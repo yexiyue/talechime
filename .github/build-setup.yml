@@ -5,3 +5,7 @@
 - name: Collect third-party license notices
   shell: bash
   run: python .github/scripts/prepare-notices.py
+- name: Set deployment target for Candle Metal
+  if: runner.os == 'macOS'
+  shell: bash
+  run: echo 'MACOSX_DEPLOYMENT_TARGET=15.0' >> "$GITHUB_ENV"

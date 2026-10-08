@@ -43,7 +43,7 @@ jobs:
         run: cargo build --locked --release -p talechime --no-default-features --features qwen-cuda,voxcpm-cuda,omnivoice-cuda
       # Real-model playback and performance require a separate GPU machine.
   metal:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

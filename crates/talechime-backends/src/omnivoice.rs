@@ -51,6 +51,9 @@ pub fn available_devices() -> Vec<Device> {
     compiled_devices()
         .into_iter()
         .filter(|device| {
+            if *device == Device::Metal && !tts_candle_platform::metal_is_available() {
+                return false;
+            }
             runtime::options_device(*device).is_some_and(|device| device.resolve().is_ok())
         })
         .collect()

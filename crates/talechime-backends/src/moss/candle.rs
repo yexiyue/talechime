@@ -80,7 +80,10 @@ pub fn compiled_devices() -> Vec<Device> {
 pub fn available_devices() -> Vec<Device> {
     compiled_devices()
         .into_iter()
-        .filter(|device| runtime::device(*device).is_ok())
+        .filter(|device| {
+            (*device != Device::Metal || tts_candle_platform::metal_is_available())
+                && runtime::device(*device).is_ok()
+        })
         .collect()
 }
 pub struct CandleBackend {

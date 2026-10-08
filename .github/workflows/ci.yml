@@ -32,7 +32,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
+          - runner: macos-15
             target: aarch64-apple-darwin
           - runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
@@ -58,6 +58,8 @@ jobs:
         shell: pwsh
         run: irm https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.ps1 | iex
       - name: Build and test isolated installation
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '15.0'
         run: |
           python .github/scripts/prepare-notices.py
           python .github/scripts/distribution-smoke.py talechime ${{ matrix.target }}

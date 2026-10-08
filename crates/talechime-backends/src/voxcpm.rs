@@ -63,7 +63,10 @@ pub fn available_devices() -> Vec<Device> {
         .into_iter()
         .filter(|device| match device {
             Device::Cpu => true,
-            Device::Cuda | Device::Metal => runtime::candle_device(*device).is_ok(),
+            Device::Cuda => runtime::candle_device(*device).is_ok(),
+            Device::Metal => {
+                tts_candle_platform::metal_is_available() && runtime::candle_device(*device).is_ok()
+            }
             _ => false,
         })
         .collect()

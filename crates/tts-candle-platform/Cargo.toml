@@ -9,10 +9,11 @@ description = "Compile-target feature selection for the shared Candle runtime"
 [features]
 default = []
 cuda = ["dep:candle-transformers"]
-metal = ["dep:candle-nn"]
+metal = ["dep:candle-nn", "dep:candle-metal-kernels"]
 
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
 candle-transformers = { workspace = true, features = ["cuda"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 candle-nn = { workspace = true, features = ["metal"], optional = true }
+candle-metal-kernels = { workspace = true, optional = true }

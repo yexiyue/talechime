@@ -13,21 +13,22 @@ alignment = ["dep:ort", "dep:tokenizers", "dep:rustfft", "dep:rubato"]
 moss = ["dep:ort", "dep:sentencepiece-rs", "dep:rand", "dep:hound", "dep:rubato"]
 moss-candle = ["moss", "dep:moss-tts", "dep:candle-core"]
 moss-candle-cuda = ["moss-candle", "moss-tts/cuda"]
-moss-candle-metal = ["moss-candle", "moss-tts/metal"]
+moss-candle-metal = ["moss-candle", "moss-tts/metal", "tts-candle-platform/metal"]
 qwen = ["dep:qwen3-tts", "dep:hound"]
-metal = ["qwen", "qwen3-tts/metal"]
+metal = ["qwen", "qwen3-tts/metal", "tts-candle-platform/metal"]
 qwen-cuda = ["qwen", "qwen3-tts/cuda"]
 voxcpm = ["dep:voxcpm", "dep:candle-core", "dep:hound", "dep:rubato"]
 voxcpm-cuda = ["voxcpm", "voxcpm/cuda"]
-voxcpm-metal = ["voxcpm", "voxcpm/metal"]
+voxcpm-metal = ["voxcpm", "voxcpm/metal", "tts-candle-platform/metal"]
 omnivoice = ["dep:omnivoice", "dep:hound", "dep:rubato"]
 omnivoice-cuda = ["omnivoice", "omnivoice/cuda"]
-omnivoice-metal = ["omnivoice", "omnivoice/metal"]
+omnivoice-metal = ["omnivoice", "omnivoice/metal", "tts-candle-platform/metal"]
 coreml = ["dep:ort", "ort/coreml"]
 ort-cuda = ["dep:ort", "ort/cuda"]
 directml-probe = ["moss", "ort/directml", "dep:windows"]
 
 [dependencies]
+tts-candle-platform.workspace = true
 moss-tts = { workspace = true, optional = true }
 candle-core = { workspace = true, optional = true }
 omnivoice = { path = "../omnivoice", optional = true }

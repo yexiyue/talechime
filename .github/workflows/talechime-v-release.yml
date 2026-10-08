@@ -134,6 +134,10 @@ jobs:
       - name: "Collect third-party license notices"
         run: "python .github/scripts/prepare-notices.py"
         shell: "bash"
+      - name: "Set deployment target for Candle Metal"
+        if: "runner.os == 'macOS'"
+        run: "echo 'MACOSX_DEPLOYMENT_TARGET=15.0' >> \"$GITHUB_ENV\""
+        shell: "bash"
       - name: Install dist
         run: ${{ matrix.install_dist.run }}
       # Get the dist-manifest

@@ -13,6 +13,7 @@ qwen3-tts = { path = "crates/qwen3-tts", version = "0.3.0", default-features = f
 candle-core = "=0.11.0"
 candle-nn = "=0.11.0"
 candle-transformers = "=0.11.0"
+candle-metal-kernels = "=0.11.0"
 tokenizers = { version = "0.22.2", default-features = false }
 hound = "3.5"
 rustfft = "6.4"

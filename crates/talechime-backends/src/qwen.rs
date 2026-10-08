@@ -128,7 +128,9 @@ pub fn available_devices() -> Vec<Device> {
             #[cfg(all(feature = "qwen-cuda", any(target_os = "windows", target_os = "linux")))]
             Device::Cuda => qwen3_tts::device::cuda(0).is_ok(),
             #[cfg(all(feature = "metal", target_os = "macos"))]
-            Device::Metal => qwen3_tts::device::metal(0).is_ok(),
+            Device::Metal => {
+                tts_candle_platform::metal_is_available() && qwen3_tts::device::metal(0).is_ok()
+            }
             _ => false,
         })
         .collect()

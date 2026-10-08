@@ -3805,6 +3805,7 @@ dependencies = [
  "tempfile",
  "tokenizers",
  "tokio",
+ "tts-candle-platform",
  "voxcpm",
  "windows",
 ]
@@ -4163,6 +4164,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 name = "tts-candle-platform"
 version = "0.1.0"
 dependencies = [
+ "candle-metal-kernels",
  "candle-nn",
  "candle-transformers",
 ]
