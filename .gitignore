@@ -9,3 +9,5 @@
 *.onnx
 *.safetensors
 *.gguf
+# Small committed numerical oracles are fixtures, not user model weights.
+!crates/**/tests/fixtures/**
