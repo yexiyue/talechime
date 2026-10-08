@@ -75,7 +75,7 @@ render 的 `interceptApi` 会话**本来就在渲染一张真实页面**，拦 A
 
 **不要**：往候选里加 **ASCII 标点**（`-` `|` `.` 等)——与汉字笔画/部件形近（「一」↔`-`、「丨」↔`|`)会把汉字误配成标点;番茄正文标点本就是全角中文标点、不走这套字体,无需覆盖。
 
-**相关文件**：`skills/booksource-generator/references/example-fanqie.v2.json`（`fontMaps.{content,search,explore}`）、`src/gen_fontmap.rs`（`baseline_candidates`）、`dev-notes/blog/font-anti-scraping-and-fontmap.md`
+**相关文件**：`skills/booksource-generator/references/example-fanqie.v2.json`（`fontMaps.{content,search,explore}`）、`src/gen_fontmap.rs`（`baseline_candidates`）、`docs/records/blog/font-anti-scraping-and-fontmap.md`
 
 ### explore 是 URL 驱动，search 是点击驱动（已落地 `search-click-pagination`）
 
@@ -181,7 +181,7 @@ CPU 默认使用 MOSS Nano；Kokoro 与 ZipVoice 已移除。ORT 钉版仍保留
 
 **坑**：rodio 0.21 的 `Sink::clear()` 会阻塞等待播放结束；停播应 stop 旧 sink，再连接同一 mixer 创建新 sink。CRLF 坐标必须累计原始换行的两个字节，不能固定加一。取消下载必须返回 Cancel，不能报告成功；服务器忽略 Range 时不能追加整文件。
 
-**相关文件**：`crates/novel-tts-core/src/session.rs`、`src/tts.rs`、`dev-notes/tts-baseline.md`。
+**相关文件**：`crates/novel-tts-core/src/session.rs`、`src/tts.rs`、`docs/records/tts-baseline.md`。
 
 ### 会话状态与音色替换的唯一所有者
 
@@ -223,7 +223,7 @@ core 使用共享 Arc<PCM>、原始音频帧时钟和 FIFO 块标记；连续入
 
 Qwen ONNX 的 feature_attention_mask 是 Int32；Whisper 前处理 extractor 调用必须显式 return_attention_mask。CoreML 动态 MLProgram 在该导出上无法编译，静态子图可运行，但大部分算子仍走 CPU。必须用 release 构建测完整链路，不把 debug 前处理开销当成 GPU 收益。配置与协议、资源清单和设备策略分别属于 protocol、backends 与 CLI。
 
-**相关文件**：`crates/novel-tts-core/src/session/playback.rs`、`crates/novel-tts-backends/src/alignment.rs`、`crates/novel-tts/src/preparation.rs`、`dev-notes/continuous-tts-acceptance.md`。
+**相关文件**：`crates/novel-tts-core/src/session/playback.rs`、`crates/novel-tts-backends/src/alignment.rs`、`crates/novel-tts/src/preparation.rs`、`docs/records/continuous-tts-acceptance.md`。
 
 ### MOSS 软换行与可选对齐
 
@@ -237,7 +237,7 @@ Qwen TTS 的 Candle 模型在 `.novel-tts/qwen/`，对齐器在 `alignment/qwen/
 
 StreamingSession::next_chunk 返回 None 不一定是 EOS；必须额外检查 is_done，帧数耗尽时它为 false。Qwen GPU 的流式 codec 使用二十帧块、CPU 十帧；推理成功与边界音质验收分开记录。0.6B CustomVoice 无克隆或风格；1.7B CustomVoice 提供风格；Base 提供渐进克隆和可复用提示。统一 voices list/import/remove/design 按所选模型执行，旧 MOSS 格式保留。
 
-**相关文件**：`crates/novel-tts-backends/src/qwen/`、`crates/novel-tts/src/{preparation.rs,voices.rs}`、`dev-notes/qwen-tts-acceptance.md`。
+**相关文件**：`crates/novel-tts-backends/src/qwen/`、`crates/novel-tts/src/{preparation.rs,voices.rs}`、`docs/records/qwen-tts-acceptance.md`。
 
 ### 预缓冲与实际播放进度
 
@@ -259,7 +259,7 @@ StreamingSession::next_chunk 返回 None 不一定是 EOS；必须额外检查 i
 
 Omni 首版是 semantic segment PCM，native_streaming=false；不得将整段完成描述为实时流式。原生线程取消直接检查 Sender::is_closed，不能依赖 Tokio 上的监视 future：Backend Drop 的 join 会阻塞该执行器，旧方式可能等完整扩散生成才退出。调用层先销毁音频 receiver 再 Drop 后端，避免 bounded send 与 join 死锁。有效 PCM 加正常 End 才提交完成检查点。
 
-**相关文件**：`crates/novel-tts-core/src/{voices.rs,config.rs,backend.rs}`、`crates/novel-tts/src/voices/`、`src/tts/ui.rs`、`dev-notes/tts-model-tiers-acceptance.md`。
+**相关文件**：`crates/novel-tts-core/src/{voices.rs,config.rs,backend.rs}`、`crates/novel-tts/src/voices/`、`src/tts/ui.rs`、`docs/records/tts-model-tiers-acceptance.md`。
 
 首次 Prepare 或 CLI 实际朗读时 ConfigStore::initialize 在文件锁内保存新默认值；Hello/GetConfig/voices list 保持只读。普通已有配置逐字保留，不通过初始化重写未知字段；退休 Kokoro/ZipVoice 及无 backend 的旧配置是例外，worker 启动时迁移到 Nano，保留未知字段与其他偏好。这样 GPU 首次默认成为用户偏好，下一次硬件变化不会悄悄换后端。
 
@@ -299,7 +299,7 @@ GGUF 重建的 SentencePiece 与官方实际 `LlamaTokenizerFast` 并非所有�
 
 ### MOSS Candle 0.11 Metal 加载完成与流式验收（2026-10-08）
 
-Mac M4 Pro 的 0.11 原加载路径实测 Realtime 提前 EOS、Local 非法控制 token；相同权重/输入的 0.9.2 Realtime 能输出非静音 PCM。Metal 模型加载及 codec 加载后分别 `Device::synchronize()`，再发送 ready，Realtime 三轮恢复正常非静音 End；Local 当前 24GB 机器则明确在初始化返回 GPU OOM，保持未验收。详细记录见 `dev-notes/moss-macos-streaming.md`。
+Mac M4 Pro 的 0.11 原加载路径实测 Realtime 提前 EOS、Local 非法控制 token；相同权重/输入的 0.9.2 Realtime 能输出非静音 PCM。Metal 模型加载及 codec 加载后分别 `Device::synchronize()`，再发送 ready，Realtime 三轮恢复正常非静音 End；Local 当前 24GB 机器则明确在初始化返回 GPU OOM，保持未验收。详细记录见 `docs/records/moss-macos-streaming.md`。
 
 **正确做法**：GPU 加载 API 返回不等于异步设备工作已完成。此处将同步错误归入现有 Initialize 路径，不放宽静音/EOS 检查。流式验收记录逐 PCM 块到达时间：Realtime 热首块约 400ms、18 块、每块通常 400ms；默认 3 秒预缓冲使实际起声晚于首 PCM。测试前检查阅读器 worker 的图形内存，避免两套 1.7B/codec 同时驻留；macOS RSS 很低不表示 GPU 权重已释放。
 

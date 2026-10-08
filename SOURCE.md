@@ -11,7 +11,7 @@ The old `novel-tts` executable remains a compatibility entry point. JSON Lines
 protocol v5, `~/.novel/tts_config.json`, `~/.novel/tts/checkpoints/` and
 `~/.novel-tts/` model/voice paths retain their existing meaning.
 
-Historical `dev-notes/` describe experiments at the time they were recorded.
+Historical `docs/records/` describe experiments at the time they were recorded.
 Use current source and the new README for current capabilities.
 
 ## Upstream fixes

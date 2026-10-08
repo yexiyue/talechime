@@ -40,7 +40,8 @@ def main(app, target):
         if app == 'trnovel':
             assert not any('talechime' in path.name or 'onnxruntime' in path.name for path in files)
         else:
-            assert (installed / 'THIRD_PARTY_LICENSES').is_dir()
+            assert (installed / 'third-party-licenses' / 'dependencies.json').is_file()
+            assert (installed / 'docs/legal/onnxruntime/ThirdPartyNotices.txt').is_file()
         home = base / 'home'
         home.mkdir()
         env = dict(os.environ, HOME=str(home), USERPROFILE=str(home))

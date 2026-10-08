@@ -8,7 +8,7 @@ configuration or a server. No Python is invoked by inference.
 The worker exposes Local and Realtime as optional GPU trial models after real
 generation/cancellation checks. VoiceGenerator creates reusable references. The
 existing Nano ONNX adapter remains intact. Successful termination does not prove
-spoken coverage. See `dev-notes/moss-candle-acceptance.md` for remaining acceptance.
+spoken coverage. See [验收记录](../../docs/records/moss-candle-acceptance.md) for remaining acceptance.
 
 ## Provenance
 

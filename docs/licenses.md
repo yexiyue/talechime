@@ -11,5 +11,8 @@ Talechime 原创项目代码沿用仓库根目录 MIT 许可证。第三方代�
 | VoxCPM 原生开发对照 | `crates/voxcpm-sys/native/SOURCE.md` 与 vendored 许可证 |
 | OmniVoice | `crates/omnivoice/SOURCE.md` 与许可证；tokenizer 的 BOSON/Higgs/Llama 授权单独保留 |
 | Qwen 对齐 | `crates/talechime-backends/src/alignment/LICENSE.Qwen` |
+| ONNX Runtime 1.28 | [许可证](legal/onnxruntime/LICENSE)、[第三方声明](legal/onnxruntime/ThirdPartyNotices.txt)、[固定来源](legal/onnxruntime/SOURCE.md) |
 
 历史验收资料中的项目名、模型实现和版本反映当时状态，以当前代码及固定资源清单为准。独立制品应携带所编译组件的 LICENSE / NOTICE / SOURCE.md，不能只附根 MIT。
+
+发行前运行 `.github/scripts/prepare-notices.py`，将工作区和 Cargo 依赖声明汇集到 Git 忽略的 `target/third-party-licenses/`。cargo-dist 将其作为 `third-party-licenses/` 放入压缩包；ONNX Runtime 的完整原文随 `docs/legal/onnxruntime/` 分发。生成文件不在仓库根目录保留占位目录，固定上游声明仍纳入版本管理。

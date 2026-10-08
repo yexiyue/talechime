@@ -85,7 +85,7 @@ tests with `VOXCPM_TEST_MODELS` and `VOXCPM_TEST_REFERENCE` pointing at local
 directories, using `--ignored --nocapture --test-threads=1`. No model is downloaded
 by tests. F32 assertions use atol=1e-5 and rtol=1e-4; Q8/F16 errors have separate
 reports. See `SOURCE.md`, the fixture README and
-`dev-notes/voxcpm-candle-acceptance.md` for identities and acceptance status.
+[验收记录](../../docs/records/voxcpm-candle-acceptance.md) for identities and acceptance status.
 Use `cargo test --release` for real-weight oracles: Debug's unoptimized matrix
 arithmetic is much slower. The numerical thresholds are identical in both profiles.
 

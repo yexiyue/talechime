@@ -16,7 +16,7 @@ install-path = "CARGO_HOME"
 install-updater = false
 msvc-crt-static = false
 features = ["qwen", "voxcpm", "omnivoice", "metal", "voxcpm-metal", "omnivoice-metal", "moss-candle-metal"]
-include = ["LICENSE", "SOURCE.md", "docs", "assets", "THIRD_PARTY_LICENSES", "licenses"]
+include = ["LICENSE", "SOURCE.md", "docs", "assets", "target/third-party-licenses"]
 github-build-setup = "../build-setup.yml"
 pr-run-mode = "plan"
 

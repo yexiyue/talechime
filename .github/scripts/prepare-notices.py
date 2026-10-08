@@ -6,7 +6,7 @@ import subprocess
 import tomllib
 
 root = Path(__file__).resolve().parents[2]
-output = root / 'THIRD_PARTY_LICENSES'
+output = root / 'target' / 'third-party-licenses'
 
 
 def collect(directory, destination):
@@ -32,5 +32,5 @@ for package in metadata['packages']:
     collect(Path(package['manifest_path']).parent,
             output / 'dependencies' / (package['name'] + '-' + package['version']))
     records.append({key: package[key] for key in ['name', 'version', 'license', 'repository', 'source']})
-output.mkdir(exist_ok=True)
+output.mkdir(parents=True, exist_ok=True)
 (output / 'dependencies.json').write_text(json.dumps(records, indent=2), encoding='utf-8')

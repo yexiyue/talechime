@@ -108,7 +108,7 @@ MOSS ONNX opset 17 原始验收使用 ort rc.10，升级到 rc.13 后需重测�
 
 VHS 验收不同 feature 的阅读器时，把构建出的 basic 二进制复制到独立目录后再录制。随后运行 workspace all-features 测试会重建 target/debug/trn；若继续录制这个共享路径，会误把完整听书版当成基础版。
 
-**相关文件**：`crates/novel-tts-backends/README.md`、`dev-notes/moss-tts-acceptance.md`。
+**相关文件**：`crates/novel-tts-backends/README.md`、`docs/records/moss-tts-acceptance.md`。
 
 ### ORT 加速 feature 与模型校验
 
@@ -177,7 +177,7 @@ CUDA 13 的运行库位于 `bin\x64`，系统 PATH 要同时包含 `bin` 和 `bi
 以及 cuDNN 的 `bin`。保留 `NVCC_PREPEND_FLAGS=-Xcompiler=/MD`，使 Candle
 host 对象与 ORT 共用动态 CRT。ORT 构建显式设置 `ORT_CUDA_VERSION=13`；
 旧终端须重新加载环境。Linux Candle CUDA 构建镜像同步为 13.0.2；Windows
-构建和真实 provider 检查结果见 `dev-notes/ort-rc13-upgrade.md`，不以 Windows
+构建和真实 provider 检查结果见 `docs/records/ort-rc13-upgrade.md`，不以 Windows
 feature 检查替代 Linux CUDA 或 macOS Metal 验收。
 
 独立 `voxcpm-sys` 对照工具在 CMake 3.31 / CUDA 13 下自动 `native` 架构探测
@@ -196,7 +196,7 @@ Omni tokenizer 权重为 BOSON/Higgs/Llama 条款，不能跟生成器一起标�
 
 `crates/moss-tts` 与 Qwen/Omni 共用 Candle 0.11.0。worker 使用 `moss-candle-cuda` / `moss-candle-metal`，不把推理依赖引入阅读器。CUDA 大模型 BF16、codec F16；VoiceGenerator F16 的真实权重会产生无效 logits。四组权重按官方固定 revision 和 SHA 放用户缓存，7.1 GB codec 共用一次，不按每个生成模型复制。打包可选 feature 时附带 moss-tts LICENSE/NOTICE。CPU 库检查不等于完整大模型 CPU 验收；当前 worker 新模式仅公开 GPU。
 
-**相关文件**：`crates/moss-tts/`、`crates/novel-tts-backends/src/moss/candle/`、`dev-notes/moss-candle-acceptance.md`。
+**相关文件**：`crates/moss-tts/`、`crates/novel-tts-backends/src/moss/candle/`、`docs/records/moss-candle-acceptance.md`。
 
 
 ### macOS VoxCPM2 原生链接
@@ -213,7 +213,7 @@ Candle 0.9.2 的 Metal `arg_sort_last_dim` 使用单线程组 bitonic sort，线
 
 **正确做法**：OmniVoice 在 Metal 且排序列数 >1024 时仅把分数排序放在 CPU，将索引传回原设备；位置选择和 class top-k 共用此保护。模型计算仍在 Metal，CUDA 路径不变。Stage1 普通解码也校验 token 范围，避免 Metal embedding 的越界截断掩盖异常。回归测试覆盖 1040 个位置，以及 1024/1025/4097 列 class top-k。
 
-**相关文件**：`crates/omnivoice/src/stage0_model.rs`、`crates/omnivoice/src/stage1_decoder.rs`；实测见 `dev-notes/metal-tts-efficiency.md`。
+**相关文件**：`crates/omnivoice/src/stage0_model.rs`、`crates/omnivoice/src/stage1_decoder.rs`；实测见 `docs/records/metal-tts-efficiency.md`。
 
 ### CPU 后端收敛与旧配置迁移
 
@@ -252,7 +252,7 @@ CFM 只缓存一个步数对应的时间嵌入表，每个 patch 的 cond projec
 - AudioVAE 缓存只持有因果卷积 receptive field 和转置卷积 overlap tail；每次生成均重置，不累积解码全历史。
 - 模块 profiling 用显式设备同步，独立于吞吐测量。Windows /MD 约定继续适用于 CUDA 与 ORT 共存。
 
-**相关文件**：`crates/voxcpm/`、`crates/novel-tts-backends/examples/voxcpm_candle_probe.rs`、`tools/tts/voxcpm_reference.py`、`dev-notes/voxcpm-candle-acceptance.md`。
+**相关文件**：`crates/voxcpm/`、`crates/novel-tts-backends/examples/voxcpm_candle_probe.rs`、`tools/tts/voxcpm_reference.py`、`docs/records/voxcpm-candle-acceptance.md`。
 
 ### VoxCPM2 Candle 生产接入（2026-10-07）
 
@@ -260,7 +260,7 @@ CFM 只缓存一个步数对应的时间嵌入表，每个 patch 的 cond projec
 
 **正确做法**：旧音色 WAV/voice.json 保留；`features.json` 不读取。`candle-reference-v1.json` 验证实现、权重清单摘要、模型/revision、WAV 摘要、文字及 F32/F16 精度，不兼容则重建。专用线程只保留一个音色编码，初始化/生成/设计取消后均回收线程。性能校准 revision 带 candle-v1，不能复用 llama.cpp 的校准值。
 
-**相关文件**：`crates/novel-tts-backends/src/voxcpm/`、`crates/novel-tts/src/preparation/synthesis.rs`、`dev-notes/voxcpm-candle-acceptance.md`。
+**相关文件**：`crates/novel-tts-backends/src/voxcpm/`、`crates/novel-tts/src/preparation/synthesis.rs`、`docs/records/voxcpm-candle-acceptance.md`。
 
 
 
@@ -280,7 +280,7 @@ Windows ML 新路线不是只有 DirectML：官方 MIGraphX 插件要求 RDNA3+�
 
 后续原生试验已实现：后端可选 `directml-probe` example 使用 DXGI 显式选择、专用 session 线程、禁用 memory pattern/parallel execution，支持 host outputs 与持久缓存 I/O Binding。DML `MemoryInfo` 的 allocation id 0 是所选 session 内的设备分配标识，不是 DXGI adapter0；实际 adapter1 的缓存返回身份验证通过。显卡按 D3D12 能力筛选，AMD 独显与核显均可参与，不因本机核显结果排除 RX 系列。
 
-本机短语料 release 五轮平均 RTF：CPU .4224、AMD 核显 host 1.2694、device cache 1.1145。真实 provider profiles 显示 MatMul/Conv 在 DML 执行，但仍有 CPU shape/control 与 codec 算术节点；内置音色不触发参考 encoder，不能宣称克隆图覆盖。取消和再次生成通过。CPU/DML 输出时长及 ASR 有差异，人工音质、长播放与 AMD 独显实机未验收，未新增产品设备或 Auto 偏好。资源是 FLOAT opset17，当前不测试 INT8 算子。详见 `dev-notes/moss-directml-evaluation.md`。
+本机短语料 release 五轮平均 RTF：CPU .4224、AMD 核显 host 1.2694、device cache 1.1145。真实 provider profiles 显示 MatMul/Conv 在 DML 执行，但仍有 CPU shape/control 与 codec 算术节点；内置音色不触发参考 encoder，不能宣称克隆图覆盖。取消和再次生成通过。CPU/DML 输出时长及 ASR 有差异，人工音质、长播放与 AMD 独显实机未验收，未新增产品设备或 Auto 偏好。资源是 FLOAT opset17，当前不测试 INT8 算子。详见 `docs/records/moss-directml-evaluation.md`。
 
 来源：AMD 9700X 规格 https://www.amd.com/en/products/processors/desktops/ryzen/9000-series/amd-ryzen-7-9700x.html；Windows ML provider 要求 https://learn.microsoft.com/en-us/windows/ai/new-windows-ml/supported-execution-providers；本地 ONNX 图静态检查。
 
@@ -299,11 +299,11 @@ CUDA 13 官方 `cuda.lib` 的静态 driver loader 对象带 `/DEFAULTLIB:LIBCMT`
 
 ### ORT CUDA 预编译包与 Blackwell 架构覆盖
 
-本机 rc.13 Runtime 1.28 CUDA13 provider 中只有 sm75/sm80/sm90a cubin，且没有 PTX；RTX 5070 sm120 的 Nano `/Cast` 实际生成报 `cudaErrorNoKernelImageForDevice`。CUDA 13 安装、驱动可用、EP 注册成功都不能证明模型算子覆盖。用 `cuobjdump --list-elf` 和 `--list-ptx` 检查实际打包 DLL，并保存真实生成错误；不静默降级显式 CUDA，不以升级 Toolkit 修复缺失内核。后续验证匹配的含 Blackwell Runtime/provider 分发或可重复原生构建，不能只替换不匹配的 provider DLL。详见 `dev-notes/ort-rc13-upgrade.md`。
+本机 rc.13 Runtime 1.28 CUDA13 provider 中只有 sm75/sm80/sm90a cubin，且没有 PTX；RTX 5070 sm120 的 Nano `/Cast` 实际生成报 `cudaErrorNoKernelImageForDevice`。CUDA 13 安装、驱动可用、EP 注册成功都不能证明模型算子覆盖。用 `cuobjdump --list-elf` 和 `--list-ptx` 检查实际打包 DLL，并保存真实生成错误；不静默降级显式 CUDA，不以升级 Toolkit 修复缺失内核。后续验证匹配的含 Blackwell Runtime/provider 分发或可重复原生构建，不能只替换不匹配的 provider DLL。详见 `docs/records/ort-rc13-upgrade.md`。
 
 ### VoxCPM Candle macOS 性能记录（2026-10-08）
 
-M4 Pro / 24GB / Candle 0.11 的 release Q8 Metal 完整语料热测平均 RTF 0.954，旧原生 Metal 1.737；相同短句 CPU 3.689、Metal 0.922。该机器 Metal 仅略快于实时，不可用吞吐数据代替实际播放断流和听感验收。详细条件、原始日志与复现见 `dev-notes/voxcpm-macos-performance.md`。
+M4 Pro / 24GB / Candle 0.11 的 release Q8 Metal 完整语料热测平均 RTF 0.954，旧原生 Metal 1.737；相同短句 CPU 3.689、Metal 0.922。该机器 Metal 仅略快于实时，不可用吞吐数据代替实际播放断流和听感验收。详细条件、原始日志与复现见 `docs/records/voxcpm-macos-performance.md`。
 
 **正确做法**：现有 `tools/tts/metrics.py` 不采样 macOS 内存，Mac 基准使用 `/usr/bin/time -l`，分开记录 maximum resident set size 和 peak memory footprint，二者不相加、不当作独占 GPU 内存。原生开发基准暂未提供 Metal CLI match arm，实测时临时补入口并恢复，不需要更改生产设备路由。
 

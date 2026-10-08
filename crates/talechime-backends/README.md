@@ -27,7 +27,7 @@ cargo build --release -p talechime --no-default-features --features qwen-cuda # 
 MOSS 也可通过 `moss-candle-cuda` / `moss-candle-metal` 增加 GPU 试用模型
 `local-1.7b` 和 `realtime-1.7b`。计算与 codec 位于 `crates/moss-tts`，共用
 工作区 Candle；Nano 继续走原 ONNX。VoiceGenerator 仅用于创建可复用参考音色。
-资源与真实验收边界见 `dev-notes/moss-candle-acceptance.md`。
+资源与真实验收边界见 [验收记录](../../docs/records/moss-candle-acceptance.md)。
 
 ## Qwen TTS（Candle）
 
@@ -41,7 +41,7 @@ Qwen 分段独立于 MOSS 的 token 预算：真实段落和标题建立硬边�
 
 CPU、可选 CUDA（Windows/Linux，`qwen-cuda`）和 Metal（macOS，`metal`）由 Qwen 自己的设备目录报告。`ort-cuda` 仅用于 MOSS/对齐器，不能为 Qwen 提供 CUDA。`tts-candle-platform` 按目标平台启用同一套 Candle 0.11.0 的 GPU 依赖，Windows 的 all-features 不会编入 Objective-C Metal。CUDA feature 仍需 Toolkit。Auto 使用同一完整链路校准门槛；运行错误仅在 Auto 模式重建 CPU 供下次显式播放，不重放失败片段。
 
-流式 codec 的边界连续性需要人工试听，EOS 也不能证明逐字覆盖。当前各模型实测与待验收项见 `dev-notes/tts-model-tiers-acceptance.md`。
+流式 codec 的边界连续性需要人工试听，EOS 也不能证明逐字覆盖。当前各模型实测与待验收项见 [验收记录](../../docs/records/tts-model-tiers-acceptance.md)。
 
 ```sh
 cargo run --release -p talechime-backends --no-default-features --features qwen,metal --example qwen -- ~/.novel-tts/qwen output.wav metal '你好，欢迎收听。'
@@ -72,7 +72,7 @@ TRNOVEL_MOSS_MODEL_DIR=<root>/moss cargo test -p talechime-backends
 
 普通测试不下载模型；设置环境变量后才执行真实模型的官方数值对照和取消测试。官方参考 fixture 来自 upstream commit `8b7bcc9341b3b4ef3a3a58ba1338a7d85ff133eb` 的 `ort_cpu_runtime.py`，使用官方 fixed sampling 图、三个 codec frame 一块和 seed=42 的固定 LCG 随机数序列。fixture 包含 SentencePiece tokens、样本数和跨音频范围的 512 个 PCM 探针；误差容限为 1e-4。随机序列用于验收，正常播放使用系统种子随机源。
 
-本地验收记录见 `dev-notes/moss-tts-acceptance.md`。Python 只用于生成官方对照数据，用户运行程序无需 Python。
+本地验收记录见 [验收记录](../../docs/records/moss-tts-acceptance.md)。Python 只用于生成官方对照数据，用户运行程序无需 Python。
 
 ## 上游来源和许可
 
@@ -82,7 +82,7 @@ MOSS 推理流程移植自 [OpenMOSS/MOSS-TTS-Nano](https://github.com/OpenMOSS/
 
 alignment feature 提供独立 `QwenAligner`，实现 core 的 `Aligner`，通过容量为 1 的请求通道在线程内运行；原文单位、16kHz mono、128-bin log-mel、分词、时间戳修复全部使用 Rust。来源为 [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) 和 [固定 ONNX 导出](https://huggingface.co/valoomba/Qwen3-ForcedAligner-0.6B-ONNX/tree/261c9ed100c1b18a4a1fbc488e05625dc9a4ae5c)，许可见 alignment/LICENSE.Qwen。
 
-coreml/ort-cuda feature 启用对应 ORT provider，Rust ort 固定 rc.13，普通预编译 ORT 1.28、Rust API 21（实际原生库 1.22 或更新，设备由应用显式选择），CUDA 原生分发要求 CUDA 13；不再发布 Intel Mac 制品。设备与校准策略由 CLI 组装，不进入 core 或阅读器。CoreML 使用 NeuralNetwork、静态子图和独立编译缓存；CUDA 用 I/O binding 保留 KV/codec 状态。设备可用、子图分配与性能通过不同证据判断；验收见 `dev-notes/continuous-tts-acceptance.md`。
+coreml/ort-cuda feature 启用对应 ORT provider，Rust ort 固定 rc.13，普通预编译 ORT 1.28、Rust API 21（实际原生库 1.22 或更新，设备由应用显式选择），CUDA 原生分发要求 CUDA 13；不再发布 Intel Mac 制品。设备与校准策略由 CLI 组装，不进入 core 或阅读器。CoreML 使用 NeuralNetwork、静态子图和独立编译缓存；CUDA 用 I/O binding 保留 KV/codec 状态。设备可用、子图分配与性能通过不同证据判断；验收见 [验收记录](../../docs/records/continuous-tts-acceptance.md)。
 
 ```sh
 TRNOVEL_MOSS_MODEL_DIR=<root>/moss TRNOVEL_QWEN_MODEL_DIR=<root>/alignment/qwen cargo test -p talechime-backends
@@ -106,4 +106,4 @@ MOSS 软换行可共享上下文；初始目标 8 秒/预计上限 12 秒，保�
 
 来源与固定 revision：`crates/voxcpm-sys/native/SOURCE.md`、`crates/omnivoice/SOURCE.md`。Vox 代码 MIT、权重 Apache-2.0；Omni 生成器 Apache-2.0，但 tokenizer 使用 BOSON/Higgs/Llama 许可。不得将整个组件集合标作 Apache/MIT。
 
-对照数值 fixture、固定语料、WAV、性能和待验收项见 `dev-notes/tts-model-tiers-acceptance.md`；普通测试不下载大模型。
+对照数值 fixture、固定语料、WAV、性能和待验收项见 [验收记录](../../docs/records/tts-model-tiers-acceptance.md)；普通测试不下载大模型。

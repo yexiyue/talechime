@@ -382,7 +382,7 @@ CUDA 13 官方 cuda.lib loader 的 LIBCMT 导致 LNK4098，保留诊断，不用
 
 ORT 1.28 CUDA13 在本机 Nano `/Cast` 生成失败：分发仅含 sm75/sm80/sm90a
 且没有 PTX，缺少 sm120 内核。没有以 Candle 成功推断 ORT/CUDA 共存推理
-通过；显式 CUDA 不降级，详细证据见 `dev-notes/ort-rc13-upgrade.md`。
+通过；显式 CUDA 不降级，详细证据见 `docs/records/ort-rc13-upgrade.md`。
 此前 0.9.2 的严格真实权重数值失败（GGUF 31 / 原始 397）属于历史记录，
 当前 0.11.0 未重新完成这组官方真实权重 oracle，不宣称已解决。
 当前 WAV 的人工试听、自动转写及 30 分钟实际播放仍未完成；Linux CUDA、

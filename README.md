@@ -10,7 +10,7 @@ Talechime 是一个 Rust 本地语音合成与长文听书项目，提供可复�
 
 *Local speech synthesis and continuous listening, built in Rust.*
 
-[架构与集成](docs/architecture.md) · [开发与验证](docs/development.md) · [品牌资产](docs/brand.md) · [迁移来源](SOURCE.md)
+[文档索引](docs/README.md) · [架构与集成](docs/architecture.md) · [开发与验证](docs/development.md) · [品牌资产](docs/brand.md) · [迁移来源](SOURCE.md)
 
 > **状态：独立源码仓库，尚未发布新品牌安装包。** 当前可以从源码构建、朗读 UTF-8 文件、管理音色或作为本地 worker 接入应用。单个会话使用一套音色；按角色连续切换音色、CastGlean 集成和通用有声书导出仍在规划中。
 
@@ -94,9 +94,9 @@ target/release/talechime --backend qwen --tts-device metal chapter.txt
 cargo build --release -p talechime --features qwen,voxcpm,omnivoice
 ```
 
-`ort-cuda` 和 `qwen-cuda` 是不同计算路径；启用一个不会为另一个提供 GPU 支持。当前原生 ORT CUDA 分发在部分 Blackwell 算子上存在覆盖问题，见[验收记录](dev-notes/ort-rc13-upgrade.md)。实际能力以编译目录与运行检查为准。
+`ort-cuda` 和 `qwen-cuda` 是不同计算路径；启用一个不会为另一个提供 GPU 支持。当前原生 ORT CUDA 分发在部分 Blackwell 算子上存在覆盖问题，见[验收记录](docs/records/ort-rc13-upgrade.md)。实际能力以编译目录与运行检查为准。
 
-各模型的数值、听感、流式边界与连续播放验收状态不同。已有适配器不等于所有模型和设备均已完成质量验收；详情见[模型验收记录](dev-notes/tts-model-tiers-acceptance.md)及[VoxCPM 记录](dev-notes/voxcpm-candle-acceptance.md)。
+各模型的数值、听感、流式边界与连续播放验收状态不同。已有适配器不等于所有模型和设备均已完成质量验收；详情见[模型验收记录](docs/records/tts-model-tiers-acceptance.md)及[VoxCPM 记录](docs/records/voxcpm-candle-acceptance.md)。
 
 ## 音色
 

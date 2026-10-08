@@ -18,7 +18,7 @@ novel-tts --backend moss --model realtime-1.7b --voice custom:myvoice --tts-devi
 重新设计。参考暂限 1–10 秒；导入时需要 `--text` 记录原文。所有权重放默认
 `.novel-tts/moss/models/<id>/<revision>`，共用一份 codec。完整大模型 CPU
 未验收，worker 试用模式只公开 GPU，CPU 听书仍使用 Nano。详情及未完成验收
-见 `dev-notes/moss-candle-acceptance.md`。
+见 [验收记录](../../docs/records/moss-candle-acceptance.md)。
 
 独立朗读 UTF-8 文件，不需要启动阅读器，不再启动另一层听书子进程。
 
@@ -45,7 +45,7 @@ printf '%s\n' '{"protocol_version":5,"request_id":"1","session_id":null,"type":"
 
 每条 stdout 行为协议 JSON，日志写 stderr；协议模式不读取终端键位，不进入原始模式。首次 hello 超时为 5 秒，行上限为 16 MiB；未知版本关闭连接，非法 JSON/重复请求返回错误，不执行播放。EOF/shutdown 停播并收尾，保留最近播放检查点。取消准备保留 .download 半文件，下次创建新下载任务可续传；服务器忽略 Range 时重头下载。下载文件锁阻止多个进程同时修改半文件。
 
-实际终端按键、主观音质和各平台 30 分钟持续播放仍需人工验收；自动化协议测试不替代这些结果。独立制品包含 talechime 与 novel-tts 两个入口；TRNovel 的听书包继续携带兼容 worker。历史检查记录位于根目录 `dev-notes/tts-acceptance.md`。
+实际终端按键、主观音质和各平台 30 分钟持续播放仍需人工验收；自动化协议测试不替代这些结果。独立制品只提供 talechime 入口；TRNovel 通过独立安装的 worker 使用听书功能。历史检查记录位于根目录 [验收记录](../../docs/records/tts-acceptance.md)。
 
 ## 后端与音色
 
@@ -109,7 +109,7 @@ Omni 描述要求模型支持的性别、年龄、音调等标签，非法标签
 克隆要求参考 WAV 和准确文字：Qwen 接受 1..15 秒，其余新后端接受 1..30 秒。
 音色按模型和 revision 隔离，不共享专用编码缓存。
 
-固定来源、SHA-256 和验收记录见 `dev-notes/tts-model-tiers-acceptance.md`。
+固定来源、SHA-256 和验收记录见 [验收记录](../../docs/records/tts-model-tiers-acceptance.md)。
 Omni 音频 tokenizer 权重另有 BOSON/Higgs/Llama 许可。
 这些组件不能笼统称为 Apache/MIT，发行需要附带对应许可和源码材料。
 
@@ -129,10 +129,10 @@ auto 对两个组件独立预热 3 次、测量 5 次，完整链路至少快 15
 
 Qwen CPU Q4 约 0.99 GiB，GPU 浮点权重约 3.42 GiB，独立按需下载并校验。资源在 `~/.novel-tts/alignment/qwen/`；各模型目录下的 coreml-cache 可删除重建。CoreML 使用 MLProgram 和静态子图，允许系统选择 GPU/神经引擎，但仍有 CPU 算子。CUDA 的 KV/codec 状态通过 I/O binding 保留在设备端，实机性能仍须验收。
 
-立即流式播放并显示片段高亮；异步对齐成功后切为逐句高亮。对齐资源缺失、推理失败、积压或超时仍继续播放。自动设备运行失败后后续任务重建 CPU 路径，已输出音频不重播；失败合成块不提交完成检查点。详见 `dev-notes/continuous-tts-acceptance.md`。
+立即流式播放并显示片段高亮；异步对齐成功后切为逐句高亮。对齐资源缺失、推理失败、积压或超时仍继续播放。自动设备运行失败后后续任务重建 CPU 路径，已输出音频不重播；失败合成块不提交完成检查点。详见 [验收记录](../../docs/records/continuous-tts-acceptance.md)。
 
 ## 可选逐句高亮
 
 默认 `alignment_enabled=false`，准备和播放仅加载所选 TTS 后端。`novel-tts --alignment book.txt` 显式开启 Qwen，`novel-tts --alignment=false book.txt` 关闭；偏好写入听书配置。已有配置没有该字段时也关闭。对齐设备仅在启用时参与准备，切换开关停止当前会话并保留可靠续读位置。
 
-MOSS 合并排版单换行，空行/标题/分隔线保留边界。使用 8 秒目标 / 12 秒预计上限及模型安全预算。模型超限或推理失败时停止，不跳过文本，也不自动重复已播放内容。正常 EOS 不保证逐字覆盖，详见 `dev-notes/moss-continuity-acceptance.md`。
+MOSS 合并排版单换行，空行/标题/分隔线保留边界。使用 8 秒目标 / 12 秒预计上限及模型安全预算。模型超限或推理失败时停止，不跳过文本，也不自动重复已播放内容。正常 EOS 不保证逐字覆盖，详见 [验收记录](../../docs/records/moss-continuity-acceptance.md)。
