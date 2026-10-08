@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 root = Path(__file__).resolve().parents[1]
 target = sys.argv[1]
@@ -27,6 +28,8 @@ for path in build.iterdir():
         shutil.copy2(path, stage / path.name)
 for name in ['README.md', 'LICENSE', 'SOURCE.md']:
     shutil.copy2(root / name, stage / name)
+for name in ['docs', 'assets', 'dev-notes']:
+    shutil.copytree(root / name, stage / name, dirs_exist_ok=True)
 for path in (root / 'crates').rglob('*'):
     if path.is_file() and (path.name.startswith(('LICENSE', 'COPYING'))
                           or path.name in ['NOTICE', 'SOURCE.md']):
@@ -38,8 +41,13 @@ version = int(re.search(r'PROTOCOL_VERSION: u32 = (\d+)', protocol.read_text()).
 requests = ''.join(json.dumps(dict(protocol_version=version, request_id=kind,
                                   session_id=None, type=kind)) + '\n'
                    for kind in ['hello', 'shutdown'])
-result = subprocess.run([str(stage / ('talechime' + suffix)), '--protocol'],
-                        input=requests, capture_output=True, text=True, check=True, timeout=15)
+with tempfile.TemporaryDirectory() as temporary:
+    state = Path(temporary)
+    result = subprocess.run([str(stage / ('talechime' + suffix)), '--protocol',
+                             '--config', str(state / 'config.json'),
+                             '--model-dir', str(state / 'models'),
+                             '--checkpoint-dir', str(state / 'positions')],
+                            input=requests, capture_output=True, text=True, check=True, timeout=15)
 messages = [json.loads(line) for line in result.stdout.splitlines()]
 assert messages[0]['type'] == 'ready' and messages[0]['protocol_version'] == version
 assert messages[-1]['type'] == 'accepted'
