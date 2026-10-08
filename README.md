@@ -26,6 +26,22 @@ Talechime 是一个 Rust 本地语音合成与长文听书项目，提供可复�
 
 模型推理在专用线程运行，音频留在 worker 进程。正文和参考音频由本地模型处理；首次准备需要下载所选模型，普通帮助和音色目录查询不下载权重。无需 Python 即可使用 Rust 程序；`tools/tts/` 中的 Python 是开发对照与验收工具。
 
+## Installation
+
+独立发行使用 cargo-dist **0.32.0**，只提供 `talechime`。首轮支持 Apple Silicon macOS、x86_64 Linux GNU、x86_64 Windows MSVC。新流程已配置，尚未创建正式应用 release tag；下列命令在首个新品牌应用 release 发布后可用。当前可使用源码构建。
+
+```sh
+# macOS / Linux
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/yexiyue/talechime/releases/latest/download/talechime-installer.sh | sh
+brew install yexiyue/tap/talechime
+```
+
+```powershell
+irm https://github.com/yexiyue/talechime/releases/latest/download/talechime-installer.ps1 | iex
+```
+
+也可从 [GitHub Releases](https://github.com/yexiyue/talechime/releases) 下载 `.tar.xz` / `.zip`，解压后加入 PATH。标准包包含 Nano、对齐、Qwen / VoxCPM / OmniVoice；Mac 增加 Metal 与 MOSS Candle Metal，Windows/Linux 使用 CPU。CUDA 保留源码构建与编译 CI。模型按需下载，安装包不含模型权重。
+
 ## 从源码开始
 
 需要 Rust 1.89 或更新版本及平台链接工具。Linux 需要 ALSA/OpenSSL 开发库和 pkg-config；CUDA 构建另外需要 Toolkit，Metal 需要 macOS。实际最低工具链与各平台模型性能须分别验证，不能由编译成功推断。
@@ -64,7 +80,7 @@ cargo run --release -- --restart chapter.txt
 | OmniVoice | Candle | 参考音色与设计；当前为语义分段生成，不是原生实时流式 |
 
 ```bash
-# NVIDIA：Qwen 及兼容 CLI 一起构建
+# NVIDIA：源码构建 Qwen CUDA
 cargo build --release -p talechime --no-default-features --features qwen-cuda
 target/release/talechime --backend qwen --model 1.7b-customvoice --tts-device cuda chapter.txt
 
@@ -118,23 +134,22 @@ flowchart LR
 
 上图中 CastGlean 到朗读计划的连接是规划能力。CastGlean 保留稳定角色身份与语义分析，使用方绑定具体音色，Talechime 负责声音。Talechime 当前不依赖 CastGlean，也不分析谁在说话。
 
-## 兼容与数据目录
+## 数据目录
 
-同时构建 `talechime` 与旧名称 `novel-tts`，两者运行相同逻辑。TRNovel 现有程序发现和发行包可以继续使用 `novel-tts`。
-
-| 数据 | 保留路径 |
+| 数据 | 默认路径 |
 | --- | --- |
-| 配置 | `~/.novel/tts_config.json` |
-| 听书恢复点 | `~/.novel/tts/checkpoints/` |
-| 模型、音色与编码缓存 | `~/.novel-tts/` |
+| 配置 | `~/.talechime/config.json` |
+| 听书恢复点 | `~/.talechime/checkpoints/` |
+| 模型、音色、编码缓存与校准资源 | `~/.talechime/resources/` |
 
-可通过 `--config`、`--checkpoint-dir` 和 `--model-dir` 显式隔离。新名称不触发目录迁移、重新下载或用户偏好重置。配置文件采用修订检查和原子替换；正文摘要或 UTF-8 坐标不匹配的恢复点会报错。恢复可能重复最近未完成片段，不承诺采样级恢复。
+保留 `--config`、`--checkpoint-dir`、`--model-dir` 显式参数。旧 `novel-tts` 入口已移除，旧目录不读取、不删除、不自动迁移；复用已有资源见[手工搬迁](docs/migration.md)。配置使用修订检查和原子替换，损坏数据不覆盖；退休后端需手工重新选择。
 
 ## 路线图
 
 - [x] 从 TRNovel 提取独立 Rust workspace，保留协议和用户数据兼容。
-- [x] 新品牌 CLI、兼容入口、项目文档与品牌资产。
-- [ ] 完成独立安装包及 Windows / Linux / Apple Silicon 发布验收。
+- [x] 独立 CLI、项目文档与品牌资产。
+- [x] cargo-dist 发行配置与三个平台的隔离构建/启动 CI。
+- [ ] 创建首个正式应用 release，并完成真实模型跨平台试听。
 - [ ] 通用朗读计划：同一模型内逐段指定音色/风格，连续播放。
 - [ ] CastGlean 标注适配、角色音色绑定和未知归属回退。
 - [ ] 长文音频导出与可复用音频缓存。

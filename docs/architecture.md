@@ -5,7 +5,7 @@ Talechime 拥有语音合成和播放；章节获取、阅读界面、角色识�
 ```mermaid
 flowchart TD
     H[宿主应用] --> P[talechime-protocol]
-    H -->|JSON Lines| CLI[talechime / novel-tts worker]
+    H -->|JSON Lines| CLI[talechime worker]
     CLI --> CORE[talechime-core]
     CLI --> B[talechime-backends]
     B --> CORE

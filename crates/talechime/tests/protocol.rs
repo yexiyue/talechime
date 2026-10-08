@@ -24,7 +24,7 @@ impl Worker {
             .unwrap(),
         )
         .unwrap();
-        let mut child = ProcessCommand::new(env!("CARGO_BIN_EXE_novel-tts"))
+        let mut child = ProcessCommand::new(env!("CARGO_BIN_EXE_talechime"))
             .args(["--protocol", "--config"])
             .arg(directory.path().join("config.json"))
             .arg("--model-dir")
@@ -164,7 +164,7 @@ fn invalid_utf8_and_missing_files_exit_before_preparation() {
     let path = directory.path().join("invalid.txt");
     std::fs::write(&path, [0xff, 0xfe]).unwrap();
     for path in [path, directory.path().join("missing.txt")] {
-        let output = ProcessCommand::new(env!("CARGO_BIN_EXE_novel-tts"))
+        let output = ProcessCommand::new(env!("CARGO_BIN_EXE_talechime"))
             .arg(path)
             .arg("--model-dir")
             .arg(directory.path().join("models"))
@@ -206,7 +206,7 @@ fn qwen_selection_and_voice_listing_do_not_load_models() {
     assert!(!worker._directory.path().join("models").exists());
     worker.send("shutdown", Command::Shutdown);
     worker.wait();
-    let output = ProcessCommand::new(env!("CARGO_BIN_EXE_novel-tts"))
+    let output = ProcessCommand::new(env!("CARGO_BIN_EXE_talechime"))
         .args(["--backend", "qwen", "--config"])
         .arg(worker._directory.path().join("config.json"))
         .args(["voices", "list"])
