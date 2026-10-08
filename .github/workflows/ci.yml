@@ -24,3 +24,4 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
       - run: cargo build --locked -p talechime --bins
+      - run: python3 scripts/smoke.py target/debug

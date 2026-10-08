@@ -1,22 +1,22 @@
 # qwen3-tts
 
-TRNovel's local Candle inference library. Imported from
+Talechime's local Candle inference library. Imported from
 [TrevorS/qwen3-tts-rs](https://github.com/TrevorS/qwen3-tts-rs) at revision
 `711ceee07cad92673f86de8997bdf54c30caa49f`, under the upstream MIT license.
 The original implementation and contributors retain attribution. Local changes
 use the repository's MIT license as well.
 
-This crate reads local model files and generates PCM. `novel-tts-backends`
+This crate reads local model files and generates PCM. `talechime-backends`
 adapts that stream to the session API; the worker owns verified downloads,
 calibration, configuration and playback. No upstream CLI, model downloader,
 benchmarks, Python tooling or custom PTX assets are included.
 
 ```mermaid
 flowchart LR
-    Worker[novel-tts] --> Adapter[novel-tts-backends]
+    Worker[novel-tts] --> Adapter[talechime-backends]
     Adapter --> Model[qwen3-tts]
     Model --> Candle[Candle CPU / CUDA / Metal]
-    Worker --> Core[novel-tts-core playback]
+    Worker --> Core[talechime-core playback]
 ```
 
 ## Features
@@ -27,7 +27,7 @@ flowchart LR
 - `profiling`: optional Chrome trace output for diagnostics.
 
 GPU features are platform-specific; do not use `--all-features` across platforms.
-All three Candle packages are pinned to 0.9.2 in the workspace. Explicit device
+All three Candle packages are pinned to 0.11.0 in the workspace. Explicit device
 requests fail if initialization fails; only Auto may fall back to CPU.
 
 ## Local changes
@@ -48,9 +48,9 @@ requests fail if initialization fails; only Auto may fall back to CPU.
 ## Worker builds and diagnostics
 
 ```sh
-cargo build --release -p novel-tts --no-default-features --features qwen
-cargo build --release -p novel-tts --no-default-features --features qwen-cuda
-cargo build --release -p novel-tts --no-default-features --features metal
+cargo build --release -p talechime --no-default-features --features qwen
+cargo build --release -p talechime --no-default-features --features qwen-cuda
+cargo build --release -p talechime --no-default-features --features metal
 ```
 
 `qwen-cuda` accelerates Qwen through Candle. `ort-cuda` independently accelerates
@@ -62,7 +62,7 @@ not the installed Toolkit. A GPU-less build runner must set `CUDA_COMPUTE_CAP`
 to the intended target architecture rather than detect its nonexistent GPU.
 
 ```sh
-cargo run --release -p novel-tts-backends --no-default-features --features qwen-cuda --example qwen -- MODEL_DIR output.wav cuda '你好，欢迎收听。'
+cargo run --release -p talechime-backends --no-default-features --features qwen-cuda --example qwen -- MODEL_DIR output.wav cuda '你好，欢迎收听。'
 ```
 
 The probe requires real local model files and checks PCM and EOS. Record first

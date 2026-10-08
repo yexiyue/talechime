@@ -6,7 +6,7 @@ MOSS GPU 试用可增加 `moss-candle-cuda`（Metal 构建入口为
 Local 速度仍未达主力要求，Realtime 更适合先试听，两者均标为实验。
 
 ```sh
-cargo build --release -p novel-tts --features qwen-cuda,voxcpm-cuda,omnivoice-cuda,moss-candle-cuda
+cargo build --release -p talechime --features qwen-cuda,voxcpm-cuda,omnivoice-cuda,moss-candle-cuda
 novel-tts --backend moss --model realtime-1.7b --tts-device cuda voices design myvoice --name "我的音色" --description "温暖清晰的成年女性普通话"
 novel-tts --backend moss --model realtime-1.7b --voice custom:myvoice --tts-device cuda book.txt
 ```
@@ -19,12 +19,12 @@ novel-tts --backend moss --model realtime-1.7b --voice custom:myvoice --tts-devi
 
 独立朗读 UTF-8 文件，不需要启动阅读器，不再启动另一层听书子进程。
 
-本次命名迁移由原 `novel-tts` 库拆出 `novel-tts-core`，CLI 接管 `novel-tts` 包名与命令。当前工作区保留 0.3.0 版本线，后续发布需升级版本；已发布的旧库不包含本 CLI，请先使用下面的源码构建命令。
+本次命名迁移由原 `novel-tts` 库拆出 `talechime-core`，CLI 接管 `novel-tts` 包名与命令。当前工作区保留 0.3.0 版本线，后续发布需升级版本；已发布的旧库不包含本 CLI，请先使用下面的源码构建命令。
 
 ```sh
-cargo build -p novel-tts
-cargo run -p novel-tts -- book.txt
-cargo run -p novel-tts -- --restart book.txt
+cargo build -p talechime
+cargo run -p talechime -- book.txt
+cargo run -p talechime -- --restart book.txt
 ```
 
 默认启用 CPU MOSS-TTS-Nano，首次实际启用下载并校验固定版本模型，再打开音频设备。协议握手和查询不下载、不加载、不播放。Nano 模型位于 `~/.novel-tts/moss/`；`--model-dir` 指定各后端共用的缓存根目录，`--config` 和 `--checkpoint-dir` 可用于隔离运行。
@@ -76,9 +76,9 @@ novel-tts voices remove narrator
 
 ```sh
 # Windows / Linux GPU；保留 MOSS 和默认关闭的对齐
-cargo build --release -p novel-tts --features qwen-cuda,voxcpm-cuda,omnivoice-cuda
+cargo build --release -p talechime --features qwen-cuda,voxcpm-cuda,omnivoice-cuda
 # macOS GPU
-cargo build --release -p novel-tts --features metal,voxcpm-metal,omnivoice-metal
+cargo build --release -p talechime --features metal,voxcpm-metal,omnivoice-metal
 novel-tts --backend qwen --model 1.7b-customvoice --tts-device cuda --style "温暖沉稳，适合小说旁白。" book.txt
 novel-tts --backend voxcpm --model 2b-q8_0 --tts-device cuda book.txt
 ```
@@ -114,9 +114,9 @@ Omni 音频 tokenizer 权重另有 BOSON/Higgs/Llama 许可。
 默认编入 MOSS 与 Qwen CPU 对齐。可用以下构建与配置：
 
 ```sh
-cargo build --release -p novel-tts --features coreml # Apple Silicon
-cargo build --release -p novel-tts --no-default-features --features qwen-cuda # Qwen NVIDIA
-cargo build --release -p novel-tts --features ort-cuda   # NVIDIA Linux/Windows
+cargo build --release -p talechime --features coreml # Apple Silicon
+cargo build --release -p talechime --no-default-features --features qwen-cuda # Qwen NVIDIA
+cargo build --release -p talechime --features ort-cuda   # NVIDIA Linux/Windows
 novel-tts --tts-device auto --alignment-device auto book.txt
 novel-tts --tts-device cpu --alignment-device cpu book.txt
 ```

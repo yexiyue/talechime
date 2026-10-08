@@ -1,4 +1,4 @@
-# novel-tts-protocol
+# talechime-protocol
 
 轻量协议 DTO，无模型或音频依赖。协议模式的 stdin/stdout 为 UTF-8 JSON Lines；日志写 stderr，音频不经管道传输。
 

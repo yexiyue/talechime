@@ -63,7 +63,7 @@ cargo test -p voxcpm --lib
 cargo build -p voxcpm --features cuda --example voxcpm_probe --release -j 2
 target/release/examples/voxcpm_probe MODEL_DIRECTORY cuda OUTPUT.wav "Chinese text"
 
-cargo build -p novel-tts-backends --no-default-features --features voxcpm-cuda,voxcpm/cuda --example voxcpm_candle_probe --release -j 2
+cargo build -p talechime-backends --no-default-features --features voxcpm-cuda,voxcpm/cuda --example voxcpm_candle_probe --release -j 2
 target/release/examples/voxcpm_candle_probe MODEL_DIRECTORY cuda OUTPUT_DIRECTORY TEXT_FILE REFERENCE.wav TRANSCRIPT_FILE
 ```
 

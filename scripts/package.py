@@ -1,12 +1,10 @@
 """Build and smoke-test a standalone CPU archive without downloading models."""
 from pathlib import Path
 import hashlib
-import json
-import re
 import shutil
 import subprocess
 import sys
-import tempfile
+from smoke import smoke
 
 root = Path(__file__).resolve().parents[1]
 target = sys.argv[1]
@@ -36,21 +34,7 @@ for path in (root / 'crates').rglob('*'):
         destination = stage / 'notices' / path.relative_to(root)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, destination)
-protocol = root / 'crates/talechime-protocol/src/lib.rs'
-version = int(re.search(r'PROTOCOL_VERSION: u32 = (\d+)', protocol.read_text()).group(1))
-requests = ''.join(json.dumps(dict(protocol_version=version, request_id=kind,
-                                  session_id=None, type=kind)) + '\n'
-                   for kind in ['hello', 'shutdown'])
-with tempfile.TemporaryDirectory() as temporary:
-    state = Path(temporary)
-    result = subprocess.run([str(stage / ('talechime' + suffix)), '--protocol',
-                             '--config', str(state / 'config.json'),
-                             '--model-dir', str(state / 'models'),
-                             '--checkpoint-dir', str(state / 'positions')],
-                            input=requests, capture_output=True, text=True, check=True, timeout=15)
-messages = [json.loads(line) for line in result.stdout.splitlines()]
-assert messages[0]['type'] == 'ready' and messages[0]['protocol_version'] == version
-assert messages[-1]['type'] == 'accepted'
+smoke(stage, suffix)
 archive_format = 'zip' if suffix else 'gztar'
 archive = Path(shutil.make_archive(str(output / stage.name), archive_format,
                                  root_dir=stage.parent, base_dir=stage.name))
