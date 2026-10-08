@@ -300,3 +300,11 @@ CUDA 13 官方 `cuda.lib` 的静态 driver loader 对象带 `/DEFAULTLIB:LIBCMT`
 ### ORT CUDA 预编译包与 Blackwell 架构覆盖
 
 本机 rc.13 Runtime 1.28 CUDA13 provider 中只有 sm75/sm80/sm90a cubin，且没有 PTX；RTX 5070 sm120 的 Nano `/Cast` 实际生成报 `cudaErrorNoKernelImageForDevice`。CUDA 13 安装、驱动可用、EP 注册成功都不能证明模型算子覆盖。用 `cuobjdump --list-elf` 和 `--list-ptx` 检查实际打包 DLL，并保存真实生成错误；不静默降级显式 CUDA，不以升级 Toolkit 修复缺失内核。后续验证匹配的含 Blackwell Runtime/provider 分发或可重复原生构建，不能只替换不匹配的 provider DLL。详见 `dev-notes/ort-rc13-upgrade.md`。
+
+### VoxCPM Candle macOS 性能记录（2026-10-08）
+
+M4 Pro / 24GB / Candle 0.11 的 release Q8 Metal 完整语料热测平均 RTF 0.954，旧原生 Metal 1.737；相同短句 CPU 3.689、Metal 0.922。该机器 Metal 仅略快于实时，不可用吞吐数据代替实际播放断流和听感验收。详细条件、原始日志与复现见 `dev-notes/voxcpm-macos-performance.md`。
+
+**正确做法**：现有 `tools/tts/metrics.py` 不采样 macOS 内存，Mac 基准使用 `/usr/bin/time -l`，分开记录 maximum resident set size 和 peak memory footprint，二者不相加、不当作独占 GPU 内存。原生开发基准暂未提供 Metal CLI match arm，实测时临时补入口并恢复，不需要更改生产设备路由。
+
+**相关文件**：`crates/talechime-backends/examples/voxcpm_candle_probe.rs`、`crates/voxcpm-sys/examples/voxcpm_native_benchmark.rs`、`tools/tts/metrics.py`。

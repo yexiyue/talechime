@@ -296,3 +296,11 @@ GGUF 重建的 SentencePiece 与官方实际 `LlamaTokenizerFast` 并非所有�
 实验目录沿用开发验证下载的默认目录，只校验所选资源，不重新下载完整缓存。
 首版只列出已编译 CUDA 的 BF16 实验，设置明确提示待验收；不由入口开放
 推断数值、音质或 30 分钟资格已经通过。模型切换仍先 Stop / 释放，再准备。
+
+### MOSS Candle 0.11 Metal 加载完成与流式验收（2026-10-08）
+
+Mac M4 Pro 的 0.11 原加载路径实测 Realtime 提前 EOS、Local 非法控制 token；相同权重/输入的 0.9.2 Realtime 能输出非静音 PCM。Metal 模型加载及 codec 加载后分别 `Device::synchronize()`，再发送 ready，Realtime 三轮恢复正常非静音 End；Local 当前 24GB 机器则明确在初始化返回 GPU OOM，保持未验收。详细记录见 `dev-notes/moss-macos-streaming.md`。
+
+**正确做法**：GPU 加载 API 返回不等于异步设备工作已完成。此处将同步错误归入现有 Initialize 路径，不放宽静音/EOS 检查。流式验收记录逐 PCM 块到达时间：Realtime 热首块约 400ms、18 块、每块通常 400ms；默认 3 秒预缓冲使实际起声晚于首 PCM。测试前检查阅读器 worker 的图形内存，避免两套 1.7B/codec 同时驻留；macOS RSS 很低不表示 GPU 权重已释放。
+
+**相关文件**：`crates/talechime-backends/src/moss/candle/runtime.rs`、`crates/talechime-core/src/session/buffering.rs`、`crates/talechime-core/src/audio.rs`。

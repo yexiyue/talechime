@@ -13,3 +13,7 @@ protocol v5, `~/.novel/tts_config.json`, `~/.novel/tts/checkpoints/` and
 
 Historical `dev-notes/` describe experiments at the time they were recorded.
 Use current source and the new README for current capabilities.
+
+## Upstream fixes
+
+- 2026-10-08: TRNovel [c5d7daa](https://github.com/yexiyue/TRNovel/commit/c5d7daa60b435293d77f1ab886e22fdd56a214c0) — synchronize MOSS Metal model and codec loading before ready; retain upstream macOS verification records with renamed crate paths.

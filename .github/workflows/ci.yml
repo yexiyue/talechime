@@ -18,9 +18,9 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
-      - run: cargo test --locked --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice --lib --tests --examples
-      - run: cargo clippy --locked --workspace --all-targets --features talechime/qwen,talechime/voxcpm,talechime/omnivoice -- -D warnings
-      - run: cargo doc --locked --no-deps --document-private-items --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice --examples
+      - run: cargo test --locked --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/moss-candle --lib --tests --examples
+      - run: cargo clippy --locked --workspace --all-targets --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/moss-candle -- -D warnings
+      - run: cargo doc --locked --no-deps --document-private-items --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/moss-candle --examples
         env:
           RUSTDOCFLAGS: -D warnings
       - run: cargo build --locked -p talechime --bins

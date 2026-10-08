@@ -41,8 +41,15 @@ pub(super) fn run(
     let load = || -> anyhow::Result<_> {
         let dev = device(selected)?;
         let model = Model::load(mode.id(), &mode.directory(&root), &dev, model_dtype(&dev))?;
+        // Finish Metal weight uploads/casts before loading the next component.
+        if dev.is_metal() {
+            dev.synchronize()?;
+        }
         anyhow::ensure!(!ready.is_closed(), "initialization cancelled");
         let codec = AudioCodec::load(&resources::codec_directory(&root), &dev, DType::F16)?;
+        if dev.is_metal() {
+            dev.synchronize()?;
+        }
         Ok((model, codec))
     };
     let (mut model, mut codec) = match load() {
