@@ -28,6 +28,6 @@ cargo build --locked -p talechime --bins
 
 ## 发行
 
-只保留 dist-workspace.toml，使用 cargo-dist 0.32.0 的原生 Cargo 构建。运行 `dist generate`、`dist generate --check` 和 `dist plan`。`.github/workflows/distribution-check.yml` 在三个平台构建标准包、解压至隔离目录并执行无模型、无 CUDA 的帮助/握手检查；Mac 标准包编译全部 Metal 路径。许可证由 `.github/scripts/prepare-notices.py` 汇集到 THIRD_PARTY_LICENSES 并随包分发。
+只保留 dist-workspace.toml，使用 cargo-dist 0.32.0 的原生 Cargo 构建。运行 `dist generate`、`dist generate --check` 和 `dist plan`。`.github/workflows/ci.yml` 在三个平台构建标准包、解压至隔离目录并执行无模型、无 CUDA 的帮助/握手检查；Mac 标准包编译全部 Metal 路径。许可证由 `.github/scripts/prepare-notices.py` 汇集到 THIRD_PARTY_LICENSES 并随包分发。
 
 协议库单独发布 `talechime-protocol-v*` 标签到 crates.io，应用标签使用 `talechime-v*`。CARGO_REGISTRY_TOKEN 与 HOMEBREW_TAP_TOKEN 由 GitHub Secrets 管理；Homebrew 发布到 yexiyue/homebrew-tap。正式应用标签需发布时再创建，普通验证不下载模型、不代替试听。
