@@ -1,0 +1,298 @@
+# 书源 / parse-book-source / TTS
+
+## 概览
+
+`crates/parse-book-source`（结构化 v2 书源引擎、规则 AST、反爬/渲染抓取）与 `crates/novel-tts-core`（听书核心）的项目特有约束。重点是番茄（fanqienovel.com）这类 SPA + 签名站点的接入路线。
+
+## 规则引擎
+
+### 抓取分层 fetch / render
+
+`fetch_checked` 是纯 reqwest（拿静态 HTML / 普通 API），**SPA 站点拿不到数据**（首屏是空壳，数据靠 JS 拉）。SPA 走 **render 通道**（CDP 驱动真浏览器渲染 + `interceptApi` 拦签名 API 响应），由 `fetch/browser/` 下的 fetcher + EscalatingFetcher 实现。
+
+**render 三字段在 `Request` 上**：`render`（开渲染）/`readyFor`（等待选择器/条件）/`interceptApi`（拦哪个 API 的响应当数据源），连同 `totalPages`/`hasMore`/`pageBy`/`vars` 全部收敛在 `source::http::Request` 上。search 与 explore 因此共用同一份「列表页规格」`ListPageSpec`（见下「explore 两阶段 + 共享 ListPageSpec」），不再各自抄一份渲染字段。
+
+**相关文件**：`crates/parse-book-source/src/fetch/browser/`、`src/source/op.rs`
+
+### 常驻浏览器池（browser-pool）：render 复用浏览器、只开新 Page
+
+render 路径（`render_dom`/`render_intercept`）**复用同一常驻 `Browser`、每次只开新 `Page`**，用完 `page.close()` 留 `Browser`，免去每次 launch 的秒级开销（翻页顺滑；也是 P2 点击翻页的基础）。`solve`/`login`（headful）**不**走池，仍每次 `launch_ephemeral` 临时起、用完 close。两类 headful/render 生命周期分别由 `with_ephemeral`/`with_pool_page` 收口。
+
+几个非显然点：
+
+- **池必须是进程级单例**（`static RENDER_POOL: Mutex<Option<Resident>>`），**不能**做成 `BrowserFetcher` 的实例字段。因为所有书源共享同一持久 profile（`~/.novel/browser-profile`）：若每个 `BrowserFetcher`（每次 `build_engine` 新建一个）各持一个常驻浏览器，多书源/路由回退栈场景下两个实例会同时存活、互抢 profile 的 `SingletonLock`（后建者 `spawn_browser` 无条件删锁）→ profile 数据竞争/「配置文件已在使用」。`BROWSER_LOCK` 只保证「同一时刻只一个浏览器在启动/渲染」，**常驻化把「存活」与「持锁」解耦后，「跨实例存活并存」不再受锁保护** —— 全局单例才能根治。
+- **关 Page 不会让浏览器退出**：Chrome 经 CDP 调试连接启动后，只要调试连接（handler task）在连就存活，零标签页也不退 —— 所以「关 render 的 Page、留 Browser」成立，池化真实生效。浏览器退出只发生在 `Browser::close()`/进程崩溃。
+- **headful 解挑战/登录前必须先拆常驻渲染浏览器**：`launch_ephemeral` 里先 `shutdown_render_pool().await`（优雅 `close` 释放 profile 的 `SingletonLock`）再起 headful 实例。
+- **`handler.is_finished()` 不是可靠断连探活**：常驻浏览器从不 `close()`，崩溃/断连时 handler task 多半 parked 在 `Pending`、`is_finished()` 仍为 false（只有显式 `Browser::close()` 才结束）。它只是廉价乐观快路；**真正的断连兜底是 `new_pool_page` 开页失败/超时后拆掉重建**。且死浏览器的 `new_page` 不会立刻报错，要等 CDP 默认 30s 请求超时，期间还独占 `BROWSER_LOCK` 阻塞所有书源 —— 故给开页套一道短超时（8s），超时即判断连重建。
+- **锁序**：render 整段持 `BROWSER_LOCK`，池的取/建/拆都在其下（`BROWSER_LOCK → RENDER_POOL`），与 `launch_ephemeral` 同序，无死锁。
+- **跨进程启动也要锁 + 冲突退到临时 profile**：`BROWSER_LOCK` 只在本进程内生效；两个 TRNovel 进程同时第一次启动时，单靠 owner marker 仍可能同时跨过“marker 不存在”的窗口。`spawn_browser` 因此先用 `std::fs::File::try_lock` 锁 `~/.novel/browser-profile/.trnovel-browser.lock`，只覆盖“恢复旧 marker → 删 Singleton* → launch → 写新 marker”的临界区；文件锁随进程退出自动释放，**不负责关闭浏览器**。若主 profile 的 owner 仍活着（另一个终端正在使用），不要报错阻断，也不要抢锁；自动退到 `~/.novel/browser-sessions/<pid>` 临时 profile 继续取页，并通过 `BrowserUi::notice` 给 TUI 一个非阻断提醒（代价是该终端不共享主 profile 登录态）。
+- **退出收尾走显式 `shutdown_render_pool()`，不能靠 `Drop`**：池是 static，进程退出**不触发** `Drop`；且即便给 `BrowserFetcher` 加 `Drop` 也错（任一 engine drop 会杀掉别 engine 仍在用的全局浏览器）。故 app 在最外层 `try_run` 统一收尾并监听 Ctrl+C，显式 `parse_book_source::shutdown_render_pool().await`，否则 headless 子进程被孤儿化。
+- **崩溃恢复靠 owner marker，而不是无条件删 profile 锁**：`spawn_browser` 启动前检查 `~/.novel/browser-profile/.trnovel-browser.json`。若 marker 的 owner pid 仍活着且不是本进程，说明另一个 TRNovel 正占用 profile，必须报错不抢占；若 owner 已死，则按 marker 里的 browser pid 清理孤儿浏览器进程树，再删除 marker 与 `SingletonLock/SingletonSocket/SingletonCookie`。启动成功后写 marker，`shutdown_render_pool`/`with_ephemeral`/断连重建删除匹配本进程、本 browser pid 的 marker。
+
+**不要**：让 render 复用同一个 `Page`（SPA 状态/cookie 跨页串味，design 已否决）—— `new_page` 比 `launch` 快几个数量级，每次新 Page 足够。
+
+**相关文件**：`crates/parse-book-source/src/fetch/browser/fetcher.rs`（`RENDER_POOL`/`new_pool_page`/`with_pool_page`/`with_ephemeral`/`shutdown_render_pool`/owner marker/profile lock）、`src/lib.rs`（统一退出钩子 + Ctrl+C）、`openspec/changes/browser-pool/`
+
+### render 双源（render-dual-source）：拦 API 的同时也能读渲染 DOM
+
+render 的 `interceptApi` 会话**本来就在渲染一张真实页面**，拦 API（数据）之外可顺手抓渲染后 DOM（`outerHTML`），让 `via:css`/`xpath` 规则对 DOM 求值——典型用途：分页器的**精确总页数**（番茄 API 的 `total_count` 是占位 10000 不可靠，真数只在 DOM 分页器）。`explore`/`search` 返回类型因此从 `Vec<BookListItem>` 改为 `BookList { items, total_pages }`，UI 显示「第 N / M 页」。
+
+- **信号 = `interceptApi` + `ready_for` 共存**：二者过去是「二选一」，现放宽为可同时给——`interceptApi` 取 body，`ready_for` 作 DOM 就绪闸（分页器在 API 之后才渲染，得等它出现再抓）。只配 `interceptApi`（无 `ready_for`）则不抓 DOM、`dom_html=None`，逐字节同现状。
+- **路由 = 按规则 `via`（`Rule::primary_via` + `pick_source`）**：`via:css`/`xpath` 的规则打渲染 DOM（没抓到则退 body），其余（json/regex/raw）打 body。`Rule` 是枚举、组合规则（`firstOf`/`concat`）取首个子规则的主 via。**关键**：这让 `has_more`（番茄 `via:json` → API body）与 `total_pages`（`via:css` → DOM）**同会话共存正确**——别用「抓到 DOM 就一律打 DOM」的 dom-presence 路由，那会把 has_more 也错误地丢给 DOM（json 解析 HTML 失败)。
+- **传输**：`FetchResponse.dom_html: Option<String>`，仅 render+intercept+要 DOM 时有值；`run_request_full`/`send_templated_full` 透传，普通取页仍用只回 body 的 `run_request`/`send_templated`。
+- **番茄分页器选择器**（agent-browser 实测，explore 书库 + search 同一字节 `byte-pagination` 组件）：总页数 = `.byte-pagination-item:not(.byte-pagination-item-icon):not(.byte-pagination-item-jumper)` 取 `index:-1`（末数字项；过滤掉前后箭头 icon 与 `...` jumper；少页/单页也成立）。`parse_total_pages` 再从结果抽首段数字。
+
+**相关文件**：`crates/parse-book-source/src/fetch/{mod.rs,browser/{fetcher.rs,escalating.rs}}`、`src/engine/{mod.rs,internal.rs}`（`eval_total_pages`）、`src/model.rs`（`BookList`）、`fanqie-web.v2.json`、`openspec/changes/render-dual-source/`
+
+## 番茄（fanqienovel.com）接入
+
+### 签名不可破解，render 让浏览器自己签
+
+番茄 API 带字节跳动 secsdk 签名：`a_bogus`（每请求级，依赖 DOM/BOM/Worker 运行时算）+ `msToken`（会话级）。**boa 跑不了**这段 JS（需要浏览器环境），别想着把签名算法搬进 boa/Rust 复刻——验证过，不可行。唯一可行路线是 **render**：驱动真浏览器，让它自己带签名发请求，我们只 `interceptApi` 拦响应 JSON。
+
+**不要做**：试图逆向 `a_bogus`/`msToken` 算法在 Rust 侧复刻。
+
+### 两套 API：网页端 vs App 端
+
+- **网页端**（fanqienovel.com）：无签名负担的部分有限——只前 ~10 章完整,其余试读 / 需会员。
+- **App 端**：全本免费但需签名 + AES 解密。
+- 字体解密是两端通用能力。
+
+### 番茄有 ≥3 套混淆字体，各需独立 fontMap（content / search / explore 不通用）
+
+番茄不同页面/接口用**不同的**字体反爬字体,码点（PUA E3xx–E5xx）范围重叠但**映射不同**——拿 `search` 的 map 去解 explore 书库的书名会得到一串乱码（「时停起手」被解成「美停它从」）。故 `fontMaps` 里 `content`（阅读正文,class 见 reader）、`search`（搜索结果）、`explore`（书库 `book_list/v0` + DOM class `font-fKts9tCXDjS49UhH`,字体文件 `…/awesome-font/c/e26e946d8b2ccb7.woff2`）**各是一套**,书源每个 op 的 item 规则按来源挂对应 `clean:[{fontMap:"…"}]`。
+
+- **生成新字体的 map**：`cargo run -- gen-fontmap "<woff2 URL 或路径>" --out /tmp/x.json`（字形位图相似度匹配,自动下 Noto 基准;纯 Rust 零 C 依赖)。字体 URL 从页面 `@font-face` 的 `src` 取（`document.styleSheets` 里 `r.type===5` 的规则）。低置信（<0.55）项会标注、个别字可能错（与现有 content/search map 同等质量）。
+- **怎么定位用哪套**：渲染该页,`TreeWalker(SHOW_TEXT)` 扫含 PUA（0xE000–0xF8FF）的短文本节点,看 `parentElement.className` 的 `font-xxx`,再比对各 map 解码是否通顺。
+- **稳定性假设**：这些字体哈希在番茄基础设施上**相对稳定**（content/search map 静态内联已长期可用),故 explore map 也静态内联;若哪天轮换导致解码变乱码,重跑 `gen-fontmap` 更新即可。
+- **三套字体的当前 URL**（`https://lf3-awef.bytetos.com/obj/awesome-font/c/<hash>.woff2`,`lf6-` 同源镜像;是静态 CDN、**无需签名**,直接 curl 可下）：content=`dc027189e0ba4cd`(md5 `d15c2b29`)、explore=`e26e946d8b2ccb7`、search=`c207f68a84deae3`。**怎么拿 hash**：content/explore 的 `@font-face` 在 **reader 页 SSR HTML** 里（`grep awesome-font`）；search 是客户端渲染,SSR 无字体,须**渲染搜索页 + 读 `document.styleSheets` 的 FONT_FACE 规则**才拿得到——且 headless 首刷会撞 secsdk **软封锁**(空结果、不注入字体),**reload 一次**即出结果与 `@font-face`（与正文抓取的 reload-once 同一招）。
+
+### fontMap 候选集必须含数字 + 拉丁字母,否则数字/英文被强配成汉字
+
+番茄字体不止混淆汉字,还把**阿拉伯数字 0-9、拉丁字母 A-Za-z**（正文里的时间「12:21」、英文「qq」等）也画进 PUA。`gen-fontmap` 靠字形相似度在候选集里找最像的——**候选集若只有汉字,数字/字母字形会被强行配到形近汉字**（实测 `E4BB` 的「q」被配成「井」→「qq」显示成「井井」;10 个数字同样全错)。三套字体恰好各编码全部 62 个字母数字（0-9 + A-Z + a-z),一个不少。
+
+**正确做法**：候选集 = GB2312 一级字 + `'0'..='9'` + `'A'..='Z'` + `'a'..='z'`（`baseline_candidates()`）。补齐后实测:三套 map 各修复 62 个字母数字条目、**汉字条目零漂移**（300/342 与旧 map 逐字一致)、全部高置信(无 <0.55 告警)。
+
+**不要**：往候选里加 **ASCII 标点**（`-` `|` `.` 等)——与汉字笔画/部件形近（「一」↔`-`、「丨」↔`|`)会把汉字误配成标点;番茄正文标点本就是全角中文标点、不走这套字体,无需覆盖。
+
+**相关文件**：`skills/booksource-generator/references/example-fanqie.v2.json`（`fontMaps.{content,search,explore}`）、`src/gen_fontmap.rs`（`baseline_candidates`）、`dev-notes/blog/font-anti-scraping-and-fontmap.md`
+
+### explore 是 URL 驱动，search 是点击驱动（已落地 `search-click-pagination`）
+
+- **explore 书库** `/library/all/page_N`：URL 驱动——翻页 URL 变,直接导航该 URL 即渲染第 N 页。API `book_list/v0`（`page_index=N-1` 0 基）。**`by:url` 翻页可用**（`{{page}}` 进 URL 模板,不需任何点击配置）。
+- **search** `/search/{词}`：SPA **不认 URL 页码**（agent-browser 实测 6 种直达变体 `/page_2`=404、`?page_index=1`、`?page=2`、`#/page/2` 等**全部回第 1 页**——对抗性反驳失败,by:url 对 search 不可行）,只能点分页器「下一页」触发 `page_index` 递增。API `search_book/v1`,`a_bogus`+`msToken` 每请求重签。
+
+### 点击驱动翻页 `pageBy.click`（render 拦截源,URL 不认页码时）
+
+书源在 `request` 上配 `pageBy: { click: "<next 选择器>" }`;`page > 1` 时引擎在**一张活页**内点 `page-1` 次翻到目标页、拦该页 API 响应。配置极简、只补 click 一种（by:url 用 `{{page}}` URL 模板已覆盖,不复活完整 enum）。`pageBy` 缺席 = 现状单拦截,翻页行为逐字节不变。
+
+- **番茄 search 分页器选择器**（`byte-pagination` 组件,逐字节实测）：NEXT = `.byte-pagination .byte-pagination-item-icon:has(.byte-icon-right)`（永远 list 末 `<li>`、翻页不漂移）;PREV = `:has(.byte-icon-left)`。**prev/next 无 aria/text,唯一判别是子 svg `byte-icon-right` vs `byte-icon-left`**。末页 NEXT 加 `disabled` **class**（无 aria-disabled/disabled 属性）、点了不发请求。当前页 = `.byte-pagination-item-active[data-active=true]`。
+- **四摩擦**（点击翻页 `intercept` 必须处理,否则一定踩）：
+  1. **点击投递**：NEXT 渲染在折叠下方（实测 y≈2534）,CDP/CLI 单击「成功」但页没翻;**`scrollIntoView` + evaluate 派发真 `MouseEvent`(mousedown/mouseup/click)才稳翻**(触发站点 React)。
+  2. **`page_index` 强制相关性**：前进判据 = 等「点击之后到达、URL 含 `interceptApi`、且 `page_index == 目标页-1`」的响应（`url_page_index` 解析）。**必须按 page_index 对齐**——软封锁 reload 会注入残留 `page_index=0`,纯 substring 匹配会误采。监听流（`EventResponseReceived`）**跨整个点击循环持有**,自然只认「点击后到达」的。
+  3. **软封锁 reload-once**：冷启/stale 签名 → `search_book/v1` 回 **HTTP 200 空 body** + `.muye-search-empty`「共 0 项」+ `verify.zijieapi.com` 滑块 iframe;**拦到空 body → reload 当前页一次**即恢复。此恢复也接进现有单页 `intercept_body`（第 1 页偶发软封锁同样修;空 body 本是失败态,严格改善、不改成功结果）。
+  4. **page-N DOM 落定**：点击后 DOM **异步于网络响应**更新（新请求 ~1s）,抓第 N 页 `outerHTML`（给 `via:css` 的 totalPages）前**重等就绪闸**（`wait_ready(readyFor)`),免抓到半截分页器。注:番茄 totalPages 选择器取末数字项「30」,各页恒定,故 staleness 对它影响小,但仍重等保险。
+- **统一的 `intercept`(单页 + 点击翻页一个方法)**：`render_intercept(url, api, timeout, headless, dom_ready, paging: Option<(目标页, next选择器)>)` 一个公开入口——`paging=None` 单页、`Some` 点击翻页(escalating 据 `pageBy`+`page>1` 计算 `paging` 单次调用)。核心 `intercept` 内:arm 监听(`responseReceived`/`loadingFinished`,**先挂再 goto**)→ 首页取页 + reload-once → 可选点击循环 → 可选抓 DOM,**只写一遍**(早期 `intercept_body`/`intercept_page`/`intercept_paged` 三方法的 arm/reload/DOM 重复已合并)。等响应抽成泛型 `wait_matching_body<R,F>`(持两个事件流、按 api 子串 + 可选 page_index 对齐等下一个匹配 body;匹配到但空 body 返回 `Ok("")` 作软封锁信号、非 Err)。
+- **到头停翻 vs 点击失败(消歧很关键)**：点 NEXT 返回 `missing`/`disabled`（控件缺失/禁用）= **真到头** → 停、返回当前(末)页（D6 结构快路;`page > 实际总页` 由此自然收尾）。点了但目标页响应超时未到 = **点击失败/拥塞(非到头)** → **重试一次**（`CLICK_RETRY`,spec SHALL）;重试耗尽仍未达目标页 → **报错传播**（交上层 `RENDER_RETRY` 整页重试 / 优雅降级），**绝不静默返回更早的页冒充第 N 页**（CDP back-pressure 下尤其要紧）。两者别混:返回 `Ok(当前页)` 只在真到头时发生。
+- **软封锁的「空 body」信号**:`wait_matching_body` 对「匹配到响应但 body 空」返回 **`Ok("")`**(非 `Err`),`Err` 只留给「完全没匹配到响应」。否则 `response_body` 把空 body 映射成 `None` → 函数返回 `Err` → `.await?` 短路,reload-once 守卫成**死代码**(评审实测发现)。空串 = 软封锁精确信号,交调用方 reload。
+- **`BROWSER_LOCK` 占用**：`with_pool_page` 整个闭包持全局 `BROWSER_LOCK`;一次多页 search 现持锁 ≈ N 个 render 时长,期间其它书源 render / solve-login 全被串行阻塞（深页/软封锁可达数十秒）。search 现实 N≤5 可接受;真实 env 验深页线性翻稳定性 + 其它 op 不被饿死（`search-click-pagination` tasks 4.3 gating）。
+- **CDP back-pressure**:独立复核实测 secsdk SPA 上 CDP 通道会 `os error 35`、停顿 1-2min → 每页响应超时要宽,勿把「慢但在途」误判成到头/软封锁。
+- **回翻/重访的成本与缓解(渲染结果缓存)**:点击翻页是**无状态重点击**——UI 翻到第 N 页 = 开新活页从第 1 页点 N-1 次,**上一页也一样**(`target_page=page-1`,从头少点几次,根本不点 PREV)。故回翻/重访已看过的页本会重付 O(N) 点击。`Engine` 加了 **`page_cache`**(`Arc<RwLock<HashMap<键, BookList>>>`,随 Clone 共享、per-source 会话级)缓解:键 = `操作\0词或分类模板\0页\0页大小`,**仅 render 路径缓存**(reqwest 便宜且缓存会跳过 cookie 回灌/命名捕获副作用),命中即返回、不再驱动浏览器。回翻/重访已取页**即时**,只首访某页付点击成本。注:缓存的是「页数据」,explore 用静态分类 URL 模板作键(`UrlOrRule::Str`;`Rule` 形不缓存)。
+
+**相关文件**：`crates/parse-book-source/src/fetch/browser/fetcher.rs`（`render_intercept`/`intercept`/`wait_matching_body`/`click_next`/`url_page_index`）、`src/source/http.rs`（`PageBy`）、`src/fetch/mod.rs`（`FetchRequest.page/page_by`）、`src/fetch/browser/escalating.rs`（render 分支路由,据 `pageBy`+`page>1` 算 `paging`）、`src/engine/{mod.rs,internal.rs}`（`page_cache` 渲染结果缓存、`RenderArgs` 参数束）、`fanqie-web.v2.json`（search.request.pageBy）、`openspec/changes/search-click-pagination/`
+
+### explore 两阶段 + 共享 ListPageSpec（dynamic-explore-entries）
+
+explore 不再是「分类 URL + 内联列表字段」，而是两阶段：`entries` 生成可选择的入口，`page` 用选中入口的变量取一页书。入口身份 = **标题 + 变量**（`ExploreEntry { title, vars }`，运行时类型在 `model.rs`），不再是固定 URL——取页 URL 由 `explore.page.request.url` 用入口变量 + `{{page}}` 模板生成。
+
+- **`ExploreOp { entries: Vec<EntrySource>, page: ListPageSpec }`**。`entries` 是入口源数组，按声明顺序合并（**没有独立 chain 类型**——「按序合并」就是数组遍历本身；包成枚举只会多一层嵌套）。
+- **`EntrySource`**（`untagged` + 唯一键判别，同 `Rule`）：`static`（固定入口列表 `{title, vars: BTreeMap<String,String>}`）/ `fetch`（远端抓取，`Box` 包裹避免大变体）。`fetch` 含 `forEach`（多组变量重复请求并合并，空=一次）、`request`（**复用 `Request`**，白送 render/intercept/charset/headers）、`list` 抽项、`item: {title: Rule, vars: BTreeMap<String,Rule>}`。
+- **`item` 规则的求值上下文**：ctx = 当前数据项（`via:json` 读其字段），vars = base + 当前 `forEach` 循环变量（`{{name}}` 引用循环变量）。JS 规则里 `result` 是数据项 **JSON 字符串**，需 `JSON.parse(result).field`（不是已解析对象）。
+- **`SearchOp = ListPageSpec`**（`pub type` 别名，裸用不包 `page` 层，search JSON 形状不变）。`ListPageSpec { prelude, request, list, item }` 就是历史 `SearchOp` 的形状——前序 change 已把全部取页旋钮收敛到 `Request`，故 search/explore 共用一个 runner。
+- **引擎收敛到 `run_list_page(spec, kind, extra_vars, page, page_size)`**（`engine/internal.rs`）：search 传 `{key}`、explore 传入口变量;渲染结果缓存键含 `kind`('s'/'e') + 有序 `extra_vars` + 页 + 页大小（不同入口因变量段不同不串缓存）。explore 收敛后**白捡** search 已有的「响应命名捕获 `request.vars`」能力。
+- **`Engine::explore_entries().await -> Result<Vec<ExploreEntry>>`** 替代旧同步 `explore_categories()`。**部分成功**：某动态源失败时保留已成功入口（含静态源），不阻断；仅当零入口产出且有源报错才返回 Err。**仅完全成功才缓存**（`entries_cache`，per-source 会话级），失败的动态源下次进入可重试。
+- **UI**（`select_books/mod.rs`）：入口加载本就在 `use_init_state(async move{})` 内，改 `explore_entries().await?` 即可；`ExploreListItem(ExploreEntry)`，取页把整个 entry 交给 `engine.explore(&entry, page, size)`。
+- **番茄迁移**：静态入口「书库·最热/最新」（`vars: {filter:"all", sort:"hottest"|"newest"}`）+ page URL `{{base}}/library/{{filter}}/page_{{page}}?sort={{sort}}`，render/intercept/totalPages/hasMore/explore fontMap 全部挪到 `page.request`/`page.item`，对这两个入口字节等价。**动态分类入口**（按 gender forEach 调 `category_list/v0`）的活体正确性需 `trn doctor` 对站点验证;即便动态源失配，部分成功也会退化到静态入口、explore 仍可用。
+
+**相关文件**：`crates/parse-book-source/src/source/op.rs`（`ListPageSpec`/`EntrySource`/`StaticEntry`/`FetchEntrySource`/`FetchEntryItem`/`ExploreOp`）、`src/model.rs`（`ExploreEntry`）、`src/engine/{mod.rs,internal.rs}`（`explore_entries`/`run_list_page`/`load_entry_source`/`load_fetch_entries`）、`fanqie-web.v2.json`、`openspec/changes/dynamic-explore-entries/`
+
+### explore 单页 + UI 递增 page（不引擎批量翻页）
+
+引擎的 `explore`/`search` 是**单页**纯 async fn（无 async closure，Send-safe）。**翻页由 UI 主动递增 `page`**——用户翻一页才取一页。**不要**让引擎一次批量翻 N 页（早期 `by:url` 批量版会一次开 5 个浏览器、UI 卡"加载中"，已回退删除 `paginate_by_url`）。
+
+边界信号走 `has_more`（book_list/v0 响应 data 顶层有 `has_more` bool；`total_count` 实测恒为 10000 占位，**不可靠，别用作总页数**）。
+
+**相关文件**：`crates/parse-book-source/src/engine/mod.rs`、`fanqie-web.v2.json`、`openspec/changes/list-has-more/`
+
+## 反爬实测
+
+### bilixs / Cloudflare
+
+- bilixs 只锁搜索接口；headful 浏览器能解 CF managed 挑战。
+- `cf_clearance` cookie **不绑 TLS 指纹**，可从浏览器交接给 reqwest 复用；但**绑 UA**——交接时 UA 必须一致。
+
+**相关文件**：`crates/parse-book-source/src/fetch/`、记忆 `booksource-anti-scraping-findings`
+
+### chromiumoxide 默认 `--enable-automation` 会让 CF 解挑战死循环卡死
+
+chromiumoxide 的 `DEFAULT_ARGS` 强制带 `--enable-automation`，它让 Chrome 显示「受自动化控制」并改 `window.chrome`，是 Cloudflare managed challenge 识别 CDP 自动化的经典信号。实测：用户点过 Turnstile、CF reload 后会**反复重新挑战**，`cf_clearance` 永不签发，`solve` 轮询卡死到超时（诊断时 cookie 一直卡在 `cf_chl_*`，从不出现 `cf_clearance`）。
+
+**正确做法**（仅 headful 解挑战路径）：
+```rust
+builder = builder.disable_default_args().hide().with_head();
+```
+- `disable_default_args()` 拔掉含 `--enable-automation` 的全部默认参数（其余多为噪声/性能项）；
+- `.hide()` 补回 `--disable-blink-features=AutomationControlled`——现代 Chrome 里这个 blink 特征**原生**就把 `navigator.webdriver` 设为 false（无需再用 JS `Object.defineProperty` 覆盖，冗余）。
+
+**不要**：
+- 用 `enable_stealth_mode()` 全套——它伪造 WebGL（`NVIDIA GTX 1050` Windows D3D11）+ 插件，与本机真实环境（如 macOS）矛盾，UA↔WebGL 不一致反而是更易被指纹识别的信号。
+- 动 headless 渲染路径（番茄流）——它保留默认参数已验证可用，解挑战的改动只加在 `if !headless` 分支。
+
+**相关文件**：`crates/parse-book-source/src/fetch/browser/fetcher.rs`（`spawn_browser`）
+
+### `disable_default_args()` 是「全有或全无」，会连带拔掉抑制首次运行体验(FRE)的参数 → Edge 弹欢迎登录模态卡死解挑战
+
+上一条为去 `--enable-automation` 调了 `disable_default_args()`，但 chromiumoxide 这个开关**不能只去一个默认参数**——它把 `DEFAULT_ARGS`（24 项）**全部**拔掉。其中 `--disable-sync`/`--disable-default-apps`/`--disable-client-side-phishing-detection` 等是抑制浏览器**首次运行体验(FRE)**的关键。实测 Windows 上探测到的浏览器是 **Edge** 时，headful 解挑战会弹出「欢迎使用 Microsoft Edge / 同步登录(是，继续 / 否，注销我)」模态**挡住挑战页**，用户无从点「确认真人」→ 解挑战拿不到 `cf_clearance` → 下游 reqwest 重试 `HTTP 403`。headless 渲染路径(番茄)保留了默认参数，故无此问题。
+
+**正确做法**：headful 分支 `disable_default_args()` 后，手动补回「`DEFAULT_ARGS` 去掉 `--enable-automation`」的等价集（常量 `HEADFUL_DEFAULT_ARGS`，关键是 `--disable-sync`）：
+```rust
+builder = builder.disable_default_args().hide().with_head();
+for &arg in HEADFUL_DEFAULT_ARGS { builder = builder.arg(arg); }
+```
+- 补回的都是环境/性能/FRE 抑制项，**没有**自动化指纹信号（CF 只认 `--enable-automation`），故不破坏上一条的 CF 修复。
+- 略去 `--lang=en_US`（保用户原生 UI 语言）与 `--enable-blink-features=IdleDetection`。
+- `HEADFUL_DEFAULT_ARGS` 是 chromiumoxide **0.9.1** 的 `DEFAULT_ARGS` 镜像，**升级该依赖时需复核**这份列表。
+
+**不要**：以为 `--no-first-run` 就够了——它只压住「首次运行」那一道，Edge 的同步登录 FRE 模态要靠 `--disable-sync` 才压得住。
+
+**相关文件**：`crates/parse-book-source/src/fetch/browser/fetcher.rs`（`HEADFUL_DEFAULT_ARGS`、`spawn_browser`）
+
+## novel-tts-core
+
+### 模型资源与后端
+
+CPU 默认使用 MOSS Nano；Kokoro 与 ZipVoice 已移除。ORT 钉版仍保留，见 [toolchain.md](toolchain.md)。模型下载保留 HTTP Range 断点续传与取消，缓存根为 `~/.novel-tts/`。
+
+### 听书进程边界与保存职责
+
+`novel-tts-core` 的 session/backend/player/text/models/config/checkpoint 为听书核心；`novel-tts` 提供独立 CLI 和协议入口。阅读器只链接 `novel-tts-protocol`，不持有模型或音频设备，也不读写听书配置。模型在专用推理线程构建/销毁，只用文本与 PCM 通道通信；播放器和会话留在 LocalSet，不再手写 unsafe Send/Sync。
+
+**正确做法**：按实际播放边界发布原文 UTF-8 范围。配置使用旧路径、短文件锁、修订号和原子替换，未知字段保留。独立检查点用来源、正文摘要及字节位置恢复；失败停止并等待用户主动重试。取消会等待不能中断的检查点事务，防止旧会话覆盖新位置。
+
+**坑**：rodio 0.21 的 `Sink::clear()` 会阻塞等待播放结束；停播应 stop 旧 sink，再连接同一 mixer 创建新 sink。CRLF 坐标必须累计原始换行的两个字节，不能固定加一。取消下载必须返回 Cancel，不能报告成功；服务器忽略 Range 时不能追加整文件。
+
+**相关文件**：`crates/novel-tts-core/src/session.rs`、`src/tts.rs`、`dev-notes/tts-baseline.md`。
+
+### 会话状态与音色替换的唯一所有者
+
+`SessionManager` 持有实际播放阶段、暂停标志、未完成原文字节位置和终止状态；协议运行时通过 `status()` 查询，不另存一套播放状态。模型准备状态独立于播放状态，重复准备或取消准备不能把正在播放的会话改成 Idle。配置校验接受完整的后端 Capabilities，核心不硬编码后端名。
+
+音色更新由核心 `update_settings()` 在未完成段的位置替换会话并保留暂停状态；协议 `ConfigChanged` 响应仅在发生替换时携带新 session_id，阅读器采用该 ID。所有已使用的会话 ID 在一个管理器生命周期内禁止重复，避免旧取消事件匹配新会话。关联响应由等待命令的调用方处理一次，不再重复广播进事件流；否则快速连续切换音色会回滚到旧 ID。
+
+阅读器生命周期意图使用有界 watch 通道保留最新意图，释放和取消准备另记代次；普通队列携带代次，停止前排队的播放意图不得重新启动旧章节。命令超时后关闭并回收进程，以免留下已接受但父端未确认的播放。
+
+**相关文件**：`crates/novel-tts/src/{protocol.rs,runtime.rs}`、`crates/novel-tts-core/src/session.rs`、`src/tts/{client.rs,controller.rs}`。
+
+### 模型无关的流式听书接口
+
+Backend::stream 返回容量受限的 PCM 块流，显式 End 才表示片段生成成功；流断连不能提交完成检查点。Backend::segments 返回合成文本和原文 UTF-8 范围，MOSS 以 SentencePiece 50 token / 60 个 CJK 字符预算合并相邻句子，超限优先在句末分段。normalize 只作用于合成副本，不能重写原文或检查点坐标。
+
+核心保留队列中的预算许可直到播放器实际消耗音频，整体受 30 秒 / 16 MiB 限制。单块必须在预算内，长流式段通过背压继续生成。生产任务也必须显式报告全流完成，避免任务异常退出被当成整章结束。
+
+新增后端只实现通用接口并注册能力。TUI 读取 default_voice / voice_names，不硬编码 具体模型音色；后端切换期间忽略其他配置操作，防止将旧快照里的音色提交给新后端。
+
+**相关文件**：`crates/novel-tts-core/src/backend.rs`、`crates/novel-tts-core/src/session/playback.rs`、`crates/novel-tts-backends/src/moss.rs`。
+
+### MOSS 的生成上限与中文分段
+
+固定图默认最多 375 audio frames（约 30 秒）。SentencePiece token 可以覆盖多个汉字，单独限制 75 token 不能限制朗读时长；连续中文段落会在音频尚未结束时撞到帧数上限。
+
+**正确做法**：在每段 50 token / 60 个 CJK 字符预算内合并相邻句子，让模型保留连续朗读的韵律；预算超限时优先在完整句末分段，其次是逗号。换行保留段落边界。不要把每个短句都独立合成，否则每句会重复收尾和起读，造成顿挫。保留原文 UTF-8 范围，仍要求模型显式结束，不把截断音频当作成功。
+
+**相关文件**：`crates/novel-tts-backends/src/moss/text.rs`。
+
+### 听书装饰行过滤保持原文坐标
+
+通用 `text::is_decoration_line` 仅识别至少三个装饰字符组成的独立行（例如 ====、---、*** 和制表分隔线）。通用默认分段和 MOSS 分段在计算 token 预算前跳过整行；MOSS 合成副本规范化也过滤这些行。不能全局删除等号或减号，`a=b`、负数和含正文的装饰标题要保留。跳过后片段仍使用原文 UTF-8 字节位置，不重算清洗文本的坐标。
+
+**相关文件**：`crates/novel-tts-core/src/text.rs`、`crates/novel-tts-backends/src/moss/text.rs`。
+
+### 连续 PCM、对齐与检查点（protocol v3）
+
+core 使用共享 Arc<PCM>、原始音频帧时钟和 FIFO 块标记；连续入队不等待每段 sink 排空。对齐由独立线程执行，保留预算租约直到线程真正释放 PCM；超时或取消 future 不能提前归还额度。句子检查点只能由实际播放完成推进，迟到时间线不能倒退原文位置。设备或后端切换须断开旧模型状态事件转发通道。
+
+Qwen ONNX 的 feature_attention_mask 是 Int32；Whisper 前处理 extractor 调用必须显式 return_attention_mask。CoreML 动态 MLProgram 在该导出上无法编译，静态子图可运行，但大部分算子仍走 CPU。必须用 release 构建测完整链路，不把 debug 前处理开销当成 GPU 收益。配置与协议、资源清单和设备策略分别属于 protocol、backends 与 CLI。
+
+**相关文件**：`crates/novel-tts-core/src/session/playback.rs`、`crates/novel-tts-backends/src/alignment.rs`、`crates/novel-tts/src/preparation.rs`、`dev-notes/continuous-tts-acceptance.md`。
+
+### MOSS 软换行与可选对齐
+
+单换行是排版信息，不能直接当作独立生成请求或段落尾。MOSS 以空行、装饰线、共享 TOC 标题规则建立硬边界，初始目标 8 秒/预计上限 12 秒。句末闭合引号跟随前句；只清洗合成副本，源范围保持原文 UTF-8。
+
+对齐默认关闭，worker 在准备入口跳过 Qwen 全部资源与校准；阅读器的设置切换门控必须涵盖后端、两类设备及对齐开关，清除待自动播放请求，避免模型卸载后旧请求恢复。MOSS 的 EOS 只表示模型结束，不是覆盖率证明；frame_limit 属于生成预算失败，不能触发 GPU 重建或写入当前块完成。
+
+### Qwen TTS 与强制对齐不同
+
+Qwen TTS 的 Candle 模型在 `.novel-tts/qwen/`，对齐器在 `alignment/qwen/`；关闭对齐只跳过后者。协议 v4 增加 Metal，当前 v5 增加模型目录；两个程序同步更新。CLI/TUI 后端切换同时选择新默认音色并重置 TTS 设备为 auto；原始协议调用应提交相容的设备。
+
+StreamingSession::next_chunk 返回 None 不一定是 EOS；必须额外检查 is_done，帧数耗尽时它为 false。Qwen GPU 的流式 codec 使用二十帧块、CPU 十帧；推理成功与边界音质验收分开记录。0.6B CustomVoice 无克隆或风格；1.7B CustomVoice 提供风格；Base 提供渐进克隆和可复用提示。统一 voices list/import/remove/design 按所选模型执行，旧 MOSS 格式保留。
+
+**相关文件**：`crates/novel-tts-backends/src/qwen/`、`crates/novel-tts/src/{preparation.rs,voices.rs}`、`dev-notes/qwen-tts-acceptance.md`。
+
+### 预缓冲与实际播放进度
+
+核心启动 sink 为暂停，初始积累 3 秒墙钟音频；队列耗尽后恢复目标每次增加 2 秒，上限 10 秒。目标乘以播放倍率且原始音频最多 20 秒，低于 30 秒预取预算。短 EOF 不足目标仍排空剩余音频。用户暂停与自动缓冲使用独立标志，resume 不能绕过缓冲。
+
+缓冲时新片段不能发布开始事件；但已播放的片段仍须处理完成并释放预算许可，否则恢复预取会死锁。RTF 需要按静音裁剪后的实际可播放时长判断，不能仅依据后端原始 PCM 时长。Qwen 的 `NOVEL_TTS_DIAGNOSTICS=1` 分开记录初始化、逐块生成与通道等待。
+
+**相关文件**：`crates/novel-tts-core/src/session/{buffering,playback}.rs`。
+
+### 本地 Qwen CUDA 设备边界
+
+`crates/qwen3-tts` 是本地模型计算库，`novel-tts-backends` 将协议设备映射到 Candle，worker 继续拥有资源校验、Auto 校准和 GPU 失败后的 CPU 重建。`qwen-cuda` 在 Windows/Linux 编入 CUDA；显式选择失败不静默回退，Auto 通过现有完整链路测速选设备。模型、PCM 通道、EOS/帧数上限、检查点与播放边界不变；真实 GPU PCM 和音质验收必须单独记录，不能用成功编译替代。
+
+### 模型选择、音色隔离与取消
+
+协议 v5 的 Config 增加可选 model/style；旧 Qwen None 对应 0.6B，已有后端/音色/设备不变。新文件默认检测 GPU 并选择 Qwen 1.7B CustomVoice 及实际 CUDA/Metal，否则选择 CPU MOSS Nano。不编入稳定后端时须显式指定候选；目录查询不下载模型，实际 Prepare 只下载当前模型。
+
+音色与提示、下载及校准按 backend/model/revision 隔离。阅读器切换模型先 Stop 并释放 manager，再准备新模型；style/voice 更改从未完成片段重建会话。共享 VoiceStore 保存 WAV/准确文字/描述/模型身份，各适配器自己的编码缓存按该身份保存。Qwen 设计音色先 VoiceDesign 短片段，保存后用 Base 克隆。
+
+Omni 首版是 semantic segment PCM，native_streaming=false；不得将整段完成描述为实时流式。原生线程取消直接检查 Sender::is_closed，不能依赖 Tokio 上的监视 future：Backend Drop 的 join 会阻塞该执行器，旧方式可能等完整扩散生成才退出。调用层先销毁音频 receiver 再 Drop 后端，避免 bounded send 与 join 死锁。有效 PCM 加正常 End 才提交完成检查点。
+
+**相关文件**：`crates/novel-tts-core/src/{voices.rs,config.rs,backend.rs}`、`crates/novel-tts/src/voices/`、`src/tts/ui.rs`、`dev-notes/tts-model-tiers-acceptance.md`。
+
+首次 Prepare 或 CLI 实际朗读时 ConfigStore::initialize 在文件锁内保存新默认值；Hello/GetConfig/voices list 保持只读。普通已有配置逐字保留，不通过初始化重写未知字段；退休 Kokoro/ZipVoice 及无 backend 的旧配置是例外，worker 启动时迁移到 Nano，保留未知字段与其他偏好。这样 GPU 首次默认成为用户偏好，下一次硬件变化不会悄悄换后端。
+
+### 推理线程在初始化 await 之前就必须有所有者
+
+std::thread::JoinHandle 直接 drop 会脱离线程。后端加载时先构造持有请求 sender 和 JoinHandle 的后端，再 await 初始化 ready，取消准备就会通过后端 Drop 关闭通道并 join；不能 ready 成功后才构造后端，否则取消并立刻切换可能短暂同时保留两套 GPU 权重。已加载模型的取消仍先丢弃 PCM receiver，释放有界发送后再 join。
+
+**相关文件**：`crates/novel-tts-backends/src/{qwen,voxcpm,omnivoice}.rs`。
+
+### MOSS 多种原生模型
+
+MOSS Nano 保留原 ONNX 与音色格式，旧 model=None 不改写；Candle 试用构建目录项增加显式 nano ID，以便从同后端的 Local/Realtime 切回。新模型设备按 model 查询，不能沿用 Nano 的 ORT 设备列表。GPU-only 模式 Auto 只能选择公布 GPU，不能拿未开放的 CPU adapter 做校准或降级。新参考记录走统一 VoiceStore，码本缓存额外检查 codec revision、WAV SHA、帧数和码本数。VoiceGenerator 创建参考一次，后续小说段落复用克隆。
+
+Codec 流式 ring-cache 在当前 chunk 注意力之前覆盖旧 key，与先算完整滑窗再裁缓存不同；需有跨窗口官方数值回归。EOS 和正常 End 不证明语音内容逐字完整。
+
+**相关文件**：`crates/novel-tts-backends/src/moss/candle.rs`、`crates/moss-tts/src/codec.rs`。
+
+### VoxCPM Candle 音色兼容（2026-10-07）
+
+后端 `voxcpm` 与模型 `2b-q8_0` 不变，既有音色记录、参考 WAV 和参考文字继续可用。计算实现改为 Candle，旧原生编码 features.json 不作为兼容数据读取，第一次使用会从 WAV 生成带身份校验的新缓存。音色设计只生成并保存短参考，后续播放复用克隆编码；只在有效 PCM 和 EOS 后完成片段，取消和截断不发送 End。
+
+**相关文件**：`crates/novel-tts-backends/src/voxcpm/cache.rs`、`design.rs`、`runtime.rs`。
+
+### VoxCPM 原始前端与 GGUF 前端对照
+
+GGUF 重建的 SentencePiece 与官方实际 `LlamaTokenizerFast` 并非所有输入都一致：当前 17 条夹具有 3 条 token ID 不同，包括开头空白标记及相邻中文的 BPE 合并。原始 Safetensors 路径直接加载 Hugging Face tokenizer.json，并沿用固定官方源码的中文多字 token 拆分；两套夹具分别保存，不把同一 GGUF 的解量化对照称为原始权重验证。该差异对听感/漏读的影响需要单独试听与内容验证，不能仅由 token 不同推断。
+
+**相关文件**：`crates/voxcpm/src/tokenizer.rs`、`crates/voxcpm/tests/fixtures/{tokenizer,original-tokenizer}.json`、`tools/tts/voxcpm_tokenizer_reference.py`。
+
+### VoxCPM 原始 BF16 阅读器实验入口
+
+用户明确授权在阅读器开放实验模型。`2b-bf16` 使用原始权重 revision 和
+独立音色、资源清单、校准、参考缓存；默认 `None` / `2b-q8_0` 仍走既有 Q8。
+实验目录沿用开发验证下载的默认目录，只校验所选资源，不重新下载完整缓存。
+首版只列出已编译 CUDA 的 BF16 实验，设置明确提示待验收；不由入口开放
+推断数值、音质或 30 分钟资格已经通过。模型切换仍先 Stop / 释放，再准备。

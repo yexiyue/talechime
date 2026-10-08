@@ -1,0 +1,24 @@
+[package]
+name = "voxcpm-sys"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+description = "Narrow native VoxCPM2 inference bridge"
+links = "trnovel_voxcpm"
+
+[features]
+default = []
+cuda = []
+metal = []
+
+[build-dependencies]
+cmake.workspace = true
+cc.workspace = true
+
+[dev-dependencies]
+hound.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+tts-core = { package = "talechime-core", path = "../talechime-core" }
+talechime-backends = { path = "../talechime-backends", default-features = false, features = ["voxcpm"] }

@@ -1,0 +1,27 @@
+# 开发与验证
+
+## 工具链
+
+Rust 2024，声明最低 Rust 1.89；当前 stable 验证不等于最低版本实机验收。Linux 安装 `libasound2-dev libssl-dev pkg-config`。CUDA 可选构建需要匹配 Toolkit；显式设备不可用时不能静默替代。ORT 固定 rc.13，Candle core/nn/transformers 固定 0.11.0；保持 Windows 动态 CRT。
+
+```bash
+cargo test --locked --workspace --lib --tests --examples
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo fmt --all --check
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --document-private-items --workspace --examples
+```
+
+不带 GPU Toolkit 的机器可验证 CPU 适配器组合：
+
+```bash
+cargo test --locked --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice --lib --tests --examples
+cargo build --locked -p talechime --bins
+```
+
+完整 all-features 检查需要相应平台工具链；CUDA 与 Metal 编译分别在原生 CI 中检查。普通测试不下载大模型；真实模型测试使用显式环境变量，保留历史 `TRNOVEL_*` 变量以兼容已有验收脚本。`tools/tts/` Python 仅供开发对照。
+
+## 原生验收
+
+迁移不升级模型、不改 PCM、EOS、取消、用户数据和检查点语义。历史数值与人工试听结论位于 `dev-notes/`，平台差异、未通过项与实验入口必须如实记录。迁移后仍应执行独立协议握手、配置隔离、默认/扩展 CPU 构建及 GPU 编译检查。
+
+构建产物不进入 Git；也不提交模型权重、用户参考音频、正文、凭据和临时运行输出。第三方源码更新保留固定 revision、许可证和对照夹具。PR 使用 Conventional Commit，说明行为、兼容和验证。

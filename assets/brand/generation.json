@@ -1,0 +1,17 @@
+{
+  "date": "2026-10-08",
+  "tool": "Codex built-in image_gen",
+  "assets": [
+    {
+      "file": "mark.png",
+      "transparent_background": true,
+      "prompt": "Use case: logo-brand. Create a polished square transparent-background brand mascot/logo for a new Rust local text-to-speech project named Talechime (Chinese name 叙铃). Primary symbol: a small friendly copper bell whose body is formed by two folded ivory book pages, with a tiny teal sound-wave cutout and a warm coral clapper. A single distinctive character, elegant editorial illustration, tactile paper and brushed copper, confident simple silhouette, restrained detail, readable at avatar size, subtle hand-crafted personality. Palette ink navy #172B3A, teal #277C78, warm copper #D78B58, ivory #F5EEE2. Front three-quarter view, centered, generous transparent margin. No text, no letters, no watermark, no headphones, no microphone, no robot, no background scenery. Deliver final standalone mascot brand mark."
+    },
+    {
+      "file": "readme-cover.png",
+      "transparent_background": false,
+      "reference": "mark.png",
+      "prompt": "Use case: ads-marketing. Asset type: GitHub README cover and social brand image. Create a wide landscape 3:1 composition for Talechime, a Rust local-first long-form text-to-speech project. Use the supplied copper book-page bell mark as the exact brand identity, preserving its ivory folded pages, teal sound cutouts and coral clapper. Put this bell on the right third; on left, large impeccably readable serif title exactly 'Talechime', below smaller Chinese name exactly '叙铃', and subtitle exactly 'Let stories ring.' Very elegant quiet literary identity, warm ivory background #F5EEE2, ink navy #172B3A lettering, understated teal/copper details. A few flowing fine sound lines emerging from a page, lots of generous breathing room. No UI, no badges, no code, no extra text, no watermark. Precise clean editorial typography, premium open-source project identity, final production artwork."
+    }
+  ]
+}

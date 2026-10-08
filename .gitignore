@@ -1,0 +1,11 @@
+/target/
+/models/
+/output/
+/runs/
+.env
+**/__pycache__/
+*.wav
+*.mp3
+*.onnx
+*.safetensors
+*.gguf
