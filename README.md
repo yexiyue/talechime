@@ -42,6 +42,8 @@ irm https://github.com/yexiyue/talechime/releases/latest/download/talechime-inst
 
 也可从 [GitHub Releases](https://github.com/yexiyue/talechime/releases) 下载 `.tar.xz` / `.zip`，解压后加入 PATH。标准包包含 Nano、对齐、Qwen / VoxCPM / OmniVoice；Mac 增加 Metal 与 MOSS Candle Metal，Windows/Linux 使用 CPU。CUDA 保留源码构建与编译 CI。模型按需下载，安装包不含模型权重。
 
+Linux 标准包基于 Ubuntu 24.04 构建，需要 glibc 2.39+、对应的 libstdc++ 和 ALSA 运行库。Windows 使用动态 MSVC CRT，需要 Visual C++ Redistributable。帮助与协议握手不要求模型、CUDA 或音频设备。
+
 ## 从源码开始
 
 需要 Rust 1.89 或更新版本及平台链接工具。Linux 需要 ALSA/OpenSSL 开发库和 pkg-config；CUDA 构建另外需要 Toolkit，Metal 需要 macOS。实际最低工具链与各平台模型性能须分别验证，不能由编译成功推断。

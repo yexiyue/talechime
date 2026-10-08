@@ -14,9 +14,14 @@ impl AppPaths {
     }
 
     pub fn user_default() -> std::io::Result<Self> {
-        dirs::home_dir().map(Self::from_home).ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, "home directory unavailable")
-        })
+        std::env::var_os("HOME")
+            .filter(|home| !home.is_empty())
+            .map(PathBuf::from)
+            .or_else(dirs::home_dir)
+            .map(Self::from_home)
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotFound, "home directory unavailable")
+            })
     }
 
     pub fn root(&self) -> &Path {

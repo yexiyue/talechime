@@ -6,18 +6,25 @@ cargo-dist-version = "0.32.0"
 ci = "github"
 recursive-tarball = false
 packages = ["talechime"]
+precise-builds = true
 installers = ["shell", "powershell", "homebrew"]
 targets = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
-tag-namespace = "talechime"
+tag-namespace = "talechime-v"
 tap = "yexiyue/homebrew-tap"
 publish-jobs = ["homebrew"]
 install-path = "CARGO_HOME"
 install-updater = false
 msvc-crt-static = false
 features = ["qwen", "voxcpm", "omnivoice", "metal", "voxcpm-metal", "omnivoice-metal", "moss-candle-metal"]
-include = ["LICENSE", "SOURCE.md", "docs", "assets", "THIRD_PARTY_LICENSES"]
+include = ["LICENSE", "SOURCE.md", "docs", "assets", "THIRD_PARTY_LICENSES", "licenses"]
 github-build-setup = "../build-setup.yml"
 pr-run-mode = "plan"
+
+[dist.github-custom-runners]
+x86_64-unknown-linux-gnu = "ubuntu-24.04"
+
+[dist.min-glibc-version]
+x86_64-unknown-linux-gnu = "2.39"
 
 [dist.dependencies.apt]
 libasound2-dev = "*"
