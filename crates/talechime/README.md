@@ -1,4 +1,7 @@
-# novel-tts
+# Talechime CLI / worker
+
+项目介绍、源码构建和当前路线图见[根 README](../../README.md)。新命令为
+`talechime`，`novel-tts` 是行为相同的兼容入口；下文保留其已有协议调用示例。
 
 MOSS GPU 试用可增加 `moss-candle-cuda`（Metal 构建入口为
 `moss-candle-metal`），模型 ID 为 `local-1.7b`、`realtime-1.7b`。
@@ -19,7 +22,8 @@ novel-tts --backend moss --model realtime-1.7b --voice custom:myvoice --tts-devi
 
 独立朗读 UTF-8 文件，不需要启动阅读器，不再启动另一层听书子进程。
 
-本次命名迁移由原 `novel-tts` 库拆出 `talechime-core`，CLI 接管 `novel-tts` 包名与命令。当前工作区保留 0.3.0 版本线，后续发布需升级版本；已发布的旧库不包含本 CLI，请先使用下面的源码构建命令。
+从 TRNovel 提取后，CLI 包名为 `talechime`，会话核心为 `talechime-core`。
+当前保留 0.3.0 版本线，尚未发布新品牌安装包；旧 novel-tts 库不包含此 CLI。
 
 ```sh
 cargo build -p talechime
@@ -41,7 +45,7 @@ printf '%s\n' '{"protocol_version":5,"request_id":"1","session_id":null,"type":"
 
 每条 stdout 行为协议 JSON，日志写 stderr；协议模式不读取终端键位，不进入原始模式。首次 hello 超时为 5 秒，行上限为 16 MiB；未知版本关闭连接，非法 JSON/重复请求返回错误，不执行播放。EOF/shutdown 停播并收尾，保留最近播放检查点。取消准备保留 .download 半文件，下次创建新下载任务可续传；服务器忽略 Range 时重头下载。下载文件锁阻止多个进程同时修改半文件。
 
-实际终端按键、主观音质和各平台 30 分钟持续播放仍需人工验收；自动化协议测试不替代这些结果。独立程序可从 workspace 构建。默认听书发行包包含三份同目录二进制，基础版包只有两个阅读器；双变体发行尚未发布。详见安装指南及 `dev-notes/tts-acceptance.md` 中的真实检查记录。
+实际终端按键、主观音质和各平台 30 分钟持续播放仍需人工验收；自动化协议测试不替代这些结果。独立制品包含 talechime 与 novel-tts 两个入口；TRNovel 的听书包继续携带兼容 worker。历史检查记录位于根目录 `dev-notes/tts-acceptance.md`。
 
 ## 后端与音色
 
