@@ -7,14 +7,11 @@ license = "MIT"
 default-run = "talechime"
 description = "Local speech synthesis, continuous listening and JSON Lines worker"
 repository = "https://github.com/yexiyue/talechime"
+homepage = "https://github.com/yexiyue/talechime"
 
 [[bin]]
 name = "talechime"
 path = "src/main.rs"
-
-[[bin]]
-name = "novel-tts"
-path = "src/compat.rs"
 
 [features]
 default = ["moss", "alignment"]

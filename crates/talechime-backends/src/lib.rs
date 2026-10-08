@@ -241,6 +241,7 @@ impl Registry {
         for caps in &mut entries {
             caps.compiled_devices = self.compiled_devices_for(&caps.backend, caps.model.as_deref());
         }
+        entries.retain(|entry| !entry.compiled_devices.is_empty());
         Ok(entries)
     }
     pub fn capabilities(&self, id: &str) -> anyhow::Result<Capabilities> {

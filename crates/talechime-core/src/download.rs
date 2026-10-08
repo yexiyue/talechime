@@ -9,17 +9,9 @@ use tokio::fs;
 use tokio::{io::AsyncWriteExt, select};
 use tokio_util::sync::CancellationToken;
 
-/// 缓存目录名称
-pub static CACHE_DIR: &str = ".novel-tts";
-
-/// 获取缓存目录路径
-///
-/// # 返回值
-/// 返回Result包装的PathBuf，包含缓存目录的路径
+/// Model, voice and calibration resources under the Talechime application home.
 pub fn get_cache_dir() -> Result<PathBuf> {
-    Ok(dirs::home_dir()
-        .map(|home| home.join(CACHE_DIR))
-        .ok_or_else(|| anyhow::anyhow!("No home directory found"))?)
+    Ok(crate::paths::AppPaths::user_default()?.resources())
 }
 
 /// 从URL下载文件

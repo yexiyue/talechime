@@ -51,7 +51,7 @@ struct Args {
     /// Explicitly restart this file from its beginning, ignoring a stored checkpoint.
     #[arg(long, conflicts_with = "protocol")]
     restart: bool,
-    /// Override the legacy listening configuration path.
+    /// Override the listening configuration path.
     #[arg(long)]
     config: Option<PathBuf>,
     /// Override the model directory (does not copy or delete existing models).
@@ -74,9 +74,6 @@ async fn main() -> anyhow::Result<()> {
         None => tts_core::checkpoint::CheckpointStore::user_default()?,
     };
     let resources = resources::Resources::new(args.model_dir)?;
-    if matches!(config.load()?.backend.as_str(), "kokoro" | "zipvoice") {
-        config.migrate_retired_backend(&resources.capabilities_for("moss", None)?)?;
-    }
     let config = if config.path().exists() {
         config
     } else {
@@ -209,11 +206,11 @@ mod tests {
     use super::*;
     #[test]
     fn alignment_flag_keeps_file_argument_and_supports_explicit_disable() {
-        let enabled = Args::try_parse_from(["novel-tts", "--alignment", "book.txt"]).unwrap();
+        let enabled = Args::try_parse_from(["talechime", "--alignment", "book.txt"]).unwrap();
         assert_eq!(enabled.alignment, Some(true));
         assert_eq!(enabled.file, Some(PathBuf::from("book.txt")));
         let disabled =
-            Args::try_parse_from(["novel-tts", "--alignment=false", "book.txt"]).unwrap();
+            Args::try_parse_from(["talechime", "--alignment=false", "book.txt"]).unwrap();
         assert_eq!(disabled.alignment, Some(false));
     }
 }

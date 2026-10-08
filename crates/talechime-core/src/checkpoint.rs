@@ -39,11 +39,11 @@ impl CheckpointStore {
         }
     }
 
-    /// Listening data directory under the existing application home.
+    /// Listening checkpoints belong to Talechime, independently of any host.
     pub fn user_default() -> Result<Self, CheckpointError> {
-        let home =
-            dirs::home_dir().ok_or(CheckpointError::Invalidated("home directory unavailable"))?;
-        Ok(Self::new(home.join(".novel/tts/checkpoints")))
+        Ok(Self::new(
+            crate::paths::AppPaths::user_default()?.checkpoints(),
+        ))
     }
 
     fn path(&self, source: &SourceId) -> Result<PathBuf, CheckpointError> {

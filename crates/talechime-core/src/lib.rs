@@ -10,6 +10,7 @@ pub mod checkpoint;
 pub mod config;
 pub mod download;
 mod error;
+pub mod paths;
 pub mod player;
 pub mod session;
 mod storage;

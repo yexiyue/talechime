@@ -1,0 +1,7 @@
+- name: Install Python for artifact smoke checks
+  uses: actions/setup-python@v5
+  with:
+    python-version: '3.x'
+- name: Collect third-party license notices
+  shell: bash
+  run: python .github/scripts/prepare-notices.py

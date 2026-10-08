@@ -2,6 +2,8 @@
 /models/
 /output/
 /runs/
+/THIRD_PARTY_LICENSES/*
+!/THIRD_PARTY_LICENSES/.gitkeep
 .env
 **/__pycache__/
 *.wav

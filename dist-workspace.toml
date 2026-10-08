@@ -1,0 +1,25 @@
+[workspace]
+members = ["cargo:."]
+
+[dist]
+cargo-dist-version = "0.32.0"
+ci = "github"
+recursive-tarball = false
+packages = ["talechime"]
+installers = ["shell", "powershell", "homebrew"]
+targets = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+tag-namespace = "talechime"
+tap = "yexiyue/homebrew-tap"
+publish-jobs = ["homebrew"]
+install-path = "CARGO_HOME"
+install-updater = false
+msvc-crt-static = false
+features = ["qwen", "voxcpm", "omnivoice", "metal", "voxcpm-metal", "omnivoice-metal", "moss-candle-metal"]
+include = ["LICENSE", "SOURCE.md", "docs", "assets", "THIRD_PARTY_LICENSES"]
+github-build-setup = "../build-setup.yml"
+pr-run-mode = "plan"
+
+[dist.dependencies.apt]
+libasound2-dev = "*"
+libssl-dev = "*"
+pkg-config = "*"
