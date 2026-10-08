@@ -5,7 +5,9 @@ resolver = "3"
 
 [workspace.dependencies]
 windows = { version = "0.54.0", default-features = false }
-moss-tts = { path = "crates/moss-tts" }
+moss-tts = { path = "crates/moss-tts", default-features = false }
+omnivoice = { path = "crates/omnivoice", default-features = false }
+voxcpm = { path = "crates/voxcpm", default-features = false }
 tts-candle-platform = { path = "crates/tts-candle-platform", version = "0.1.0" }
 cmake = "0.1.58"
 cc = "1.2"

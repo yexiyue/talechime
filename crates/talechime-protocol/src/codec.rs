@@ -117,14 +117,13 @@ mod tests {
     }
 
     #[test]
-    fn missing_alignment_preference_defaults_off_and_explicit_true_roundtrips() {
-        let config: crate::Config = serde_json::from_str("{}").unwrap();
-        assert!(!config.alignment_enabled);
-        let config: crate::Config = serde_json::from_str(r#"{"alignment_enabled":true}"#).unwrap();
-        assert!(config.alignment_enabled);
-        let patch: crate::ConfigPatch =
-            serde_json::from_str(r#"{"alignment_enabled":false,"expected_revision":0}"#).unwrap();
-        assert_eq!(patch.alignment_enabled, Some(false));
+    fn removed_alignment_settings_are_rejected_in_config_updates() {
+        for patch in [
+            r#"{"expected_revision":0,"alignment_enabled":true}"#,
+            r#"{"expected_revision":0,"alignment_device":"cpu"}"#,
+        ] {
+            assert!(serde_json::from_str::<crate::ConfigPatch>(patch).is_err());
+        }
     }
 
     #[test]
@@ -187,15 +186,23 @@ mod tests {
     }
 
     #[test]
-    fn old_preferences_keep_values_and_unknown_fields() {
+    fn preferences_keep_values_and_unknown_fields() {
         let config: Config =
-            serde_json::from_str(include_str!("../tests/fixtures/legacy-config.json")).unwrap();
-        assert_eq!(config.backend, "kokoro");
-        assert_eq!(config.voice, "Zm009");
+            serde_json::from_str(include_str!("../tests/fixtures/preferences.json")).unwrap();
+        assert_eq!(config.backend, Config::default().backend);
+        assert_eq!(config.voice, "Weiguo");
         assert_eq!(config.speed, 1.3);
         assert_eq!(
             serde_json::from_slice::<Config>(&serde_json::to_vec(&config).unwrap()).unwrap(),
             config
+        );
+    }
+
+    #[test]
+    fn missing_config_fields_use_the_same_defaults_as_new_preferences() {
+        assert_eq!(
+            serde_json::from_str::<Config>("{}").unwrap(),
+            Config::default()
         );
     }
 

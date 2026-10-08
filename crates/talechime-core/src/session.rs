@@ -86,7 +86,6 @@ struct Job {
 /// Runs inside a Tokio LocalSet; audio/model objects never move between threads.
 pub struct SessionManager {
     backend: Rc<dyn Backend>,
-    aligner: Option<Arc<dyn crate::alignment::Aligner>>,
     player: Rc<dyn Playback>,
     checkpoints: CheckpointStore,
     events: mpsc::Sender<SessionEvent>,
@@ -104,19 +103,12 @@ impl SessionManager {
     ) -> Self {
         Self {
             backend,
-            aligner: None,
             player,
             checkpoints,
             events,
             job: None,
             used_ids: HashSet::new(),
         }
-    }
-
-    /// Attach an independent alignment engine before starting playback.
-    pub fn with_aligner(mut self, aligner: Arc<dyn crate::alignment::Aligner>) -> Self {
-        self.aligner = Some(aligner);
-        self
     }
 
     /// Start explicitly. Restoring a checkpoint never starts this method on its own.
@@ -168,7 +160,6 @@ impl SessionManager {
             id: id.clone(),
             request: request.clone(),
             backend: self.backend.clone(),
-            aligner: self.aligner.clone(),
             player: self.player.clone(),
             checkpoints: self.checkpoints.clone(),
             events: self.events.clone(),
@@ -551,110 +542,6 @@ mod tests {
                 manager.resume("buffer").await.unwrap();
                 assert!(!player.paused.get());
                 player.cursor.set(player.queued.get());
-                assert_eq!(terminal(&mut rx).await.0, EndReason::Completed);
-            })
-            .await;
-    }
-    struct MergedBackend(FakeBackend);
-    impl Backend for MergedBackend {
-        fn capabilities(&self) -> Capabilities {
-            self.0.capabilities()
-        }
-        fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a> {
-            self.0.stream(text, voice)
-        }
-        fn segments<'a>(&'a self, text: &'a str) -> crate::backend::Segmentation<'a> {
-            Box::pin(async move {
-                Ok(vec![crate::text::TextSegment {
-                    text: text.into(),
-                    start: 0,
-                    end: text.len(),
-                }])
-            })
-        }
-    }
-    struct FakeAligner;
-    impl crate::alignment::Aligner for FakeAligner {
-        fn align<'a>(
-            &'a self,
-            text: &'a crate::alignment::SpeechText,
-            _: &'a crate::alignment::AudioClip,
-        ) -> crate::alignment::Alignment<'a> {
-            Box::pin(async move {
-                Ok(text
-                    .sentences
-                    .iter()
-                    .enumerate()
-                    .map(|(i, sentence)| crate::alignment::SentenceTiming {
-                        range: sentence.range,
-                        start_frame: i as u64 * 120,
-                        end_frame: (i + 1) as u64 * 120,
-                    })
-                    .collect())
-            })
-        }
-    }
-    #[tokio::test]
-    async fn aligned_sentences_follow_playback_clock_and_pause() {
-        tokio::task::LocalSet::new()
-            .run_until(async {
-                let directory = tempfile::tempdir().unwrap();
-                let checkpoints = CheckpointStore::new(directory.path());
-                let (tx, mut rx) = mpsc::channel(64);
-                let player = Rc::new(FakePlayer::default());
-                let mut manager = SessionManager::new(
-                    Rc::new(MergedBackend(FakeBackend {
-                        calls: Cell::new(0),
-                        fail_at: None,
-                    })),
-                    player.clone(),
-                    checkpoints.clone(),
-                    tx,
-                )
-                .with_aligner(Arc::new(FakeAligner));
-                let source = request("第一句。第二句。");
-                manager
-                    .start("aligned".into(), source.clone(), &Config::default())
-                    .await
-                    .unwrap();
-                loop {
-                    if let Event::SentenceStarted { range, .. } =
-                        tokio::time::timeout(Duration::from_secs(2), rx.recv())
-                            .await
-                            .unwrap()
-                            .unwrap()
-                            .event
-                    {
-                        assert_eq!(range.start, 0);
-                        break;
-                    }
-                }
-                player.cursor.set(Duration::from_millis(6));
-                loop {
-                    if let Event::SentenceStarted { range, .. } =
-                        tokio::time::timeout(Duration::from_secs(2), rx.recv())
-                            .await
-                            .unwrap()
-                            .unwrap()
-                            .event
-                    {
-                        assert_eq!(range.start, 12);
-                        break;
-                    }
-                }
-                assert_eq!(
-                    checkpoints
-                        .load(&source.source, &source.text)
-                        .unwrap()
-                        .unwrap()
-                        .resume_byte,
-                    12
-                );
-                manager.pause("aligned").await.unwrap();
-                player.cursor.set(Duration::from_millis(10));
-                tokio::time::sleep(Duration::from_millis(30)).await;
-                assert_eq!(manager.job.as_ref().unwrap().position.get(), 12);
-                manager.resume("aligned").await.unwrap();
                 assert_eq!(terminal(&mut rx).await.0, EndReason::Completed);
             })
             .await;

@@ -26,7 +26,7 @@ pub struct SourceId {
     pub chapter: String,
 }
 
-/// Requested execution policy, independent for synthesis and alignment.
+/// Requested synthesis execution policy.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Device {
@@ -38,7 +38,7 @@ pub enum Device {
     Cuda,
 }
 
-/// User preferences. `voice` retains the old JSON enum spelling, e.g. `Zf001`.
+/// Model-independent user preferences.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -46,16 +46,12 @@ pub struct Config {
     pub speed: f32,
     pub voice: String,
     pub auto_play: bool,
-    #[serde(default = "legacy_backend")]
     pub backend: String,
-    /// None retains the backend's legacy model for existing configurations.
+    /// None selects the backend's default model.
     pub model: Option<String>,
     pub style: Option<String>,
     pub revision: u64,
     pub tts_device: Device,
-    pub alignment_device: Device,
-    /// Load sentence alignment only when explicitly requested.
-    pub alignment_enabled: bool,
     #[serde(flatten)]
     pub extra: BTreeMap<String, serde_json::Value>,
 }
@@ -72,8 +68,6 @@ impl Default for Config {
             style: None,
             revision: 0,
             tts_device: Device::Auto,
-            alignment_device: Device::Auto,
-            alignment_enabled: false,
             extra: BTreeMap::new(),
         }
     }
@@ -81,14 +75,13 @@ impl Default for Config {
 
 /// Only changed fields are sent, so unrelated preferences can be preserved.
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConfigPatch {
     pub backend: Option<String>,
     pub model: Option<String>,
     /// An empty string clears the current style.
     pub style: Option<String>,
     pub tts_device: Option<Device>,
-    pub alignment_device: Option<Device>,
-    pub alignment_enabled: Option<bool>,
     pub expected_revision: u64,
     pub volume: Option<f32>,
     pub speed: Option<f32>,
@@ -249,18 +242,6 @@ pub enum Event {
         range: TextRange,
         text_hash: String,
     },
-    AlignmentStatus {
-        sentence_highlight: bool,
-        reason: Option<String>,
-    },
-    SentenceStarted {
-        range: TextRange,
-        text_hash: String,
-    },
-    SentenceFinished {
-        range: TextRange,
-        text_hash: String,
-    },
     SegmentFinished {
         range: TextRange,
         text_hash: String,
@@ -282,8 +263,4 @@ pub struct Message {
     pub request_id: Option<String>,
     #[serde(flatten)]
     pub event: Event,
-}
-
-fn legacy_backend() -> String {
-    "kokoro".into()
 }

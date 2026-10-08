@@ -20,6 +20,21 @@ cargo build --locked -p talechime --bins
 
 完整 all-features 检查需要相应平台工具链；CUDA 与 Metal 编译分别在原生 CI 中检查。普通测试不下载大模型；真实模型测试使用显式环境变量，保留历史 `TRNOVEL_*` 变量以兼容已有验收脚本。`tools/tts/` Python 仅供开发对照。
 
+## 编译 feature 分层
+
+CLI 与 backends 使用同名开关，计算库只提供 `cuda` / `metal` 平台开关：
+
+| 层次 | 开关 | 含义 |
+| --- | --- | --- |
+| 模型适配器 | `moss`、`qwen`、`voxcpm`、`omnivoice` | 启用对应模型；默认 `moss` 使用 Nano ONNX |
+| MOSS 实验实现 | `moss-candle` | 在 MOSS 目录增加 Local / Realtime；生产入口目前仅开放 GPU |
+| Candle 加速 | `qwen-cuda` / `qwen-metal`、`voxcpm-cuda` / `voxcpm-metal`、`omnivoice-cuda` / `omnivoice-metal`、`moss-candle-cuda` / `moss-candle-metal` | 启用对应适配器及计算库加速；按目标平台门控 |
+| ORT provider | `ort-cuda`、`ort-coreml` | 为 Nano 提供 provider，不自动启用模型适配器 |
+
+适配器层不提供通用 `metal` / `cuda` 开关；选择加速时必须明确模型。旧 `metal` / `coreml` 名称已移除，改用 `qwen-metal` / `ort-coreml`。加速开关包含对应模型开关，发行配置无需重复列出模型。`directml-probe` 仅是 backends 的实验 example，不暴露产品设备。
+
+Cargo 会统一同一计算库的 feature，可能使依赖同时拥有多个加速实现；各适配器仍按自己的开关报告设备，不能以底层 Candle 的统一 feature 推断模型可用性。MOSS 两种实现共用一个后端目录，`moss-candle` 依赖 `moss` 是当前设计；CPU Nano 与 GPU 实验模型的差异保留。
+
 ## 原生验收
 
 迁移不升级模型、不改 PCM、EOS、取消、用户数据和检查点语义。历史数值与人工试听结论位于 `docs/records/`，平台差异、未通过项与实验入口必须如实记录。迁移后仍应执行独立协议握手、配置隔离、默认/扩展 CPU 构建及 GPU 编译检查。

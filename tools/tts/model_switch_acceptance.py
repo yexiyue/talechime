@@ -4,12 +4,16 @@ import atexit
 import hashlib
 import json
 import queue
+import re
 import subprocess
 import threading
 import time
 from pathlib import Path
 
 from metrics import memory
+
+protocol_source = Path(__file__).resolve().parents[2] / 'crates/talechime-protocol/src/lib.rs'
+protocol_version = int(re.search(r'PROTOCOL_VERSION: u32 = (\d+)', protocol_source.read_text()).group(1))
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--worker', required=True)
@@ -50,7 +54,7 @@ threading.Thread(target=read, daemon=True).start()
 
 
 def send(kind, request, payload=None, session=None):
-    message = dict(protocol_version=5, request_id=request, session_id=session, type=kind)
+    message = dict(protocol_version=protocol_version, request_id=request, session_id=session, type=kind)
     if payload is not None:
         message['payload'] = payload
     worker.stdin.write(json.dumps(message, ensure_ascii=False) + '\n')

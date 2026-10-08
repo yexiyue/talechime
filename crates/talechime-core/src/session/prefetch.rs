@@ -15,7 +15,7 @@ impl Default for Budget {
 }
 pub(super) struct Packet {
     pub(super) audio: Pcm,
-    pub(super) lease: Arc<Lease>,
+    pub(super) lease: Lease,
 }
 
 #[derive(Debug)]
@@ -48,10 +48,10 @@ impl Budget {
             .map_err(|_| SessionError::Disconnected)?;
         Ok(Packet {
             audio,
-            lease: Arc::new(Lease {
+            lease: Lease {
                 _time: time,
                 _bytes: bytes,
-            }),
+            },
         })
     }
 }

@@ -21,8 +21,8 @@ permissions:
 
 jobs:
   compile:
-    runs-on: ubuntu-22.04
-    container: nvidia/cuda:13.0.2-devel-ubuntu22.04
+    runs-on: ubuntu-24.04
+    container: nvidia/cuda:13.0.2-devel-ubuntu24.04
     env:
       # This runner has a compiler, but no GPU to detect. Target RTX 50 series.
       CUDA_COMPUTE_CAP: '120'
@@ -30,17 +30,19 @@ jobs:
       - name: Install host dependencies
         run: |
           apt-get update
-          apt-get install -y git curl build-essential pkg-config libasound2-dev libssl-dev python3-pip
-          pip3 install cmake==3.31.6 ninja==1.11.1.4
+          apt-get install -y git curl build-essential pkg-config libasound2-dev libssl-dev python3-venv
+          python3 -m venv /opt/build-tools
+          /opt/build-tools/bin/pip install cmake==3.31.6 ninja==1.11.1.4
+          echo /opt/build-tools/bin >> "$GITHUB_PATH"
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Check CUDA implementation
-        run: cargo clippy --locked -p talechime --no-default-features --features qwen-cuda,voxcpm-cuda,omnivoice-cuda --all-targets -- -D warnings
+        run: cargo clippy --locked -p talechime --no-default-features --features qwen-cuda,voxcpm-cuda,omnivoice-cuda,moss-candle-cuda --all-targets -- -D warnings
       - name: Link CUDA worker
-        run: cargo build --locked --release -p talechime --no-default-features --features qwen-cuda,voxcpm-cuda,omnivoice-cuda
+        run: cargo build --locked --release -p talechime --no-default-features --features qwen-cuda,voxcpm-cuda,omnivoice-cuda,moss-candle-cuda
       # Real-model playback and performance require a separate GPU machine.
   metal:
     runs-on: macos-15
@@ -53,6 +55,6 @@ jobs:
         run: brew install cmake ninja pkg-config
       - uses: Swatinem/rust-cache@v2
       - name: Check shared Candle and native Metal adapters
-        run: cargo clippy --locked -p talechime --no-default-features --features metal,voxcpm-metal,omnivoice-metal,moss-candle-metal --all-targets -- -D warnings
+        run: cargo clippy --locked -p talechime --no-default-features --features qwen-metal,voxcpm-metal,omnivoice-metal,moss-candle-metal --all-targets -- -D warnings
       - name: Link Metal worker
-        run: cargo build --locked --release -p talechime --no-default-features --features metal,voxcpm-metal,omnivoice-metal,moss-candle-metal
+        run: cargo build --locked --release -p talechime --no-default-features --features qwen-metal,voxcpm-metal,omnivoice-metal,moss-candle-metal

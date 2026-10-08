@@ -7,10 +7,14 @@ import sys
 import tempfile
 
 
-def smoke(directory: Path, suffix: str = '') -> None:
+def protocol_version() -> int:
     root = Path(__file__).resolve().parents[2]
     source = root / 'crates/talechime-protocol/src/lib.rs'
-    version = int(re.search(r'PROTOCOL_VERSION: u32 = (\d+)', source.read_text()).group(1))
+    return int(re.search(r'PROTOCOL_VERSION: u32 = (\d+)', source.read_text()).group(1))
+
+
+def smoke(directory: Path, suffix: str = '') -> None:
+    version = protocol_version()
     requests = ''.join(json.dumps(dict(protocol_version=version, request_id=kind,
                                       session_id=None, type=kind)) + '\n'
                        for kind in ['hello', 'shutdown'])

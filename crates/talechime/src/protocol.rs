@@ -16,6 +16,29 @@ struct Output {
     messages: mpsc::Sender<Message>,
 }
 impl Output {
+    // Commands can emit lifecycle events themselves. Keep draining their bounded
+    // queue while awaiting a command, without accepting another command.
+    async fn while_draining<T>(
+        &mut self,
+        events: &mut mpsc::Receiver<SessionEvent>,
+        operation: impl std::future::Future<Output = T>,
+    ) -> anyhow::Result<T> {
+        tokio::pin!(operation);
+        let mut events_open = true;
+        loop {
+            tokio::select! {
+                result = &mut operation => return Ok(result),
+                event = events.recv(), if events_open => {
+                    if let Some(event) = event {
+                        self.send(None, Some(event.session_id), event.event).await?;
+                    } else {
+                        events_open = false;
+                    }
+                }
+            }
+        }
+    }
+
     async fn send(
         &mut self,
         request: Option<&Request>,
@@ -176,25 +199,26 @@ async fn serve(
                             handshake = true;
                             output.send(Some(&request), None, Event::Ready(worker.catalog()?)).await?;
                             #[cfg(any(feature="moss",feature="qwen",feature="voxcpm",feature="omnivoice"))]
-                            for component in ["tts","alignment"] {
-                                output.send(None,None,worker.unprepared_device_status(component)?).await?;
-                            }
+                            output.send(None,None,worker.unprepared_device_status()?).await?;
                         }
                         Command::Shutdown => {
                             output.send(Some(&request), None, Event::Accepted).await?;
                             break;
                         }
                         command => {
-                            let response = worker.command(&request).await;
-                            if matches!(command, Command::CancelPrepare) || matches!(command, Command::UpdateConfig(patch) if patch.backend.is_some() || patch.model.is_some() || patch.tts_device.is_some() || patch.alignment_device.is_some() || patch.alignment_enabled.is_some()) {
+                            let response = output.while_draining(&mut session_events, worker.command(&request)).await?;
+                            let preparation_changed = matches!(command, Command::UpdateConfig(patch)
+                                if patch.backend.is_some() || patch.model.is_some()
+                                    || patch.tts_device.is_some());
+                            if matches!(command, Command::CancelPrepare) || preparation_changed {
                                 while model_events.try_recv().is_ok() {}
                             }
                             let config_changed = matches!(&response.event, Event::ConfigChanged(_))
-                                && matches!(command, Command::UpdateConfig(patch) if patch.backend.is_some() || patch.model.is_some() || patch.tts_device.is_some() || patch.alignment_device.is_some() || patch.alignment_enabled.is_some());
+                                && preparation_changed;
                             output.send(Some(&request), response.session, response.event).await?;
                             #[cfg(any(feature="moss",feature="qwen",feature="voxcpm",feature="omnivoice"))]
                             if config_changed && !worker.is_preparing() && !worker.has_prepared_model() {
-                                output.send(None,None,worker.unprepared_device_status("tts")?).await?;
+                                output.send(None,None,worker.unprepared_device_status()?).await?;
                             }
                             #[cfg(not(any(feature="moss",feature="qwen",feature="voxcpm",feature="omnivoice")))]
                             let _ = config_changed;
@@ -205,11 +229,78 @@ async fn serve(
         }
         Ok(())
     }.await;
-    worker.shutdown().await?;
+    output
+        .while_draining(&mut session_events, worker.shutdown())
+        .await??;
     while let Ok(event) = session_events.try_recv() {
         output
             .send(None, Some(event.session_id), event.event)
             .await?;
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tts_protocol::{EndReason, SessionState};
+
+    #[tokio::test]
+    async fn command_lifecycle_events_drain_a_full_queue_before_response() {
+        let (events, mut pending) = mpsc::channel(1);
+        events
+            .send(SessionEvent {
+                session_id: "active".into(),
+                event: Event::SessionState {
+                    state: SessionState::Playing,
+                },
+            })
+            .await
+            .unwrap();
+        let (messages, mut received) = mpsc::channel(8);
+        let mut output = Output {
+            instance: "test".into(),
+            sequence: 0,
+            messages,
+        };
+        // Stop and replacement commands must await this bounded terminal send.
+        let command = async {
+            events
+                .send(SessionEvent {
+                    session_id: "active".into(),
+                    event: Event::SessionEnded {
+                        reason: EndReason::Cancelled,
+                        text_hash: "snapshot".into(),
+                    },
+                })
+                .await
+                .unwrap();
+            Event::Accepted
+        };
+        let response = tokio::time::timeout(
+            Duration::from_secs(1),
+            output.while_draining(&mut pending, command),
+        )
+        .await
+        .expect("command must finish even when its event queue starts full")
+        .unwrap();
+        output.send(None, None, response).await.unwrap();
+        // The transport resumes its event loop after dispatching the response.
+        while let Ok(event) = pending.try_recv() {
+            output
+                .send(None, Some(event.session_id), event.event)
+                .await
+                .unwrap();
+        }
+        let first = received.recv().await.unwrap();
+        let second = received.recv().await.unwrap();
+        let third = received.recv().await.unwrap();
+        assert!(matches!(first.event, Event::SessionState { .. }));
+        assert!(
+            matches!(second.event, Event::SessionEnded { .. })
+                || matches!(third.event, Event::SessionEnded { .. })
+        );
+        assert!(matches!(second.event, Event::Accepted) || matches!(third.event, Event::Accepted));
+        assert_eq!([first.sequence, second.sequence, third.sequence], [1, 2, 3]);
+    }
 }

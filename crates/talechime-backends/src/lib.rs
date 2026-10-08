@@ -1,9 +1,6 @@
 //! Concrete model adapters. The core and reader never import inference types.
-#[cfg(feature = "alignment")]
-pub mod alignment;
 #[cfg(any(
     feature = "moss",
-    feature = "alignment",
     feature = "qwen",
     feature = "voxcpm",
     feature = "omnivoice",
@@ -19,7 +16,6 @@ pub mod qwen;
 pub mod reference;
 #[cfg(any(
     feature = "moss",
-    feature = "alignment",
     feature = "qwen",
     feature = "voxcpm",
     feature = "omnivoice",

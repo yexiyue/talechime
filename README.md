@@ -22,7 +22,7 @@ Talechime 是一个 Rust 本地语音合成与长文听书项目，提供可复�
 - 在编译时选择 MOSS、Qwen3-TTS、VoxCPM2 和 OmniVoice 适配器。
 - 按模型能力列出、导入、移除或设计可复用音色；风格和克隆能力由模型报告。
 - 通过版本化 JSON Lines 控制播放并接收状态、资源进度、原文范围和错误。
-- 可选句子对齐；关闭时仍有片段进度，不加载对齐模型。
+- 片段级原文进度与高亮，不加载额外的对齐模型。
 
 模型推理在专用线程运行，音频留在 worker 进程。正文和参考音频由本地模型处理；首次准备需要下载所选模型，普通帮助和音色目录查询不下载权重。无需 Python 即可使用 Rust 程序；`tools/tts/` 中的 Python 是开发对照与验收工具。
 
@@ -40,7 +40,7 @@ brew install yexiyue/tap/talechime
 irm https://github.com/yexiyue/talechime/releases/latest/download/talechime-installer.ps1 | iex
 ```
 
-也可从 [GitHub Releases](https://github.com/yexiyue/talechime/releases) 下载 `.tar.xz` / `.zip`，解压后加入 PATH。标准包包含 Nano、对齐、Qwen / VoxCPM / OmniVoice；Mac 增加 Metal 与 MOSS Candle Metal，Windows/Linux 使用 CPU。CUDA 保留源码构建与编译 CI。模型按需下载，安装包不含模型权重。
+也可从 [GitHub Releases](https://github.com/yexiyue/talechime/releases) 下载 `.tar.xz` / `.zip`，解压后加入 PATH。标准包包含 Nano、Qwen / VoxCPM / OmniVoice；Mac 增加 Metal 与 MOSS Candle Metal，Windows/Linux 使用 CPU。CUDA 保留源码构建与编译 CI。模型按需下载，安装包不含模型权重。
 
 Mac 标准包要求 macOS 15+（Candle Metal residency set API）。Linux 标准包基于 Ubuntu 24.04 构建，需要 glibc 2.39+、对应的 libstdc++ 和 ALSA 运行库。Windows 使用动态 MSVC CRT，需要 Visual C++ Redistributable。帮助与协议握手不要求模型、CUDA、GPU 或音频设备。
 
@@ -57,7 +57,7 @@ cargo run -- voices list
 cargo run --release -- chapter.txt
 ```
 
-默认构建包含 MOSS Nano 和可选对齐实现，对齐默认关闭。新用户的实际默认模型由本构建中的模型及设备目录决定；已有配置保留用户选择。可显式指定 CPU MOSS：
+默认构建包含 MOSS Nano。新用户的实际默认模型由本构建中的模型及设备目录决定；已有配置保留用户选择。可显式指定 CPU MOSS：
 
 ```bash
 cargo run --release -- --backend moss --tts-device cpu chapter.txt
@@ -87,7 +87,7 @@ cargo build --release -p talechime --no-default-features --features qwen-cuda
 target/release/talechime --backend qwen --model 1.7b-customvoice --tts-device cuda chapter.txt
 
 # Apple Silicon
-cargo build --release -p talechime --features metal
+cargo build --release -p talechime --features qwen-metal
 target/release/talechime --backend qwen --tts-device metal chapter.txt
 
 # 扩展其他 Candle 后端
@@ -115,10 +115,10 @@ talechime --backend moss voices remove reader
 talechime --protocol
 ```
 
-stdin/stdout 使用 UTF-8 JSON Lines；stderr 用于日志，协议模式不接管终端。客户端先发送 `hello`，核验 `protocol_version` 和模型能力，再发送准备/播放命令。当前协议主版本是 **5**。
+stdin/stdout 使用 UTF-8 JSON Lines；stderr 用于日志，协议模式不接管终端。客户端先发送 `hello`，核验 `protocol_version` 和模型能力，再发送准备/播放命令。当前协议主版本是 **6**，已移除对齐配置与句子事件。
 
 ```json
-{"protocol_version":5,"request_id":"hello-1","session_id":null,"type":"hello"}
+{"protocol_version":6,"request_id":"hello-1","session_id":null,"type":"hello"}
 ```
 
 `talechime-protocol` 只依赖轻量序列化、哈希和错误库。阅读器可共享其 DTO，同时把模型与音频隔离在进程中；Rust 应用也可直接装配 core/backends，需在自己的 Tokio `LocalSet` 中运行会话。核心不自行创建应用运行时。

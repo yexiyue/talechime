@@ -13,7 +13,7 @@ use tts_core::{
 };
 use tts_protocol::{Command, ErrorInfo, Event, Request, SessionState};
 
-type Preparation = JoinHandle<anyhow::Result<crate::preparation::Prepared>>;
+type Preparation = JoinHandle<anyhow::Result<Rc<dyn tts_core::backend::Backend>>>;
 
 pub struct Response {
     pub session: Option<String>,
@@ -78,13 +78,13 @@ impl Worker {
         feature = "voxcpm",
         feature = "omnivoice",
     ))]
-    pub fn unprepared_device_status(&self, component: &str) -> anyhow::Result<Event> {
+    pub fn unprepared_device_status(&self) -> anyhow::Result<Event> {
         let config = self.store.load()?;
-        Ok(crate::preparation::unprepared_device_status(
-            component,
+        Ok(self.resources.device_status_for(
             &config.backend,
             config.model.as_deref(),
-            &self.resources,
+            tts_protocol::Device::Auto,
+            Some("resources not prepared".into()),
         ))
     }
     pub fn is_preparing(&self) -> bool {
@@ -125,17 +125,11 @@ impl Worker {
         match AudioPlayer::open() {
             Ok(player) => {
                 self.manager = Some(SessionManager::new(
-                    prepared.backend,
+                    prepared,
                     Rc::new(player),
                     self.checkpoints.clone(),
                     self.events.clone(),
                 ));
-                if let Some(aligner) = prepared.aligner {
-                    self.manager = self
-                        .manager
-                        .take()
-                        .map(|manager| manager.with_aligner(aligner));
-                }
                 self.resource_state = SessionState::Idle;
                 Response::global(Event::ModelReady)
             }
@@ -176,11 +170,6 @@ impl Worker {
                     Ok(config) => config,
                     Err(error) => return Response::error("config_invalid", "config", error),
                 };
-                if let Err(error) = crate::preparation::validate_alignment_enabled(
-                    patch.alignment_enabled.unwrap_or(old.alignment_enabled),
-                ) {
-                    return Response::error("alignment_unavailable", "config", error);
-                }
                 let target = patch.backend.as_deref().unwrap_or(&old.backend);
                 let caps = match self
                     .resources
@@ -195,27 +184,16 @@ impl Worker {
                     feature = "voxcpm",
                     feature = "omnivoice",
                 ))]
-                for (component, device) in [
-                    (
-                        "tts",
-                        patch
-                            .tts_device
-                            .or_else(|| (target != old.backend).then_some(old.tts_device)),
-                    ),
-                    ("alignment", patch.alignment_device),
-                ]
-                .into_iter()
-                .filter_map(|(component, device)| device.map(|device| (component, device)))
-                {
-                    if let Err(error) = crate::preparation::validate_device(
-                        component,
-                        device,
-                        target,
-                        patch.target_model(&old),
-                        &self.resources,
-                    ) {
-                        return Response::error("device_unavailable", "config", error);
-                    }
+                if let Some(device) = patch.tts_device.or_else(|| {
+                    (target != old.backend || patch.target_model(&old) != old.model.as_deref())
+                        .then_some(old.tts_device)
+                }) && let Err(error) = crate::preparation::validate_device(
+                    device,
+                    target,
+                    patch.target_model(&old),
+                    &self.resources,
+                ) {
+                    return Response::error("device_unavailable", "config", error);
                 }
                 let config = match self.store.update(patch, &caps) {
                     Ok(config) => config,
@@ -231,8 +209,6 @@ impl Worker {
                 if config.model != old.model
                     || config.backend != old.backend
                     || config.tts_device != old.tts_device
-                    || config.alignment_device != old.alignment_device
-                    || config.alignment_enabled != old.alignment_enabled
                 {
                     self.cancel_prepare().await;
                     self.disconnect_progress();
@@ -391,7 +367,7 @@ impl Drop for Worker {
     }
 }
 
-#[cfg(all(test, feature = "moss", feature = "alignment"))]
+#[cfg(all(test, feature = "moss"))]
 mod tests {
     use super::*;
     use std::{cell::Cell, sync::Arc};
@@ -426,7 +402,7 @@ mod tests {
         fn configure(&self, _: f32, _: f32) {}
     }
     #[tokio::test]
-    async fn alignment_toggle_releases_prepared_manager_and_preserves_checkpoint_files() {
+    async fn device_change_releases_prepared_manager_and_preserves_checkpoint_files() {
         let root = tempfile::tempdir().unwrap();
         let resources = Resources::new(Some(root.path().join("models"))).unwrap();
         let caps = resources.capabilities("moss").unwrap();
@@ -453,15 +429,17 @@ mod tests {
         let response = worker
             .command(&Request {
                 protocol_version: tts_protocol::PROTOCOL_VERSION,
-                request_id: "toggle".into(),
+                request_id: "device".into(),
                 session_id: None,
                 command: Command::UpdateConfig(tts_protocol::ConfigPatch {
-                    alignment_enabled: Some(true),
+                    tts_device: Some(tts_protocol::Device::Cpu),
                     ..Default::default()
                 }),
             })
             .await;
-        assert!(matches!(response.event, Event::ConfigChanged(config) if config.alignment_enabled));
+        assert!(
+            matches!(response.event, Event::ConfigChanged(config) if config.tts_device == tts_protocol::Device::Cpu)
+        );
         assert!(worker.manager.is_none());
         assert_eq!(worker.resource_state, SessionState::Idle);
         assert!(player.0.get() > 0);
@@ -469,5 +447,57 @@ mod tests {
             std::fs::read_to_string(progress_file).unwrap(),
             "reliable progress"
         );
+    }
+    #[cfg(feature = "moss-candle")]
+    #[tokio::test]
+    async fn model_change_rejects_inherited_device_before_config_or_manager_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let resources = Resources::new(Some(root.path().join("models"))).unwrap();
+        let defaults = tts_protocol::Config {
+            model: Some("nano".into()),
+            tts_device: tts_protocol::Device::Cpu,
+            ..Default::default()
+        };
+        let store = ConfigStore::new(root.path().join("config.json")).with_defaults(defaults);
+        let old = store
+            .initialize(&resources.capabilities("moss").unwrap())
+            .unwrap();
+        let original = std::fs::read(store.path()).unwrap();
+        let checkpoints = CheckpointStore::new(root.path().join("checkpoints"));
+        let (events, _) = mpsc::channel(32);
+        let (progress, _) = mpsc::channel(32);
+        let player = Rc::new(IdlePlayer::default());
+        let mut worker = Worker::new(
+            store.clone(),
+            checkpoints.clone(),
+            resources.clone(),
+            events.clone(),
+            progress,
+        );
+        worker.manager = Some(SessionManager::new(
+            Rc::new(SilentBackend(resources.capabilities("moss").unwrap())),
+            player.clone(),
+            checkpoints,
+            events,
+        ));
+        let response = worker
+            .command(&Request {
+                protocol_version: tts_protocol::PROTOCOL_VERSION,
+                request_id: "model".into(),
+                session_id: None,
+                command: Command::UpdateConfig(tts_protocol::ConfigPatch {
+                    expected_revision: old.revision,
+                    model: Some("local-1.7b".into()),
+                    voice: Some("narrator".into()),
+                    ..Default::default()
+                }),
+            })
+            .await;
+        assert!(
+            matches!(response.event, Event::Error(ref error) if error.code == "device_unavailable")
+        );
+        assert_eq!(std::fs::read(store.path()).unwrap(), original);
+        assert!(worker.manager.is_some());
+        assert_eq!(player.0.get(), 0);
     }
 }

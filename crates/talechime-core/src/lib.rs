@@ -3,7 +3,6 @@
 //!
 //! Run sessions inside a Tokio `LocalSet`; concrete models live in talechime-backends.
 
-pub mod alignment;
 pub mod audio;
 pub mod backend;
 pub mod checkpoint;

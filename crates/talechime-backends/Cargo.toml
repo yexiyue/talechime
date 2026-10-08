@@ -8,14 +8,13 @@ description = "Native model adapters for novel-tts"
 repository = "https://github.com/yexiyue/talechime"
 
 [features]
-default = ["moss", "alignment"]
-alignment = ["dep:ort", "dep:tokenizers", "dep:rustfft", "dep:rubato"]
+default = ["moss"]
 moss = ["dep:ort", "dep:sentencepiece-rs", "dep:rand", "dep:hound", "dep:rubato"]
 moss-candle = ["moss", "dep:moss-tts", "dep:candle-core"]
 moss-candle-cuda = ["moss-candle", "moss-tts/cuda"]
 moss-candle-metal = ["moss-candle", "moss-tts/metal", "tts-candle-platform/metal"]
 qwen = ["dep:qwen3-tts", "dep:hound"]
-metal = ["qwen", "qwen3-tts/metal", "tts-candle-platform/metal"]
+qwen-metal = ["qwen", "qwen3-tts/metal", "tts-candle-platform/metal"]
 qwen-cuda = ["qwen", "qwen3-tts/cuda"]
 voxcpm = ["dep:voxcpm", "dep:candle-core", "dep:hound", "dep:rubato"]
 voxcpm-cuda = ["voxcpm", "voxcpm/cuda"]
@@ -23,7 +22,7 @@ voxcpm-metal = ["voxcpm", "voxcpm/metal", "tts-candle-platform/metal"]
 omnivoice = ["dep:omnivoice", "dep:hound", "dep:rubato"]
 omnivoice-cuda = ["omnivoice", "omnivoice/cuda"]
 omnivoice-metal = ["omnivoice", "omnivoice/metal", "tts-candle-platform/metal"]
-coreml = ["dep:ort", "ort/coreml"]
+ort-coreml = ["dep:ort", "ort/coreml"]
 ort-cuda = ["dep:ort", "ort/cuda"]
 directml-probe = ["moss", "ort/directml", "dep:windows"]
 
@@ -31,15 +30,13 @@ directml-probe = ["moss", "ort/directml", "dep:windows"]
 tts-candle-platform.workspace = true
 moss-tts = { workspace = true, optional = true }
 candle-core = { workspace = true, optional = true }
-omnivoice = { path = "../omnivoice", optional = true }
-voxcpm = { path = "../voxcpm", optional = true }
+omnivoice = { workspace = true, optional = true }
+voxcpm = { workspace = true, optional = true }
 qwen3-tts = { workspace = true, optional = true }
 tts-core = { package = "talechime-core", path = "../talechime-core", version = "0.3.0" }
 tts-protocol = { package = "talechime-protocol", path = "../talechime-protocol", version = "0.1.0" }
 ort = { workspace = true, optional = true }
 sentencepiece-rs = { version = "0.2.2", optional = true }
-tokenizers = { workspace = true, features = ["fancy-regex"], optional = true }
-rustfft = { workspace = true, optional = true }
 rand = { version = "0.9", optional = true }
 hound = { workspace = true, optional = true }
 rubato = { version = "0.16", optional = true }
@@ -61,14 +58,6 @@ required-features = ["directml-probe"]
 [[example]]
 name = "moss"
 required-features = ["moss"]
-
-[[example]]
-name = "alignment_probe"
-required-features = ["moss"]
-
-[[example]]
-name = "alignment"
-required-features = ["alignment", "moss"]
 
 [[example]]
 name = "device_calibration"

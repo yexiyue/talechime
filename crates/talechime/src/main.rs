@@ -37,11 +37,6 @@ struct Args {
     style: Option<String>,
     #[arg(long, value_parser = parse_device)]
     tts_device: Option<tts_protocol::Device>,
-    #[arg(long, value_parser = parse_device)]
-    alignment_device: Option<tts_protocol::Device>,
-    /// Enable or disable optional sentence alignment (disabled by default).
-    #[arg(long, num_args = 0..=1, default_missing_value = "true", require_equals = true)]
-    alignment: Option<bool>,
     /// File to read. Interactive controls: space=pause/resume, s=stop, q=exit.
     #[arg(required_unless_present = "protocol", conflicts_with = "protocol")]
     file: Option<PathBuf>,
@@ -96,9 +91,7 @@ async fn main() -> anyhow::Result<()> {
             || args.style.is_some()
             || args.backend.is_some()
             || args.voice.is_some()
-            || args.tts_device.is_some()
-            || args.alignment_device.is_some()
-            || args.alignment.is_some())
+            || args.tts_device.is_some())
     {
         let current = config.load()?;
         let target = args.backend.as_deref().unwrap_or(&current.backend);
@@ -107,24 +100,6 @@ async fn main() -> anyhow::Result<()> {
                 .then_some(current.model.as_deref())
                 .flatten()
         });
-        #[cfg(any(
-            feature = "moss",
-            feature = "qwen",
-            feature = "voxcpm",
-            feature = "omnivoice",
-        ))]
-        for (component, device) in [
-            ("tts", args.tts_device),
-            ("alignment", args.alignment_device),
-        ]
-        .into_iter()
-        .filter_map(|(component, device)| device.map(|device| (component, device)))
-        {
-            preparation::validate_device(component, device, target, model, &resources)?;
-        }
-        preparation::validate_alignment_enabled(
-            args.alignment.unwrap_or(current.alignment_enabled),
-        )?;
         let caps = resources.capabilities_for(target, model)?;
         let model_changed = resources
             .capabilities_for(&current.backend, current.model.as_deref())
@@ -138,6 +113,20 @@ async fn main() -> anyhow::Result<()> {
                 .filter(|id| *id != &current.backend)
                 .map(|_| tts_protocol::Device::Auto)
         });
+        #[cfg(any(
+            feature = "moss",
+            feature = "qwen",
+            feature = "voxcpm",
+            feature = "omnivoice",
+        ))]
+        if tts_device.is_some() || model_changed {
+            preparation::validate_device(
+                tts_device.unwrap_or(current.tts_device),
+                target,
+                model,
+                &resources,
+            )?;
+        }
         config.update(
             &tts_protocol::ConfigPatch {
                 expected_revision: current.revision,
@@ -145,8 +134,6 @@ async fn main() -> anyhow::Result<()> {
                 model: args.model.clone(),
                 style: args.style.clone(),
                 tts_device,
-                alignment_device: args.alignment_device,
-                alignment_enabled: args.alignment,
                 voice,
                 ..Default::default()
             },
@@ -198,19 +185,5 @@ fn parse_device(value: &str) -> Result<tts_protocol::Device, String> {
         "metal" => Ok(tts_protocol::Device::Metal),
         "cuda" => Ok(tts_protocol::Device::Cuda),
         _ => Err("expected auto/cpu/coreml/cuda/metal".into()),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn alignment_flag_keeps_file_argument_and_supports_explicit_disable() {
-        let enabled = Args::try_parse_from(["talechime", "--alignment", "book.txt"]).unwrap();
-        assert_eq!(enabled.alignment, Some(true));
-        assert_eq!(enabled.file, Some(PathBuf::from("book.txt")));
-        let disabled =
-            Args::try_parse_from(["talechime", "--alignment=false", "book.txt"]).unwrap();
-        assert_eq!(disabled.alignment, Some(false));
     }
 }

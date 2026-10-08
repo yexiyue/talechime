@@ -116,22 +116,16 @@ pub fn compiled_devices() -> Vec<Device> {
         Device::Cpu,
         #[cfg(all(feature = "qwen-cuda", any(target_os = "windows", target_os = "linux")))]
         Device::Cuda,
-        #[cfg(all(feature = "metal", target_os = "macos"))]
+        #[cfg(all(feature = "qwen-metal", target_os = "macos"))]
         Device::Metal,
     ]
 }
 pub fn available_devices() -> Vec<Device> {
     compiled_devices()
         .into_iter()
-        .filter(|device| match device {
-            Device::Cpu => true,
-            #[cfg(all(feature = "qwen-cuda", any(target_os = "windows", target_os = "linux")))]
-            Device::Cuda => qwen3_tts::device::cuda(0).is_ok(),
-            #[cfg(all(feature = "metal", target_os = "macos"))]
-            Device::Metal => {
-                tts_candle_platform::metal_is_available() && qwen3_tts::device::metal(0).is_ok()
-            }
-            _ => false,
+        .filter(|device| {
+            (*device != Device::Metal || tts_candle_platform::metal_is_available())
+                && runtime::device(*device).is_ok()
         })
         .collect()
 }

@@ -96,12 +96,6 @@ impl ConfigStore {
         if let Some(device) = patch.tts_device {
             config.tts_device = device;
         }
-        if let Some(device) = patch.alignment_device {
-            config.alignment_device = device;
-        }
-        if let Some(enabled) = patch.alignment_enabled {
-            config.alignment_enabled = enabled;
-        }
         if let Some(speed) = patch.speed {
             config.speed = speed;
         }
@@ -287,47 +281,14 @@ mod tests {
     }
 
     #[test]
-    fn alignment_switch_persists_without_changing_voice_or_device() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = ConfigStore::new(dir.path().join("config.json"));
-        let caps = capabilities();
-        let current = store
-            .update(
-                &ConfigPatch {
-                    backend: Some("kokoro".into()),
-                    voice: Some("Zf001".into()),
-                    alignment_enabled: Some(true),
-                    ..Default::default()
-                },
-                &caps,
-            )
-            .unwrap();
-        assert!(current.alignment_enabled);
-        let changed = store
-            .update(
-                &ConfigPatch {
-                    expected_revision: current.revision,
-                    alignment_enabled: Some(false),
-                    ..Default::default()
-                },
-                &caps,
-            )
-            .unwrap();
-        assert!(!changed.alignment_enabled);
-        assert_eq!(changed.voice, current.voice);
-        assert_eq!(changed.alignment_device, current.alignment_device);
-        assert_eq!(store.load().unwrap(), changed);
-    }
-
-    #[test]
-    fn legacy_load_and_drop_do_not_write_defaults() {
+    fn load_and_drop_do_not_write_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
-        let original = include_str!("../../talechime-protocol/tests/fixtures/legacy-config.json");
+        let original = include_str!("../../talechime-protocol/tests/fixtures/preferences.json");
         std::fs::write(&path, original).unwrap();
         let store = ConfigStore::new(&path);
         let config = store.load().unwrap();
-        assert_eq!(config.voice, "Zm009");
+        assert_eq!(config.voice, "Weiguo");
         drop(config);
         drop(store);
         assert_eq!(std::fs::read_to_string(path).unwrap(), original);
@@ -339,7 +300,7 @@ mod tests {
         let path = dir.path().join("config.json");
         std::fs::write(
             &path,
-            include_str!("../../talechime-protocol/tests/fixtures/legacy-config.json"),
+            include_str!("../../talechime-protocol/tests/fixtures/preferences.json"),
         )
         .unwrap();
         let store = ConfigStore::new(path);
@@ -348,8 +309,8 @@ mod tests {
             model_name: String::new(),
             default_voice: "Zf001".into(),
             voice_names: Default::default(),
-            voices: vec!["Zm009".into()],
-            backend: "kokoro".into(),
+            voices: vec!["Weiguo".into()],
+            backend: "moss".into(),
             native_streaming: false,
             style: false,
             compiled_devices: Vec::new(),

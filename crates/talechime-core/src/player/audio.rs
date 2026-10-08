@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-/// Shared PCM avoids copying the same audio for playback and alignment.
+/// Shared PCM lets the playback source own queued audio without copying it.
 struct SharedPcm {
     audio: Arc<Pcm>,
     index: usize,

@@ -54,22 +54,13 @@ pub async fn run(
                 Event::ModelProgress {resource,downloaded,total} => eprintln!("{resource}: {:.1}% · {:.1}/{:.1} MiB", if total==0 {0.0} else {downloaded as f64/total as f64*100.0},downloaded as f64/1048576.0,total as f64/1048576.0),
                 Event::ResourceState {stage,resource}=>eprintln!("{stage} {resource}"),
                 Event::DeviceStatus {component,selected,reason,..} => eprintln!("{component}: {selected:?} {}",reason.unwrap_or_default()),
-                Event::AlignmentStatus {reason,..} => eprintln!("片段高亮: {}",reason.unwrap_or_default()),
                 _=>{}
             } },
             signal = tokio::signal::ctrl_c() => { signal?; task.abort(); let _ = task.await; return Ok(()); }
         }
     };
     let (tx, mut events) = mpsc::channel::<SessionEvent>(64);
-    let mut manager = SessionManager::new(
-        prepared.backend,
-        Rc::new(AudioPlayer::open()?),
-        checkpoints,
-        tx,
-    );
-    if let Some(aligner) = prepared.aligner {
-        manager = manager.with_aligner(aligner);
-    }
+    let mut manager = SessionManager::new(prepared, Rc::new(AudioPlayer::open()?), checkpoints, tx);
     let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
     let _terminal = if interactive {
         Some(TerminalGuard::enter()?)
@@ -112,7 +103,7 @@ pub async fn run(
                         Event::BufferStatus{buffered_ms,target_ms,underruns} => eprintln!("缓冲 {:.1}/{:.1}s · 耗尽 {underruns} 次\r",buffered_ms as f64/1000.0,target_ms as f64/1000.0),
                         Event::SessionState{state} => eprintln!("{state:?}\r"),
                         Event::Error(error) => eprintln!("{}: {}\r",error.stage,error.message),
-                        Event::SegmentStarted{range,..} | Event::SentenceStarted{range,..} => eprintln!("bytes {}..{}\r",range.start,range.end),
+                        Event::SegmentStarted{range,..} => eprintln!("bytes {}..{}\r",range.start,range.end),
                         Event::SessionEnded{reason,..} => {
                             if reason == EndReason::Failed {return Err(anyhow::anyhow!("listening failed; run again to retry the unfinished segment"));}
                             break;

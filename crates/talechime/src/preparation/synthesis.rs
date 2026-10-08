@@ -5,7 +5,7 @@ pub(super) async fn prepare(
     resources: &Resources,
     config: &Config,
     progress: &mpsc::Sender<Event>,
-) -> anyhow::Result<(Rc<dyn Backend>, Device, Option<Device>)> {
+) -> anyhow::Result<Rc<dyn Backend>> {
     let candidate = resources
         .available_devices_for(&config.backend, config.model.as_deref())
         .into_iter()
@@ -185,7 +185,7 @@ pub(super) async fn prepare(
         );
     }
 
-    Ok((backend, selected, candidate))
+    Ok(backend)
 }
 pub(super) fn tts_revision(config: &Config) -> &'static str {
     let backend = config.backend.as_str();

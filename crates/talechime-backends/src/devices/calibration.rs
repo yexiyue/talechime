@@ -2,12 +2,9 @@
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
-    time::{Duration, Instant},
+    time::Instant,
 };
-use tts_core::{
-    alignment::{Aligner, AudioClip, SpeechText},
-    backend::{AudioChunk, Backend},
-};
+use tts_core::backend::{AudioChunk, Backend};
 use tts_protocol::Device;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -93,12 +90,7 @@ pub fn key(component: &str, revision: &str) -> String {
 }
 fn runtime_info() -> String {
     let versions: Vec<String> = vec![
-        #[cfg(any(
-            feature = "moss",
-            feature = "alignment",
-            feature = "coreml",
-            feature = "ort-cuda",
-        ))]
+        #[cfg(any(feature = "moss", feature = "ort-coreml", feature = "ort-cuda",))]
         format!("{:?}", ort::info()),
         #[cfg(any(
             feature = "qwen",
@@ -168,78 +160,6 @@ pub async fn synthesis(backend: &dyn Backend, voice: &str) -> anyhow::Result<Mea
             measurements.push(Measurements {
                 total_ms: start.elapsed().as_secs_f64() * 1000.0,
                 first_ms: first.unwrap().as_secs_f64() * 1000.0,
-            });
-        }
-    }
-    Ok(mean(&measurements))
-}
-pub async fn alignment(
-    aligner: &dyn Aligner,
-    text: &SpeechText,
-    audio: &AudioClip,
-) -> anyhow::Result<Measurements> {
-    let mut measurements = Vec::new();
-    for i in 0..8 {
-        let start = Instant::now();
-        tokio::time::timeout(Duration::from_secs(30), aligner.align(text, audio))
-            .await?
-            .map_err(|e| anyhow::anyhow!(e))?;
-        if i >= 3 {
-            let ms = start.elapsed().as_secs_f64() * 1000.0;
-            measurements.push(Measurements {
-                total_ms: ms,
-                first_ms: ms,
-            });
-        }
-    }
-    Ok(mean(&measurements))
-}
-pub async fn concurrent(
-    backend: &dyn Backend,
-    voice: &str,
-    aligner: &dyn Aligner,
-    text: &SpeechText,
-    audio: &AudioClip,
-) -> anyhow::Result<Measurements> {
-    let mut measurements = Vec::new();
-    for i in 0..8 {
-        let started = Instant::now();
-        let synthesis = async {
-            let mut stream = backend
-                .stream("你好，欢迎使用听书功能。今天我们一起阅读一个故事。", voice)
-                .await?;
-            let mut first = None;
-            let mut ended = false;
-            let mut silence = tts_core::audio::BoundarySilence::default();
-            while let Some(chunk) = stream.recv().await {
-                match chunk? {
-                    AudioChunk::Pcm(pcm) => {
-                        if silence.push(pcm)?.is_some() {
-                            first.get_or_insert(started.elapsed());
-                        }
-                    }
-                    AudioChunk::End => {
-                        let _ = silence.finish(true)?;
-                        ended = true;
-                        break;
-                    }
-                }
-            }
-            anyhow::ensure!(ended, "incomplete concurrent calibration");
-            first.ok_or_else(|| anyhow::anyhow!("no concurrent calibration audio"))
-        };
-        let alignment = async {
-            tokio::time::timeout(Duration::from_secs(30), aligner.align(text, audio))
-                .await?
-                .map_err(|e| anyhow::anyhow!(e))
-        };
-        let (first, aligned) = tokio::join!(synthesis, alignment);
-        let first = first?;
-        aligned?;
-        if i >= 3 {
-            measurements.push(Measurements {
-                total_ms: started.elapsed().as_secs_f64() * 1000.0,
-                first_ms: first.as_secs_f64() * 1000.0,
             });
         }
     }

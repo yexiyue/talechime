@@ -5,7 +5,7 @@
 ```mermaid
 flowchart LR
     Reader[阅读器] --> Protocol[talechime-protocol]
-    CLI[novel-tts CLI / worker] --> Protocol
+    CLI[talechime CLI / worker] --> Protocol
     CLI --> Core[talechime-core]
     CLI --> Backends[talechime-backends]
     Backends --> Core
@@ -16,7 +16,7 @@ flowchart LR
 
 ```sh
 cargo build -p talechime                                  # MOSS 默认
-cargo build --release -p talechime --features qwen,metal   # macOS: MOSS + Candle Qwen
+cargo build --release -p talechime --features qwen-metal   # macOS: MOSS + Candle Qwen
 cargo build --release -p talechime --no-default-features --features qwen-cuda # NVIDIA GPU
 ```
 
@@ -39,20 +39,20 @@ CustomVoice 提供九种预置音色，默认福叔 `uncle_fu`；1.7B 支持朗�
 
 Qwen 分段独立于 MOSS 的 token 预算：真实段落和标题建立硬边界；合并软换行，在 180 UTF-8 字节内优先切完整句末、分句、单词和字符边界。原文不修改，装饰线跳过，正文运算符保留。
 
-CPU、可选 CUDA（Windows/Linux，`qwen-cuda`）和 Metal（macOS，`metal`）由 Qwen 自己的设备目录报告。`ort-cuda` 仅用于 MOSS/对齐器，不能为 Qwen 提供 CUDA。`tts-candle-platform` 按目标平台启用同一套 Candle 0.11.0 的 GPU 依赖，Windows 的 all-features 不会编入 Objective-C Metal。CUDA feature 仍需 Toolkit。Auto 使用同一完整链路校准门槛；运行错误仅在 Auto 模式重建 CPU 供下次显式播放，不重放失败片段。
+CPU、可选 CUDA（Windows/Linux，`qwen-cuda`）和 Metal（macOS，`qwen-metal`）由 Qwen 自己的设备目录报告。`ort-cuda` 仅用于 MOSS Nano，不能为 Qwen 提供 CUDA。`tts-candle-platform` 按目标平台启用同一套 Candle 0.11.0 的 GPU 依赖，Windows 的 all-features 不会编入 Objective-C Metal。CUDA feature 仍需 Toolkit。Auto 使用同一完整链路校准门槛；运行错误仅在 Auto 模式重建 CPU 供下次显式播放，不重放失败片段。
 
 流式 codec 的边界连续性需要人工试听，EOS 也不能证明逐字覆盖。当前各模型实测与待验收项见 [验收记录](../../docs/records/tts-model-tiers-acceptance.md)。
 
 ```sh
-cargo run --release -p talechime-backends --no-default-features --features qwen,metal --example qwen -- ~/.novel-tts/qwen output.wav metal '你好，欢迎收听。'
-TRNOVEL_QWEN_MODEL_DIR=~/.novel-tts/qwen cargo test --release -p talechime-backends --features qwen real_model_streams_and_releases_cancelled_request
+cargo run --release -p talechime-backends --no-default-features --features qwen-metal --example qwen -- <model-directory> output.wav metal '你好，欢迎收听。'
+TRNOVEL_QWEN_MODEL_DIR=<model-directory> cargo test --release -p talechime-backends --features qwen real_model_streams_and_releases_cancelled_request
 ```
 
 ## MOSS
 
 CPU ONNX 推理在独立线程执行。通道容量为 1；消费者丢弃流后，生成在推理步骤之间终止。SentencePiece 按 50 token / 60 个 CJK 字符预算合并相邻句子，超限优先在句末分段，保存原文范围，合成副本执行空白/标点规范化。首版不引入官方 Python 可选的 WeText 数字规范化包。
 
-资源位于 `~/.novel-tts/moss/{tts,codec}`，自定义音色位于 `moss/voices`。`--model-dir` 覆盖的是公共根目录，子目录按后端和模型隔离。
+资源位于 `~/.talechime/resources/moss/{tts,codec}`，自定义音色位于 `moss/voices`。`--model-dir` 覆盖的是公共根目录，子目录按后端和模型隔离。
 
 固定资源清单位于 `src/moss/assets/resources.json`，每个文件记录下载 URL、大小和 SHA-256：
 
@@ -77,17 +77,6 @@ TRNOVEL_MOSS_MODEL_DIR=<root>/moss cargo test -p talechime-backends
 ## 上游来源和许可
 
 MOSS 推理流程移植自 [OpenMOSS/MOSS-TTS-Nano](https://github.com/OpenMOSS/MOSS-TTS-Nano)。assets 中的 manifest、ONNX metadata 和参考音色 codes 来自上述固定模型 revision，按 Apache-2.0 提供；许可证保存在 `src/moss/assets/LICENSE.OpenMOSS`。原项目 Rust 代码继续使用仓库 MIT 许可。
-
-## Qwen 对齐与设备
-
-alignment feature 提供独立 `QwenAligner`，实现 core 的 `Aligner`，通过容量为 1 的请求通道在线程内运行；原文单位、16kHz mono、128-bin log-mel、分词、时间戳修复全部使用 Rust。来源为 [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) 和 [固定 ONNX 导出](https://huggingface.co/valoomba/Qwen3-ForcedAligner-0.6B-ONNX/tree/261c9ed100c1b18a4a1fbc488e05625dc9a4ae5c)，许可见 alignment/LICENSE.Qwen。
-
-coreml/ort-cuda feature 启用对应 ORT provider，Rust ort 固定 rc.13，普通预编译 ORT 1.28、Rust API 21（实际原生库 1.22 或更新，设备由应用显式选择），CUDA 原生分发要求 CUDA 13；不再发布 Intel Mac 制品。设备与校准策略由 CLI 组装，不进入 core 或阅读器。CoreML 使用 NeuralNetwork、静态子图和独立编译缓存；CUDA 用 I/O binding 保留 KV/codec 状态。设备可用、子图分配与性能通过不同证据判断；验收见 [验收记录](../../docs/records/continuous-tts-acceptance.md)。
-
-```sh
-TRNOVEL_MOSS_MODEL_DIR=<root>/moss TRNOVEL_QWEN_MODEL_DIR=<root>/alignment/qwen cargo test -p talechime-backends
-cargo run --release -p talechime-backends --features coreml --example device_calibration -- <root>/moss
-```
 
 ## MOSS 连贯性与终止诊断
 

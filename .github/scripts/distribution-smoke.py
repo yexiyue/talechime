@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 from threading import Thread
+from smoke import protocol_version
 
 
 def run(*args, **kwargs):
@@ -67,12 +68,13 @@ def main(app, target):
                 assert not history.exists()
                 assert all(path.read_text() == 'sentinel' for path in preserved)
             else:
-                requests = ''.join(json.dumps(dict(protocol_version=5, request_id=kind,
+                version = protocol_version()
+                requests = ''.join(json.dumps(dict(protocol_version=version, request_id=kind,
                     session_id=None, type=kind)) + '\n' for kind in ['hello', 'shutdown'])
                 result = run(binary, '--protocol', input=requests, capture_output=True,
                     text=True, encoding='utf-8', env=env, cwd=home)
                 messages = [json.loads(line) for line in result.stdout.splitlines()]
-                assert messages[0]['type'] == 'ready' and messages[0]['protocol_version'] == 5
+                assert messages[0]['type'] == 'ready' and messages[0]['protocol_version'] == version
                 assert messages[-1]['type'] == 'accepted'
         assert not list(home.rglob('*.onnx')), 'Handshake downloaded weights'
         assert not list(home.rglob('config.json')), 'Handshake persisted configuration'

@@ -14,15 +14,14 @@ name = "talechime"
 path = "src/main.rs"
 
 [features]
-default = ["moss", "alignment"]
+default = ["moss"]
 moss = ["tts-backends/moss"]
 moss-candle = ["moss", "tts-backends/moss-candle"]
 moss-candle-cuda = ["moss-candle", "tts-backends/moss-candle-cuda"]
 moss-candle-metal = ["moss-candle", "tts-backends/moss-candle-metal"]
 qwen = ["tts-backends/qwen"]
-metal = ["qwen", "tts-backends/metal"]
-alignment = ["tts-backends/alignment"]
-coreml = ["tts-backends/coreml"]
+qwen-metal = ["qwen", "tts-backends/qwen-metal"]
+ort-coreml = ["tts-backends/ort-coreml"]
 ort-cuda = ["tts-backends/ort-cuda"]
 qwen-cuda = ["qwen", "tts-backends/qwen-cuda"]
 voxcpm = ["tts-backends/voxcpm"]

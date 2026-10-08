@@ -67,16 +67,19 @@ pub(super) fn run(
     }
 }
 
-pub(super) fn load(directory: &std::path::Path, selected: Device) -> anyhow::Result<Qwen3TTS> {
-    let device = match selected {
-        Device::Cpu => qwen3_tts::Device::Cpu,
+pub(super) fn device(selected: Device) -> anyhow::Result<qwen3_tts::Device> {
+    match selected {
+        Device::Cpu => Ok(qwen3_tts::Device::Cpu),
         #[cfg(all(feature = "qwen-cuda", any(target_os = "windows", target_os = "linux")))]
-        Device::Cuda => qwen3_tts::device::cuda(0)?,
-        #[cfg(all(feature = "metal", target_os = "macos"))]
-        Device::Metal => qwen3_tts::device::metal(0)?,
+        Device::Cuda => Ok(qwen3_tts::device::cuda(0)?),
+        #[cfg(all(feature = "qwen-metal", target_os = "macos"))]
+        Device::Metal => Ok(qwen3_tts::device::metal(0)?),
         _ => anyhow::bail!("Qwen device {selected:?} is unavailable"),
-    };
-    Qwen3TTS::from_pretrained(&directory.to_string_lossy(), device)
+    }
+}
+
+pub(super) fn load(directory: &std::path::Path, selected: Device) -> anyhow::Result<Qwen3TTS> {
+    Qwen3TTS::from_pretrained(&directory.to_string_lossy(), device(selected)?)
 }
 
 fn inference_error(error: anyhow::Error) -> BackendError {

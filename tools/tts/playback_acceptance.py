@@ -1,6 +1,8 @@
 import subprocess, threading, queue, json, time, hashlib
 from pathlib import Path
-import argparse, os, atexit
+import argparse, os, atexit, re
+protocol_source = Path(__file__).resolve().parents[2] / 'crates/talechime-protocol/src/lib.rs'
+protocol_version = int(re.search(r'PROTOCOL_VERSION: u32 = (\d+)', protocol_source.read_text()).group(1))
 parser = argparse.ArgumentParser(description='Development-only protocol playback acceptance; no Python is used by novel-tts.')
 parser.add_argument('--worker', default='target/release/novel-tts.exe')
 parser.add_argument('--backend', required=True)
@@ -38,7 +40,7 @@ def read():
 threading.Thread(target=read, daemon=True).start()
 
 def send(kind, request, payload=None, session=None):
-    d = dict(protocol_version=5, request_id=request, session_id=session, type=kind)
+    d = dict(protocol_version=protocol_version, request_id=request, session_id=session, type=kind)
     if payload is not None:
         d['payload'] = payload
     p.stdin.write(json.dumps(d, ensure_ascii=False) + '\n')

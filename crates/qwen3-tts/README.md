@@ -13,7 +13,7 @@ benchmarks, Python tooling or custom PTX assets are included.
 
 ```mermaid
 flowchart LR
-    Worker[novel-tts] --> Adapter[talechime-backends]
+    Worker[talechime] --> Adapter[talechime-backends]
     Adapter --> Model[qwen3-tts]
     Model --> Candle[Candle CPU / CUDA / Metal]
     Worker --> Core[talechime-core playback]
@@ -50,11 +50,11 @@ requests fail if initialization fails; only Auto may fall back to CPU.
 ```sh
 cargo build --release -p talechime --no-default-features --features qwen
 cargo build --release -p talechime --no-default-features --features qwen-cuda
-cargo build --release -p talechime --no-default-features --features metal
+cargo build --release -p talechime --no-default-features --features qwen-metal
 ```
 
 `qwen-cuda` accelerates Qwen through Candle. `ort-cuda` independently accelerates
-MOSS and the alignment model through ONNX Runtime. Enable both only when needed.
+MOSS Nano through ONNX Runtime. Enable both only when needed.
 
 For RTX 50 series, use a Blackwell-capable Toolkit (12.8 or newer), with a
 compatible MSVC host compiler. The `nvidia-smi` CUDA version describes the driver,

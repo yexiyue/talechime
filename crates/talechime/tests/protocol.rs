@@ -191,9 +191,7 @@ fn qwen_selection_and_voice_listing_do_not_load_models() {
             ..Default::default()
         }),
     );
-    assert!(
-        matches!(changed.event, Event::ConfigChanged(ref config) if config.backend == "qwen" && !config.alignment_enabled)
-    );
+    assert!(matches!(changed.event, Event::ConfigChanged(ref config) if config.backend == "qwen"));
     let invalid = worker.send(
         "coreml",
         Command::UpdateConfig(ConfigPatch {
