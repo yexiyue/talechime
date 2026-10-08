@@ -37,8 +37,8 @@ async fn main() -> anyhow::Result<()> {
         Some("cuda") => tts_protocol::Device::Cuda,
         _ => tts_protocol::Device::Cpu,
     };
-    let aligner = novel_tts_backends::alignment::QwenAligner::load_on(model.into(), device).await?;
-    let measurements = novel_tts_backends::devices::calibration::alignment(
+    let aligner = talechime_backends::alignment::QwenAligner::load_on(model.into(), device).await?;
+    let measurements = talechime_backends::devices::calibration::alignment(
         &*aligner,
         &SpeechText::from_source(&text, 0),
         &audio,

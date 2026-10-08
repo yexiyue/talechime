@@ -7,10 +7,10 @@ async fn main() -> anyhow::Result<()> {
     let mut baseline = None;
     for device in [tts_protocol::Device::Cpu, tts_protocol::Device::Coreml] {
         let backend =
-            novel_tts_backends::moss::MossBackend::load_on(directory.clone().into(), device)
+            talechime_backends::moss::MossBackend::load_on(directory.clone().into(), device)
                 .await?;
         let measured =
-            novel_tts_backends::devices::calibration::synthesis(&backend, "Weiguo").await?;
+            talechime_backends::devices::calibration::synthesis(&backend, "Weiguo").await?;
         eprintln!("{device:?}: {measured:?}");
         if let Some(cpu) = baseline {
             eprintln!("qualifies: {}", measured.improves(cpu));

@@ -40,7 +40,7 @@ fn main() -> anyhow::Result<()> {
     let load = start.elapsed();
     let start = Instant::now();
     let reference = if args.len() >= 6 {
-        let samples = novel_tts_backends::reference::load(Path::new(&args[5]), 16000)?;
+        let samples = talechime_backends::reference::load(Path::new(&args[5]), 16000)?;
         let transcript = args.get(6).map(std::fs::read_to_string).transpose()?;
         Some(model.reference(&samples, transcript, &|| false)?)
     } else {

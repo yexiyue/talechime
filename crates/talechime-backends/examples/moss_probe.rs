@@ -1,5 +1,5 @@
 //! Fixed-seed offline synthesis evidence. Output stays in a user-selected directory.
-use novel_tts_backends::moss::MossBackend;
+use talechime_backends::moss::MossBackend;
 use std::{path::PathBuf, time::Instant};
 use tts_core::{
     audio::BoundarySilence,

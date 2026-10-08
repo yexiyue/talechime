@@ -27,9 +27,9 @@ async fn run() -> anyhow::Result<()> {
         let backend: Rc<dyn Backend> = match args[1].as_str() {
             #[cfg(feature = "moss-candle")]
             "moss" => Rc::new(
-                novel_tts_backends::moss::candle::CandleBackend::load_on(
+                talechime_backends::moss::candle::CandleBackend::load_on(
                     directory.clone(),
-                    novel_tts_backends::moss::candle::Mode::parse(
+                    talechime_backends::moss::candle::Mode::parse(
                         &std::env::var("MOSS_MODEL").unwrap_or_else(|_| "realtime-1.7b".into()),
                     )?,
                     device,
@@ -38,15 +38,15 @@ async fn run() -> anyhow::Result<()> {
             ),
             #[cfg(feature = "qwen")]
             "qwen" => Rc::new(
-                novel_tts_backends::qwen::QwenBackend::load_on(directory.clone(), device).await?,
+                talechime_backends::qwen::QwenBackend::load_on(directory.clone(), device).await?,
             ),
             #[cfg(feature = "voxcpm")]
             "voxcpm" => Rc::new(
-                novel_tts_backends::voxcpm::VoxBackend::load_on(directory.clone(), device).await?,
+                talechime_backends::voxcpm::VoxBackend::load_on(directory.clone(), device).await?,
             ),
             #[cfg(feature = "omnivoice")]
             "omnivoice" => Rc::new(
-                novel_tts_backends::omnivoice::OmniBackend::load_on(directory.clone(), device)
+                talechime_backends::omnivoice::OmniBackend::load_on(directory.clone(), device)
                     .await?,
             ),
             _ => anyhow::bail!("backend not compiled"),

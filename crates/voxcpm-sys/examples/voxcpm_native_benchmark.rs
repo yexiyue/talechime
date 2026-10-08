@@ -23,7 +23,7 @@ fn main() -> anyhow::Result<()> {
     .map_err(anyhow::Error::msg)?;
     let load = started.elapsed();
     let started = Instant::now();
-    let samples = novel_tts_backends::reference::load(Path::new(&args[5]), 16000)?;
+    let samples = talechime_backends::reference::load(Path::new(&args[5]), 16000)?;
     let transcript = std::fs::read_to_string(&args[6])?;
     let encoded = model
         .encode_reference(&samples, 16000)

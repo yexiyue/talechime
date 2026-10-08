@@ -1,5 +1,5 @@
 //! Export a reproducible same-voice comparison without an audio output device.
-use novel_tts_backends::moss::MossBackend;
+use talechime_backends::moss::MossBackend;
 use std::{path::PathBuf, time::Instant};
 use tts_core::{
     audio::BoundarySilence,

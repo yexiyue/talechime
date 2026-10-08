@@ -23,7 +23,7 @@ async fn main() -> anyhow::Result<()> {
     let voice = args.next().unwrap_or_else(|| "uncle_fu".into());
     let style = std::env::var("NOVEL_TTS_PROBE_STYLE").ok();
     let started = Instant::now();
-    let backend = novel_tts_backends::qwen::QwenBackend::load_on(directory, device).await?;
+    let backend = talechime_backends::qwen::QwenBackend::load_on(directory, device).await?;
     let load_ms = started.elapsed().as_millis();
     if std::env::var("NOVEL_TTS_PROBE_CANCEL").is_ok() {
         let mut cancelled = backend.stream(&text, &voice).await?;

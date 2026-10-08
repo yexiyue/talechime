@@ -1,5 +1,5 @@
 //! Real CPU smoke test without opening an audio device.
-use novel_tts_backends::moss::MossBackend;
+use talechime_backends::moss::MossBackend;
 use tts_core::backend::{AudioChunk, Backend};
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
