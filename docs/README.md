@@ -27,7 +27,7 @@
 - MOSS：[Nano](records/moss-tts-acceptance.md)、[Candle](records/moss-candle-acceptance.md)、[macOS 1.7B 流式输出](records/moss-macos-streaming.md)、[连贯性与对齐](records/moss-continuity-acceptance.md)、[DirectML 实验](records/moss-directml-evaluation.md)。
 - Qwen：[Candle 集成](records/qwen-tts-acceptance.md)。
 - VoxCPM：[Candle 移植](records/voxcpm-candle-acceptance.md)、[macOS 性能](records/voxcpm-macos-performance.md)。
-- ASR：[主线原生验收](records/asr-readback-mainline-2026-10-09.md)、[回读校验选型 spike](records/asr-spike-2026-10-09.md)：Qwen、SenseVoice、FireRed、Whisper 候选及当时未接入产品的边界；当前实现见主线记录。
+- ASR：[主线原生验收](records/asr-readback-mainline-2026-10-09.md)、[《蛊真人》验收（已中断）](records/guzhenren-readback-acceptance-2026-10-09.md)、[回读校验选型 spike](records/asr-spike-2026-10-09.md)：Qwen、SenseVoice、FireRed、Whisper 候选及当时未接入产品的边界；当前实现见主线记录。
 
 ## 播放、解耦与历史设计
 

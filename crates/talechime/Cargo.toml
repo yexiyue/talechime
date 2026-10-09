@@ -56,3 +56,7 @@ tempfile.workspace = true
 [[example]]
 name = "verified_synthesis"
 required-features = ["asr"]
+
+[[example]]
+name = "readback_corpus"
+required-features = ["asr", "cli"]
