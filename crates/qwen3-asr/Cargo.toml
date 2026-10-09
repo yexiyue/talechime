@@ -1,0 +1,21 @@
+[package]
+name = "qwen3-asr"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+description = "Native Qwen3-ASR inference for Talechime"
+
+[features]
+default = []
+
+[dependencies]
+candle-core.workspace = true
+candle-nn.workspace = true
+tokenizers = { workspace = true, features = ["onig"] }
+serde.workspace = true
+serde_json.workspace = true
+rustfft.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+log = "0.4"

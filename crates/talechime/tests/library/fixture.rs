@@ -10,6 +10,8 @@ use tokio::sync::mpsc;
 #[derive(Clone, Copy)]
 pub enum Mode {
     Normal,
+    #[allow(dead_code)] // Readback tests use changing attempts; library tests share this fixture.
+    Changing,
     Long,
     Disconnect,
     Silent,
@@ -71,6 +73,8 @@ impl Backend for Fixture {
                         samples: vec![
                             if matches!(mode, Mode::Silent) {
                                 0.0
+                            } else if matches!(mode, Mode::Changing) {
+                                0.1 + segment_index as f32 * 0.001
                             } else {
                                 0.1
                             };

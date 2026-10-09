@@ -16,6 +16,8 @@ pub struct PlanSessionOptions {
     pub restore_checkpoint: bool,
     /// Private execution storage limits for AfterChapterReady.
     pub staging: StagingOptions,
+    /// Optional readback; prepare and attach a verifier before enabling.
+    pub verification: crate::verification::VerificationOptions,
 }
 
 impl Default for PlanSessionOptions {
@@ -26,6 +28,7 @@ impl Default for PlanSessionOptions {
             resume_byte: None,
             restore_checkpoint: false,
             staging: StagingOptions::default(),
+            verification: crate::verification::VerificationOptions::default(),
         }
     }
 }
@@ -49,6 +52,8 @@ pub struct PlanProgress {
 
 pub(super) struct PlanInput {
     pub(super) plan: RefCell<SpeechPlan>,
+    pub(super) verifier: Option<Rc<crate::verification::Verifier>>,
+    pub(super) verification: crate::verification::VerificationOptions,
     pub(super) changed: Notify,
     pub(super) generated: Cell<usize>,
     pub(super) waiting: Cell<bool>,
@@ -59,6 +64,8 @@ impl PlanInput {
     pub(super) fn new(plan: SpeechPlan, byte: usize) -> Self {
         Self {
             plan: RefCell::new(plan),
+            verifier: None,
+            verification: crate::verification::VerificationOptions::default(),
             changed: Notify::new(),
             generated: Cell::new(byte),
             waiting: Cell::new(false),

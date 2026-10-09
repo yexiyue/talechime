@@ -42,15 +42,27 @@ impl Drop for TerminalGuard {
     }
 }
 
+pub struct CliOptions {
+    pub restore_checkpoint: bool,
+    pub plan_file: Option<PathBuf>,
+    pub after_chapter: bool,
+    pub verification: tts_protocol::VerificationOptions,
+    pub report_file: Option<PathBuf>,
+}
 pub async fn run(
     file: PathBuf,
     store: ConfigStore,
     checkpoints: CheckpointStore,
     resources: Resources,
-    restore_checkpoint: bool,
-    plan_file: Option<PathBuf>,
-    after_chapter: bool,
+    options: CliOptions,
 ) -> anyhow::Result<()> {
+    let CliOptions {
+        restore_checkpoint,
+        plan_file,
+        after_chapter,
+        mut verification,
+        report_file,
+    } = options;
     // Read and validate before model download or opening the output device.
     let text = tokio::fs::read_to_string(&file)
         .await
@@ -80,6 +92,7 @@ pub async fn run(
         if input.text != text || !input.sealed {
             anyhow::bail!("CLI requires a sealed plan with the exact file text");
         }
+        verification = input.verification.clone();
         (
             crate::plan_input::build(
                 &input,
@@ -117,11 +130,22 @@ pub async fn run(
             restore_checkpoint,
         )
     };
+    tts_core::verification::validate_options(&verification)?;
+    let readback = verification.policy != tts_protocol::VerificationPolicy::Off;
+    #[cfg(not(feature = "asr"))]
+    if readback {
+        anyhow::bail!("readback requires the asr build feature");
+    }
+    let mut report_output = if let Some(path) = report_file {
+        Some(tokio::fs::File::create(path).await?)
+    } else {
+        None
+    };
     plan.validate_resume_byte(resume_byte.unwrap_or(0))?;
     let (progress, mut preparation) = mpsc::channel(16);
     let settings = config.clone();
     let mut task = tokio::task::spawn_local(async move {
-        crate::preparation::prepare(resources, settings, progress).await
+        crate::preparation::prepare_models(resources, settings, progress, readback).await
     });
     let prepared = loop {
         tokio::select! {
@@ -136,7 +160,12 @@ pub async fn run(
         }
     };
     let (tx, mut events) = mpsc::channel::<SessionEvent>(64);
-    let mut owner = crate::app_session::AppSession::open(prepared, &checkpoints, tx)?;
+    let mut owner = crate::app_session::AppSession::open(
+        prepared.backend,
+        &checkpoints,
+        tx,
+        prepared.verifier,
+    )?;
     let manager = owner.control.clone();
     let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
     let _terminal = if interactive {
@@ -161,6 +190,7 @@ pub async fn run(
                 speed: config.speed,
                 resume_byte,
                 restore_checkpoint,
+                verification,
                 ..Default::default()
             },
         )
@@ -178,6 +208,13 @@ pub async fn run(
                 event = events.recv() => {
                     let Some(event) = event else {break};
                     match event.event {
+                        Event::Verification(report) => {
+                            eprintln!("回读 {:?} · bytes {}..{} · attempt {}\r", report.verdict, report.range.start, report.range.end, report.attempt);
+                            if let Some(file) = &mut report_output {
+                                use tokio::io::AsyncWriteExt;
+                                let mut row=serde_json::to_vec(&report)?; row.push(b'\n'); file.write_all(&row).await?;
+                            }
+                        }
                         Event::BufferStatus{buffered_ms,target_ms,underruns} => eprintln!("缓冲 {:.1}/{:.1}s · 耗尽 {underruns} 次\r",buffered_ms as f64/1000.0,target_ms as f64/1000.0),
                         Event::SessionState{state} => eprintln!("{state:?}\r"),
                         Event::Error(error) => eprintln!("{}: {}\r",error.stage,error.message),

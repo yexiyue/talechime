@@ -14,7 +14,7 @@ RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --document-private-items
 不带 GPU Toolkit 的机器可验证 CPU 适配器组合：
 
 ```bash
-cargo test --locked --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice --lib --tests --examples
+cargo test --locked --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/moss-candle,talechime/asr --lib --tests --examples
 cargo build --locked -p talechime --bins
 ```
 
@@ -27,6 +27,7 @@ CLI 与 backends 使用同名开关，计算库只提供 `cuda` / `metal` 平台
 | 层次 | 开关 | 含义 |
 | --- | --- | --- |
 | 模型适配器 | `moss`、`qwen`、`voxcpm`、`omnivoice` | 启用对应模型；默认 `moss` 使用 Nano ONNX |
+| 回读模型组 | `asr` | Qwen3-ASR 0.6B Candle CPU + SenseVoiceSmall INT8 ORT CPU；合成策略仍默认关闭 |
 | MOSS 实验实现 | `moss-candle` | 在 MOSS 目录增加 Local / Realtime；生产入口目前仅开放 GPU |
 | Candle 加速 | `qwen-cuda` / `qwen-metal`、`voxcpm-cuda` / `voxcpm-metal`、`omnivoice-cuda` / `omnivoice-metal`、`moss-candle-cuda` / `moss-candle-metal` | 启用对应适配器及计算库加速；按目标平台门控 |
 | ORT provider | `ort-cuda`、`ort-coreml` | 为 Nano 提供 provider，不自动启用模型适配器 |
@@ -64,3 +65,5 @@ cargo clippy --locked -p talechime --no-default-features --all-targets -- -D war
 ```
 
 无默认 feature 的二进制构建需显式加 cli，例如 `--features cli,qwen-metal`。core 当前仍编译播放器依赖，直接合成运行时不打开设备。
+
+ASR 普通测试使用确定性转写和合成夹具，不下载权重；原生前端用固定整数合成波形对照独立 kaldi-native-fbank 数值。手工真实模型探针：`cargo run --release --locked -p talechime-backends --features asr --example asr_readback -- QWEN_DIR SENSEVOICE_DIR CORPUS_JSON OUTPUT_JSON`。语料、模型、结果只放 Git 忽略目录；验证范围见[原生验收](records/asr-readback-mainline-2026-10-09.md)。

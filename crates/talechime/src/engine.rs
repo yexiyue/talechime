@@ -98,6 +98,7 @@ impl Active {
 /// No player or checkpoint exists until listening is explicitly attached.
 pub struct Engine {
     backend: Option<Rc<dyn Backend>>,
+    pub(crate) verifier: Option<Rc<crate::Verifier>>,
     active: RefCell<Option<Active>>,
 }
 impl Engine {
@@ -180,8 +181,15 @@ impl Engine {
     pub fn from_backend(backend: Rc<dyn Backend>) -> Self {
         Self {
             backend: Some(backend),
+            verifier: None,
             active: RefCell::new(None),
         }
+    }
+    /// Attach reusable prepared ASR resources while idle. Verification remains opt-in per execution.
+    pub fn set_verifier(&mut self, verifier: Rc<crate::Verifier>) -> Result<(), EngineError> {
+        self.available()?;
+        self.verifier = Some(verifier);
+        Ok(())
     }
     /// Actual prepared capability identity; constructing/querying never starts audio.
     pub fn capabilities(&self) -> Result<Capabilities, EngineError> {
@@ -209,8 +217,25 @@ impl Engine {
         voice: &str,
         style: Option<String>,
     ) -> Result<PcmStream, EngineError> {
+        self.synthesize_verified(text, voice, style, crate::VerificationOptions::default())
+    }
+    /// Enable report-only or gate policy at actual backend segment boundaries.
+    pub fn synthesize_verified(
+        &self,
+        text: impl Into<Arc<str>>,
+        voice: &str,
+        style: Option<String>,
+        verification: crate::VerificationOptions,
+    ) -> Result<PcmStream, EngineError> {
         self.available()?;
-        let stream = SynthesisStream::start(self.backend()?, text, voice, style)?;
+        let stream = SynthesisStream::start_verified(
+            self.backend()?,
+            text,
+            voice,
+            style,
+            self.verifier.clone(),
+            verification,
+        )?;
         let owner = Rc::new(());
         self.active.replace(Some(Active::Synthesis {
             owner: Rc::downgrade(&owner),
@@ -255,6 +280,9 @@ impl Engine {
         }
         self.active.take();
         self.backend.take();
+        if let Some(verifier) = self.verifier.take() {
+            verifier.settled().await;
+        }
         Ok(())
     }
 }
@@ -265,6 +293,10 @@ pub struct PcmStream {
     owner: Option<Rc<()>>,
 }
 impl PcmStream {
+    /// Most recent readback report, retained independently of PCM packet ownership.
+    pub fn last_report(&self) -> Option<&crate::VerificationReport> {
+        self.stream.last_report()
+    }
     /// Request cancellation from another thread without moving the stream.
     pub fn cancellation(&self) -> CancellationHandle {
         self.stream.cancellation()
@@ -279,6 +311,18 @@ impl PcmStream {
         let item = self
             .stream
             .recv()
+            .await
+            .map(|item| item.map_err(EngineError::Session));
+        if self.stream.state() != SynthesisState::Running {
+            self.owner.take();
+        }
+        item
+    }
+    /// Receive ordered reports and PCM; use this when storing all attempt evidence.
+    pub async fn next(&mut self) -> Option<Result<crate::SynthesisItem, EngineError>> {
+        let item = self
+            .stream
+            .next()
             .await
             .map(|item| item.map_err(EngineError::Session));
         if self.stream.state() != SynthesisState::Running {

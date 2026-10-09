@@ -333,6 +333,7 @@ fn cli_rejects_open_or_mismatched_plan_before_model_preparation() {
             playback: tts_protocol::PlanPlayback::Streaming,
             resume_byte: Some(resume_byte),
             restore_checkpoint: false,
+            verification: Default::default(),
         };
         std::fs::write(
             root.path().join("plan.json"),

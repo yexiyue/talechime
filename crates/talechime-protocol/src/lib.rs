@@ -5,9 +5,11 @@
 mod codec;
 pub mod headings;
 mod message;
+mod verification;
 
 pub use codec::*;
 pub use message::*;
+pub use verification::*;
 
 /// Supported protocol major version.
 pub const PROTOCOL_VERSION: u32 = 7;

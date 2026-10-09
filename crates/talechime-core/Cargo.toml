@@ -22,3 +22,7 @@ rodio.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+unicode-normalization.workspace = true
+sha2.workspace = true
+ferrous-opencc.workspace = true
+chinese-number.workspace = true

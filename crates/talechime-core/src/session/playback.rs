@@ -73,6 +73,7 @@ impl Runner {
                 self.writes.clone(),
                 &self.text,
                 byte,
+                Some((&self.id, &self.events)),
             )
             .await?;
             input.ready.set(true);
@@ -198,6 +199,7 @@ impl Runner {
                 ));
             };
             match item? {
+                Item::Verification(report) => self.emit(Event::Verification(report)).await?,
                 Item::Finished => completed = true,
                 Item::Skipped(range) => {
                     // Layout advances only after all preceding queued audio is consumed.

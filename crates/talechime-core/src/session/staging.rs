@@ -100,14 +100,15 @@ enum Record {
     Finished,
 }
 impl Record {
-    fn from_item(item: Item) -> Self {
-        match item {
+    fn from_item(item: Item) -> Result<Self, SessionError> {
+        Ok(match item {
+            Item::Verification(_) => return Err(invalid("report cannot be stored as PCM")),
             Item::Start(r) => Self::Start(r),
             Item::End(r) => Self::End(r),
             Item::Skipped(r) => Self::Skipped(r),
             Item::Finished => Self::Finished,
             Item::Audio(packet) => Self::Audio(packet.audio), // release playback budget immediately
-        }
+        })
     }
     fn encode(self) -> Vec<u8> {
         match self {
@@ -391,17 +392,30 @@ pub(super) async fn prepare(
     writes: Arc<PendingWrites>,
     text: &str,
     byte: usize,
+    observer: Option<(&str, &mpsc::Sender<SessionEvent>)>,
 ) -> Result<Arc<Storage>, SessionError> {
     let limits = options.clone();
     let storage = io(writes.clone(), move || create_storage(&limits)).await?;
     let mut bytes = 8;
     let mut count = 0;
     loop {
-        let record = Record::from_item(
-            rx.recv()
-                .await
-                .ok_or_else(|| invalid("generation disconnected"))??,
-        );
+        let item = rx
+            .recv()
+            .await
+            .ok_or_else(|| invalid("generation disconnected"))??;
+        if let Item::Verification(report) = item {
+            if let Some((id, events)) = observer {
+                events
+                    .send(SessionEvent {
+                        session_id: id.into(),
+                        event: Event::Verification(report),
+                    })
+                    .await
+                    .map_err(|_| SessionError::Disconnected)?;
+            }
+            continue;
+        }
+        let record = Record::from_item(item)?;
         let finished = matches!(record, Record::Finished);
         let owner = storage.clone();
         let limits = options.clone();

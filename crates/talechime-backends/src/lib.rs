@@ -1,4 +1,6 @@
 //! Concrete model adapters. The core and reader never import inference types.
+#[cfg(feature = "asr")]
+pub mod asr;
 #[cfg(any(
     feature = "moss",
     feature = "qwen",
@@ -19,6 +21,7 @@ pub mod reference;
     feature = "qwen",
     feature = "voxcpm",
     feature = "omnivoice",
+    feature = "asr",
 ))]
 mod resources;
 #[cfg(feature = "voxcpm")]

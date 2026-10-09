@@ -246,6 +246,9 @@ impl Engine {
         let (commands, mut requests) = mpsc::channel(16);
         let closing = CancellationToken::new();
         let closed = closing.clone();
+        if let Some(verifier) = &self.verifier {
+            manager.set_verifier(verifier.clone())?;
+        }
         self.reserve_listening(&owner);
         let task = tokio::task::spawn_local(async move {
             let reservation = owner;

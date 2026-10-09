@@ -1,6 +1,7 @@
 //! Serial synthesis, duration learning and boundary processing ahead of playback.
 use super::*;
 pub(super) enum Item {
+    Verification(crate::verification::VerificationReport),
     Start(TextRange),
     Audio(Packet),
     End(TextRange),
@@ -85,12 +86,18 @@ pub(super) fn spawn(
                     let paragraph_end =
                         backend.paragraph_end(&segment.text, &source_text[segment.end..]);
                     let mut silence = crate::audio::BoundarySilence::default();
+                    let mut audio = if input.verification.policy
+                        == crate::verification::VerificationPolicy::Off
+                    {
+                        backend
+                            .stream_with_style(&segment.text, span.voice(), span.style())
+                            .await?
+                    } else {
+                        verified_audio(backend, input, &segment, &span, &tx).await?
+                    };
                     tx.send(Ok(Item::Start(range)))
                         .await
                         .map_err(|_| SessionError::Disconnected)?;
-                    let mut audio = backend
-                        .stream_with_style(&segment.text, span.voice(), span.style())
-                        .await?;
                     let mut ended = false;
                     let mut generated_seconds = 0.0;
                     while let Some(chunk) = audio.recv().await {
@@ -148,6 +155,116 @@ pub(super) fn spawn(
         }
     }));
     (task, rx)
+}
+
+async fn verified_audio(
+    backend: &Rc<dyn Backend>,
+    input: &PlanInput,
+    segment: &crate::text::TextSegment,
+    span: &SpeechSpan,
+    tx: &mpsc::Sender<Result<Item, SessionError>>,
+) -> Result<crate::backend::AudioStream, SessionError> {
+    use crate::verification::*;
+    let verifier = input
+        .verifier
+        .as_ref()
+        .ok_or(VerificationError::NotPrepared)?;
+    let caps = backend.capabilities();
+    let source = input.plan.borrow().source().clone();
+    let options = &input.verification;
+    let mut attempt = 0;
+    let pcm = loop {
+        let mut stream = backend
+            .stream_with_style(&segment.text, span.voice(), span.style())
+            .await?;
+        let mut audio: Option<Pcm> = None;
+        let mut ended = false;
+        while let Some(chunk) = stream.recv().await {
+            match chunk? {
+                crate::backend::AudioChunk::End => {
+                    ended = true;
+                    break;
+                }
+                crate::backend::AudioChunk::Pcm(pcm) => {
+                    pcm.duration_ms()?;
+                    let current = audio.get_or_insert_with(|| Pcm {
+                        samples: Vec::new(),
+                        sample_rate: pcm.sample_rate,
+                        channels: pcm.channels,
+                    });
+                    if (current.sample_rate, current.channels) != (pcm.sample_rate, pcm.channels) {
+                        return Err(SessionError::Invalid(
+                            "PCM format changed inside segment".into(),
+                        ));
+                    }
+                    let samples = current
+                        .samples
+                        .len()
+                        .checked_add(pcm.samples.len())
+                        .ok_or(VerificationError::Capacity)?;
+                    if samples > options.max_segment_bytes / 4
+                        || (samples as u64 / pcm.channels as u64 * 1000)
+                            .div_ceil(pcm.sample_rate as u64)
+                            > options.max_segment_ms as u64
+                    {
+                        return Err(VerificationError::Capacity.into());
+                    }
+                    current.samples.extend(pcm.samples);
+                }
+            }
+        }
+        if !ended {
+            return Err(SessionError::Invalid(
+                "synthesis stream ended without completion".into(),
+            ));
+        }
+        let pcm = audio.ok_or_else(|| SessionError::Invalid("empty synthesis segment".into()))?;
+        let report = verifier
+            .report(
+                ReadbackRequest {
+                    source: &source,
+                    range: TextRange {
+                        start: segment.start,
+                        end: segment.end,
+                    },
+                    spoken_text: &segment.text,
+                    backend: &caps.backend,
+                    model: caps.model.as_deref(),
+                    voice: span.voice(),
+                    style: span.style(),
+                    attempt,
+                },
+                &pcm,
+                options,
+            )
+            .await?;
+        let verdict = report.verdict;
+        tx.send(Ok(Item::Verification(report)))
+            .await
+            .map_err(|_| SessionError::Disconnected)?;
+        match options.policy {
+            VerificationPolicy::ReportOnly => break pcm,
+            VerificationPolicy::Gate {
+                max_retries,
+                strict_suspect,
+            } => match verdict {
+                VerificationVerdict::Passed => break pcm,
+                VerificationVerdict::Suspect if !strict_suspect => break pcm,
+                VerificationVerdict::ConfirmedError if attempt < max_retries => attempt += 1,
+                _ => return Err(VerificationError::Rejected { verdict, attempt }.into()),
+            },
+            VerificationPolicy::Off => break pcm,
+        }
+    };
+    // The bounded segment is already complete; no detached forwarding task is needed.
+    let (sender, receiver) = mpsc::channel(2);
+    sender
+        .try_send(Ok(crate::backend::AudioChunk::Pcm(pcm)))
+        .map_err(|_| SessionError::Disconnected)?;
+    sender
+        .try_send(Ok(crate::backend::AudioChunk::End))
+        .map_err(|_| SessionError::Disconnected)?;
+    Ok(receiver)
 }
 
 // A backend may omit only known non-spoken layout, never arbitrary prose.

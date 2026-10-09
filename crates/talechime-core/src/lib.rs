@@ -15,6 +15,7 @@ pub mod player;
 pub mod session;
 mod storage;
 pub mod text;
+pub mod verification;
 pub mod voices;
 
 pub use error::{ResourceError, Result};
@@ -25,5 +26,5 @@ pub use player::AudioPlayer;
 pub use player::Playback;
 pub use session::{
     CancellationHandle, PlanProgress, PlanSessionOptions, SpeechAudio, StagingError,
-    StagingOptions, SynthesisState, SynthesisStream,
+    StagingOptions, SynthesisItem, SynthesisState, SynthesisStream,
 };

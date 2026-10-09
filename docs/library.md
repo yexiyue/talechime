@@ -40,6 +40,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 有效 PCM 前缀之后仍可能合成失败。`recv()` 返回错误后保持 Failed；None 也可能来自取消，不能仅靠流耗尽认定成功，需检查 `SynthesisState::Completed`。生成完成不表示播放完成。
 
+## 可选回读校验
+
+显式 `prepare_readback` 后用 `engine.set_verifier` 装配一次，按次 `synthesize_verified(..., VerificationOptions)` 或设置 `PlanSessionOptions.verification`；默认关闭。`Verifier::report` 支持只有已有音频的报告场景，不需要 TTS 或播放。完整策略、事件、取消与示例见[回读校验](readback.md)。
+
 ## 构造计划
 
 ```rust,no_run

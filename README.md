@@ -124,7 +124,7 @@ talechime --backend moss voices remove reader
 talechime --protocol
 ```
 
-stdin/stdout 使用 UTF-8 JSON Lines；stderr 用于日志，协议模式不接管终端。客户端先发送 `hello`，核验 `protocol_version` 和模型能力，再发送准备/播放命令。当前协议主版本是 **6**，已移除对齐配置与句子事件。
+stdin/stdout 使用 UTF-8 JSON Lines；stderr 用于日志，协议模式不接管终端。客户端先发送 `hello`，核验 `protocol_version` 和模型能力，再发送准备/播放命令。当前协议主版本是 **7**，已移除对齐配置与句子事件。
 
 ```json
 {"protocol_version":7,"request_id":"hello-1","session_id":null,"type":"hello"}
@@ -181,3 +181,7 @@ flowchart LR
 工作区包含 CLI、协议、核心、后端及本地模型计算库。构建和检查见[开发说明](docs/development.md)，第三方来源见各组件的 `SOURCE.md`、`LICENSE*` 和[许可说明](docs/licenses.md)。模型权重、用户音频和小说正文不随仓库分发。
 
 原创项目代码沿用 MIT。第三方组件与模型保留各自授权，整个模型集合不能统一视为 MIT；品牌图片由内置图像工具生成，提示词和资产记录见[品牌说明](docs/brand.md)。
+
+## 可选回读校验
+
+首版内置 Qwen3-ASR 0.6B 主识别与 SenseVoiceSmall 复核，默认关闭。库支持独立报告、仅报告合成及逐片段门禁/有界重试；标准发行包包含 `asr`，嵌入库按需启用该 feature。准备模型与合成分开，调用过程中不隐式下载。使用方法及边界见[回读校验](docs/readback.md)。

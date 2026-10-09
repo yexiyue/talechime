@@ -75,3 +75,40 @@ pub async fn prepare(
         Ok(backend)
     }
 }
+
+/// Explicit preparation bundle; enabling readback here never enables the gate by itself.
+pub struct PreparedModels {
+    pub backend: Rc<dyn Backend>,
+    pub verifier: Option<Rc<talechime::Verifier>>,
+}
+pub async fn prepare_models(
+    resources: Resources,
+    config: Config,
+    progress: mpsc::Sender<Event>,
+    readback: bool,
+) -> anyhow::Result<PreparedModels> {
+    #[cfg(not(feature = "asr"))]
+    if readback {
+        anyhow::bail!("readback models require the asr build feature");
+    }
+    let directory = resources.root().to_path_buf();
+    let backend = prepare(resources, config, progress.clone()).await?;
+    #[cfg(feature = "asr")]
+    let verifier = if readback {
+        Some(
+            tts_backends::asr::prepare(
+                &tts_backends::asr::ReadbackModelOptions::new(directory),
+                progress,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    #[cfg(not(feature = "asr"))]
+    let verifier = {
+        let _ = (directory, progress);
+        None
+    };
+    Ok(PreparedModels { backend, verifier })
+}

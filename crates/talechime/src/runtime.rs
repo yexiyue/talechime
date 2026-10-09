@@ -1,5 +1,6 @@
 //! Worker application state, independent of JSON Lines transport.
 use crate::resources::Resources;
+#[cfg(test)]
 use std::rc::Rc;
 use std::time::Duration;
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -10,7 +11,7 @@ use tts_core::{
 };
 use tts_protocol::{Command, ErrorInfo, Event, Request, SessionState};
 
-type Preparation = JoinHandle<anyhow::Result<Rc<dyn tts_core::backend::Backend>>>;
+type Preparation = JoinHandle<anyhow::Result<crate::preparation::PreparedModels>>;
 
 pub struct Response {
     pub session: Option<String>,
@@ -34,6 +35,7 @@ impl Response {
 }
 
 pub struct Worker {
+    readback_models: bool,
     store: ConfigStore,
     checkpoints: CheckpointStore,
     resources: Resources,
@@ -54,6 +56,7 @@ impl Worker {
         progress: mpsc::Sender<Event>,
     ) -> Self {
         Self {
+            readback_models: false,
             store,
             checkpoints,
             resources,
@@ -122,6 +125,9 @@ impl Worker {
             None => (None, self.resource_state),
         }
     }
+    pub fn enable_readback_models(&mut self, enabled: bool) {
+        self.readback_models = enabled;
+    }
     /// Poll only while preparation exists; dropping this future keeps the task owned.
     pub async fn prepared(&mut self) -> Response {
         let Some(task) = &mut self.preparing else {
@@ -140,8 +146,12 @@ impl Worker {
                 return Response::error("prepare_failed", "model", error);
             }
         };
-        match crate::app_session::AppSession::open(prepared, &self.checkpoints, self.events.clone())
-        {
+        match crate::app_session::AppSession::open(
+            prepared.backend,
+            &self.checkpoints,
+            self.events.clone(),
+            prepared.verifier,
+        ) {
             Ok(manager) => {
                 self.manager = Some(manager);
                 self.resource_state = SessionState::Idle;
@@ -285,8 +295,10 @@ impl Worker {
                             }
                         }
                     }));
+                    let readback = self.readback_models;
                     self.preparing = Some(tokio::task::spawn_local(async move {
-                        crate::preparation::prepare(resources, config, progress).await
+                        crate::preparation::prepare_models(resources, config, progress, readback)
+                            .await
                     }));
                     self.resource_state = SessionState::Preparing;
                 }
@@ -343,6 +355,7 @@ impl Worker {
                             speed: config.speed,
                             resume_byte: input.resume_byte,
                             restore_checkpoint: input.restore_checkpoint,
+                            verification: input.verification.clone(),
                             ..Default::default()
                         },
                     )
@@ -611,6 +624,7 @@ mod plan_tests {
             playback,
             resume_byte: Some(0),
             restore_checkpoint: false,
+            verification: Default::default(),
         }
     }
     fn span(start: usize, end: usize, voice: &str) -> VoiceSpan {

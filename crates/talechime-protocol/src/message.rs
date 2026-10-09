@@ -213,6 +213,7 @@ pub struct ErrorInfo {
 pub enum Event {
     Ready(Vec<Capabilities>),
     Accepted,
+    Verification(crate::VerificationReport),
     /// Requested snapshot, independent of generation/playback completion.
     Progress(PlanProgressSnapshot),
     Config(Config),
@@ -301,6 +302,8 @@ pub struct PlanRequest {
     pub playback: PlanPlayback,
     pub resume_byte: Option<usize>,
     pub restore_checkpoint: bool,
+    #[serde(default)]
+    pub verification: crate::VerificationOptions,
 }
 
 /// Input completion is distinct from generation and playback completion.

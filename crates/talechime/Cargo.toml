@@ -16,6 +16,7 @@ required-features = ["cli"]
 
 [features]
 default = ["cli", "moss"]
+asr = ["tts-backends/asr", "dep:hound"]
 cli = ["dep:clap", "dep:crossterm", "dep:futures", "dep:serde_json", "dep:tempfile"]
 moss = ["tts-backends/moss"]
 moss-candle = ["moss", "tts-backends/moss-candle"]
@@ -47,5 +48,11 @@ crossterm = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 
+hound = { workspace = true, optional = true }
+
 [dev-dependencies]
 tempfile.workspace = true
+
+[[example]]
+name = "verified_synthesis"
+required-features = ["asr"]

@@ -82,6 +82,7 @@ pub async fn run(
     store: ConfigStore,
     checkpoints: CheckpointStore,
     resources: Resources,
+    readback_models: bool,
 ) -> anyhow::Result<()> {
     let (input_tx, mut input) = mpsc::channel(8);
     // A dedicated stdin thread can end with the process even if a broken parent
@@ -114,7 +115,15 @@ pub async fn run(
             })();
             let _ = finished.send(result);
         })?;
-    let result = serve(store, checkpoints, resources, &mut input, messages).await;
+    let result = serve(
+        store,
+        checkpoints,
+        resources,
+        &mut input,
+        messages,
+        readback_models,
+    )
+    .await;
     let written = tokio::time::timeout(Duration::from_secs(3), writer).await;
     match written {
         Ok(joined) => joined??,
@@ -129,10 +138,12 @@ async fn serve(
     resources: Resources,
     input: &mut mpsc::Receiver<Result<Option<Vec<u8>>, tts_protocol::ProtocolError>>,
     messages: mpsc::Sender<Message>,
+    readback_models: bool,
 ) -> anyhow::Result<()> {
     let (events, session_events) = mpsc::channel::<SessionEvent>(64);
     let (progress, model_events) = mpsc::channel::<Event>(16);
-    let worker = Worker::new(store, checkpoints, resources, events, progress);
+    let mut worker = Worker::new(store, checkpoints, resources, events, progress);
+    worker.enable_readback_models(readback_models);
     serve_worker(worker, session_events, model_events, input, messages).await
 }
 
@@ -337,7 +348,7 @@ mod plan_tests {
             let (outgoing,mut received)=mpsc::channel(1);
             let task=tokio::task::spawn_local(async move {serve_worker(worker,pending,updates,&mut frames,outgoing).await});
             let span=|start,end,voice:&str| VoiceSpan {range:TextRange {start,end},voice:voice.into(),style:None};
-            let plan=PlanRequest {source:SourceId {namespace:"test".into(),book:"book".into(),chapter:"chapter".into()},text:"甲乙丙".into(),text_hash:text_hash("甲乙丙"),backend:"fixture".into(),model:Some("shared".into()),voices:vec!["A".into(),"B".into()],spans:vec![span(0,3,"A")],sealed:false,playback:PlanPlayback::Streaming,resume_byte:Some(0),restore_checkpoint:false};
+            let plan=PlanRequest {source:SourceId {namespace:"test".into(),book:"book".into(),chapter:"chapter".into()},text:"甲乙丙".into(),text_hash:text_hash("甲乙丙"),backend:"fixture".into(),model:Some("shared".into()),voices:vec!["A".into(),"B".into()],spans:vec![span(0,3,"A")],sealed:false,playback:PlanPlayback::Streaming,resume_byte:Some(0),restore_checkpoint:false,verification:Default::default()};
             for (id,session,command) in [("hello",None,Command::Hello),("start",Some("one"),Command::Start(Box::new(plan))),("early",Some("one"),Command::Seal),("invalid",Some("one"),Command::Append {spans:vec![span(4,6,"B")]}),("progress",Some("one"),Command::GetProgress),("append",Some("one"),Command::Append {spans:vec![span(3,6,"B"),span(6,9,"A")]}),("seal",Some("one"),Command::Seal)] {
                 input.send(Ok(Some(encode(&Request {protocol_version:PROTOCOL_VERSION,request_id:id.into(),session_id:session.map(str::to_owned),command}).unwrap()))).await.unwrap();
             }

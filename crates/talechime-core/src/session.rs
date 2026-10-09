@@ -54,6 +54,8 @@ pub enum SessionError {
     #[error(transparent)]
     Checkpoint(#[from] CheckpointError),
     #[error(transparent)]
+    Verification(#[from] crate::verification::VerificationError),
+    #[error(transparent)]
     Staging(#[from] StagingError),
     #[error("invalid session: {0}")]
     Invalid(String),
@@ -77,7 +79,9 @@ use plan::PlanInput;
 pub use plan::{PlanProgress, PlanSessionOptions};
 use prefetch::{Budget, Packet};
 pub use staging::{StagingError, StagingOptions};
-pub use synthesis::{CancellationHandle, SpeechAudio, SynthesisState, SynthesisStream};
+pub use synthesis::{
+    CancellationHandle, SpeechAudio, SynthesisItem, SynthesisState, SynthesisStream,
+};
 
 struct AbortOnDrop(JoinHandle<()>);
 impl Drop for AbortOnDrop {
@@ -114,11 +118,13 @@ struct Job {
     input: Rc<PlanInput>,
     legacy_settings: Option<(String, Option<String>)>,
     staging: StagingOptions,
+    verification: crate::verification::VerificationOptions,
     task: Option<AbortOnDrop>,
 }
 
 /// Runs inside a Tokio LocalSet; audio/model objects never move between threads.
 pub struct SessionManager {
+    verifier: Option<Rc<crate::verification::Verifier>>,
     backend: Rc<dyn Backend>,
     player: Rc<dyn Playback>,
     checkpoints: Option<CheckpointStore>,
@@ -146,6 +152,7 @@ impl SessionManager {
         events: mpsc::Sender<SessionEvent>,
     ) -> Self {
         Self {
+            verifier: None,
             backend,
             player,
             checkpoints,
@@ -153,6 +160,20 @@ impl SessionManager {
             job: None,
             used_ids: HashSet::new(),
         }
+    }
+
+    /// Attach prepared ASR resources; configuration cannot change mid-execution.
+    pub fn set_verifier(
+        &mut self,
+        verifier: Rc<crate::verification::Verifier>,
+    ) -> Result<(), SessionError> {
+        if self.job.as_ref().is_some_and(|job| !job.terminal.get()) {
+            return Err(SessionError::Invalid(
+                "cannot change verifier during execution".into(),
+            ));
+        }
+        self.verifier = Some(verifier);
+        Ok(())
     }
 
     /// Start explicitly. Restoring a checkpoint never starts this method on its own.
@@ -188,6 +209,7 @@ impl SessionManager {
                 resume_byte: request.resume_byte,
                 restore_checkpoint: request.restore_checkpoint,
                 staging: StagingOptions::default(),
+                verification: crate::verification::VerificationOptions::default(),
             },
             Some((config.voice.clone(), config.style.clone())),
         )
@@ -211,6 +233,12 @@ impl SessionManager {
         options: PlanSessionOptions,
         legacy_settings: Option<(String, Option<String>)>,
     ) -> Result<(), SessionError> {
+        crate::verification::validate_options(&options.verification)?;
+        if options.verification.policy != crate::verification::VerificationPolicy::Off
+            && self.verifier.is_none()
+        {
+            return Err(crate::verification::VerificationError::NotPrepared.into());
+        }
         if plan.playback_policy() == PlaybackPolicy::AfterChapterReady {
             options.staging.validate()?;
         }
@@ -254,7 +282,10 @@ impl SessionManager {
         let terminal = Rc::new(Cell::new(false));
         let buffering = Rc::new(Cell::new(true));
         let speed = Rc::new(Cell::new(options.speed));
-        let input = Rc::new(PlanInput::new(plan, byte));
+        let mut input = PlanInput::new(plan, byte);
+        input.verifier = self.verifier.clone();
+        input.verification = options.verification.clone();
+        let input = Rc::new(input);
         let writes = Arc::new(PendingWrites::default());
         let runner = Runner {
             id: id.clone(),
@@ -280,15 +311,20 @@ impl SessionManager {
             if let Err(error) = &result {
                 runner.player.stop();
                 let staging = matches!(error, SessionError::Staging(_));
+                let verification = matches!(error, SessionError::Verification(_));
                 let _ = runner
                     .emit(Event::Error(ErrorInfo {
-                        code: if staging {
+                        code: if verification {
+                            "verification_failed"
+                        } else if staging {
                             "staging_failed"
                         } else {
                             "session_failed"
                         }
                         .into(),
-                        stage: if staging {
+                        stage: if verification {
+                            "readback"
+                        } else if staging {
                             "chapter_staging"
                         } else {
                             "listening"
@@ -331,6 +367,7 @@ impl SessionManager {
             input,
             legacy_settings,
             staging: options.staging,
+            verification: options.verification,
             task: Some(AbortOnDrop(task)),
         });
         Ok(())
@@ -518,6 +555,9 @@ impl SessionManager {
             }
             // A blocking atomic write cannot be aborted. Finish it before a new session
             // writes the same source, so a cancelled session cannot replace newer progress.
+            if let Some(verifier) = &self.verifier {
+                verifier.settled().await;
+            }
             while job.writes.count.load(Ordering::SeqCst) != 0 {
                 job.writes.idle.notified().await;
             }
@@ -623,6 +663,7 @@ impl SessionManager {
                 resume_byte: Some(byte),
                 restore_checkpoint: false,
                 staging: job.staging.clone(),
+                verification: job.verification.clone(),
             },
         )
         .await?;

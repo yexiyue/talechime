@@ -9,6 +9,8 @@ mod preparation;
 mod protocol;
 mod resources;
 mod runtime;
+#[cfg(feature = "asr")]
+mod verify;
 mod voices;
 
 use clap::Parser;
@@ -16,10 +18,26 @@ use std::path::PathBuf;
 
 #[derive(clap::Subcommand)]
 enum Commands {
+    /// Compare existing PCM16 WAV to UTF-8 source without synthesis or playback.
+    #[cfg(feature = "asr")]
+    Verify {
+        text: PathBuf,
+        audio: PathBuf,
+        #[arg(long)]
+        report: PathBuf,
+    },
     Voices {
         #[command(subcommand)]
         command: voices::VoiceCommand,
     },
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Default)]
+enum VerifyMode {
+    #[default]
+    Off,
+    Report,
+    Gate,
 }
 
 #[derive(Parser)]
@@ -31,6 +49,15 @@ enum Commands {
 struct Args {
     #[command(subcommand)]
     command: Option<Commands>,
+    /// Optional readback strategy; default off. Gate permits one resynthesis.
+    #[arg(long, value_enum, default_value = "off", conflicts_with_all = ["protocol", "plan"])]
+    verify: VerifyMode,
+    /// Write per-attempt JSONL reports to this explicit path.
+    #[arg(long, conflicts_with = "protocol")]
+    verification_report: Option<PathBuf>,
+    /// Prepare the ASR model group with prepare_model in JSON Lines mode.
+    #[arg(long, requires = "protocol")]
+    readback_models: bool,
     #[arg(long)]
     backend: Option<String>,
     #[arg(long)]
@@ -72,6 +99,16 @@ struct Args {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    #[cfg(feature = "asr")]
+    if let Some(Commands::Verify {
+        text,
+        audio,
+        report,
+    }) = &args.command
+    {
+        let resources = resources::Resources::new(args.model_dir.clone())?;
+        return talechime::run_local(verify::run(text, audio, report, resources.root())).await;
+    }
     let config = match args.config {
         Some(path) => tts_core::config::ConfigStore::new(path),
         None => tts_core::config::ConfigStore::user_default()?,
@@ -169,7 +206,7 @@ async fn main() -> anyhow::Result<()> {
             }
             voices::run(command, resources, &selection).await
         } else if args.protocol {
-            protocol::run(config, checkpoints, resources).await
+            protocol::run(config, checkpoints, resources, args.readback_models).await
         } else {
             cli::run(
                 args.file.ok_or_else(|| {
@@ -180,9 +217,23 @@ async fn main() -> anyhow::Result<()> {
                 config,
                 checkpoints,
                 resources,
-                !args.restart,
-                args.plan,
-                args.after_chapter,
+                cli::CliOptions {
+                    restore_checkpoint: !args.restart,
+                    plan_file: args.plan,
+                    after_chapter: args.after_chapter,
+                    verification: tts_protocol::VerificationOptions {
+                        policy: match args.verify {
+                            VerifyMode::Off => tts_protocol::VerificationPolicy::Off,
+                            VerifyMode::Report => tts_protocol::VerificationPolicy::ReportOnly,
+                            VerifyMode::Gate => tts_protocol::VerificationPolicy::Gate {
+                                max_retries: 1,
+                                strict_suspect: false,
+                            },
+                        },
+                        ..Default::default()
+                    },
+                    report_file: args.verification_report,
+                },
             )
             .await
         }

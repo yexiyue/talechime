@@ -118,6 +118,7 @@ mod tests {
                 playback: PlanPlayback::Streaming,
                 resume_byte: None,
                 restore_checkpoint: true,
+                verification: Default::default(),
             })),
         }
     }
@@ -261,6 +262,7 @@ mod plan_tests {
             playback: PlanPlayback::AfterChapterReady,
             resume_byte: Some(0),
             restore_checkpoint: false,
+            verification: Default::default(),
         };
         for command in [
             Command::Start(Box::new(start)),

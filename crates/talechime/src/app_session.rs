@@ -14,8 +14,12 @@ impl AppSession {
         backend: Rc<dyn Backend>,
         checkpoints: &CheckpointStore,
         events: mpsc::Sender<SessionEvent>,
+        verifier: Option<Rc<talechime::Verifier>>,
     ) -> anyhow::Result<Self> {
-        let engine = Engine::from_backend(backend);
+        let mut engine = Engine::from_backend(backend);
+        if let Some(verifier) = verifier {
+            engine.set_verifier(verifier)?;
+        }
         let session = engine.listen_to(
             ListeningOptions {
                 checkpoints: Some(checkpoints.directory().into()),

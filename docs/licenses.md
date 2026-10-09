@@ -4,6 +4,8 @@ Talechime 原创项目代码沿用仓库根目录 MIT 许可证。第三方代�
 
 | 组件 | 来源记录 |
 | --- | --- |
+| Qwen3-ASR Rust 计算库 | `crates/qwen3-asr/SOURCE.md` 与 MIT 许可证；官方权重 Apache-2.0 模型卡单独下载保留 |
+| SenseVoiceSmall 回读资源 | `crates/talechime-backends/src/asr/SOURCE.md`、固定资源清单；权重许可遵循 FunASR，不能当作 MIT |
 | Qwen3-TTS Rust 计算库 | `crates/qwen3-tts/SOURCE.md` 与组件许可证 |
 | MOSS Candle 计算库 | `crates/moss-tts/SOURCE.md`、LICENSE / NOTICE |
 | MOSS Nano 资源 | `crates/talechime-backends/src/moss/assets/LICENSE.OpenMOSS` 与固定资源清单 |

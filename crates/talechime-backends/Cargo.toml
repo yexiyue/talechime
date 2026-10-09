@@ -9,6 +9,7 @@ repository = "https://github.com/yexiyue/talechime"
 
 [features]
 default = ["moss"]
+asr = ["dep:qwen3-asr", "dep:candle-core", "dep:ort", "dep:kaldi-fbank", "dep:rubato", "dep:hound"]
 moss = ["dep:ort", "dep:sentencepiece-rs", "dep:rand", "dep:hound", "dep:rubato"]
 moss-candle = ["moss", "dep:moss-tts", "dep:candle-core"]
 moss-candle-cuda = ["moss-candle", "moss-tts/cuda"]
@@ -32,6 +33,8 @@ moss-tts = { workspace = true, optional = true }
 candle-core = { workspace = true, optional = true }
 omnivoice = { workspace = true, optional = true }
 voxcpm = { workspace = true, optional = true }
+qwen3-asr = { workspace = true, optional = true }
+kaldi-fbank = { workspace = true, optional = true }
 qwen3-tts = { workspace = true, optional = true }
 tts-core = { package = "talechime-core", path = "../talechime-core", version = "0.3.0" }
 tts-protocol = { package = "talechime-protocol", path = "../talechime-protocol", version = "0.1.0" }
@@ -86,3 +89,6 @@ required-features = ["qwen"]
 name = "voxcpm_candle_probe"
 required-features = ["voxcpm"]
 
+[[example]]
+name = "asr_readback"
+required-features = ["asr"]
