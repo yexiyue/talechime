@@ -284,7 +284,7 @@ async fn send_skipped(
 ) -> Result<(), SessionError> {
     if !source[start..end]
         .lines()
-        .all(|line| line.trim().is_empty() || crate::text::is_decoration_line(line))
+        .all(crate::text::is_non_spoken_line)
     {
         return Err(SessionError::Invalid(
             "backend omitted spoken source text".into(),

@@ -1,6 +1,9 @@
-use tts_core::text::{TextSegment, is_decoration_line, is_heading_line};
+use tts_core::text::{
+    TextSegment, is_decoration_line, is_heading_line, is_non_spoken_line, sanitize_for_speech,
+};
 
 pub(super) fn normalize(source: &str) -> String {
+    let source = sanitize_for_speech(source);
     let mut result = String::new();
     for line in source.lines() {
         let line = line.trim();
@@ -29,7 +32,7 @@ pub(super) fn segments(source: &str) -> Vec<TextSegment> {
     let mut start = 0;
     let mut offset = 0;
     for line in source.split_inclusive('\n') {
-        let hard = line.trim().is_empty() || is_decoration_line(line) || is_heading_line(line);
+        let hard = is_non_spoken_line(line) || is_heading_line(line);
         if hard {
             append(source, start, offset, &mut result);
             if is_heading_line(line) {
@@ -85,6 +88,30 @@ fn append(source: &str, mut start: usize, end: usize, result: &mut Vec<TextSegme
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn noisy_layout_preserves_hard_boundaries_and_source_ranges() {
+        let source = "前句。\n====\u{200B}====\n后句。\n\u{200B}\n\u{FEFF}第一章 开始\n正文。";
+        let pieces = segments(source);
+        assert_eq!(pieces.len(), 4);
+        let spoken: Vec<_> = pieces.iter().map(|p| normalize(&p.text)).collect();
+        let expected: Vec<_> = ["前句。", "后句。", "第一章 开始", "正文。"]
+            .into_iter()
+            .map(normalize)
+            .collect();
+        assert_eq!(spoken, expected);
+        for piece in pieces {
+            assert_eq!(
+                normalize(&piece.text),
+                normalize(&source[piece.start..piece.end])
+            );
+        }
+        assert!(segments("\u{200B}\n\u{0}").is_empty());
+    }
+    #[test]
+    fn inaudible_noise_never_reaches_synthesis() {
+        assert_eq!(normalize("你\u{200B}好，世\u{0}界\u{FEFF}"), "你好，世界");
+        assert_eq!(normalize("====\u{200B}===="), "");
+    }
     #[test]
     fn preserves_source_ranges_and_hard_boundaries() {
         let source = "====\n第一章 开始\n你好，\n世界。\n\n第二段 a=b。";

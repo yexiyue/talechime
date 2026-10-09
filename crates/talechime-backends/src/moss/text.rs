@@ -1,7 +1,7 @@
 use sentencepiece_rs::SentencePieceProcessor;
 use tts_core::{
     backend::BackendError,
-    text::{TextSegment, is_decoration_line},
+    text::{TextSegment, is_decoration_line, is_non_spoken_line, sanitize_for_speech},
 };
 
 fn is_cjk(c: char) -> bool {
@@ -14,6 +14,7 @@ fn contains_cjk(text: &str) -> bool {
 }
 
 pub(super) fn normalize(text: &str) -> String {
+    let text = sanitize_for_speech(text);
     let mut spoken = String::new();
     let mut previous_cjk = false;
     for line in text.lines().filter(|line| !is_decoration_line(line)) {
@@ -116,17 +117,18 @@ fn is_closer(c: char) -> bool {
 
 /// Whitespace-only lines, decorations and titles delimit synthesis context.
 fn hard_line(line: &str) -> bool {
-    line.trim().is_empty() || is_decoration_line(line) || tts_core::text::is_heading_line(line)
+    is_non_spoken_line(line) || tts_core::text::is_heading_line(line)
 }
 
 pub(super) fn paragraph_end(segment: &str, remaining: &str) -> bool {
-    if remaining.trim().is_empty() || tts_core::text::is_heading_line(segment.trim()) {
+    if remaining.lines().all(is_non_spoken_line) || tts_core::text::is_heading_line(segment.trim())
+    {
         return true;
     }
     let next_line = if segment.ends_with('\n') {
         remaining
     } else if let Some((tail, next)) = remaining.split_once('\n') {
-        if !tail.trim().is_empty() {
+        if !is_non_spoken_line(tail) {
             return false;
         }
         next
@@ -165,8 +167,7 @@ fn split_limit(
             let line_end = text[start..]
                 .find('\n')
                 .map_or(text.len(), |offset| start + offset + 1);
-            if text[start..line_end].trim().is_empty() || is_decoration_line(&text[start..line_end])
-            {
+            if is_non_spoken_line(&text[start..line_end]) {
                 start = line_end;
                 continue;
             }
@@ -248,6 +249,25 @@ fn split_limit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn noisy_layout_preserves_hard_boundaries_and_source_ranges() {
+        let source = "前句。\n====\u{200B}====\n后句。\n\u{200B}\n\u{FEFF}第一章 开始\n正文。";
+        let pieces = split(source, |_| Ok(1)).unwrap();
+        assert_eq!(pieces.len(), 4);
+        let spoken: Vec<_> = pieces.iter().map(|p| normalize(&p.text)).collect();
+        let expected: Vec<_> = ["前句。", "后句。", "第一章 开始", "正文。"]
+            .into_iter()
+            .map(normalize)
+            .collect();
+        assert_eq!(spoken, expected);
+        for piece in pieces {
+            assert_eq!(
+                normalize(&piece.text),
+                normalize(&source[piece.start..piece.end])
+            );
+        }
+        assert!(split("\u{200B}\n\u{0}", |_| Ok(1)).unwrap().is_empty());
+    }
     #[test]
     fn soft_lines_merge_but_blank_lines_titles_and_separators_do_not() {
         let source =
@@ -382,5 +402,16 @@ mod tests {
         assert_eq!(normalize("こんにちは"), "こんにちは。");
         assert_eq!(normalize("hello friend"), "        Hello friend.");
         assert!(split("\r\n   ", |s| Ok(s.len())).unwrap().is_empty());
+    }
+
+    #[test]
+    fn inaudible_noise_never_reaches_synthesis() {
+        assert_eq!(normalize("你\u{200B}好，世\u{0}界\u{FEFF}"), "你好，世界。");
+        assert_eq!(normalize("====\u{200B}===="), "");
+        assert_eq!(
+            normalize("hello\u{0}world"),
+            "        Helloworld.",
+            "dropped non-whitespace controls join nothing; word boundaries come from control whitespace"
+        );
     }
 }

@@ -24,11 +24,53 @@ pub fn is_heading_line(line: &str) -> bool {
             .map(|pattern| Regex::new(pattern).expect("built-in heading pattern"))
             .collect()
     });
-    let line = line.trim();
+    let spoken = sanitize_for_speech(line);
+    let line = spoken.trim();
     !line.is_empty()
         && line.chars().count() <= tts_protocol::headings::MAX_TITLE_CHARS
         && !line.ends_with(['。', '.', '！', '!', '？', '?'])
         && HEADINGS.iter().any(|pattern| pattern.is_match(line))
+}
+
+/// Selected format marks removed from the speech copy to avoid tokenizer noise.
+/// `char` has no category API; these ranges cover marks encountered in scraped prose.
+/// Control characters (Cc, including C1) are handled via `char::is_control`.
+fn is_format_noise(c: char) -> bool {
+    matches!(c,
+        '\u{00AD}'
+        | '\u{061C}'
+        | '\u{180E}'
+        | '\u{200B}'..='\u{200F}'
+        | '\u{202A}'..='\u{202E}'
+        | '\u{2060}'..='\u{2064}'
+        | '\u{2066}'..='\u{206F}'
+        | '\u{FEFF}'
+        | '\u{FFF9}'..='\u{FFFB}')
+}
+
+/// Build the speech copy of a source range: drop controls and format marks,
+/// keep the `\n`/`\r` structure the segmenter and heading rules depend on.
+/// Control whitespace (tab, vertical tab, form feed, NEL) keeps a word
+/// boundary as one ASCII space. Only the copy changes; never the source.
+pub fn sanitize_for_speech(text: &str) -> String {
+    let mut spoken = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\n' | '\r' => spoken.push(c),
+            _ if is_format_noise(c) => {}
+            _ if c.is_control() && c.is_whitespace() => spoken.push(' '),
+            _ if c.is_control() => {}
+            _ => spoken.push(c),
+        }
+    }
+    spoken
+}
+
+/// Whether a source line contains only whitespace, removable noise or decoration.
+/// Used by segmenters and by the source-coverage validator.
+pub fn is_non_spoken_line(line: &str) -> bool {
+    let spoken = sanitize_for_speech(line);
+    spoken.trim().is_empty() || is_decoration_line(&spoken)
 }
 
 /// 匹配主要句子结束标点符号（句号、感叹号、问号）
@@ -96,7 +138,7 @@ fn preprocess_text_recursive(
         let line_end_offset = byte_offset + line_byte_len;
 
         // 跳过空行，更新字节偏移量（+1 表示换行符）
-        if line.trim().is_empty() || is_decoration_line(line) {
+        if is_non_spoken_line(line) {
             byte_offset = next_offset;
             continue;
         }
@@ -184,13 +226,43 @@ fn preprocess_text_recursive(
 /// * `limit` - 每个分段的最大字节数限制
 ///
 /// # 返回值
-/// 返回处理后的文本片段向量，每个元素包含文本内容及其在原始文本中的字节位置范围
+/// 返回处理后的文本片段向量，每个元素包含文本内容及其在原始文本中的字节位置范围。
+/// 每个片段的文本是清洗后的朗读副本（控制与格式字符已去除）；坐标始终指向原始文本。
 pub fn preprocess_text(text: &str, limit: usize) -> Vec<TextSegment> {
     preprocess_text_recursive(text, limit, SplitLevel::Primary, 0)
+        .into_iter()
+        .filter_map(|segment| {
+            let text = sanitize_for_speech(&segment.text).trim().to_string();
+            (!text.is_empty() && !is_decoration_line(&text))
+                .then_some(TextSegment { text, ..segment })
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn speech_copy_drops_noise_and_keeps_line_structure() {
+        let noisy = "你\u{200B}好，世\u{0}界。\r\n\u{FEFF}第二\u{AD}句\u{85}。\nC1\u{9F}尾\ta";
+        assert_eq!(
+            super::sanitize_for_speech(noisy),
+            "你好，世界。\r\n第二句 。\nC1尾 a"
+        );
+    }
+    #[test]
+    fn preprocess_cleans_speech_copy_without_moving_source_offsets() {
+        let text = "====\u{200B}====\r\n你\u{FEFF}好，世\u{0}界。\n第二句！\n\u{200B}";
+        let pieces = super::preprocess_text(text, 200);
+        assert_eq!(pieces.len(), 2);
+        assert_eq!(pieces[0].text, "你好，世界。");
+        assert_eq!(pieces[1].text, "第二句！");
+        assert_eq!(&text[pieces[1].start..pieces[1].end], "第二句！");
+        // Offsets stay source-bound even where the speech copy differs.
+        assert_eq!(
+            &text[pieces[0].start..pieces[0].end],
+            "你\u{FEFF}好，世\u{0}界。"
+        );
+    }
     #[test]
     fn decorations_are_skipped_without_changing_source_offsets() {
         for line in ["====", " ＝ ＝ ＝ ", "---", "* * *", "────"] {

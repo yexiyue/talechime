@@ -798,6 +798,41 @@ async fn backend_disconnect_or_invalid_segmentation_fails_without_completion() {
 }
 
 #[tokio::test]
+async fn sanitized_layout_completes_with_original_source_progress() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let text = "====\u{200B}====\n你\u{FEFF}好。\n\u{0}\u{200B}";
+            for policy in [PlaybackPolicy::Streaming, PlaybackPolicy::AfterChapterReady] {
+                let mut h = Harness::new();
+                let base = h.plan(text);
+                let mut plan =
+                    SpeechPlan::new(base.source().clone(), base.voices().clone(), policy);
+                plan.append(vec![span(0, text.len(), "A")]).unwrap();
+                plan.seal().unwrap();
+                h.manager
+                    .start_plan("noise".into(), plan, PlanSessionOptions::default())
+                    .await
+                    .unwrap();
+                h.drive(true, |h| h.ended("noise", EndReason::Completed))
+                    .await;
+                let progress = h.manager.plan_progress("noise").unwrap();
+                assert_eq!(progress.generated_end, text.len());
+                assert_eq!(progress.played_end, text.len());
+                assert_eq!(
+                    h.backend
+                        .calls
+                        .borrow()
+                        .iter()
+                        .map(|call| call.text.as_str())
+                        .collect::<Vec<_>>(),
+                    ["你好。"]
+                );
+            }
+        })
+        .await;
+}
+
+#[tokio::test]
 async fn skipped_layout_waits_for_preceding_audio_and_empty_plan_requires_seal() {
     tokio::task::LocalSet::new()
         .run_until(async {
