@@ -6,7 +6,6 @@ use std::{
     rc::{Rc, Weak},
     sync::Arc,
 };
-use tokio::sync::mpsc;
 use tts_core::SynthesisStream;
 
 /// Model preparation is explicit and independent of playback/config persistence.
@@ -144,7 +143,7 @@ impl Engine {
     /// Requires the host's current LocalSet. No CLI config is read or written.
     pub async fn prepare(
         options: ModelOptions,
-        mut progress: impl FnMut(Event),
+        progress: impl FnMut(Event),
     ) -> Result<Self, EngineError> {
         if options.backend.trim().is_empty()
             || options.resources.as_os_str().is_empty()
@@ -156,26 +155,19 @@ impl Engine {
         }
         let registry =
             tts_backends::Registry::new(Some(options.resources)).map_err(EngineError::Prepare)?;
-        let (tx, mut rx) = mpsc::channel(16);
-        let prepare = registry.prepare_model_on(
-            &options.backend,
-            options.model.as_deref(),
-            tx,
-            options.device,
-        );
-        tokio::pin!(prepare);
-        let mut progress_open = true;
-        loop {
-            tokio::select! {
-                result = &mut prepare => {
-                    while let Ok(event) = rx.try_recv() { progress(event); }
-                    return result.map(Self::from_backend).map_err(EngineError::Prepare);
-                }
-                event = rx.recv(), if progress_open => {
-                    if let Some(event) = event { progress(event); } else { progress_open = false; }
-                }
-            }
-        }
+        crate::model_preparation::with_progress(
+            |tx| {
+                registry.prepare_model_on(
+                    &options.backend,
+                    options.model.as_deref(),
+                    tx,
+                    options.device,
+                )
+            },
+            progress,
+        )
+        .await
+        .map(Self::from_backend)
     }
     /// Inject a prepared custom/test backend. Keep one Engine per backend owner.
     pub fn from_backend(backend: Rc<dyn Backend>) -> Self {
@@ -280,9 +272,7 @@ impl Engine {
         }
         self.active.take();
         self.backend.take();
-        if let Some(verifier) = self.verifier.take() {
-            verifier.settled().await;
-        }
+        self.verifier.take();
         Ok(())
     }
 }

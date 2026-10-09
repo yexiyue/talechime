@@ -23,6 +23,7 @@ tokenizers = { version = "0.22.2", default-features = false }
 hound = "3.5"
 rustfft = "6.4"
 tracing = "0.1"
+log = "0.4"
 # API 21 leaves device selection to the application instead of enabling ORT's auto EP policy.
 # Native prebuilt libraries still use the latest ONNX Runtime 1.28.
 # Lax matching permits platform-independent all-features checks; runtime EPs stay explicit.

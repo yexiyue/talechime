@@ -43,16 +43,15 @@ async fn main() -> anyhow::Result<()> {
         });
         if cancellation_s.is_none() {
             let start = Instant::now();
+            let request = primary.request(audio.clone());
+            let mut completion = request.completion.expect("native request receipt");
             anyhow::ensure!(
-                tokio::time::timeout(
-                    std::time::Duration::from_millis(1),
-                    primary.transcribe(audio.clone())
-                )
-                .await
-                .is_err(),
+                tokio::time::timeout(std::time::Duration::from_millis(1), request.future)
+                    .await
+                    .is_err(),
                 "cancellation probe unexpectedly completed"
             );
-            verifier.settled().await;
+            completion.wait_for(|done| *done).await?;
             cancellation_s = Some(start.elapsed().as_secs_f64());
         }
         let start = Instant::now();

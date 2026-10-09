@@ -477,3 +477,261 @@ async fn standalone_cache_binds_actual_audio_source_voice_and_style_and_does_not
         assert_eq!(report.verdict, verdict);
     }
 }
+
+/// A native request may remain in cleanup after its async future ends.
+struct TrackedAsr {
+    inner: Rc<Asr>,
+    receipts: RefCell<Vec<tokio::sync::watch::Sender<bool>>>,
+}
+impl Recognizer for TrackedAsr {
+    fn identity(&self) -> RecognizerIdentity {
+        self.inner.identity()
+    }
+    fn transcribe(&self, audio: Arc<ReadbackAudio>) -> Recognition<'_> {
+        self.inner.transcribe(audio)
+    }
+    fn request(&self, audio: Arc<ReadbackAudio>) -> RecognitionRequest<'_> {
+        let (done, completion) = tokio::sync::watch::channel(false);
+        self.receipts.borrow_mut().push(done);
+        RecognitionRequest {
+            future: self.transcribe(audio),
+            completion: Some(completion),
+        }
+    }
+}
+
+async fn outstanding_report(verifier: &Verifier) {
+    let source = SourceSnapshot::new(
+        SourceId {
+            namespace: "test".into(),
+            book: "".into(),
+            chapter: "external".into(),
+        },
+        "甲乙",
+        &text_hash("甲乙"),
+    )
+    .unwrap();
+    verifier
+        .report(
+            ReadbackRequest {
+                source: &source,
+                range: TextRange { start: 0, end: 6 },
+                spoken_text: "甲乙",
+                backend: "external",
+                model: None,
+                voice: "external",
+                style: None,
+                attempt: 0,
+            },
+            &Pcm {
+                samples: vec![0.2; 800],
+                sample_rate: 1000,
+                channels: 1,
+            },
+            &VerificationOptions::default(),
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn decimal_readback_does_not_pass_when_fractional_zeros_change_the_value() {
+    let primary = Asr::new(
+        "a",
+        vec![Answer::Text("一点零五"), Answer::Text("一点零五")],
+    );
+    let reviewer = Asr::new("b", vec![Answer::Text("一点零五")]);
+    let verifier = Verifier::new(primary.clone(), reviewer.clone()).unwrap();
+    let pcm = Pcm {
+        samples: vec![0.1; 800],
+        sample_rate: 1000,
+        channels: 1,
+    };
+    for (text, verdict) in [
+        ("1.5", VerificationVerdict::Suspect),
+        ("1.05", VerificationVerdict::Passed),
+    ] {
+        let source = SourceSnapshot::new(
+            SourceId {
+                namespace: "test".into(),
+                book: "".into(),
+                chapter: "decimal".into(),
+            },
+            text,
+            &text_hash(text),
+        )
+        .unwrap();
+        let report = verifier
+            .report(
+                ReadbackRequest {
+                    source: &source,
+                    range: TextRange {
+                        start: 0,
+                        end: text.len(),
+                    },
+                    spoken_text: text,
+                    backend: "external",
+                    model: None,
+                    voice: "external",
+                    style: None,
+                    attempt: 0,
+                },
+                &pcm,
+                &VerificationOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(report.verdict, verdict);
+    }
+    assert_eq!(primary.calls.get(), 2);
+    assert_eq!(reviewer.calls.get(), 1);
+}
+
+#[tokio::test]
+async fn disabled_verification_and_engine_close_ignore_unrelated_native_work() {
+    run_local(async {
+        let primary = Rc::new(TrackedAsr {
+            inner: Asr::new("a", vec![]),
+            receipts: Default::default(),
+        });
+        let verifier = Rc::new(Verifier::new(primary.clone(), Asr::new("b", vec![])).unwrap());
+        outstanding_report(&verifier).await;
+        let mut engine = Engine::from_backend(Rc::new(Fixture::default()));
+        engine.set_verifier(verifier.clone()).unwrap();
+        for _ in 0..2 {
+            let mut stream = engine.synthesize("甲乙", "A", None).unwrap();
+            let (reports, samples, error) = drain(&mut stream).await;
+            assert!(reports.is_empty() && samples > 0 && !error);
+            assert_eq!(stream.state(), SynthesisState::Completed);
+            assert!(stream.cancellation().is_finished());
+        }
+        tokio::time::timeout(Duration::from_millis(100), engine.close())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), verifier.settled())
+                .await
+                .is_err()
+        );
+        primary.receipts.borrow()[0].send_replace(true);
+        verifier.settled().await;
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn cancellation_waits_for_its_native_receipt_and_not_shared_reports() {
+    run_local(async {
+        let inner = Asr::new("a", vec![Answer::Text("甲乙"), Answer::Pending]);
+        let primary = Rc::new(TrackedAsr {
+            inner: inner.clone(),
+            receipts: Default::default(),
+        });
+        let verifier = Rc::new(Verifier::new(primary.clone(), Asr::new("b", vec![])).unwrap());
+        outstanding_report(&verifier).await;
+        let mut engine = Engine::from_backend(Rc::new(Fixture::default()));
+        engine.set_verifier(verifier.clone()).unwrap();
+        let mut stream = engine
+            .synthesize_verified(
+                "甲乙",
+                "A",
+                None,
+                VerificationOptions {
+                    policy: VerificationPolicy::ReportOnly,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        while primary.receipts.borrow().len() < 2 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), stream.cancel())
+                .await
+                .is_err()
+        );
+        assert!(inner.cancelled.get());
+        primary.receipts.borrow()[1].send_replace(true);
+        tokio::time::timeout(Duration::from_millis(100), stream.cancel())
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_millis(100), engine.close())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!*primary.receipts.borrow()[0].borrow());
+        primary.receipts.borrow()[0].send_replace(true);
+        verifier.settled().await;
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn listening_close_waits_only_for_its_own_native_request() {
+    run_local(async {
+        let primary = Rc::new(TrackedAsr {
+            inner: Asr::new("a", vec![Answer::Text("甲乙"), Answer::Pending]),
+            receipts: Default::default(),
+        });
+        let verifier = Rc::new(Verifier::new(primary.clone(), Asr::new("b", vec![])).unwrap());
+        outstanding_report(&verifier).await;
+        let mut engine = Engine::from_backend(Rc::new(Fixture::default()));
+        engine.set_verifier(verifier.clone()).unwrap();
+        let mut listening = engine
+            .listen_with(Rc::new(Player::default()), ListeningOptions::default())
+            .unwrap();
+        let plan = engine
+            .single_voice_plan(
+                SourceSnapshot::new(
+                    SourceId {
+                        namespace: "test".into(),
+                        book: "".into(),
+                        chapter: "listen".into(),
+                    },
+                    "甲乙",
+                    &text_hash("甲乙"),
+                )
+                .unwrap(),
+                "A",
+                None,
+                PlaybackPolicy::Streaming,
+            )
+            .unwrap();
+        listening
+            .control()
+            .start(
+                "listening",
+                plan,
+                PlanSessionOptions {
+                    verification: VerificationOptions {
+                        policy: VerificationPolicy::ReportOnly,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        while primary.receipts.borrow().len() < 2 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), listening.close())
+                .await
+                .is_err()
+        );
+        primary.receipts.borrow()[1].send_replace(true);
+        tokio::time::timeout(Duration::from_millis(100), listening.close())
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::timeout(Duration::from_millis(100), engine.close())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!*primary.receipts.borrow()[0].borrow());
+        primary.receipts.borrow()[0].send_replace(true);
+    })
+    .await;
+}

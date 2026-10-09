@@ -283,7 +283,12 @@ impl SessionManager {
         let buffering = Rc::new(Cell::new(true));
         let speed = Rc::new(Cell::new(options.speed));
         let mut input = PlanInput::new(plan, byte);
-        input.verifier = self.verifier.clone();
+        input.verifier =
+            if options.verification.policy == crate::verification::VerificationPolicy::Off {
+                None
+            } else {
+                self.verifier.as_ref().map(|verifier| verifier.scoped())
+            };
         input.verification = options.verification.clone();
         let input = Rc::new(input);
         let writes = Arc::new(PendingWrites::default());
@@ -555,7 +560,7 @@ impl SessionManager {
             }
             // A blocking atomic write cannot be aborted. Finish it before a new session
             // writes the same source, so a cancelled session cannot replace newer progress.
-            if let Some(verifier) = &self.verifier {
+            if let Some(verifier) = &job.input.verifier {
                 verifier.settled().await;
             }
             while job.writes.count.load(Ordering::SeqCst) != 0 {

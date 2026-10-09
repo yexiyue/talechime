@@ -31,7 +31,7 @@ engine.close().await?;
 
 仅要 PCM 时仍可用 `recv()`，最近一份报告通过 `last_report()` 获取；要完整的每次尝试证据，用 `next()` 消费报告与 PCM 的有序流。监听计划使用 `PlanSessionOptions.verification`，报告从 `Event::Verification` 投递。旧 `synthesize` 方法仍默认关闭。仅记录采用 `VerificationPolicy::ReportOnly`，不自动重试。
 
-已经有音频的宿主直接调用 `verifier.report(ReadbackRequest { source, range, spoken_text, backend, model, voice, style, attempt }, &pcm, &options).await`。这是报告接口，不需要 Engine、TTS、播放器或检查点；`options.policy` 不触发重合成。原文快照必须匹配摘要，`range` 是 UTF-8 字节范围，`spoken_text` 是该范围实际送入 TTS 的预处理文本。ASR 只接收音频，不接收正文或热词提示。超时/执行失败写入 `Unverified` 证据；无效输入、容量超限直接返回错误。超时后需要确认原生任务退出时可调用 `verifier.settled().await`。
+已经有音频的宿主直接调用 `verifier.report(ReadbackRequest { source, range, spoken_text, backend, model, voice, style, attempt }, &pcm, &options).await`。这是报告接口，不需要 Engine、TTS、播放器或检查点；`options.policy` 不触发重合成。原文快照必须匹配摘要，`range` 是 UTF-8 字节范围，`spoken_text` 是该范围实际送入 TTS 的预处理文本。ASR 只接收音频，不接收正文或热词提示。超时/执行失败写入 `Unverified` 证据；无效输入、容量超限直接返回错误。超时后需要确认原生任务退出时可调用 `verifier.settled().await`，只等待该 Verifier 的报告请求。
 
 ## 交付与重试
 
@@ -46,7 +46,7 @@ engine.close().await?;
 
 开启时先收齐一个实际模型片段，再回读并交付。流式计划仍逐片段前进，但增加片段收集与回读延迟；默认关闭时保持原有 TTS 流式行为。重试只替换尚未发布的该片段 PCM，不修改计划、不切换 TTS、不撤回已交付音频。`AfterChapterReady` 全章暂存且通过才播放，后续片段失败时整章不播放。生成完成始终与播放完成分开。
 
-每个片段最多 512 字符、30 秒、16 MiB float PCM；可降低限额。每个 ASR 超时默认 30 秒，可设为 1–300000 ms；重试 0–3 次。输入、报告、控制及 PCM 通道有界，消费报告同样施加背压。显式 `cancel/close` 等待本地生产者及原生在途任务退出；Drop 请求取消，不代表异步清理完成。ASR 原生对象由各自线程构造、调用、销毁。
+每个片段最多 512 字符、30 秒、16 MiB float PCM；可降低限额。每个 ASR 超时默认 30 秒，可设为 1–300000 ms；重试 0–3 次。输入、报告、控制及 PCM 通道有界，消费报告同样施加背压。显式 `cancel/close` 等待本地生产者及原生在途任务退出；Drop 请求取消，不代表异步清理完成。ASR 原生对象由各自线程构造、调用、销毁。每次执行单独跟踪原生请求的完成回执，共享模型和报告缓存也不会让取消等待其他执行；校验关闭时不参与 ASR 等待。自定义原生识别器通过 `Recognizer::request` 提供 `RecognitionRequest.completion`，在请求真正清理结束后置 true 或关闭发送端；纯异步识别器只实现 `transcribe` 即可。
 
 报告绑定原文摘要、字节范围、实际朗读文本、TTS/音色/风格、实际 PCM 哈希、ASR revision/实现及规则版本。缓存仅保留报告，默认 32 项，可设置 0–256；音频不缓存，超时/执行失败不缓存。同一音频重复生成可命中证据，`attempt` 仍独立记录。繁简、数字或预处理改变映射时，差异范围保守回落到整个实际原文片段，不伪造精确字节位置；报告还保留归一化朗读文本中的字节位置用于复核，避免将不同位置的同词缺失混为一致。重试单位始终是实际模型片段。
 

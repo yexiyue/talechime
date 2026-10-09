@@ -43,7 +43,7 @@ pub struct CancellationHandle {
     abort: tokio::task::AbortHandle,
     requested: Arc<AtomicBool>,
     completed: watch::Receiver<bool>,
-    work: Vec<watch::Receiver<usize>>,
+    work: Arc<crate::verification::RequestCompletions>,
 }
 impl CancellationHandle {
     /// Request cancellation from any thread. Await stream.cancel() for cleanup.
@@ -53,15 +53,13 @@ impl CancellationHandle {
     }
     /// Whether the producer has released its receiver and local resources.
     pub fn is_finished(&self) -> bool {
-        *self.completed.borrow() && self.work.iter().all(|work| *work.borrow() == 0)
+        *self.completed.borrow() && self.work.is_finished()
     }
     /// Wait for local producer teardown; the owning LocalSet must keep running.
     pub async fn closed(&self) {
         let mut completed = self.completed.clone();
         let _ = completed.wait_for(|done| *done).await;
-        for mut work in self.work.clone() {
-            let _ = work.wait_for(|count| *count == 0).await;
-        }
+        self.work.settled().await;
     }
 }
 
@@ -108,9 +106,14 @@ impl SynthesisStream {
         {
             return Err(crate::verification::VerificationError::NotPrepared.into());
         }
+        let verifier = if verification.policy == crate::verification::VerificationPolicy::Off {
+            None
+        } else {
+            verifier.map(|verifier| verifier.scoped())
+        };
         let work = verifier
             .as_ref()
-            .map_or_else(Vec::new, |verifier| verifier.pending());
+            .map_or_else(Arc::default, |verifier| verifier.work());
         let text = text.into();
         let caps = backend.capabilities();
         let voices = VoiceSnapshot::new(

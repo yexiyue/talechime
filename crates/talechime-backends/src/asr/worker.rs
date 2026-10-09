@@ -4,7 +4,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use tokio::sync::{mpsc, oneshot};
-use tts_core::verification::{ReadbackAudio, Recognition, VerificationError};
+use tts_core::verification::{ReadbackAudio, Recognition, RecognitionRequest, VerificationError};
 pub(super) enum Model {
     Qwen,
     SenseVoice,
@@ -13,14 +13,13 @@ struct Request {
     audio: Arc<ReadbackAudio>,
     cancelled: Arc<AtomicBool>,
     run: Arc<ort::session::RunOptions>,
-    _work: Work,
+    _completion: Completion,
     result: oneshot::Sender<Result<String, VerificationError>>,
 }
 struct Owner {
     jobs: Option<mpsc::Sender<Request>>,
     thread: Option<std::thread::JoinHandle<()>>,
     identity: RecognizerIdentity,
-    pending: tokio::sync::watch::Sender<usize>,
 }
 impl Drop for Owner {
     fn drop(&mut self) {
@@ -30,10 +29,10 @@ impl Drop for Owner {
         }
     }
 }
-struct Work(tokio::sync::watch::Sender<usize>);
-impl Drop for Work {
+struct Completion(tokio::sync::watch::Sender<bool>);
+impl Drop for Completion {
     fn drop(&mut self) {
-        self.0.send_modify(|count| *count -= 1);
+        self.0.send_replace(true);
     }
 }
 struct Cancel(Arc<AtomicBool>, Arc<ort::session::RunOptions>);
@@ -47,11 +46,13 @@ impl Recognizer for Owner {
     fn identity(&self) -> RecognizerIdentity {
         self.identity.clone()
     }
-    fn pending(&self) -> Option<tokio::sync::watch::Receiver<usize>> {
-        Some(self.pending.subscribe())
-    }
     fn transcribe(&self, audio: Arc<ReadbackAudio>) -> Recognition<'_> {
-        Box::pin(async move {
+        self.request(audio).future
+    }
+    fn request(&self, audio: Arc<ReadbackAudio>) -> RecognitionRequest<'_> {
+        let (done, completion) = tokio::sync::watch::channel(false);
+        let work = Completion(done);
+        let future = Box::pin(async move {
             let cancelled = Arc::new(AtomicBool::new(false));
             let run = Arc::new(
                 ort::session::RunOptions::new()
@@ -59,8 +60,6 @@ impl Recognizer for Owner {
             );
             let _guard = Cancel(cancelled.clone(), run.clone());
             let (result, received) = oneshot::channel();
-            self.pending.send_modify(|count| *count += 1);
-            let work = Work(self.pending.clone());
             self.jobs
                 .as_ref()
                 .ok_or_else(|| VerificationError::Recognition("ASR owner closed".into()))?
@@ -69,14 +68,18 @@ impl Recognizer for Owner {
                     cancelled,
                     run,
                     result,
-                    _work: work,
+                    _completion: work,
                 })
                 .await
                 .map_err(|e| VerificationError::Recognition(e.to_string()))?;
             received
                 .await
                 .map_err(|e| VerificationError::Recognition(e.to_string()))?
-        })
+        });
+        RecognitionRequest {
+            future,
+            completion: Some(completion),
+        }
     }
 }
 enum Loaded {
@@ -89,7 +92,6 @@ pub(super) async fn spawn(
     threads: usize,
     identity: RecognizerIdentity,
 ) -> anyhow::Result<Rc<dyn Recognizer>> {
-    let (pending, _) = tokio::sync::watch::channel(0usize);
     let (jobs, mut received) = mpsc::channel::<Request>(1);
     let (ready, prepared) = oneshot::channel();
     // Model/device objects are constructed, used and dropped on this dedicated owner.
@@ -145,7 +147,6 @@ pub(super) async fn spawn(
         jobs: Some(jobs),
         thread: Some(thread),
         identity,
-        pending,
     };
     prepared.await?.map_err(anyhow::Error::msg)?;
     Ok(Rc::new(owner))

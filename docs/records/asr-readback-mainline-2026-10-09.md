@@ -37,3 +37,9 @@ release CPU 原始片段中位数 RTF：Qwen 0.2803，SenseVoice 0.0130。SenseV
 另用 `verified_synthesis` release 示例，真实 Qwen TTS 0.6B CPU 合成“你好，世界。”，通过内置主 ASR，随后直接流交付 34800 个 PCM 样本、1 份 Passed 报告，状态 Completed，Engine 关闭成功。没有打开播放器或创建检查点。真实样本这次没有发生合成重试；定向重试和整章失败禁播来自上述确定性测试，不当作真实 TTS 故障修复率。
 
 独立 CLI `verify` 用同一尾部截断 PCM16 WAV 输出 ConfirmedError JSON，未准备 TTS、未播放。扩展 CPU workspace 共 420 项通过（无模型下载），纯库 17 项通过；格式、Clippy、rustdoc、Python 检查及 dist generate/check/plan 通过。
+
+## 合并前审查与简化
+
+基于主分支 7fff5d7 独立执行 Standards/Spec 双轴审查。修复共享模型组全局工作计数引起的取消/关闭耦合：改为每请求完成回执、每执行独立跟踪，共享权重和缓存继续复用，Off 不追踪 ASR。新增默认关闭复用、直接流取消及 Listening.close 隔离的无模型回归，确认等待自己的原生清理且不等待独立宿主报告。修复中文逐位数字的小数前导零归一化，保留 1.05 与 1.5 区别。准备进度处理合并为同一私有有界 helper，log 依赖统一到 workspace。
+
+审查统计：Standards 3 项（取消所有权、workspace 依赖、重复进度处理判断性建议），Spec 2 项（小数数值误判、取消隔离），均已处理。补充端到端数值报告回归，最终扩展 CPU workspace 425 项通过，纯库 17 项通过；Clippy、rustdoc、格式、Metal feature 组合编译及 dist generate --check/plan 通过。更新后的原生探针 16/16 转写完成，逐请求完成回执下取消后清理约 98 ms，同一模型继续复用成功；原始运行输出为 review-native-readback.json。

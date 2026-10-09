@@ -174,51 +174,10 @@ async fn verified_audio(
     let options = &input.verification;
     let mut attempt = 0;
     let pcm = loop {
-        let mut stream = backend
+        let stream = backend
             .stream_with_style(&segment.text, span.voice(), span.style())
             .await?;
-        let mut audio: Option<Pcm> = None;
-        let mut ended = false;
-        while let Some(chunk) = stream.recv().await {
-            match chunk? {
-                crate::backend::AudioChunk::End => {
-                    ended = true;
-                    break;
-                }
-                crate::backend::AudioChunk::Pcm(pcm) => {
-                    pcm.duration_ms()?;
-                    let current = audio.get_or_insert_with(|| Pcm {
-                        samples: Vec::new(),
-                        sample_rate: pcm.sample_rate,
-                        channels: pcm.channels,
-                    });
-                    if (current.sample_rate, current.channels) != (pcm.sample_rate, pcm.channels) {
-                        return Err(SessionError::Invalid(
-                            "PCM format changed inside segment".into(),
-                        ));
-                    }
-                    let samples = current
-                        .samples
-                        .len()
-                        .checked_add(pcm.samples.len())
-                        .ok_or(VerificationError::Capacity)?;
-                    if samples > options.max_segment_bytes / 4
-                        || (samples as u64 / pcm.channels as u64 * 1000)
-                            .div_ceil(pcm.sample_rate as u64)
-                            > options.max_segment_ms as u64
-                    {
-                        return Err(VerificationError::Capacity.into());
-                    }
-                    current.samples.extend(pcm.samples);
-                }
-            }
-        }
-        if !ended {
-            return Err(SessionError::Invalid(
-                "synthesis stream ended without completion".into(),
-            ));
-        }
-        let pcm = audio.ok_or_else(|| SessionError::Invalid("empty synthesis segment".into()))?;
+        let pcm = collect_segment(stream, options).await?;
         let report = verifier
             .report(
                 ReadbackRequest {
@@ -265,6 +224,55 @@ async fn verified_audio(
         .try_send(Ok(crate::backend::AudioChunk::End))
         .map_err(|_| SessionError::Disconnected)?;
     Ok(receiver)
+}
+
+async fn collect_segment(
+    mut stream: crate::backend::AudioStream,
+    options: &crate::verification::VerificationOptions,
+) -> Result<Pcm, SessionError> {
+    use crate::verification::VerificationError;
+    let mut audio: Option<Pcm> = None;
+    let mut ended = false;
+    while let Some(chunk) = stream.recv().await {
+        match chunk? {
+            crate::backend::AudioChunk::End => {
+                ended = true;
+                break;
+            }
+            crate::backend::AudioChunk::Pcm(pcm) => {
+                pcm.duration_ms()?;
+                let current = audio.get_or_insert_with(|| Pcm {
+                    samples: Vec::new(),
+                    sample_rate: pcm.sample_rate,
+                    channels: pcm.channels,
+                });
+                if (current.sample_rate, current.channels) != (pcm.sample_rate, pcm.channels) {
+                    return Err(SessionError::Invalid(
+                        "PCM format changed inside segment".into(),
+                    ));
+                }
+                let samples = current
+                    .samples
+                    .len()
+                    .checked_add(pcm.samples.len())
+                    .ok_or(VerificationError::Capacity)?;
+                if samples > options.max_segment_bytes / 4
+                    || (samples as u64 / pcm.channels as u64 * 1000)
+                        .div_ceil(pcm.sample_rate as u64)
+                        > options.max_segment_ms as u64
+                {
+                    return Err(VerificationError::Capacity.into());
+                }
+                current.samples.extend(pcm.samples);
+            }
+        }
+    }
+    if !ended {
+        return Err(SessionError::Invalid(
+            "synthesis stream ended without completion".into(),
+        ));
+    }
+    audio.ok_or_else(|| SessionError::Invalid("empty synthesis segment".into()))
 }
 
 // A backend may omit only known non-spoken layout, never arbitrary prose.

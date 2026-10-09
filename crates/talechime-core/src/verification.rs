@@ -1,6 +1,7 @@
 //! Readback without source prompts, with conservative cross-family consensus.
 mod comparison;
 mod normalization;
+mod work;
 use crate::{SourceSnapshot, backend::Pcm};
 use sha2::{Digest, Sha256};
 use std::{
@@ -12,18 +13,31 @@ pub use tts_protocol::{
     DifferenceKind, ReadbackDifference, ReadbackEvidence, RecognizerIdentity, VerificationOptions,
     VerificationPolicy, VerificationReport, VerificationVerdict,
 };
+pub(crate) use work::RequestCompletions;
+
+const RULES: &str = "readback-v1-conservative";
 
 /// Prepared ASR receives only audio; never reference text, hotwords or voice hints.
 pub trait Recognizer {
     fn identity(&self) -> RecognizerIdentity;
-    /// Native owners expose queued/in-flight work so explicit teardown can await it.
-    fn pending(&self) -> Option<tokio::sync::watch::Receiver<usize>> {
-        None
-    }
     /// Cancellation must release request ownership and stop native work cooperatively.
     fn transcribe(&self, audio: Arc<ReadbackAudio>) -> Recognition<'_>;
+    /// Native owners attach this request's cleanup receipt. Async-only recognizers
+    /// need no receipt: dropping their future releases all request work.
+    fn request(&self, audio: Arc<ReadbackAudio>) -> RecognitionRequest<'_> {
+        RecognitionRequest {
+            future: self.transcribe(audio),
+            completion: None,
+        }
+    }
 }
 pub type Recognition<'a> = Pin<Box<dyn Future<Output = Result<String, VerificationError>> + 'a>>;
+/// A transcription and optional per-request native completion receipt.
+/// Send `true` or close the sender only after all native work has stopped.
+pub struct RecognitionRequest<'a> {
+    pub future: Recognition<'a>,
+    pub completion: Option<tokio::sync::watch::Receiver<bool>>,
+}
 /// Immutable framed PCM handed to prepared inference owners.
 #[derive(Debug)]
 pub struct ReadbackAudio {
@@ -89,9 +103,10 @@ pub fn validate_options(options: &VerificationOptions) -> Result<(), Verificatio
 pub struct Verifier {
     primary: Rc<dyn Recognizer>,
     reviewer: Rc<dyn Recognizer>,
-    cache: RefCell<VecDeque<(String, VerificationReport)>>,
+    cache: Rc<RefCell<VecDeque<(String, VerificationReport)>>>,
     cache_capacity: usize,
-    normalization: normalization::Normalizer,
+    normalization: Rc<normalization::Normalizer>,
+    work: Arc<RequestCompletions>,
 }
 impl Verifier {
     /// Reviewer must belong to a different ASR family; size variants are not independent.
@@ -124,7 +139,8 @@ impl Verifier {
             reviewer,
             cache: Default::default(),
             cache_capacity: 32,
-            normalization: normalization::Normalizer::new()?,
+            normalization: Rc::new(normalization::Normalizer::new()?),
+            work: Default::default(),
         })
     }
     /// Bound volatile evidence reuse to 0..=256 entries. Audio is never cached here.
@@ -135,20 +151,26 @@ impl Verifier {
             ));
         }
         self.cache_capacity = capacity;
-        self.cache.get_mut().clear();
+        self.cache.borrow_mut().clear();
         Ok(self)
     }
     /// Await native requests after timeout or cancellation; no new transcription starts here.
     pub async fn settled(&self) {
-        for mut work in self.pending() {
-            let _ = work.wait_for(|count| *count == 0).await;
-        }
+        self.work.settled().await;
     }
-    pub(crate) fn pending(&self) -> Vec<tokio::sync::watch::Receiver<usize>> {
-        [self.primary.pending(), self.reviewer.pending()]
-            .into_iter()
-            .flatten()
-            .collect()
+    pub(crate) fn work(&self) -> Arc<RequestCompletions> {
+        self.work.clone()
+    }
+    /// Share prepared models/evidence, but isolate the execution's cleanup receipts.
+    pub(crate) fn scoped(&self) -> Rc<Self> {
+        Rc::new(Self {
+            primary: self.primary.clone(),
+            reviewer: self.reviewer.clone(),
+            cache: self.cache.clone(),
+            cache_capacity: self.cache_capacity,
+            normalization: self.normalization.clone(),
+            work: Default::default(),
+        })
     }
     /// Standalone report API. ASR failure/timeout yields Unverified evidence; invalid
     /// input is an error. It never regenerates audio or creates a player/runtime.
@@ -178,13 +200,7 @@ impl Verifier {
                 "invalid source range or spoken text (max 512 chars)".into(),
             ));
         }
-        let mut hash = Sha256::new();
-        hash.update(pcm.sample_rate.to_le_bytes());
-        hash.update(pcm.channels.to_le_bytes());
-        for sample in &pcm.samples {
-            hash.update(sample.to_le_bytes());
-        }
-        let audio_hash = format!("{:x}", hash.finalize());
+        let audio_hash = audio_hash(pcm);
         let key = tts_protocol::text_hash(
             &serde_json::to_string(&(
                 request.source.hash(),
@@ -195,7 +211,7 @@ impl Verifier {
                 request.voice,
                 request.style,
                 &audio_hash,
-                "readback-v1-conservative",
+                RULES,
                 self.primary.identity(),
                 self.reviewer.identity(),
             ))
@@ -254,7 +270,7 @@ impl Verifier {
             audio_hash,
             attempt: request.attempt,
             cache_hit: false,
-            rules: "readback-v1-conservative".into(),
+            rules: RULES.into(),
             verdict,
             evidence,
         };
@@ -274,12 +290,13 @@ impl Verifier {
         request: &ReadbackRequest<'_>,
         options: &VerificationOptions,
     ) -> ReadbackEvidence {
-        let result = tokio::time::timeout(
-            Duration::from_millis(options.timeout_ms),
-            recognizer.transcribe(audio),
-        )
-        .await
-        .unwrap_or(Err(VerificationError::Timeout));
+        let task = recognizer.request(audio);
+        if let Some(completion) = task.completion {
+            self.work.register(completion);
+        }
+        let result = tokio::time::timeout(Duration::from_millis(options.timeout_ms), task.future)
+            .await
+            .unwrap_or(Err(VerificationError::Timeout));
         match result {
             Ok(text) if text.chars().count() <= 1024 => ReadbackEvidence {
                 recognizer: recognizer.identity(),
@@ -301,4 +318,14 @@ impl Verifier {
             },
         }
     }
+}
+
+fn audio_hash(pcm: &Pcm) -> String {
+    let mut hash = Sha256::new();
+    hash.update(pcm.sample_rate.to_le_bytes());
+    hash.update(pcm.channels.to_le_bytes());
+    for sample in &pcm.samples {
+        hash.update(sample.to_le_bytes());
+    }
+    format!("{:x}", hash.finalize())
 }

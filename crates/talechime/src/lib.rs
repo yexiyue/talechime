@@ -27,6 +27,7 @@
 //! ```
 mod engine;
 mod listening;
+mod model_preparation;
 
 pub use engine::{Engine, EngineError, ModelOptions, PcmStream, run_local};
 pub use listening::{Listening, ListeningHandle, ListeningOptions, ListeningSession};
@@ -43,8 +44,8 @@ pub use tts_protocol::{
 
 pub use tts_core::verification::{
     DifferenceKind, ReadbackAudio, ReadbackDifference, ReadbackEvidence, ReadbackRequest,
-    Recognition, Recognizer, RecognizerIdentity, VerificationError, VerificationOptions,
-    VerificationPolicy, VerificationReport, VerificationVerdict, Verifier,
+    Recognition, RecognitionRequest, Recognizer, RecognizerIdentity, VerificationError,
+    VerificationOptions, VerificationPolicy, VerificationReport, VerificationVerdict, Verifier,
 };
 
 #[cfg(feature = "asr")]
@@ -53,16 +54,7 @@ pub use tts_backends::asr::ReadbackModelOptions;
 #[cfg(feature = "asr")]
 pub async fn prepare_readback(
     options: ReadbackModelOptions,
-    mut progress: impl FnMut(Event),
+    progress: impl FnMut(Event),
 ) -> Result<std::rc::Rc<Verifier>, EngineError> {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(16);
-    let prepare = tts_backends::asr::prepare(&options, tx);
-    tokio::pin!(prepare);
-    let mut open = true;
-    loop {
-        tokio::select! {
-            result=&mut prepare => { while let Ok(event)=rx.try_recv() { progress(event); } return result.map_err(EngineError::Prepare); }
-            event=rx.recv(), if open => match event {Some(event)=>progress(event),None=>open=false},
-        }
-    }
+    model_preparation::with_progress(|tx| tts_backends::asr::prepare(&options, tx), progress).await
 }
