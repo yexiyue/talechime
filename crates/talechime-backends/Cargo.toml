@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
-description = "Native model adapters for novel-tts"
+description = "Native model adapters for Talechime"
 repository = "https://github.com/yexiyue/talechime"
 
 [features]

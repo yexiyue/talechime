@@ -3778,7 +3778,9 @@ dependencies = [
  "talechime-core",
  "talechime-protocol",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

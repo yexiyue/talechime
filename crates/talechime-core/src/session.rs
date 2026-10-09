@@ -1,6 +1,7 @@
 //! Thread-local session state machine with bounded prefetch and durable text positions.
 use crate::{
-    Playback,
+    PlanError, PlanState, Playback, PlaybackPolicy, SourceSnapshot, SpeechPlan, SpeechSpan,
+    VoiceSnapshot,
     backend::{Backend, BackendError, Pcm},
     checkpoint::{CheckpointError, CheckpointStore},
 };
@@ -18,9 +19,23 @@ use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore, mpsc},
     task::JoinHandle,
 };
-use tts_protocol::{
-    Config, EndReason, ErrorInfo, Event, SessionState, StartRequest, TextRange, text_hash,
-};
+use tts_protocol::{Config, EndReason, ErrorInfo, Event, SessionState, TextRange};
+
+/// Advanced core single-voice input, independent of the JSON Lines transport.
+/// Public hosts should usually construct an Engine plan instead.
+#[derive(Debug, Clone)]
+pub struct StartRequest {
+    /// Host-owned immutable source identity.
+    pub source: tts_protocol::SourceId,
+    /// Exact full source without speech normalization.
+    pub text: String,
+    /// SHA-256 checked by the plan constructor.
+    pub text_hash: String,
+    /// Explicit source byte to resume at.
+    pub resume_byte: Option<usize>,
+    /// Use stored actual-playback progress when no explicit byte is provided.
+    pub restore_checkpoint: bool,
+}
 
 /// Per-session event before the transport adds instance IDs and sequence numbers.
 #[derive(Debug)]
@@ -33,19 +48,36 @@ pub struct SessionEvent {
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
     #[error(transparent)]
+    Plan(#[from] PlanError),
+    #[error(transparent)]
     Backend(#[from] BackendError),
     #[error(transparent)]
     Checkpoint(#[from] CheckpointError),
+    #[error(transparent)]
+    Staging(#[from] StagingError),
     #[error("invalid session: {0}")]
     Invalid(String),
     #[error("event consumer disconnected")]
     Disconnected,
 }
 
+impl From<std::io::Error> for SessionError {
+    fn from(error: std::io::Error) -> Self {
+        StagingError::Io(error).into()
+    }
+}
+
 mod buffering;
+mod plan;
 mod prefetch;
 mod producer;
+mod staging;
+mod synthesis;
+use plan::PlanInput;
+pub use plan::{PlanProgress, PlanSessionOptions};
 use prefetch::{Budget, Packet};
+pub use staging::{StagingError, StagingOptions};
+pub use synthesis::{CancellationHandle, SpeechAudio, SynthesisState, SynthesisStream};
 
 struct AbortOnDrop(JoinHandle<()>);
 impl Drop for AbortOnDrop {
@@ -70,16 +102,18 @@ impl Drop for WriteGuard {
 
 struct Job {
     id: String,
-    request: StartRequest,
+    source: SourceSnapshot,
     paused: Rc<Cell<bool>>,
     phase: Rc<Cell<SessionState>>,
     buffering: Rc<Cell<bool>>,
     speed: Rc<Cell<f32>>,
+    volume: Cell<f32>,
     position: Rc<Cell<usize>>,
     terminal: Rc<Cell<bool>>,
     writes: Arc<PendingWrites>,
-    voice: String,
-    style: Option<String>,
+    input: Rc<PlanInput>,
+    legacy_settings: Option<(String, Option<String>)>,
+    staging: StagingOptions,
     task: Option<AbortOnDrop>,
 }
 
@@ -87,7 +121,7 @@ struct Job {
 pub struct SessionManager {
     backend: Rc<dyn Backend>,
     player: Rc<dyn Playback>,
-    checkpoints: CheckpointStore,
+    checkpoints: Option<CheckpointStore>,
     events: mpsc::Sender<SessionEvent>,
     job: Option<Job>,
     used_ids: HashSet<String>,
@@ -99,6 +133,16 @@ impl SessionManager {
         backend: Rc<dyn Backend>,
         player: Rc<dyn Playback>,
         checkpoints: CheckpointStore,
+        events: mpsc::Sender<SessionEvent>,
+    ) -> Self {
+        Self::with_optional_checkpoints(backend, player, Some(checkpoints), events)
+    }
+
+    /// Assemble local playback with explicit optional checkpoint persistence.
+    pub fn with_optional_checkpoints(
+        backend: Rc<dyn Backend>,
+        player: Rc<dyn Playback>,
+        checkpoints: Option<CheckpointStore>,
         events: mpsc::Sender<SessionEvent>,
     ) -> Self {
         Self {
@@ -118,19 +162,80 @@ impl SessionManager {
         request: StartRequest,
         config: &Config,
     ) -> Result<(), SessionError> {
-        if id.is_empty()
-            || self.used_ids.contains(&id)
-            || self.used_ids.len() >= 65_536
-            || request.text_hash != text_hash(&request.text)
-        {
+        let capabilities = self.backend.capabilities();
+        crate::config::validate(config, &capabilities)
+            .map_err(|error| SessionError::Invalid(error.to_string()))?;
+        let source = SourceSnapshot::new(request.source, request.text, &request.text_hash)?;
+        let voices = VoiceSnapshot::new(
+            &capabilities.backend,
+            capabilities.model.as_deref(),
+            &capabilities,
+            vec![config.voice.clone()],
+        )?;
+        let plan = SpeechPlan::single_voice(
+            source,
+            voices,
+            PlaybackPolicy::Streaming,
+            &config.voice,
+            config.style.clone(),
+        )?;
+        self.start_input(
+            id,
+            plan,
+            PlanSessionOptions {
+                volume: config.volume,
+                speed: config.speed,
+                resume_byte: request.resume_byte,
+                restore_checkpoint: request.restore_checkpoint,
+                staging: StagingOptions::default(),
+            },
+            Some((config.voice.clone(), config.style.clone())),
+        )
+        .await
+    }
+
+    /// Start a plan on the host's LocalSet, replacing the previous session.
+    pub async fn start_plan(
+        &mut self,
+        id: String,
+        plan: SpeechPlan,
+        options: PlanSessionOptions,
+    ) -> Result<(), SessionError> {
+        self.start_input(id, plan, options, None).await
+    }
+
+    async fn start_input(
+        &mut self,
+        id: String,
+        plan: SpeechPlan,
+        options: PlanSessionOptions,
+        legacy_settings: Option<(String, Option<String>)>,
+    ) -> Result<(), SessionError> {
+        if plan.playback_policy() == PlaybackPolicy::AfterChapterReady {
+            options.staging.validate()?;
+        }
+        if plan.state() == PlanState::Failed {
+            return Err(PlanError::NotOpen(PlanState::Failed).into());
+        }
+        plan.validate_capabilities(&self.backend.capabilities())?;
+        crate::config::validate_playback(options.volume, options.speed)
+            .map_err(|error| SessionError::Invalid(error.to_string()))?;
+        let source = plan.source().clone();
+        if id.is_empty() || self.used_ids.contains(&id) || self.used_ids.len() >= 65_536 {
             return Err(SessionError::Invalid(
-                "missing, reused or exhausted session ID, or text digest mismatch".into(),
+                "missing, reused or exhausted session ID".into(),
             ));
         }
-        let mut byte = request.resume_byte.unwrap_or(0);
-        if request.restore_checkpoint
-            && request.resume_byte.is_none()
-            && let Some(checkpoint) = self.checkpoints.load(&request.source, &request.text)?
+        if options.restore_checkpoint && self.checkpoints.is_none() {
+            return Err(SessionError::Invalid(
+                "checkpoint restoration requires a store".into(),
+            ));
+        }
+        let mut byte = options.resume_byte.unwrap_or(0);
+        if options.restore_checkpoint
+            && options.resume_byte.is_none()
+            && let Some(store) = &self.checkpoints
+            && let Some(checkpoint) = store.load(source.source(), source.text())?
         {
             byte = if checkpoint.completed {
                 0
@@ -138,15 +243,9 @@ impl SessionManager {
                 checkpoint.resume_byte
             };
         }
-        if byte > request.text.len() || !request.text.is_char_boundary(byte) {
-            return Err(SessionError::Invalid(
-                "invalid UTF-8 resume position".into(),
-            ));
-        }
-        crate::config::validate(config, &self.backend.capabilities())
-            .map_err(|error| SessionError::Invalid(error.to_string()))?;
+        plan.validate_resume_byte(byte)?;
         self.stop().await?;
-        self.player.configure(config.volume, config.speed);
+        self.player.configure(options.volume, options.speed);
         self.player.pause();
         self.used_ids.insert(id.clone());
         let phase = Rc::new(Cell::new(SessionState::Generating));
@@ -154,11 +253,12 @@ impl SessionManager {
         let paused = Rc::new(Cell::new(false));
         let terminal = Rc::new(Cell::new(false));
         let buffering = Rc::new(Cell::new(true));
-        let speed = Rc::new(Cell::new(config.speed));
+        let speed = Rc::new(Cell::new(options.speed));
+        let input = Rc::new(PlanInput::new(plan, byte));
         let writes = Arc::new(PendingWrites::default());
         let runner = Runner {
             id: id.clone(),
-            request: request.clone(),
+            source: source.clone(),
             backend: self.backend.clone(),
             player: self.player.clone(),
             checkpoints: self.checkpoints.clone(),
@@ -168,23 +268,32 @@ impl SessionManager {
             buffering: buffering.clone(),
             speed: speed.clone(),
             position: position.clone(),
-            text: Arc::from(request.text.as_str()),
+            text: source.shared_text(),
             writes: writes.clone(),
+            staging: options.staging.clone(),
         };
-        let voice = config.voice.clone();
-        let style = config.style.clone();
-        let job_style = style.clone();
         let finished = terminal.clone();
         let final_phase = phase.clone();
-        let job_voice = voice.clone();
+        let running_input = input.clone();
         let task = tokio::task::spawn_local(async move {
-            let result = runner.run(byte, voice, style).await;
+            let result = runner.run(byte, running_input).await;
             if let Err(error) = &result {
                 runner.player.stop();
+                let staging = matches!(error, SessionError::Staging(_));
                 let _ = runner
                     .emit(Event::Error(ErrorInfo {
-                        code: "session_failed".into(),
-                        stage: "listening".into(),
+                        code: if staging {
+                            "staging_failed"
+                        } else {
+                            "session_failed"
+                        }
+                        .into(),
+                        stage: if staging {
+                            "chapter_staging"
+                        } else {
+                            "listening"
+                        }
+                        .into(),
                         message: error.to_string(),
                         retryable: true,
                     }))
@@ -204,24 +313,82 @@ impl SessionManager {
             let _ = runner
                 .emit(Event::SessionEnded {
                     reason,
-                    text_hash: runner.request.text_hash.clone(),
+                    text_hash: runner.source.hash().into(),
                 })
                 .await;
         });
         self.job = Some(Job {
             id,
-            request,
+            source,
             paused,
             phase,
             buffering,
             speed,
+            volume: Cell::new(options.volume),
             position,
             terminal,
             writes,
-            voice: job_voice,
-            style: job_style,
+            input,
+            legacy_settings,
+            staging: options.staging,
             task: Some(AbortOnDrop(task)),
         });
+        Ok(())
+    }
+
+    /// Atomically accept another contiguous batch. Stale/terminal sessions fail.
+    pub fn append_plan(&self, id: &str, batch: Vec<SpeechSpan>) -> Result<(), SessionError> {
+        let job = self.active(id)?;
+        job.input.plan.borrow_mut().append(batch)?;
+        job.input.changed.notify_one();
+        Ok(())
+    }
+
+    /// Seal fully covered input; this does not imply generation or playback completion.
+    pub fn seal_plan(&self, id: &str) -> Result<(), SessionError> {
+        let job = self.active(id)?;
+        job.input.plan.borrow_mut().seal()?;
+        job.input.changed.notify_one();
+        Ok(())
+    }
+
+    /// Fail open input and cancel in-flight generation/playback, preserving safe progress.
+    pub async fn fail_input(&mut self, id: &str, message: &str) -> Result<(), SessionError> {
+        self.active(id)?.input.plan.borrow_mut().fail()?;
+        self.finish(EndReason::Failed, Some(message), true).await
+    }
+
+    /// Query progress for this session, including after its terminal event.
+    pub fn plan_progress(&self, id: &str) -> Result<PlanProgress, SessionError> {
+        let job = self
+            .job
+            .as_ref()
+            .filter(|job| job.id == id)
+            .ok_or_else(|| SessionError::Invalid("stale session".into()))?;
+        let plan = job.input.plan.borrow();
+        Ok(PlanProgress {
+            input_state: plan.state(),
+            accepted_end: plan.accepted_end(),
+            generated_end: job.input.generated.get(),
+            played_end: job.position.get(),
+            waiting_for_input: !job.terminal.get() && job.input.waiting.get(),
+            chapter_ready: job.input.ready.get(),
+        })
+    }
+
+    /// Change only playback settings without touching the fixed voice assignments.
+    pub fn configure_playback(
+        &self,
+        id: &str,
+        volume: f32,
+        speed: f32,
+    ) -> Result<(), SessionError> {
+        crate::config::validate_playback(volume, speed)
+            .map_err(|error| SessionError::Invalid(error.to_string()))?;
+        let job = self.active(id)?;
+        job.speed.set(speed);
+        job.volume.set(volume);
+        self.player.configure(volume, speed);
         Ok(())
     }
 
@@ -276,16 +443,33 @@ impl SessionManager {
         new_id: String,
         config: &Config,
     ) -> Result<bool, SessionError> {
+        if self
+            .job
+            .as_ref()
+            .is_some_and(|job| !job.terminal.get() && job.legacy_settings.is_none())
+        {
+            return Err(SessionError::Invalid(
+                "planned sessions have fixed voices; use configure_playback or start a new plan"
+                    .into(),
+            ));
+        }
         crate::config::validate(config, &self.backend.capabilities())
             .map_err(|error| SessionError::Invalid(error.to_string()))?;
         if let Some(job) = &self.job
             && !job.terminal.get()
-            && (job.voice != config.voice || job.style != config.style)
+            && job
+                .legacy_settings
+                .as_ref()
+                .is_some_and(|(voice, style)| voice != &config.voice || style != &config.style)
         {
             let paused = job.paused.get();
-            let mut request = job.request.clone();
-            request.resume_byte = Some(job.position.get());
-            request.restore_checkpoint = false;
+            let request = StartRequest {
+                source: job.source.source().clone(),
+                text: job.source.text().into(),
+                text_hash: job.source.hash().into(),
+                resume_byte: Some(job.position.get()),
+                restore_checkpoint: false,
+            };
             self.start(new_id.clone(), request, config).await?;
             if paused {
                 self.pause(&new_id).await?;
@@ -294,6 +478,7 @@ impl SessionManager {
         }
         if let Some(job) = &self.job {
             job.speed.set(config.speed);
+            job.volume.set(config.volume);
         }
         self.player.configure(config.volume, config.speed);
         Ok(false)
@@ -308,6 +493,23 @@ impl SessionManager {
 
     /// Cancel generation and clear playback, keeping the model and checkpoint.
     pub async fn stop(&mut self) -> Result<(), SessionError> {
+        self.finish(EndReason::Cancelled, None, true).await
+    }
+
+    /// Cancel and await owned tasks/I/O without waiting for an event consumer.
+    /// Closing discards the execution; it never reports playback completion.
+    pub async fn close(&mut self) -> Result<(), SessionError> {
+        self.finish(EndReason::Cancelled, None, false).await?;
+        self.job.take();
+        Ok(())
+    }
+
+    async fn finish(
+        &mut self,
+        reason: EndReason,
+        input_error: Option<&str>,
+        publish: bool,
+    ) -> Result<(), SessionError> {
         self.player.stop();
         if let Some(job) = &mut self.job {
             if let Some(mut task) = job.task.take() {
@@ -320,13 +522,35 @@ impl SessionManager {
                 job.writes.idle.notified().await;
             }
             if !job.terminal.replace(true) {
-                job.phase.set(SessionState::Stopped);
+                job.phase.set(if reason == EndReason::Failed {
+                    SessionState::Failed
+                } else {
+                    SessionState::Stopped
+                });
+                job.input.waiting.set(false);
+                if !publish {
+                    return Ok(());
+                }
+                if let Some(message) = input_error {
+                    self.events
+                        .send(SessionEvent {
+                            session_id: job.id.clone(),
+                            event: Event::Error(ErrorInfo {
+                                code: "input_failed".into(),
+                                stage: "plan_input".into(),
+                                message: message.into(),
+                                retryable: true,
+                            }),
+                        })
+                        .await
+                        .map_err(|_| SessionError::Disconnected)?;
+                }
                 self.events
                     .send(SessionEvent {
                         session_id: job.id.clone(),
                         event: Event::SessionEnded {
-                            reason: EndReason::Cancelled,
-                            text_hash: job.request.text_hash.clone(),
+                            reason,
+                            text_hash: job.source.hash().into(),
                         },
                     })
                     .await
@@ -337,6 +561,7 @@ impl SessionManager {
     }
 
     /// Seek creates a new session and re-synthesizes from a stable original-text byte.
+    /// For planned sessions, only config volume/speed are used; voices stay fixed.
     pub async fn seek(
         &mut self,
         old_id: &str,
@@ -344,10 +569,67 @@ impl SessionManager {
         byte: usize,
         config: &Config,
     ) -> Result<(), SessionError> {
-        let mut request = self.active(old_id)?.request.clone();
-        request.resume_byte = Some(byte);
-        request.restore_checkpoint = false;
+        let job = self.active(old_id)?;
+        if job.legacy_settings.is_none() {
+            return self
+                .restart_plan(old_id, new_id, byte, config.volume, config.speed)
+                .await;
+        }
+        let request = StartRequest {
+            source: job.source.source().clone(),
+            text: job.source.text().into(),
+            text_hash: job.source.hash().into(),
+            resume_byte: Some(byte),
+            restore_checkpoint: false,
+        };
         self.start(new_id, request, config).await
+    }
+
+    /// Seek a planned session without global configuration, preserving voices,
+    /// volume/speed and user pause. The new ID owns all subsequent input updates.
+    pub async fn seek_plan(
+        &mut self,
+        old_id: &str,
+        new_id: String,
+        byte: usize,
+    ) -> Result<(), SessionError> {
+        let job = self.active(old_id)?;
+        if job.legacy_settings.is_some() {
+            return Err(SessionError::Invalid(
+                "use seek for legacy configuration sessions".into(),
+            ));
+        }
+        let (volume, speed) = (job.volume.get(), job.speed.get());
+        self.restart_plan(old_id, new_id, byte, volume, speed).await
+    }
+
+    async fn restart_plan(
+        &mut self,
+        old_id: &str,
+        new_id: String,
+        byte: usize,
+        volume: f32,
+        speed: f32,
+    ) -> Result<(), SessionError> {
+        let job = self.active(old_id)?;
+        let plan = job.input.plan.borrow().clone();
+        let paused = job.paused.get();
+        self.start_plan(
+            new_id.clone(),
+            plan,
+            PlanSessionOptions {
+                volume,
+                speed,
+                resume_byte: Some(byte),
+                restore_checkpoint: false,
+                staging: job.staging.clone(),
+            },
+        )
+        .await?;
+        if paused {
+            self.pause(&new_id).await?;
+        }
+        Ok(())
     }
 
     async fn emit(&self, id: &str, event: Event) -> Result<(), SessionError> {
@@ -378,7 +660,7 @@ mod tests {
         backend::{AudioChunk, Streaming},
         text::preprocess_text,
     };
-    use tts_protocol::{Capabilities, SourceId};
+    use tts_protocol::{Capabilities, SourceId, text_hash};
 
     struct FakeBackend {
         calls: Cell<usize>,

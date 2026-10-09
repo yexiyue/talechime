@@ -123,26 +123,47 @@ pub fn validate(config: &Config, capabilities: &Capabilities) -> Result<(), Conf
             config.backend, config.model
         )));
     }
-    if config.style.as_ref().is_some_and(|style| {
+    validate_style(config.style.as_deref(), capabilities)?;
+    validate_playback(config.volume, config.speed)?;
+    validate_voice(&config.voice, capabilities)
+}
+
+pub(crate) fn validate_playback(volume: f32, speed: f32) -> Result<(), ConfigError> {
+    if !volume.is_finite() || !(0.0..=10.0).contains(&volume) {
+        return Err(ConfigError::Invalid("volume must be 0..10".into()));
+    }
+    if !speed.is_finite() || !(0.5..=2.0).contains(&speed) {
+        return Err(ConfigError::Invalid("speed must be 0.5..2".into()));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_style(
+    style: Option<&str>,
+    capabilities: &Capabilities,
+) -> Result<(), ConfigError> {
+    if style.is_some_and(|style| {
         !capabilities.style || style.trim().is_empty() || style.chars().count() > 200
     }) {
         return Err(ConfigError::Invalid(
             "style is unsupported by this model or exceeds 200 characters".into(),
         ));
     }
-    if !config.volume.is_finite() || !(0.0..=10.0).contains(&config.volume) {
-        return Err(ConfigError::Invalid("volume must be 0..10".into()));
-    }
-    if !config.speed.is_finite() || !(0.5..=2.0).contains(&config.speed) {
-        return Err(ConfigError::Invalid("speed must be 0.5..2".into()));
-    }
-    if !capabilities.voices.contains(&config.voice) {
+    Ok(())
+}
+
+pub(crate) fn validate_voice(voice: &str, capabilities: &Capabilities) -> Result<(), ConfigError> {
+    if !capabilities
+        .voices
+        .iter()
+        .any(|available| available == voice)
+    {
         if capabilities.cloning && capabilities.voices.is_empty() {
             return Err(ConfigError::Invalid("this model requires a saved reference voice; import or design a voice before selecting it".into()));
         }
         return Err(ConfigError::Invalid(format!(
             "voice {} is unavailable",
-            config.voice
+            voice
         )));
     }
     Ok(())

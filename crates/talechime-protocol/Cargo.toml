@@ -3,7 +3,7 @@ name = "talechime-protocol"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
-description = "Process protocol for TRNovel listening clients"
+description = "Lightweight speech-plan protocol for Talechime hosts"
 license = "MIT"
 repository = "https://github.com/yexiyue/talechime"
 

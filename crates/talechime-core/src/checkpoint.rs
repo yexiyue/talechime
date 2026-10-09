@@ -46,6 +46,11 @@ impl CheckpointStore {
         ))
     }
 
+    /// Explicit directory owned by the host, for shared library assembly.
+    pub fn directory(&self) -> &std::path::Path {
+        &self.directory
+    }
+
     fn path(&self, source: &SourceId) -> Result<PathBuf, CheckpointError> {
         let identity = serde_json::to_string(source)?;
         Ok(self

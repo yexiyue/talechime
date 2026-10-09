@@ -1,3 +1,5 @@
+#![cfg(feature = "cli")]
+
 use std::{
     io::{BufRead, BufReader, Write},
     process::{Child, ChildStdin, ChildStdout, Command as ProcessCommand, Stdio},
@@ -275,4 +277,91 @@ fn backend_directory_and_switch_are_lightweight() {
     assert!(!worker._directory.path().join("models").exists());
     worker.send("shutdown", Command::Shutdown);
     worker.wait();
+}
+
+#[test]
+fn plan_queries_require_prepared_model_without_download_side_effects() {
+    let mut worker = Worker::new();
+    let ready = worker.send("hello", Command::Hello);
+    assert_eq!(ready.protocol_version, 7);
+    assert!(matches!(ready.event, Event::Ready(_)));
+    assert!(
+        matches!(worker.send("unprepared",Command::Seal).event,Event::Error(ref e) if e.code=="model_not_ready")
+    );
+    assert!(!worker._directory.path().join("models").exists());
+    assert!(!worker._directory.path().join("positions").exists());
+    worker.send("shutdown", Command::Shutdown);
+    worker.wait();
+}
+
+#[cfg(feature = "moss")]
+#[test]
+fn cli_rejects_open_or_mismatched_plan_before_model_preparation() {
+    for (text, sealed, resume_byte) in [
+        ("甲", false, 0),
+        ("乙", false, 0),
+        ("甲", true, 1),
+        ("甲", true, 4),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("chapter.txt"), "甲").unwrap();
+        let plan = tts_protocol::PlanRequest {
+            source: tts_protocol::SourceId {
+                namespace: "test".into(),
+                book: "book".into(),
+                chapter: "chapter".into(),
+            },
+            text: text.into(),
+            text_hash: tts_protocol::text_hash(text),
+            backend: "moss".into(),
+            model: if cfg!(feature = "moss-candle") {
+                Some("nano".into())
+            } else {
+                None
+            },
+            voices: vec!["Weiguo".into()],
+            spans: if sealed {
+                vec![tts_protocol::VoiceSpan {
+                    range: tts_protocol::TextRange { start: 0, end: 3 },
+                    voice: "Weiguo".into(),
+                    style: None,
+                }]
+            } else {
+                vec![]
+            },
+            sealed,
+            playback: tts_protocol::PlanPlayback::Streaming,
+            resume_byte: Some(resume_byte),
+            restore_checkpoint: false,
+        };
+        std::fs::write(
+            root.path().join("plan.json"),
+            serde_json::to_vec(&plan).unwrap(),
+        )
+        .unwrap();
+        let output = ProcessCommand::new(env!("CARGO_BIN_EXE_talechime"))
+            .args(["--backend", "moss", "--tts-device", "cpu", "--config"])
+            .arg(root.path().join("config.json"))
+            .arg("--model-dir")
+            .arg(root.path().join("models"))
+            .arg("--checkpoint-dir")
+            .arg(root.path().join("positions"))
+            .arg(root.path().join("chapter.txt"))
+            .arg("--plan")
+            .arg(root.path().join("plan.json"))
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8(output.stderr)
+                .unwrap()
+                .contains(if sealed {
+                    "resume"
+                } else {
+                    "sealed plan with the exact file text"
+                })
+        );
+        assert!(!root.path().join("models").exists());
+        assert!(!root.path().join("positions").exists());
+    }
 }

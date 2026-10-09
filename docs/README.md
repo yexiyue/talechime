@@ -7,6 +7,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [项目 README](../README.md) | 安装、模型能力、CLI 与宿主集成 |
+| [Rust 库入口](library.md) | 模型准备、直接 PCM、可选播放/检查点、控制与关闭 |
 | [配置与手工搬迁](migration.md) | 数据归属、新目录与旧资源复用 |
 | [架构与集成](architecture.md) | 协议、所有权、故障边界和多音色演进 |
 | [开发与验证](development.md) | 工具链、CPU/GPU 验证及独立发行 |

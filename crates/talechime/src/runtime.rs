@@ -1,15 +1,12 @@
 //! Worker application state, independent of JSON Lines transport.
 use crate::resources::Resources;
-use std::{
-    rc::Rc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::rc::Rc;
+use std::time::Duration;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tts_core::{
-    AudioPlayer,
     checkpoint::CheckpointStore,
     config::{ConfigError, ConfigStore},
-    session::{SessionEvent, SessionManager},
+    session::SessionEvent,
 };
 use tts_protocol::{Command, ErrorInfo, Event, Request, SessionState};
 
@@ -44,9 +41,9 @@ pub struct Worker {
     progress: mpsc::Sender<Event>,
     preparing: Option<Preparation>,
     progress_forwarder: Option<JoinHandle<()>>,
-    manager: Option<SessionManager>,
+    manager: Option<crate::app_session::AppSession>,
+    plan_spans: usize,
     resource_state: SessionState,
-    next_session: u64,
 }
 impl Worker {
     pub fn new(
@@ -65,9 +62,25 @@ impl Worker {
             preparing: None,
             progress_forwarder: None,
             manager: None,
+            plan_spans: 0,
             resource_state: SessionState::Idle,
-            next_session: 0,
         }
+    }
+    #[cfg(test)]
+    pub fn attach_test(
+        &mut self,
+        backend: Rc<dyn tts_core::backend::Backend>,
+        player: Rc<dyn talechime::Playback>,
+    ) {
+        self.manager = Some(
+            crate::app_session::AppSession::with_player(
+                backend,
+                player,
+                &self.checkpoints,
+                self.events.clone(),
+            )
+            .unwrap(),
+        );
     }
     pub fn catalog(&self) -> anyhow::Result<Vec<tts_protocol::Capabilities>> {
         self.resources.catalog()
@@ -99,10 +112,15 @@ impl Worker {
     pub fn has_prepared_model(&self) -> bool {
         self.manager.is_some()
     }
-    fn status(&self) -> (Option<String>, SessionState) {
-        self.manager
-            .as_ref()
-            .map_or((None, self.resource_state), SessionManager::status)
+    async fn status(&self) -> (Option<String>, SessionState) {
+        match &self.manager {
+            Some(manager) => manager
+                .control
+                .status()
+                .await
+                .unwrap_or((None, SessionState::Failed)),
+            None => (None, self.resource_state),
+        }
     }
     /// Poll only while preparation exists; dropping this future keeps the task owned.
     pub async fn prepared(&mut self) -> Response {
@@ -122,14 +140,10 @@ impl Worker {
                 return Response::error("prepare_failed", "model", error);
             }
         };
-        match AudioPlayer::open() {
-            Ok(player) => {
-                self.manager = Some(SessionManager::new(
-                    prepared,
-                    Rc::new(player),
-                    self.checkpoints.clone(),
-                    self.events.clone(),
-                ));
+        match crate::app_session::AppSession::open(prepared, &self.checkpoints, self.events.clone())
+        {
+            Ok(manager) => {
+                self.manager = Some(manager);
                 self.resource_state = SessionState::Idle;
                 Response::global(Event::ModelReady)
             }
@@ -155,7 +169,7 @@ impl Worker {
     pub async fn command(&mut self, request: &Request) -> Response {
         match &request.command {
             Command::GetStatus => {
-                let (session, state) = self.status();
+                let (session, state) = self.status().await;
                 Response {
                     session,
                     event: Event::SessionState { state },
@@ -212,35 +226,31 @@ impl Worker {
                 {
                     self.cancel_prepare().await;
                     self.disconnect_progress();
-                    if let Some(mut manager) = self.manager.take() {
-                        let _ = manager.stop().await;
+                    if let Some(mut manager) = self.manager.take()
+                        && let Err(error) = manager.stop_and_close().await
+                    {
+                        self.resource_state = SessionState::Failed;
+                        return Response::error("session_cleanup_failed", "session", error);
                     }
                     self.resource_state = SessionState::Idle;
+                    self.plan_spans = 0;
                     return Response::global(Event::ConfigChanged(config));
                 }
-                self.next_session += 1;
-                let nonce = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos();
-                let id = format!(
-                    "worker-voice-{}-{nonce}-{}",
-                    std::process::id(),
-                    self.next_session
-                );
-                let session = if let Some(manager) = &mut self.manager {
-                    match manager.update_settings(id.clone(), &config).await {
-                        Ok(true) => Some(id),
-                        Ok(false) => None,
-                        Err(error) => return Response::error("session_invalid", "session", error),
-                    }
-                } else {
-                    None
-                };
-                Response {
-                    session,
-                    event: Event::ConfigChanged(config),
+                if (config.volume != old.volume || config.speed != old.speed)
+                    && let Some(manager) = &self.manager
+                    && let Ok((Some(active), state)) = manager.control.status().await
+                    && !matches!(
+                        state,
+                        SessionState::Stopped | SessionState::Failed | SessionState::Idle
+                    )
+                    && let Err(error) = manager
+                        .control
+                        .configure_playback(active, config.volume, config.speed)
+                        .await
+                {
+                    return Response::error("session_invalid", "session", error);
                 }
+                Response::global(Event::ConfigChanged(config))
             }
             Command::PrepareModel => {
                 if self.manager.is_some() {
@@ -310,32 +320,90 @@ impl Worker {
             );
         };
         let result = match command {
-            Command::Start(start) => match self.store.load() {
-                Ok(config) => manager.start(id.into(), start.clone(), &config).await,
-                Err(error) => return Response::error("config_invalid", "config", error),
-            },
-            Command::Pause => manager.pause(id).await,
-            Command::Resume => manager.resume(id).await,
+            Command::Start(input) => {
+                let caps = match manager.capabilities() {
+                    Ok(caps) => caps,
+                    Err(error) => return Response::error("session_invalid", "plan", error),
+                };
+                let plan = match crate::plan_input::build(input, &caps) {
+                    Ok(plan) => plan,
+                    Err(error) => return Response::error("plan_invalid", "plan", error),
+                };
+                let config = match self.store.load() {
+                    Ok(config) => config,
+                    Err(error) => return Response::error("config_invalid", "config", error),
+                };
+                let result = manager
+                    .control
+                    .start(
+                        id,
+                        plan,
+                        talechime::PlanSessionOptions {
+                            volume: config.volume,
+                            speed: config.speed,
+                            resume_byte: input.resume_byte,
+                            restore_checkpoint: input.restore_checkpoint,
+                            ..Default::default()
+                        },
+                    )
+                    .await;
+                if result.is_ok() {
+                    self.plan_spans = input.spans.len();
+                }
+                result
+            }
+            Command::Append { spans } => {
+                if let Err(error) = crate::plan_input::check_batch(spans.len(), self.plan_spans) {
+                    return Response::error("plan_invalid", "plan", error);
+                }
+                let result = manager
+                    .control
+                    .append(id, crate::plan_input::spans(spans))
+                    .await;
+                if result.is_ok() {
+                    self.plan_spans += spans.len();
+                }
+                result
+            }
+            Command::Seal => manager.control.seal(id).await,
+            Command::FailInput { message } => manager.control.fail_input(id, message).await,
+            Command::GetProgress => {
+                return match manager.control.progress(id).await {
+                    Ok(progress) => Response {
+                        session: Some(id.into()),
+                        event: Event::Progress(crate::plan_input::progress(progress)),
+                    },
+                    Err(error) => Response::error("session_invalid", "plan", error),
+                };
+            }
+            Command::Pause => manager.control.pause(id).await,
+            Command::Resume => manager.control.resume(id).await,
             Command::Stop => {
-                if manager.status().0.as_deref() == Some(id) {
-                    manager.stop().await
+                if manager
+                    .control
+                    .status()
+                    .await
+                    .ok()
+                    .and_then(|status| status.0)
+                    .as_deref()
+                    == Some(id)
+                {
+                    manager.control.stop().await
                 } else {
-                    Err(tts_core::session::SessionError::Invalid(
-                        "stale session".into(),
+                    Err(talechime::EngineError::Session(
+                        tts_core::session::SessionError::Invalid("stale session".into()),
                     ))
                 }
             }
             Command::Seek {
                 byte,
                 new_session_id,
-            } => match self.store.load() {
-                Ok(config) => {
-                    manager
-                        .seek(id, new_session_id.clone(), *byte, &config)
-                        .await
-                }
-                Err(error) => return Response::error("config_invalid", "config", error),
-            },
+            } => {
+                manager
+                    .control
+                    .seek(id, new_session_id.clone(), *byte)
+                    .await
+            }
             _ => return Response::error("invalid_request", "session", "not a session command"),
         };
         match result {
@@ -353,7 +421,7 @@ impl Worker {
         self.cancel_prepare().await;
         self.disconnect_progress();
         if let Some(manager) = &mut self.manager {
-            tokio::time::timeout(Duration::from_secs(3), manager.stop()).await??;
+            tokio::time::timeout(Duration::from_secs(3), manager.stop_and_close()).await??;
         }
         Ok(())
     }
@@ -370,7 +438,7 @@ impl Drop for Worker {
 #[cfg(all(test, feature = "moss"))]
 mod tests {
     use super::*;
-    use std::{cell::Cell, sync::Arc};
+    use std::{cell::Cell, rc::Rc, sync::Arc};
     use tts_core::{
         backend::{Backend, BackendError, Pcm, Streaming},
         player::Playback,
@@ -403,6 +471,8 @@ mod tests {
     }
     #[tokio::test]
     async fn device_change_releases_prepared_manager_and_preserves_checkpoint_files() {
+        talechime::run_local(async {
+
         let root = tempfile::tempdir().unwrap();
         let resources = Resources::new(Some(root.path().join("models"))).unwrap();
         let caps = resources.capabilities("moss").unwrap();
@@ -420,12 +490,15 @@ mod tests {
             events.clone(),
             progress,
         );
-        worker.manager = Some(SessionManager::new(
-            Rc::new(SilentBackend(caps)),
-            player.clone(),
-            checkpoints,
-            events,
-        ));
+        worker.manager = Some(
+            crate::app_session::AppSession::with_player(
+                Rc::new(SilentBackend(caps)),
+                player.clone(),
+                &checkpoints,
+                events,
+            )
+            .unwrap(),
+        );
         let response = worker
             .command(&Request {
                 protocol_version: tts_protocol::PROTOCOL_VERSION,
@@ -447,10 +520,14 @@ mod tests {
             std::fs::read_to_string(progress_file).unwrap(),
             "reliable progress"
         );
+
+        }).await;
     }
     #[cfg(feature = "moss-candle")]
     #[tokio::test]
     async fn model_change_rejects_inherited_device_before_config_or_manager_changes() {
+        talechime::run_local(async {
+
         let root = tempfile::tempdir().unwrap();
         let resources = Resources::new(Some(root.path().join("models"))).unwrap();
         let defaults = tts_protocol::Config {
@@ -474,12 +551,15 @@ mod tests {
             events.clone(),
             progress,
         );
-        worker.manager = Some(SessionManager::new(
-            Rc::new(SilentBackend(resources.capabilities("moss").unwrap())),
-            player.clone(),
-            checkpoints,
-            events,
-        ));
+        worker.manager = Some(
+            crate::app_session::AppSession::with_player(
+                Rc::new(SilentBackend(resources.capabilities("moss").unwrap())),
+                player.clone(),
+                &checkpoints,
+                events,
+            )
+            .unwrap(),
+        );
         let response = worker
             .command(&Request {
                 protocol_version: tts_protocol::PROTOCOL_VERSION,
@@ -499,5 +579,356 @@ mod tests {
         assert_eq!(std::fs::read(store.path()).unwrap(), original);
         assert!(worker.manager.is_some());
         assert_eq!(player.0.get(), 0);
+
+        }).await;
+    }
+}
+
+#[cfg(test)]
+mod plan_tests {
+    use super::*;
+    use crate::fixture::{Fixture, Mode, Player};
+    use tts_protocol::{PlanPlayback, PlanRequest, SourceId, TextRange, VoiceSpan, text_hash};
+
+    fn input(sealed: bool, playback: PlanPlayback) -> PlanRequest {
+        PlanRequest {
+            source: SourceId {
+                namespace: "tests".into(),
+                book: "book".into(),
+                chapter: "chapter".into(),
+            },
+            text: "甲乙丙".into(),
+            text_hash: text_hash("甲乙丙"),
+            backend: "fixture".into(),
+            model: Some("shared".into()),
+            voices: vec!["A".into(), "B".into()],
+            spans: if sealed {
+                vec![span(0, 3, "A"), span(3, 6, "B"), span(6, 9, "A")]
+            } else {
+                vec![]
+            },
+            sealed,
+            playback,
+            resume_byte: Some(0),
+            restore_checkpoint: false,
+        }
+    }
+    fn span(start: usize, end: usize, voice: &str) -> VoiceSpan {
+        VoiceSpan {
+            range: TextRange { start, end },
+            voice: voice.into(),
+            style: None,
+        }
+    }
+    async fn send(worker: &mut Worker, id: Option<&str>, command: Command) -> Response {
+        // Exercise the actual JSON DTO boundary before application dispatch.
+        let request = Request {
+            protocol_version: tts_protocol::PROTOCOL_VERSION,
+            request_id: "test".into(),
+            session_id: id.map(str::to_owned),
+            command,
+        };
+        let request = tts_protocol::decode(&tts_protocol::encode(&request).unwrap()).unwrap();
+        worker.command(&request).await
+    }
+    fn make(
+        root: &tempfile::TempDir,
+        backend: Rc<Fixture>,
+        player: Rc<Player>,
+        capacity: usize,
+    ) -> (Worker, mpsc::Receiver<SessionEvent>) {
+        let resources = Resources::new(Some(root.path().join("models"))).unwrap();
+        let store = ConfigStore::new(root.path().join("config.json"));
+        let checkpoints = CheckpointStore::new(root.path().join("checkpoints"));
+        let (events, receiver) = mpsc::channel(capacity);
+        let (progress, _) = mpsc::channel(16);
+        let mut worker = Worker::new(
+            store,
+            checkpoints.clone(),
+            resources,
+            events.clone(),
+            progress,
+        );
+        worker.manager = Some(
+            crate::app_session::AppSession::with_player(backend, player, &checkpoints, events)
+                .unwrap(),
+        );
+        (worker, receiver)
+    }
+    async fn snapshot(worker: &mut Worker, id: &str) -> tts_protocol::PlanProgressSnapshot {
+        let response = send(worker, Some(id), Command::GetProgress).await;
+        if let Event::Progress(progress) = response.event {
+            progress
+        } else {
+            panic!("{:?}", response.event)
+        }
+    }
+    #[tokio::test]
+    async fn incremental_transport_is_atomic_and_stale_controls_cannot_mutate_replacement() {
+        talechime::run_local(async {
+            let root = tempfile::tempdir().unwrap();
+            let backend = Rc::new(Fixture::default());
+            let (mut worker, mut events) =
+                make(&root, backend.clone(), Rc::new(Player::default()), 64);
+            let drain = tokio::task::spawn_local(async move {
+                while let Some(event) = events.recv().await {
+                    if matches!(
+                        event.event,
+                        Event::SessionEnded {
+                            reason: tts_protocol::EndReason::Completed,
+                            ..
+                        }
+                    ) {
+                        return (event, events);
+                    }
+                }
+                panic!("no completion")
+            });
+            assert!(matches!(
+                send(
+                    &mut worker,
+                    Some("one"),
+                    Command::Start(Box::new(input(false, PlanPlayback::Streaming)))
+                )
+                .await
+                .event,
+                Event::Accepted
+            ));
+            assert!(matches!(
+                send(&mut worker, Some("one"), Command::Seal).await.event,
+                Event::Error(_)
+            ));
+            assert!(matches!(
+                send(
+                    &mut worker,
+                    Some("one"),
+                    Command::Append {
+                        spans: vec![span(0, 3, "A"), span(4, 6, "B")]
+                    }
+                )
+                .await
+                .event,
+                Event::Error(_)
+            ));
+            assert_eq!(snapshot(&mut worker, "one").await.accepted_end, 0);
+            assert!(matches!(
+                send(
+                    &mut worker,
+                    Some("one"),
+                    Command::Append {
+                        spans: vec![span(0, 3, "A")]
+                    }
+                )
+                .await
+                .event,
+                Event::Accepted
+            ));
+            let mut invalid = input(false, PlanPlayback::Streaming);
+            invalid.text_hash = "bad".into();
+            assert!(matches!(
+                send(&mut worker, Some("bad"), Command::Start(Box::new(invalid)))
+                    .await
+                    .event,
+                Event::Error(_)
+            ));
+            assert_eq!(snapshot(&mut worker, "one").await.accepted_end, 3);
+            assert!(matches!(
+                send(
+                    &mut worker,
+                    Some("one"),
+                    Command::Seek {
+                        byte: 0,
+                        new_session_id: "two".into()
+                    }
+                )
+                .await
+                .event,
+                Event::Accepted
+            ));
+            assert!(matches!(
+                send(
+                    &mut worker,
+                    Some("one"),
+                    Command::FailInput {
+                        message: "late".into()
+                    }
+                )
+                .await
+                .event,
+                Event::Error(_)
+            ));
+            assert!(matches!(
+                send(
+                    &mut worker,
+                    Some("two"),
+                    Command::Append {
+                        spans: vec![span(3, 6, "B"), span(6, 9, "A")]
+                    }
+                )
+                .await
+                .event,
+                Event::Accepted
+            ));
+            assert!(matches!(
+                send(&mut worker, Some("two"), Command::Seal).await.event,
+                Event::Accepted
+            ));
+            let (ended, _events) = tokio::time::timeout(Duration::from_secs(3), drain)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(ended.session_id, "two");
+            {
+                let calls = backend.calls.borrow();
+                assert_eq!(
+                    calls
+                        .iter()
+                        .rev()
+                        .take(3)
+                        .map(|c| c.1.as_str())
+                        .collect::<Vec<_>>(),
+                    vec!["A", "B", "A"]
+                );
+            }
+            worker.shutdown().await.unwrap();
+            assert!(!root.path().join("models").exists());
+        })
+        .await;
+    }
+    #[tokio::test]
+    async fn chapter_ready_stays_paused_and_close_drains_without_an_observer() {
+        talechime::run_local(async {
+            let root = tempfile::tempdir().unwrap();
+            let backend = Rc::new(Fixture::default());
+            backend.mode.set(Mode::Long);
+            let player = Rc::new(Player::default());
+            let (mut worker, mut events) = make(&root, backend, player, 64);
+            assert!(matches!(
+                send(
+                    &mut worker,
+                    Some("chapter"),
+                    Command::Start(Box::new(input(true, PlanPlayback::AfterChapterReady)))
+                )
+                .await
+                .event,
+                Event::Accepted
+            ));
+            assert!(matches!(
+                send(&mut worker, Some("chapter"), Command::Pause)
+                    .await
+                    .event,
+                Event::Accepted
+            ));
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    while events.try_recv().is_ok() {}
+                    let p = snapshot(&mut worker, "chapter").await;
+                    if p.chapter_ready {
+                        assert_eq!(p.generated_end, 9);
+                        assert_eq!(p.played_end, 0);
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            // Owner closure must bypass observer pressure, including both bounded queues.
+            worker.manager.as_mut().unwrap().close().await.unwrap();
+        })
+        .await;
+    }
+    #[cfg(feature = "moss")]
+    #[tokio::test]
+    async fn default_voice_update_does_not_replace_or_change_current_plan() {
+        talechime::run_local(async {
+            let root = tempfile::tempdir().unwrap();
+            let (mut worker, _events) = make(
+                &root,
+                Rc::new(Fixture::default()),
+                Rc::new(Player::default()),
+                64,
+            );
+            send(
+                &mut worker,
+                Some("open"),
+                Command::Start(Box::new(input(false, PlanPlayback::Streaming))),
+            )
+            .await;
+            let response = send(
+                &mut worker,
+                None,
+                Command::UpdateConfig(tts_protocol::ConfigPatch {
+                    voice: Some("Weiguo".into()),
+                    ..Default::default()
+                }),
+            )
+            .await;
+            assert!(matches!(response.event, Event::ConfigChanged(_)));
+            assert!(worker.store.path().exists());
+            assert_eq!(worker.status().await.0.as_deref(), Some("open"));
+            assert_eq!(snapshot(&mut worker, "open").await.accepted_end, 0);
+            worker.manager.as_mut().unwrap().close().await.unwrap();
+        })
+        .await;
+    }
+    #[tokio::test]
+    async fn input_failure_and_batch_limits_are_explicit() {
+        talechime::run_local(async {
+            let root = tempfile::tempdir().unwrap();
+            let (mut worker, mut events) = make(
+                &root,
+                Rc::new(Fixture::default()),
+                Rc::new(Player::default()),
+                64,
+            );
+            send(
+                &mut worker,
+                Some("open"),
+                Command::Start(Box::new(input(false, PlanPlayback::Streaming))),
+            )
+            .await;
+            let oversized = vec![span(0, 3, "A"); tts_protocol::MAX_PLAN_BATCH_SPANS + 1];
+            assert!(matches!(
+                send(
+                    &mut worker,
+                    Some("open"),
+                    Command::Append { spans: oversized }
+                )
+                .await
+                .event,
+                Event::Error(_)
+            ));
+            assert_eq!(snapshot(&mut worker, "open").await.accepted_end, 0);
+            assert!(matches!(
+                send(
+                    &mut worker,
+                    Some("open"),
+                    Command::FailInput {
+                        message: "analysis failed".into()
+                    }
+                )
+                .await
+                .event,
+                Event::Accepted
+            ));
+            let reason = tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    let e = events.recv().await.unwrap();
+                    if let Event::SessionEnded { reason, .. } = e.event {
+                        break reason;
+                    }
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(reason, tts_protocol::EndReason::Failed);
+            assert!(matches!(
+                send(&mut worker, Some("open"), Command::Seal).await.event,
+                Event::Error(_)
+            ));
+            worker.shutdown().await.unwrap();
+        })
+        .await;
     }
 }

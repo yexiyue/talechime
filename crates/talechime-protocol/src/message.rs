@@ -135,16 +135,6 @@ impl Capabilities {
     }
 }
 
-/// Validated immutable text and requested recovery position.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StartRequest {
-    pub source: SourceId,
-    pub text: String,
-    pub text_hash: String,
-    pub resume_byte: Option<usize>,
-    pub restore_checkpoint: bool,
-}
-
 /// Commands sent by the parent. Session controls require an envelope session ID.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
@@ -155,11 +145,23 @@ pub enum Command {
     UpdateConfig(ConfigPatch),
     PrepareModel,
     CancelPrepare,
-    Start(StartRequest),
+    /// Start one validated single- or multi-voice plan.
+    Start(Box<PlanRequest>),
+    Append {
+        spans: Vec<VoiceSpan>,
+    },
+    Seal,
+    FailInput {
+        message: String,
+    },
+    GetProgress,
     Pause,
     Resume,
     Stop,
-    Seek { byte: usize, new_session_id: String },
+    Seek {
+        byte: usize,
+        new_session_id: String,
+    },
     Shutdown,
 }
 
@@ -211,6 +213,8 @@ pub struct ErrorInfo {
 pub enum Event {
     Ready(Vec<Capabilities>),
     Accepted,
+    /// Requested snapshot, independent of generation/playback completion.
+    Progress(PlanProgressSnapshot),
     Config(Config),
     ConfigChanged(Config),
     ResourceState {
@@ -264,3 +268,62 @@ pub struct Message {
     #[serde(flatten)]
     pub event: Event,
 }
+
+/// Explicit plan playback strategy, independent of incremental input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanPlayback {
+    Streaming,
+    AfterChapterReady,
+}
+
+/// Proposed transport assignment. Domain validation happens before acceptance.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceSpan {
+    pub range: TextRange,
+    pub voice: String,
+    pub style: Option<String>,
+}
+
+/// Transport plan, not a validated executable plan. Identity is exact, including None model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlanRequest {
+    pub source: SourceId,
+    pub text: String,
+    pub text_hash: String,
+    pub backend: String,
+    pub model: Option<String>,
+    pub voices: Vec<String>,
+    pub spans: Vec<VoiceSpan>,
+    pub sealed: bool,
+    pub playback: PlanPlayback,
+    pub resume_byte: Option<usize>,
+    pub restore_checkpoint: bool,
+}
+
+/// Input completion is distinct from generation and playback completion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanInputState {
+    Open,
+    Sealed,
+    Failed,
+}
+
+/// Contiguous source boundaries queried from the execution owner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanProgressSnapshot {
+    pub input_state: PlanInputState,
+    pub accepted_end: usize,
+    pub generated_end: usize,
+    pub played_end: usize,
+    pub waiting_for_input: bool,
+    pub chapter_ready: bool,
+}
+
+/// Maximum assignments per append command.
+pub const MAX_PLAN_BATCH_SPANS: usize = 4096;
+/// Maximum accepted assignments per execution at the transport boundary.
+pub const MAX_PLAN_SPANS: usize = 65536;

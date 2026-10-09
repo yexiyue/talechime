@@ -10,6 +10,7 @@ pub mod config;
 pub mod download;
 mod error;
 pub mod paths;
+mod plan;
 pub mod player;
 pub mod session;
 mod storage;
@@ -17,5 +18,12 @@ pub mod text;
 pub mod voices;
 
 pub use error::{ResourceError, Result};
+pub use plan::{
+    PlanError, PlanState, PlaybackPolicy, SourceSnapshot, SpeechPlan, SpeechSpan, VoiceSnapshot,
+};
 pub use player::AudioPlayer;
 pub use player::Playback;
+pub use session::{
+    CancellationHandle, PlanProgress, PlanSessionOptions, SpeechAudio, StagingError,
+    StagingOptions, SynthesisState, SynthesisStream,
+};

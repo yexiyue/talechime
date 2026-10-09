@@ -59,10 +59,35 @@ enum Work {
     },
 }
 pub struct MossBackend {
-    requests: mpsc::Sender<Work>,
+    owner: InferenceOwner,
     tokenizer: Arc<SentencePieceProcessor>,
     capabilities: Capabilities,
     estimate: std::cell::RefCell<(String, tts_core::text::duration::DurationEstimator)>,
+}
+
+// Closing the initialization receiver before joining makes weight loading cancellable.
+struct Loading {
+    ready: oneshot::Receiver<Result<Arc<SentencePieceProcessor>, BackendError>>,
+    owner: InferenceOwner,
+}
+struct InferenceOwner {
+    requests: Option<mpsc::Sender<Work>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+impl InferenceOwner {
+    fn sender(&self) -> Result<&mpsc::Sender<Work>, BackendError> {
+        self.requests
+            .as_ref()
+            .ok_or_else(|| BackendError::Synthesis("inference owner closed".into()))
+    }
+}
+impl Drop for InferenceOwner {
+    fn drop(&mut self) {
+        self.requests.take();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 impl MossBackend {
     pub async fn load(directory: PathBuf) -> Result<Self, BackendError> {
@@ -84,7 +109,7 @@ impl MossBackend {
         let caps = capabilities(&directory).map_err(|e| BackendError::Initialize(e.to_string()))?;
         let (requests, mut jobs) = mpsc::channel(1);
         let (ready, loaded) = oneshot::channel();
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name("moss-inference".into())
             .spawn(move || {
                 let load = || -> anyhow::Result<_> {
@@ -160,11 +185,18 @@ impl MossBackend {
                 }
             })
             .map_err(|e| BackendError::Initialize(e.to_string()))?;
-        let tokenizer = loaded
+        let mut loading = Loading {
+            ready: loaded,
+            owner: InferenceOwner {
+                requests: Some(requests),
+                thread: Some(thread),
+            },
+        };
+        let tokenizer = (&mut loading.ready)
             .await
             .map_err(|_| BackendError::Initialize("inference thread exited".into()))??;
         Ok(Self {
-            requests,
+            owner: loading.owner,
             tokenizer,
             capabilities: caps,
             estimate: std::cell::RefCell::new((String::new(), Default::default())),
@@ -172,7 +204,8 @@ impl MossBackend {
     }
     pub async fn import_voice(&self, id: String, name: String, wav: PathBuf) -> anyhow::Result<()> {
         let (reply, result) = oneshot::channel();
-        self.requests
+        self.owner
+            .sender()?
             .send(Work::Import {
                 id,
                 name,
@@ -227,7 +260,8 @@ impl MossBackend {
             .map(|id| id as i32)
             .collect();
         let (audio, stream) = mpsc::channel(1);
-        self.requests
+        self.owner
+            .sender()?
             .send(Work::Generate {
                 tokens,
                 voice: voice.into(),
@@ -389,5 +423,49 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod owner_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    #[test]
+    fn inference_owner_closes_requests_and_joins_before_returning() {
+        let (requests, mut jobs) = mpsc::channel(1);
+        let joined = Arc::new(AtomicBool::new(false));
+        let ended = joined.clone();
+        let thread = std::thread::spawn(move || {
+            while jobs.blocking_recv().is_some() {}
+            ended.store(true, Ordering::SeqCst);
+        });
+        let owner = InferenceOwner {
+            requests: Some(requests),
+            thread: Some(thread),
+        };
+        drop(owner);
+        assert!(joined.load(Ordering::SeqCst));
+    }
+    #[test]
+    fn loading_drops_ready_receiver_before_joining_cancelled_initialization() {
+        let (requests, _jobs) = mpsc::channel(1);
+        let (ready, loaded) = oneshot::channel();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let observed = cancelled.clone();
+        let thread = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            while !ready.is_closed() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            observed.store(ready.is_closed(), Ordering::SeqCst);
+        });
+        drop(Loading {
+            ready: loaded,
+            owner: InferenceOwner {
+                requests: Some(requests),
+                thread: Some(thread),
+            },
+        });
+        assert!(cancelled.load(Ordering::SeqCst));
     }
 }

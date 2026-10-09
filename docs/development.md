@@ -53,3 +53,14 @@ GNU release runner 为 Ubuntu 24.04，最低 glibc 2.39，ORT 1.28 预编译库�
 
 使用与架构指南直接放在 `docs/`，历史验收与实验放在 `docs/records/`，开发知识放在 `docs/knowledge/`，原生第三方声明放在 `docs/legal/`。[文档索引](README.md)是统一入口。搬迁记录时只更新路径引用，保留验收日期、设备、未通过项及原始结论；当前行为变化写入指南和知识库。
 
+
+## 仅库构建
+
+`talechime` 默认启用 cli 与 moss。嵌入库用 `default-features = false` 再选择模型 feature；cli 门控 executable、clap/crossterm 与终端控制依赖。无模型库测试可运行：
+
+```sh
+cargo test --locked -p talechime --no-default-features --test library
+cargo clippy --locked -p talechime --no-default-features --all-targets -- -D warnings
+```
+
+无默认 feature 的二进制构建需显式加 cli，例如 `--features cli,qwen-metal`。core 当前仍编译播放器依赖，直接合成运行时不打开设备。

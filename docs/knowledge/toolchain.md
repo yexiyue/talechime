@@ -1,4 +1,13 @@
+## 2026-10-09：T4 计划入口与 API 收简
+
+用户明确不要求兼容，JSON Lines 直接升级 v7，start 只接受计划；不保留能力协商或旧 wire start。Engine::plan/single_voice_plan 从已准备模型创建声音快照。ListeningSession 分离本地执行 owner，Listening 组合库自建 receiver；CLI/worker 使用宿主队列直接投递，无事件转发任务。配置声音仅用于未来计划，当前计划独立调整音量/速度。单音色与多音色共用计划执行。TRNovel 优先级最低，待 Talechime API 与 CastGlean 各自稳定后再共同接入。cli feature 门控二进制及 clap/crossterm 等依赖；纯库 normal dependency tree 不含这两项。原生 CI 的 --no-default-features 二进制构建显式选择 cli。
+
 # 工具链 / 工程
+
+## 2026-10-09 T3 库装配
+
+talechime 包新增 lib.rs/engine.rs/listening.rs 薄库入口，沿用模型 feature，未新增 crate 或 CLI 裁剪 feature。新增依赖仅是 workspace 已锁定的 thiserror/tokio-util，不升级推理库；library 与 binary 共同编译，协议/CLI 接线在 T4。MOSS Nano 保存推理线程 owner，Loading 字段顺序确保初始化 receiver 先关闭再 join；已准备 owner 先关闭请求通道再 join。普通检查/示例不加载模型。
+
 
 ## 概览
 
@@ -308,3 +317,7 @@ M4 Pro / 24GB / Candle 0.11 的 release Q8 Metal 完整语料热测平均 RTF 0.
 **正确做法**：现有 `tools/tts/metrics.py` 不采样 macOS 内存，Mac 基准使用 `/usr/bin/time -l`，分开记录 maximum resident set size 和 peak memory footprint，二者不相加、不当作独占 GPU 内存。原生开发基准暂未提供 Metal CLI match arm，实测时临时补入口并恢复，不需要更改生产设备路由。
 
 **相关文件**：`crates/talechime-backends/examples/voxcpm_candle_probe.rs`、`crates/voxcpm-sys/examples/voxcpm_native_benchmark.rs`、`tools/tts/metrics.py`。
+
+### 朗读计划审查约束
+
+CLI 的暂停、恢复和停止确认与事件接收并行轮询；不能在唯一事件接收循环中直接等待控制确认，否则可靠事件填满队列时会死锁。`SpeechPlan::validate_resume_byte` 统一检查已接受正文范围与 UTF-8 边界，CLI 在模型准备前调用。会话与播放器共享不可变 `SourceSnapshot` 的正文，不重复分配完整正文。宿主提供事件 sender 时，容量以 sender 为准，`ListeningOptions.event_capacity` 只控制库创建的队列。

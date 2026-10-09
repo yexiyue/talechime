@@ -4,6 +4,44 @@
 
 ## API 迁移
 
+### 朗读计划（T0）
+
+根导出的 `SourceSnapshot`、`VoiceSnapshot`、`SpeechSpan` 和 `SpeechPlan` 支持整章及增量计划的独立校验。正文绑定摘要，声音绑定已准备模型的能力；批次接受无部分提交，封闭要求完整覆盖，失败不改写已接受范围。`PlanState` 只描述输入状态，计划本身不执行 `PlaybackPolicy`，由会话实现播放策略。
+
+```sh
+cargo run --locked -p talechime-core --example speech_plan
+```
+
+该示例不下载模型、不创建音频设备或写用户配置。详见[架构说明](../../docs/architecture.md)。
+
+### 增量会话（T1）
+
+`SessionManager::start_plan` 已支持 Streaming 计划和独立的 `PlanSessionOptions`；按 ID 调用 `append_plan / seal_plan / fail_input`。`plan_progress` 分别查询接受、生成和安全播放进度。`seek_plan` 保留逐段音色、播放设置及暂停，`configure_playback` 仅调整音量/速度。旧单音色 start 复用同一执行路径。开放输入暂时耗尽不表示播放完成，分析失败不能发 seal。
+
+```sh
+cargo run --locked -p talechime-core --example plan_session
+```
+
+示例使用替身模型/播放器、宿主 LocalSet 和后台事件消费者。会话事件须并行消费，检查点保存实际播放位置。当前 CLI/worker 没有计划命令。
+
+### 整章暂存（T2）
+
+`AfterChapterReady` 支持增量分析、提前生成，等 seal 且整章成功写盘并校验后再播放。`PlanSessionOptions::staging` 的 `StagingOptions` 配置已有父目录、最大文件字节数（默认 1 GiB）和记录数量（默认一百万）；默认父目录为系统临时目录。单 PCM 块沿用 30 秒/16 MiB 限制，读回也使用原有播放预算。暂停不会阻止写盘；`chapter_ready` 与 `played_end` 分开查询。
+
+```sh
+cargo run --locked -p talechime-core --example plan_session -- --after-chapter
+```
+
+执行目录在父目录下的 `talechime-staging-v1/`，正常完成、失败和显式 stop 清理音频；下次创建暂存时通过所有权标记和文件锁清理已退出执行，跳过活动执行、未知文件及符号链接。Drop 尽力取消，显式 stop 才等待在途 I/O。seek 新建暂存并从安全位置重新生成，不复用失败或旧执行音频。`StagingError` 区分 I/O、容量和结构/完整性错误。无长期缓存、生成任务恢复或导出 API。
+
+### 直接流与可选持久化（T3）
+
+根导出 `SynthesisStream / SpeechAudio / SynthesisState / CancellationHandle`，高级调用者可直接消费唯一 producer 的有界 PCM，取消/失败与正常生成完成分开。SpeechAudio 的预算许可随块消费释放，CancellationHandle 可跨线程请求取消并等待本地 producer 释放。旧 SessionManager::new 保留检查点行为，with_optional_checkpoints 可禁用持久化；无存储时请求恢复报错。close 取消并等待资源、不等待事件消费；stop 保留正常 cancelled 事件。
+
+普通应用优先使用 `talechime` facade 的 Engine，详见 [Rust 库入口](../../docs/library.md)。它装配模型、可选播放器/检查点、控制句柄和限量收集，不要求宿主拼装内部组件。
+
+### 原有会话 API
+
 原 `novel-tts` 库更名为 `talechime-core`。消费者在 Cargo.toml 中使用 `tts-core = { package = "talechime-core", version = "0.3.0" }`，Rust 引用为 `tts_core`；本次改名尚未发布，当前工作区可使用对应 path 依赖。
 
 此次重构移除 `NovelTTS`、`ChapterTTS`、`Player` 和无界音频 queue API，不再公开 Kokoro 或 rodio 类型。使用 `backend::Backend`、`player::Playback` 和 `session::SessionManager`；位置为 `TextRange` 原文 UTF-8 字节范围，结束原因是 completed/cancelled/failed。示例见 `../talechime-backends/examples/moss.rs`。

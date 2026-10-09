@@ -13,6 +13,7 @@ impl Default for Budget {
         }
     }
 }
+#[derive(Debug)]
 pub(super) struct Packet {
     pub(super) audio: Pcm,
     pub(super) lease: Lease,
@@ -25,15 +26,23 @@ pub(super) struct Lease {
 }
 
 impl Budget {
-    pub(super) async fn acquire(&self, audio: Pcm) -> Result<Packet, SessionError> {
+    pub(super) fn validate(audio: &Pcm) -> Result<(u32, u32), SessionError> {
         let duration = audio.duration_ms()?;
-        let bytes = u32::try_from(audio.samples.len() * size_of::<f32>())
-            .map_err(|_| SessionError::Invalid("PCM memory overflow".into()))?;
+        let bytes = audio
+            .samples
+            .len()
+            .checked_mul(size_of::<f32>())
+            .and_then(|bytes| u32::try_from(bytes).ok())
+            .ok_or_else(|| SessionError::Invalid("PCM memory overflow".into()))?;
         if duration > 30_000 || bytes > 16 * 1024 * 1024 {
             return Err(SessionError::Invalid(
-                "single segment exceeds audio prefetch budget".into(),
+                "single block exceeds audio prefetch budget".into(),
             ));
         }
+        Ok((duration, bytes))
+    }
+    pub(super) async fn acquire(&self, audio: Pcm) -> Result<Packet, SessionError> {
+        let (duration, bytes) = Self::validate(&audio)?;
         let time = self
             .milliseconds
             .clone()

@@ -102,7 +102,7 @@ mod tests {
             protocol_version: PROTOCOL_VERSION,
             request_id: "1".into(),
             session_id: Some("chapter-1".into()),
-            command: Command::Start(StartRequest {
+            command: Command::Start(Box::new(PlanRequest {
                 source: SourceId {
                     namespace: "reader".into(),
                     book: "书".into(),
@@ -110,9 +110,15 @@ mod tests {
                 },
                 text: "你好🙂\r\n“再见。”".into(),
                 text_hash: "digest".into(),
+                backend: "fixture".into(),
+                model: None,
+                voices: vec!["A".into()],
+                spans: vec![],
+                sealed: false,
+                playback: PlanPlayback::Streaming,
                 resume_byte: None,
                 restore_checkpoint: true,
-            }),
+            })),
         }
     }
 
@@ -227,5 +233,66 @@ mod tests {
         let mut data = std::io::Cursor::new(b"{}\n{}\r\n");
         assert_eq!(read_frame(&mut data).unwrap().unwrap(), b"{}\n");
         assert_eq!(read_frame(&mut data).unwrap().unwrap(), b"{}\r\n");
+    }
+}
+
+#[cfg(test)]
+mod plan_tests {
+    use crate::*;
+    #[test]
+    fn plan_commands_roundtrip_with_exact_unicode_snapshot() {
+        let start = PlanRequest {
+            source: SourceId {
+                namespace: "test".into(),
+                book: "书".into(),
+                chapter: "一".into(),
+            },
+            text: "中🙂\r\n".into(),
+            text_hash: text_hash("中🙂\r\n"),
+            backend: "fixture".into(),
+            model: None,
+            voices: vec!["A".into()],
+            spans: vec![VoiceSpan {
+                range: TextRange { start: 0, end: 9 },
+                voice: "A".into(),
+                style: None,
+            }],
+            sealed: true,
+            playback: PlanPlayback::AfterChapterReady,
+            resume_byte: Some(0),
+            restore_checkpoint: false,
+        };
+        for command in [
+            Command::Start(Box::new(start)),
+            Command::Append { spans: vec![] },
+            Command::Seal,
+            Command::FailInput {
+                message: "failed".into(),
+            },
+            Command::GetProgress,
+        ] {
+            let request = Request {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: "opaque".into(),
+                session_id: Some("execution".into()),
+                command,
+            };
+            assert_eq!(
+                decode::<Request>(&encode(&request).unwrap()).unwrap(),
+                request
+            );
+        }
+        let hello = Request {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: "hello".into(),
+            session_id: None,
+            command: Command::Hello,
+        };
+        assert_eq!(encode(&hello).unwrap(),b"{\"protocol_version\":7,\"request_id\":\"hello\",\"session_id\":null,\"type\":\"hello\"}\n");
+    }
+    #[test]
+    fn typo_in_plan_control_fields_is_rejected() {
+        let span = r#"{"range":{"start":0,"end":3},"voice":"A","style":null,"role_id":"ignored?"}"#;
+        assert!(serde_json::from_str::<VoiceSpan>(span).is_err());
     }
 }

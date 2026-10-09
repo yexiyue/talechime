@@ -4,15 +4,30 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode},
 };
 use futures::StreamExt;
-use std::{io::IsTerminal, path::PathBuf, rc::Rc};
+use std::{future::Future, io::IsTerminal, path::PathBuf, pin::Pin};
 use tokio::sync::mpsc;
-use tts_core::{
-    AudioPlayer,
-    checkpoint::CheckpointStore,
-    config::ConfigStore,
-    session::{SessionEvent, SessionManager},
-};
-use tts_protocol::{EndReason, Event, SourceId, StartRequest, text_hash};
+use tts_core::{checkpoint::CheckpointStore, config::ConfigStore, session::SessionEvent};
+use tts_protocol::{EndReason, Event, SourceId, text_hash};
+
+/// Keep acknowledgements in the event loop so reliable events cannot block them.
+struct PendingControl {
+    acknowledgement: Pin<Box<dyn Future<Output = Result<(), talechime::EngineError>>>>,
+    stop: bool,
+}
+impl PendingControl {
+    fn new(
+        acknowledgement: impl Future<Output = Result<(), talechime::EngineError>> + 'static,
+        stop: bool,
+    ) -> Self {
+        Self {
+            acknowledgement: Box::pin(acknowledgement),
+            stop,
+        }
+    }
+    async fn wait(&mut self) -> Result<(), talechime::EngineError> {
+        self.acknowledgement.as_mut().await
+    }
+}
 
 struct TerminalGuard;
 impl TerminalGuard {
@@ -33,6 +48,8 @@ pub async fn run(
     checkpoints: CheckpointStore,
     resources: Resources,
     restore_checkpoint: bool,
+    plan_file: Option<PathBuf>,
+    after_chapter: bool,
 ) -> anyhow::Result<()> {
     // Read and validate before model download or opening the output device.
     let text = tokio::fs::read_to_string(&file)
@@ -42,6 +59,65 @@ pub async fn run(
     let config = store.load()?;
     let config =
         store.initialize(&resources.capabilities_for(&config.backend, config.model.as_deref())?)?;
+    let source = SourceId {
+        namespace: "cli-file".into(),
+        book: canonical.to_string_lossy().into(),
+        chapter: "file".into(),
+    };
+    let (plan, resume_byte, restore_checkpoint) = if let Some(path) = plan_file {
+        // Bound file reads before deserialization. Full plans only; stdin worker handles increments.
+        use tokio::io::AsyncReadExt;
+        let mut data = Vec::new();
+        tokio::fs::File::open(&path)
+            .await?
+            .take((tts_protocol::MAX_MESSAGE_BYTES + 1) as u64)
+            .read_to_end(&mut data)
+            .await?;
+        if data.len() > tts_protocol::MAX_MESSAGE_BYTES {
+            anyhow::bail!("plan file exceeds transport limit");
+        }
+        let input: tts_protocol::PlanRequest = serde_json::from_slice(&data)?;
+        if input.text != text || !input.sealed {
+            anyhow::bail!("CLI requires a sealed plan with the exact file text");
+        }
+        (
+            crate::plan_input::build(
+                &input,
+                &resources.capabilities_for(&config.backend, config.model.as_deref())?,
+            )?,
+            if restore_checkpoint {
+                input.resume_byte
+            } else {
+                Some(0)
+            },
+            restore_checkpoint && input.restore_checkpoint,
+        )
+    } else {
+        let caps = resources.capabilities_for(&config.backend, config.model.as_deref())?;
+        let source = talechime::SourceSnapshot::new(source, text.clone(), &text_hash(&text))?;
+        let voices = talechime::VoiceSnapshot::new(
+            &caps.backend,
+            caps.model.as_deref(),
+            &caps,
+            vec![config.voice.clone()],
+        )?;
+        (
+            talechime::SpeechPlan::single_voice(
+                source,
+                voices,
+                if after_chapter {
+                    talechime::PlaybackPolicy::AfterChapterReady
+                } else {
+                    talechime::PlaybackPolicy::Streaming
+                },
+                &config.voice,
+                config.style.clone(),
+            )?,
+            if restore_checkpoint { None } else { Some(0) },
+            restore_checkpoint,
+        )
+    };
+    plan.validate_resume_byte(resume_byte.unwrap_or(0))?;
     let (progress, mut preparation) = mpsc::channel(16);
     let settings = config.clone();
     let mut task = tokio::task::spawn_local(async move {
@@ -60,7 +136,8 @@ pub async fn run(
         }
     };
     let (tx, mut events) = mpsc::channel::<SessionEvent>(64);
-    let mut manager = SessionManager::new(prepared, Rc::new(AudioPlayer::open()?), checkpoints, tx);
+    let mut owner = crate::app_session::AppSession::open(prepared, &checkpoints, tx)?;
+    let manager = owner.control.clone();
     let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
     let _terminal = if interactive {
         Some(TerminalGuard::enter()?)
@@ -73,24 +150,25 @@ pub async fn run(
         None
     };
     let mut paused = false;
+    let mut pending: Option<PendingControl> = None;
     let id = "cli-file";
-    manager
+    let started = manager
         .start(
-            id.into(),
-            StartRequest {
-                source: SourceId {
-                    namespace: "cli-file".into(),
-                    book: canonical.to_string_lossy().into(),
-                    chapter: "file".into(),
-                },
-                text_hash: text_hash(&text),
-                text,
-                resume_byte: if restore_checkpoint { None } else { Some(0) },
+            id,
+            plan,
+            talechime::PlanSessionOptions {
+                volume: config.volume,
+                speed: config.speed,
+                resume_byte,
                 restore_checkpoint,
+                ..Default::default()
             },
-            &config,
         )
-        .await?;
+        .await;
+    if let Err(error) = started {
+        owner.close().await?;
+        return Err(error.into());
+    }
     if interactive {
         eprintln!("space: pause/resume; s: stop; q: exit\r");
     }
@@ -116,20 +194,61 @@ pub async fn run(
                         match key.code {
                             KeyCode::Char('q') | KeyCode::Esc => break,
                             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
-                            KeyCode::Char('s') => {manager.stop().await?; break;},
-                            KeyCode::Char(' ') => {
-                                if paused {manager.resume(id).await?;} else {manager.pause(id).await?;}
-                                paused = !paused;
+                            KeyCode::Char('s') if pending.is_none() => {
+                                let manager = manager.clone();
+                                pending = Some(PendingControl::new(async move { manager.stop().await }, true));
+                            },
+                            KeyCode::Char(' ') if pending.is_none() => {
+                                let manager = manager.clone();
+                                pending = Some(PendingControl::new(async move {
+                                    if paused { manager.resume(id).await } else { manager.pause(id).await }
+                                }, false));
                             }
                             _ => {}
                         }
                     }
+                }
+                acknowledgement = async { pending.as_mut().expect("guarded").wait().await }, if pending.is_some() => {
+                    acknowledgement?;
+                    if pending.take().expect("completed operation").stop { break; }
+                    paused = !paused;
                 }
                 signal = tokio::signal::ctrl_c() => {signal?; break;}
             }
         }
         Ok(())
     }.await;
-    manager.stop().await?;
+    owner.close().await?;
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn control_acknowledgement_allows_draining_a_full_event_queue() {
+        let (sender, mut events) = mpsc::channel(1);
+        sender.send(1).await.unwrap();
+        let mut pending = PendingControl::new(
+            async move {
+                sender.send(2).await.unwrap();
+                Ok(())
+            },
+            true,
+        );
+        let mut received = Vec::new();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                tokio::select! {
+                    acknowledgement = pending.wait() => { acknowledgement.unwrap(); break; }
+                    event = events.recv() => if let Some(event) = event { received.push(event); }
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(received.first(), Some(&1));
+        assert!(pending.stop);
+    }
 }

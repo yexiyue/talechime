@@ -4,6 +4,8 @@ default-members = ["crates/talechime"]
 resolver = "3"
 
 [workspace.dependencies]
+clap = { version = "4.6", features = ["derive"] }
+crossterm = { version = "0.29.0", features = ["event-stream"] }
 windows = { version = "0.54.0", default-features = false }
 moss-tts = { path = "crates/moss-tts", default-features = false }
 omnivoice = { path = "crates/omnivoice", default-features = false }

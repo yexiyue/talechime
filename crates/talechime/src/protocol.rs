@@ -130,6 +130,19 @@ async fn serve(
     input: &mut mpsc::Receiver<Result<Option<Vec<u8>>, tts_protocol::ProtocolError>>,
     messages: mpsc::Sender<Message>,
 ) -> anyhow::Result<()> {
+    let (events, session_events) = mpsc::channel::<SessionEvent>(64);
+    let (progress, model_events) = mpsc::channel::<Event>(16);
+    let worker = Worker::new(store, checkpoints, resources, events, progress);
+    serve_worker(worker, session_events, model_events, input, messages).await
+}
+
+async fn serve_worker(
+    mut worker: Worker,
+    mut session_events: mpsc::Receiver<SessionEvent>,
+    mut model_events: mpsc::Receiver<Event>,
+    input: &mut mpsc::Receiver<Result<Option<Vec<u8>>, tts_protocol::ProtocolError>>,
+    messages: mpsc::Sender<Message>,
+) -> anyhow::Result<()> {
     let mut output = Output {
         instance: format!(
             "{}-{}",
@@ -139,13 +152,10 @@ async fn serve(
         sequence: 0,
         messages,
     };
-    let (events, mut session_events) = mpsc::channel::<SessionEvent>(64);
-    let (progress, mut model_events) = mpsc::channel::<Event>(16);
     let mut tracker = RequestTracker::default();
     let mut handshake = false;
     let deadline = tokio::time::sleep(Duration::from_secs(5));
     tokio::pin!(deadline);
-    let mut worker = Worker::new(store, checkpoints, resources, events, progress);
     let result: anyhow::Result<()> = async {
         loop {
             let preparing = worker.is_preparing();
@@ -302,5 +312,65 @@ mod tests {
         );
         assert!(matches!(second.event, Event::Accepted) || matches!(third.event, Event::Accepted));
         assert_eq!([first.sequence, second.sequence, third.sequence], [1, 2, 3]);
+    }
+}
+
+#[cfg(test)]
+mod plan_tests {
+    use super::*;
+    use crate::fixture::{Fixture, Player};
+    use std::rc::Rc;
+    use tts_protocol::{
+        EndReason, PlanPlayback, PlanRequest, SourceId, TextRange, VoiceSpan, text_hash,
+    };
+
+    #[tokio::test]
+    async fn json_plan_reaches_completed_only_after_seal_and_real_fixture_playback() {
+        talechime::run_local(async {
+            let root=tempfile::tempdir().unwrap();
+            let backend=Rc::new(Fixture::default());
+            let (events, pending)=mpsc::channel(2);
+            let (progress, updates)=mpsc::channel(2);
+            let mut worker=Worker::new(ConfigStore::new(root.path().join("config.json")),CheckpointStore::new(root.path().join("checkpoints")),Resources::new(Some(root.path().join("models"))).unwrap(),events,progress);
+            worker.attach_test(backend.clone(),Rc::new(Player::default()));
+            let (input,mut frames)=mpsc::channel(8);
+            let (outgoing,mut received)=mpsc::channel(1);
+            let task=tokio::task::spawn_local(async move {serve_worker(worker,pending,updates,&mut frames,outgoing).await});
+            let span=|start,end,voice:&str| VoiceSpan {range:TextRange {start,end},voice:voice.into(),style:None};
+            let plan=PlanRequest {source:SourceId {namespace:"test".into(),book:"book".into(),chapter:"chapter".into()},text:"甲乙丙".into(),text_hash:text_hash("甲乙丙"),backend:"fixture".into(),model:Some("shared".into()),voices:vec!["A".into(),"B".into()],spans:vec![span(0,3,"A")],sealed:false,playback:PlanPlayback::Streaming,resume_byte:Some(0),restore_checkpoint:false};
+            for (id,session,command) in [("hello",None,Command::Hello),("start",Some("one"),Command::Start(Box::new(plan))),("early",Some("one"),Command::Seal),("invalid",Some("one"),Command::Append {spans:vec![span(4,6,"B")]}),("progress",Some("one"),Command::GetProgress),("append",Some("one"),Command::Append {spans:vec![span(3,6,"B"),span(6,9,"A")]}),("seal",Some("one"),Command::Seal)] {
+                input.send(Ok(Some(encode(&Request {protocol_version:PROTOCOL_VERSION,request_id:id.into(),session_id:session.map(str::to_owned),command}).unwrap()))).await.unwrap();
+            }
+            let mut sequence=0;
+            let mut instance=None;
+            let mut responses=std::collections::BTreeSet::new();
+            let mut completed=false;
+            tokio::time::timeout(Duration::from_secs(3),async {
+                loop {
+                    let message=received.recv().await.unwrap();
+                    assert_eq!(message.sequence,sequence+1);sequence=message.sequence;
+                    assert_eq!(message.protocol_version,7);
+                    if let Some(expected)=&instance {assert_eq!(&message.instance_id,expected);} else {instance=Some(message.instance_id.clone());}
+                    // Exercise output serialization as the real stdout writer does.
+                    assert_eq!(decode::<Message>(&encode(&message).unwrap()).unwrap(),message);
+                    if let Some(id)=&message.request_id {
+                        responses.insert(id.clone());
+                        match id.as_str() {
+                            "early"|"invalid" => assert!(matches!(message.event,Event::Error(_))),
+                            "progress" => assert!(matches!(message.event,Event::Progress(ref p) if p.accepted_end==3 && p.input_state==tts_protocol::PlanInputState::Open)),
+                            _ => {},
+                        }
+                    }
+                    if matches!(message.event,Event::SessionEnded {reason:EndReason::Completed,..}) {assert_eq!(message.session_id.as_deref(),Some("one"));completed=true;}
+                    if completed && responses.contains("seal") {break;}
+                }
+            }).await.unwrap();
+            assert!(responses.contains("seal"));
+            input.send(Ok(Some(encode(&Request {protocol_version:7,request_id:"shutdown".into(),session_id:None,command:Command::Shutdown}).unwrap()))).await.unwrap();
+            while let Some(message)=received.recv().await {assert_eq!(message.sequence,sequence+1);sequence=message.sequence;}
+            task.await.unwrap().unwrap();
+            assert_eq!(backend.calls.borrow().iter().map(|c| c.1.as_str()).collect::<Vec<_>>(),vec!["A","B","A"]);
+            assert!(!root.path().join("models").exists());
+        }).await;
     }
 }

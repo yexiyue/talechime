@@ -1,4 +1,10 @@
+mod app_session;
 mod cli;
+#[cfg(test)]
+#[path = "../tests/library/fixture.rs"]
+#[allow(dead_code)] // Binary adapter tests use only normal/long fixture modes.
+mod fixture;
+mod plan_input;
 mod preparation;
 mod protocol;
 mod resources;
@@ -29,7 +35,7 @@ struct Args {
     backend: Option<String>,
     #[arg(long)]
     voice: Option<String>,
-    /// Model ID within the selected backend (see the reader model list).
+    /// Model ID within the selected backend (see the protocol model catalog).
     #[arg(long)]
     model: Option<String>,
     /// Speaking style for Qwen 1.7B CustomVoice; an empty value clears it.
@@ -43,6 +49,12 @@ struct Args {
     /// Machine mode; never takes over the terminal.
     #[arg(long)]
     protocol: bool,
+    /// Complete JSON plan (source text comes from the file and must match exactly).
+    #[arg(long, conflicts_with_all = ["protocol", "voice", "style", "after_chapter"])]
+    plan: Option<PathBuf>,
+    /// Generate and verify the whole chapter on disk before playback.
+    #[arg(long, conflicts_with = "protocol")]
+    after_chapter: bool,
     /// Explicitly restart this file from its beginning, ignoring a stored checkpoint.
     #[arg(long, conflicts_with = "protocol")]
     restart: bool,
@@ -140,41 +152,42 @@ async fn main() -> anyhow::Result<()> {
             &caps,
         )?;
     }
-    tokio::task::LocalSet::new()
-        .run_until(async move {
-            if let Some(Commands::Voices { command }) = args.command {
-                let mut selection = config.load()?;
-                if let Some(backend) = args.backend {
-                    if backend != selection.backend {
-                        selection.model = None;
-                    }
-                    selection.backend = backend;
+    talechime::run_local(async move {
+        if let Some(Commands::Voices { command }) = args.command {
+            let mut selection = config.load()?;
+            if let Some(backend) = args.backend {
+                if backend != selection.backend {
+                    selection.model = None;
                 }
-                if let Some(model) = args.model {
-                    selection.model = Some(model);
-                }
-                if let Some(device) = args.tts_device {
-                    selection.tts_device = device;
-                }
-                voices::run(command, resources, &selection).await
-            } else if args.protocol {
-                protocol::run(config, checkpoints, resources).await
-            } else {
-                cli::run(
-                    args.file.ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "provide a UTF-8 file, --protocol, or voices command; see --help"
-                        )
-                    })?,
-                    config,
-                    checkpoints,
-                    resources,
-                    !args.restart,
-                )
-                .await
+                selection.backend = backend;
             }
-        })
-        .await
+            if let Some(model) = args.model {
+                selection.model = Some(model);
+            }
+            if let Some(device) = args.tts_device {
+                selection.tts_device = device;
+            }
+            voices::run(command, resources, &selection).await
+        } else if args.protocol {
+            protocol::run(config, checkpoints, resources).await
+        } else {
+            cli::run(
+                args.file.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "provide a UTF-8 file, --protocol, or voices command; see --help"
+                    )
+                })?,
+                config,
+                checkpoints,
+                resources,
+                !args.restart,
+                args.plan,
+                args.after_chapter,
+            )
+            .await
+        }
+    })
+    .await
 }
 
 fn parse_device(value: &str) -> Result<tts_protocol::Device, String> {
@@ -185,5 +198,44 @@ fn parse_device(value: &str) -> Result<tts_protocol::Device, String> {
         "metal" => Ok(tts_protocol::Device::Metal),
         "cuda" => Ok(tts_protocol::Device::Cuda),
         _ => Err("expected auto/cpu/coreml/cuda/metal".into()),
+    }
+}
+
+#[cfg(test)]
+mod argument_tests {
+    use super::*;
+    #[test]
+    fn plan_and_playback_flags_do_not_change_machine_mode_or_voice_selection() {
+        assert!(
+            Args::try_parse_from(["talechime", "chapter.txt", "--after-chapter"])
+                .unwrap()
+                .after_chapter
+        );
+        assert_eq!(
+            Args::try_parse_from(["talechime", "chapter.txt", "--plan", "chapter.json"])
+                .unwrap()
+                .plan,
+            Some(PathBuf::from("chapter.json"))
+        );
+        for args in [
+            vec!["talechime", "--protocol", "--after-chapter"],
+            vec![
+                "talechime",
+                "chapter.txt",
+                "--plan",
+                "p.json",
+                "--voice",
+                "A",
+            ],
+            vec![
+                "talechime",
+                "chapter.txt",
+                "--plan",
+                "p.json",
+                "--after-chapter",
+            ],
+        ] {
+            assert!(Args::try_parse_from(args).is_err());
+        }
     }
 }

@@ -10,9 +10,9 @@ Talechime 是一个 Rust 本地语音合成与长文听书项目，提供可复�
 
 *Local speech synthesis and continuous listening, built in Rust.*
 
-[文档索引](docs/README.md) · [架构与集成](docs/architecture.md) · [开发与验证](docs/development.md) · [品牌资产](docs/brand.md) · [迁移来源](SOURCE.md)
+[文档索引](docs/README.md) · [架构与集成](docs/architecture.md) · [Rust 库](docs/library.md) · [开发与验证](docs/development.md) · [品牌资产](docs/brand.md) · [迁移来源](SOURCE.md)
 
-> **状态：独立源码仓库，尚未发布新品牌安装包。** 当前可以从源码构建、朗读 UTF-8 文件、管理音色或作为本地 worker 接入应用。单个会话使用一套音色；按角色连续切换音色、CastGlean 集成和通用有声书导出仍在规划中。
+> **状态：独立源码仓库，尚未发布新品牌安装包。** 当前可以从源码构建、朗读 UTF-8 文件、管理音色或作为本地 worker 接入应用。Rust 会话核心已支持同模型多音色增量计划及整章磁盘暂存后播放；CLI/worker 已使用统一计划入口；CastGlean 集成和通用有声书导出尚未实现。
 
 ## 已经能做什么
 
@@ -25,6 +25,15 @@ Talechime 是一个 Rust 本地语音合成与长文听书项目，提供可复�
 - 片段级原文进度与高亮，不加载额外的对齐模型。
 
 模型推理在专用线程运行，音频留在 worker 进程。正文和参考音频由本地模型处理；首次准备需要下载所选模型，普通帮助和音色目录查询不下载权重。无需 Python 即可使用 Rust 程序；`tools/tts/` 中的 Python 是开发对照与验收工具。
+
+## 嵌入 Rust 应用
+
+`talechime` library 提供 `Engine::prepare / synthesize / synthesize_pcm / listen`，直接合成无需播放器或检查点。宿主提供模型资源目录、runtime 和线程；音色与播放设置分开。流式 PCM、同模型多音色计划和整章暂存后播放复用 core 执行规则。详见 [Rust 库入口](docs/library.md)，无需模型的示例可直接运行：
+
+```sh
+cargo run --locked -p talechime --example synthesize
+cargo run --locked -p talechime --example listen_plan
+```
 
 ## Installation
 
@@ -83,7 +92,7 @@ cargo run --release -- --restart chapter.txt
 
 ```bash
 # NVIDIA：源码构建 Qwen CUDA
-cargo build --release -p talechime --no-default-features --features qwen-cuda
+cargo build --release -p talechime --no-default-features --features cli,qwen-cuda --bin talechime
 target/release/talechime --backend qwen --model 1.7b-customvoice --tts-device cuda chapter.txt
 
 # Apple Silicon
@@ -118,10 +127,21 @@ talechime --protocol
 stdin/stdout 使用 UTF-8 JSON Lines；stderr 用于日志，协议模式不接管终端。客户端先发送 `hello`，核验 `protocol_version` 和模型能力，再发送准备/播放命令。当前协议主版本是 **6**，已移除对齐配置与句子事件。
 
 ```json
-{"protocol_version":6,"request_id":"hello-1","session_id":null,"type":"hello"}
+{"protocol_version":7,"request_id":"hello-1","session_id":null,"type":"hello"}
 ```
 
-`talechime-protocol` 只依赖轻量序列化、哈希和错误库。阅读器可共享其 DTO，同时把模型与音频隔离在进程中；Rust 应用也可直接装配 core/backends，需在自己的 Tokio `LocalSet` 中运行会话。核心不自行创建应用运行时。
+`talechime-protocol` 只依赖轻量序列化、哈希和错误库。阅读器可共享其 DTO，同时把模型与音频隔离在进程中；Rust 应用优先调用 `talechime::Engine`，通过 `run_local` 使用宿主 runtime。核心不自行创建应用运行时。
+
+### 完整计划与整章播放
+
+```sh
+# 单音色，整章成功生成后再播放
+cargo run --release -- chapter.txt --after-chapter
+# 完整同模型多音色计划，正文必须与文件完全一致
+cargo run --release -- chapter.txt --plan chapter-plan.json
+```
+
+计划文件是协议的 `PlanRequest` payload，必须 sealed=true；播放策略及来源身份由计划提供。`--restart` 强制从零播放，否则使用计划的 resume_byte / restore_checkpoint。增量输入通过 JSON Lines v7 的 start/append/seal，详见[协议说明](crates/talechime-protocol/README.md)。先稳定 Talechime 通用 API，CastGlean 完成后再共同接入 TRNovel。
 
 ## 与 TRNovel、CastGlean 的分工
 
@@ -148,11 +168,11 @@ flowchart LR
 
 ## 路线图
 
-- [x] 从 TRNovel 提取独立 Rust workspace，保留协议和用户数据兼容。
+- [x] 从 TRNovel 提取独立 Rust workspace，确立通用库边界。
 - [x] 独立 CLI、项目文档与品牌资产。
 - [x] cargo-dist 发行配置与三个平台的隔离构建/启动 CI。
 - [ ] 创建首个正式应用 release，并完成真实模型跨平台试听。
-- [ ] 通用朗读计划：同一模型内逐段指定音色/风格，连续播放。
+- [x] 通用朗读计划：同一模型内逐段指定音色/风格，连续播放。
 - [ ] CastGlean 标注适配、角色音色绑定和未知归属回退。
 - [ ] 长文音频导出与可复用音频缓存。
 

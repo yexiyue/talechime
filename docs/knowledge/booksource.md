@@ -1,4 +1,28 @@
+## 2026-10-09：T4 计划入口与 API 收简
+
+用户明确不要求兼容，JSON Lines 直接升级 v7，start 只接受计划；不保留能力协商或旧 wire start。Engine::plan/single_voice_plan 从已准备模型创建声音快照。ListeningSession 分离本地执行 owner，Listening 组合库自建 receiver；CLI/worker 使用宿主队列直接投递，无事件转发任务。配置声音仅用于未来计划，当前计划独立调整音量/速度。单音色与多音色共用计划执行。TRNovel 优先级最低，待 Talechime API 与 CastGlean 各自稳定后再共同接入。
+
 # 书源 / parse-book-source / TTS
+
+## 2026-10-09 T3 库装配
+
+Engine 明确 prepare、直接 PCM 和可选 Listening；直接合成复用 core producer，无播放器/检查点/暂存。Listening 默认无持久化，Send 控制通过 16 项队列和确认调用本地 SessionManager。慢事件仍有背压，需并行消费；close 关闭观察者并走无事件 cleanup，producer/reader 生命周期与 blocking I/O 一并等待，Drop 不代表清理完成。Engine 预约直到 owner 清理后释放，活执行忙时拒绝，原协议 v6/CLI 未变。
+
+
+## 2026-10-09 T2：整章暂存已接入
+
+AfterChapterReady 复用同一生成器，将 PCM/范围记录写入私有、版本化且带校验码的顺序文件；seal + 全部生成成功 + 完整扫描校验之后才能 chapter_ready/读回播放。StagingOptions 默认 1 GiB/一百万记录，可传已有父目录。写盘释放生成队列预算，读回受 30 秒/16 MiB 播放预算限制；暂停可继续整章准备，生成不推进安全检查点。stop 等待跟踪的 blocking I/O，完成/失败/取消删执行目录；下次创建只清理受管根中有正确标记且未持有锁的已知目录，未知文件/符号链接/活动执行保留。seek 保留暂存配置但重新生成。CLI/协议与便利装配仍待后续。以下 T0/T1 条目按阶段保留，不代表当前尚不支持整章暂存。
+
+
+## Talechime 朗读计划契约（2026-10-09，T0）
+
+T1 已在同一天后续接入 SessionManager；以下 T0 状态描述仅指契约阶段。当前通过 start_plan 执行 Streaming 计划，旧 start 也转换为封闭计划。追加与封闭用本地共享输入及 Notify；输入等待不触发 completed，短前缀在等待分析时可排空但不视为 EOF。生成进度与安全播放进度分别查询。音色范围限制分段输入，select_voice/时长学习逐范围更新；seek 保留计划，旧 ID 控制拒绝。空白/装饰标记排队后按实际音频消费推进，普通正文不得被分段器静默省略。AfterChapterReady、CLI/协议命令与便利装配仍待后续。
+
+`talechime-core` 根导出正文快照、固定声音集合、逐段声音范围和增量计划；源摘要与 UTF-8 范围复用 protocol 类型，音色/风格校验复用 config 内部规则。模型身份精确匹配，不把 `None` 当通配符。追加批次先全部校验再接受，错误不推进前缀；封闭要求完整覆盖，失败/封闭终态不可修改。计划接受进度不是生成或播放进度。
+
+本阶段只完成无模型计划契约及示例，不接入 SessionManager/CLI、不管理音色资源租约，也不实现磁盘暂存。当前基线为 JSON Lines v6，对齐已移除；以下旧协议和对齐笔记为历史上下文，不能用于恢复已删除行为。后续执行层应保护参考资源版本，并按实际播放完成维护检查点。
+
+相关文件：`crates/talechime-core/src/plan.rs`、`tests/speech_plan.rs`、`examples/speech_plan.rs`、`docs/architecture.md`。
 
 ## 概览
 

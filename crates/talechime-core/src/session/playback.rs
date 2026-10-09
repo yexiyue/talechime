@@ -2,10 +2,10 @@ use super::producer::Item;
 use super::*;
 pub(super) struct Runner {
     pub(super) id: String,
-    pub(super) request: StartRequest,
+    pub(super) source: SourceSnapshot,
     pub(super) backend: Rc<dyn Backend>,
     pub(super) player: Rc<dyn Playback>,
-    pub(super) checkpoints: CheckpointStore,
+    pub(super) checkpoints: Option<CheckpointStore>,
     pub(super) events: mpsc::Sender<SessionEvent>,
     pub(super) paused: Rc<Cell<bool>>,
     pub(super) phase: Rc<Cell<SessionState>>,
@@ -14,6 +14,7 @@ pub(super) struct Runner {
     pub(super) position: Rc<Cell<usize>>,
     pub(super) text: Arc<str>,
     pub(super) writes: Arc<PendingWrites>,
+    pub(super) staging: StagingOptions,
 }
 
 impl Runner {
@@ -28,8 +29,10 @@ impl Runner {
     }
 
     async fn save(&self, byte: usize, completed: bool) -> Result<(), SessionError> {
-        let checkpoints = self.checkpoints.clone();
-        let source = self.request.source.clone();
+        let Some(checkpoints) = self.checkpoints.clone() else {
+            return Ok(());
+        };
+        let source = self.source.source().clone();
         let text = self.text.clone();
         self.writes.count.fetch_add(1, Ordering::SeqCst);
         let pending = WriteGuard(self.writes.clone());
@@ -42,12 +45,7 @@ impl Runner {
         Ok(())
     }
 
-    pub(super) async fn run(
-        &self,
-        byte: usize,
-        voice: String,
-        style: Option<String>,
-    ) -> Result<(), SessionError> {
+    pub(super) async fn run(&self, byte: usize, input: Rc<PlanInput>) -> Result<(), SessionError> {
         self.emit(Event::SessionState {
             state: if self.paused.get() {
                 SessionState::Paused
@@ -56,34 +54,36 @@ impl Runner {
             },
         })
         .await?;
-        self.backend.select_voice(&voice);
-        let first = if byte == self.text.len() {
-            None
-        } else {
-            self.backend
-                .next_segment(&self.text[byte..])
-                .await?
-                .map(|mut segment| {
-                    segment.start += byte;
-                    segment.end += byte;
-                    segment
-                })
-        };
-        if let Some(segment) = &first {
-            if !(TextRange {
-                start: segment.start,
-                end: segment.end,
-            })
-            .is_valid(&self.text)
-                || segment.start >= segment.end
-            {
-                return Err(SessionError::Invalid("invalid backend source range".into()));
-            }
-            self.position.set(segment.start);
-            self.save(segment.start, false).await?;
+        self.save(byte, false).await?;
+        let (mut producer, mut rx) = super::producer::spawn(
+            self.backend.clone(),
+            self.text.clone(),
+            input.clone(),
+            byte,
+            Some(self.writes.clone()),
+            None,
+        );
+        let mut staged = None;
+        let after_chapter =
+            input.plan.borrow().playback_policy() == PlaybackPolicy::AfterChapterReady;
+        if after_chapter {
+            let storage = super::staging::prepare(
+                &mut rx,
+                &self.staging,
+                self.writes.clone(),
+                &self.text,
+                byte,
+            )
+            .await?;
+            input.ready.set(true);
+            let (reader, replay) = super::staging::replay(storage.clone(), self.writes.clone());
+            producer = reader;
+            rx = replay;
+            staged = Some(storage);
         }
-        let (_producer, mut rx) =
-            super::producer::spawn(self.backend.clone(), self.text.clone(), first, voice, style);
+        let _producer = producer;
+        // Keep the private directory alive until playback finishes or is cancelled.
+        let _staged = staged;
         struct Marker {
             range: TextRange,
             start: Duration,
@@ -92,6 +92,7 @@ impl Runner {
             had_audio: bool,
             format: Option<(u32, u16)>,
         }
+        const MAX_MARKERS: usize = 64;
         let mut completed = false;
         let mut buffering = super::buffering::Buffering::default();
         let mut last_report = tokio::time::Instant::now() - Duration::from_secs(1);
@@ -110,7 +111,11 @@ impl Runner {
                 self.player.is_empty(),
                 buffered,
                 self.speed.get(),
-                completed,
+                // Drain a finished input prefix while waiting for analysis, even
+                // if it is shorter than the recovery buffer. This is not EOF.
+                completed
+                    || ((input.waiting.get() || markers.len() >= MAX_MARKERS)
+                        && !buffered.is_zero()),
             );
             self.buffering.set(buffering.waiting);
             if waiting != buffering.waiting {
@@ -146,7 +151,7 @@ impl Runner {
                         self.phase.set(SessionState::Playing);
                         self.emit(Event::SegmentStarted {
                             range: marker.range,
-                            text_hash: self.request.text_hash.clone(),
+                            text_hash: self.source.hash().into(),
                         })
                         .await?;
                         self.emit(Event::SessionState {
@@ -160,11 +165,13 @@ impl Runner {
                     let marker = markers.pop_front().expect("front exists");
                     self.position.set(marker.range.end);
                     self.save(marker.range.end, false).await?;
-                    self.emit(Event::SegmentFinished {
-                        range: marker.range,
-                        text_hash: self.request.text_hash.clone(),
-                    })
-                    .await?;
+                    if marker.had_audio {
+                        self.emit(Event::SegmentFinished {
+                            range: marker.range,
+                            text_hash: self.source.hash().into(),
+                        })
+                        .await?;
+                    }
                 }
             }
             if !self.paused.get() {
@@ -182,7 +189,7 @@ impl Runner {
                 break;
             }
             let item = tokio::select! {
-                item = rx.recv(), if !completed => item,
+                item = rx.recv(), if !completed && markers.len() < MAX_MARKERS => item,
                 _ = tokio::time::sleep(Duration::from_millis(10)) => continue,
             };
             let Some(item) = item else {
@@ -192,8 +199,19 @@ impl Runner {
             };
             match item? {
                 Item::Finished => completed = true,
+                Item::Skipped(range) => {
+                    // Layout advances only after all preceding queued audio is consumed.
+                    markers.push_back(Marker {
+                        range,
+                        start: queued,
+                        end: Some(queued),
+                        started: true,
+                        had_audio: false,
+                        format: None,
+                    });
+                }
                 Item::Start(range) => {
-                    if !range.is_valid(&self.request.text) || range.start >= range.end {
+                    if !range.is_valid(self.source.text()) || range.start >= range.end {
                         return Err(SessionError::Invalid("invalid source range".into()));
                     }
                     markers.push_back(Marker {
@@ -239,7 +257,7 @@ impl Runner {
                 }
             }
         }
-        self.save(self.request.text.len(), true).await?;
+        self.save(self.source.text().len(), true).await?;
         Ok(())
     }
 }
