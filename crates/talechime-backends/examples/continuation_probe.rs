@@ -200,6 +200,7 @@ async fn run() -> anyhow::Result<()> {
         "backend model-dir output-dir cpu|metal|cuda voice on|off corpus.txt [--seed n] [--param name=value]..."
     );
     let mut seed: u64 = 42;
+    let mut style: Option<String> = None;
     let mut params = tts_core::params::GenerationParams::new();
     let mut extra = args[8..].iter();
     while let Some(flag) = extra.next() {
@@ -209,6 +210,14 @@ async fn run() -> anyhow::Result<()> {
                     .next()
                     .and_then(|value| value.parse().ok())
                     .ok_or_else(|| anyhow::anyhow!("--seed requires a number"))?;
+            }
+            "--style" => {
+                style = Some(
+                    extra
+                        .next()
+                        .ok_or_else(|| anyhow::anyhow!("--style requires a description"))?
+                        .clone(),
+                );
             }
             "--param" => {
                 let entry = extra
@@ -335,7 +344,7 @@ async fn run() -> anyhow::Result<()> {
         observed,
         text.clone(),
         &args[5],
-        None,
+        style.clone(),
         None,
         SynthesisOptions {
             continuation,
@@ -415,6 +424,7 @@ async fn run() -> anyhow::Result<()> {
         "model": caps.model,
         "device": format!("{device:?}"),
         "voice": args[5],
+        "style": style,
         "continuation": continuation,
         "load_and_verify_ms": load_ms,
         "elapsed_ms": elapsed_ms,

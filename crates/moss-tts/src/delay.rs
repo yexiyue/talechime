@@ -101,6 +101,7 @@ impl DelayModel {
             request.text,
             request.instruction,
             None,
+            None,
         )?;
         let mut hidden = self.backbone.forward(&self.embed(&prompt)?, cancelled)?;
         let mut history: Vec<Vec<u32>> = (0..=self.config.n_vq)

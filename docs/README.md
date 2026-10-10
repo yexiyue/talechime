@@ -27,6 +27,8 @@
 
 - [四后端生成参数与 seed 接入](records/params-exposure-2026-10-10.md)：参数目录、类型化构造器、OmniVoice 原生语速自动路由与 VoxCPM 真模型复现验证。
 
+- [逐段风格的开放与组合边界](records/style-exposure-2026-10-10.md)：VoxCPM/OmniVoice/MOSS style 接线、MOSS language 槽位与 VoxCPM style×接续的显式拒绝。
+
 - [其他模型接续](records/continuation-all-models-2026-10-10.md)：Qwen 1.7B Base、VoxCPM2、MOSS Local / Realtime 的格式与验证边界。
 
 - [Nano Candle 验证与默认切换](records/moss-nano-candle-trial-2026-10-10.md)：原实验移植、官方实现对照、数值验证与试听确认；现为默认 Nano 实现。

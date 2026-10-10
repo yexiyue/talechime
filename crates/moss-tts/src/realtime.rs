@@ -120,6 +120,10 @@ impl RealtimeModel {
             request.instruction.is_none(),
             "Realtime does not accept voice design descriptions"
         );
+        anyhow::ensure!(
+            request.language.is_none(),
+            "Realtime does not accept language tags"
+        );
         self.backbone.reset();
         self.depth.reset();
         let system = "<|im_start|>system\nYou are a highly expressive text-to-speech (TTS) engine developed by Mosi Intelligence. \nYou possess natural language understanding, emotional modeling, and multi-style speech generation capabilities, allowing you to generate the corresponding speech based on the text given in the assistant.<|im_end|>\n";

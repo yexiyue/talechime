@@ -114,6 +114,7 @@ impl LocalModel {
         let crate::Generation {
             text,
             instruction,
+            language,
             reference,
             max_frames,
             seed,
@@ -127,6 +128,7 @@ impl LocalModel {
             &self.config,
             joined.as_deref().unwrap_or(text),
             instruction,
+            language,
             reference,
         )?;
         if let Some(context) = continuation {

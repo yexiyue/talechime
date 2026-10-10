@@ -117,6 +117,7 @@ fn generate(
     generation.seed = request.seed;
     generation.max_frames = request.resolved.max_frames;
     generation.instruction = request.resolved.instruction.as_deref();
+    generation.language = request.resolved.language.as_deref();
     generation.reference = reference.as_deref().or_else(|| {
         if mode == Mode::Realtime {
             continuation.as_deref()

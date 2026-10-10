@@ -7,6 +7,7 @@ pub fn text_prompt(
     config: &SpeechConfig,
     text: &str,
     instruction: Option<&str>,
+    language: Option<&str>,
     reference: Option<&[Vec<u32>]>,
 ) -> anyhow::Result<Vec<Vec<u32>>> {
     anyhow::ensure!(!text.trim().is_empty(), "empty MOSS input");
@@ -16,8 +17,9 @@ pub fn text_prompt(
         "None"
     };
     let user = format!(
-        "<user_inst>\n- Reference(s):\n{reference_marker}\n- Instruction:\n{}\n- Tokens:\nNone\n- Quality:\nNone\n- Sound Event:\nNone\n- Ambient Sound:\nNone\n- Language:\nNone\n- Text:\n{text}\n</user_inst>",
-        instruction.unwrap_or("None")
+        "<user_inst>\n- Reference(s):\n{reference_marker}\n- Instruction:\n{}\n- Tokens:\nNone\n- Quality:\nNone\n- Sound Event:\nNone\n- Ambient Sound:\nNone\n- Language:\n{}\n- Text:\n{text}\n</user_inst>",
+        instruction.unwrap_or("None"),
+        language.unwrap_or("None")
     );
     let user = format!("<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n");
     let mut rows = Vec::new();

@@ -68,6 +68,8 @@ pub struct Generation<'a> {
     pub continuation: Option<Continuation<'a>>,
     pub text: &'a str,
     pub instruction: Option<&'a str>,
+    /// Official `build_user_message` language tag; only Local renders it.
+    pub language: Option<&'a str>,
     pub reference: Option<&'a [Vec<u32>]>,
     pub max_frames: usize,
     pub seed: u64,
@@ -78,6 +80,7 @@ impl<'a> Generation<'a> {
             text,
             continuation: None,
             instruction: None,
+            language: None,
             reference: None,
             max_frames: 750,
             seed: 42,

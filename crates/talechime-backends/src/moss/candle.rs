@@ -56,10 +56,10 @@ pub fn capabilities(root: &Path, mode: Mode) -> anyhow::Result<Capabilities> {
         voice_names: [("narrator".into(), "随机音色（建议导入或设计音色）".into())].into(),
         native_streaming: true,
         cloning: true,
-        style: false,
+        style: true,
         pronunciation: false,
         continuation: true,
-        parameters: params::catalog(),
+        parameters: params::catalog(mode == Mode::Local),
         compiled_devices: compiled_devices(),
     };
     for voice in voice_store(&mode.directory(root), mode)?.list()? {
@@ -141,7 +141,11 @@ impl Backend for CandleBackend {
                     "unknown MOSS voice or empty text".into(),
                 ));
             }
-            let resolved = params::resolve(request.params);
+            let mut resolved = params::resolve(request.params);
+            // A per-span style is the utterance-level instruction and wins over the param.
+            if let Some(style) = request.style.filter(|value| !value.trim().is_empty()) {
+                resolved.instruction = Some(style.to_owned());
+            }
             let (audio, receiver) = mpsc::channel(1);
             self.requests
                 .as_ref()

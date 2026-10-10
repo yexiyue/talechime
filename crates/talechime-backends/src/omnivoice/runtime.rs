@@ -20,6 +20,8 @@ pub(super) struct Request {
     voice: String,
     seed: u64,
     resolved: super::params::Resolved,
+    /// Per-utterance instruct; the frontend validates its vocabulary.
+    style: Option<String>,
     audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
 }
 impl Request {
@@ -30,6 +32,7 @@ impl Request {
         context: Option<&tts_core::SpeechContext>,
         seed: u64,
         resolved: super::params::Resolved,
+        style: Option<String>,
     ) -> Self {
         Self {
             context: context.cloned(),
@@ -37,6 +40,7 @@ impl Request {
             voice: voice.into(),
             seed,
             resolved,
+            style,
             audio,
         }
     }
@@ -148,6 +152,9 @@ fn generate(pipeline: &Pipeline, directory: &Path, request: &Request) -> Result<
         .with_generation_config(request.resolved.config.clone());
     if let Some(speed) = request.resolved.speed {
         input.speeds = vec![Some(speed)];
+    }
+    if let Some(style) = &request.style {
+        input = input.with_instruct(style);
     }
     if let Some(context) = &request.context {
         let samples = crate::reference::mono(context.pcm(), 24000)

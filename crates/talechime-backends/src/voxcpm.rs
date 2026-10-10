@@ -37,7 +37,7 @@ pub fn capabilities_for(directory: &Path, model: models::Model) -> anyhow::Resul
         voice_names: [("narrator".into(), "自然音色（模型默认）".into())].into(),
         native_streaming: true,
         cloning: true,
-        style: false,
+        style: true,
         compiled_devices: Vec::new(),
         pronunciation: false,
         continuation: true,
@@ -134,15 +134,17 @@ impl Backend for VoxBackend {
                     "unknown Vox voice or empty text".into(),
                 ));
             }
+            let text = styled_text(request.style, text, context.is_some())?;
+            let resolved = params::resolve(request.params, request.seed);
             let (audio, receiver) = mpsc::channel(1);
             self.requests
                 .as_ref()
                 .expect("live inference thread")
                 .send(runtime::Request {
                     context: context.cloned(),
-                    text: text.into(),
+                    text,
                     voice: voice.into(),
-                    options: params::resolve(request.params, request.seed),
+                    options: resolved,
                     audio,
                 })
                 .await
@@ -155,6 +157,37 @@ impl Backend for VoxBackend {
     }
 }
 
+/// The documented upstream style-control convention: a parenthesized
+/// description prefix on the target text; parentheses inside the description
+/// would blur the prefix boundary and are rejected explicitly.
+///
+/// Combined with execution-local continuation the prefix sits between the
+/// previous transcript and the target text; a real-model trial (see
+/// docs/records/params-exposure-2026-10-10.md) truncated the continued
+/// segment there, so the combination is rejected until listening
+/// acceptance proves it.
+fn styled_text(style: Option<&str>, text: &str, continued: bool) -> Result<String, BackendError> {
+    let styled = !style.is_some_and(|value| value.trim().is_empty());
+    if styled && continued {
+        return Err(BackendError::Unsupported(
+            "Vox style is unavailable together with continuation until accepted".into(),
+        ));
+    }
+    let style = style
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_default();
+    if style.contains('(') || style.contains(')') {
+        return Err(BackendError::Unsupported(
+            "Vox style descriptions must not contain parentheses".into(),
+        ));
+    }
+    if style.is_empty() {
+        Ok(text.to_owned())
+    } else {
+        Ok(format!("({style}){text}"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,9 +197,21 @@ mod tests {
         for model in [models::Model::Q8, models::Model::OriginalBf16] {
             let caps = capabilities_for(&model.directory(root.path()), model)?;
             assert!(caps.continuation);
+            assert!(caps.style);
             assert_eq!(caps.default_voice, "narrator");
         }
         assert_eq!(std::fs::read_dir(root.path())?.count(), 0);
         Ok(())
+    }
+    #[test]
+    fn style_wraps_the_target_text_like_the_upstream_convention() {
+        assert_eq!(styled_text(None, "你好。", false).unwrap(), "你好。");
+        assert_eq!(styled_text(Some("  "), "你好。", true).unwrap(), "你好。");
+        assert_eq!(
+            styled_text(Some("cheerful tone"), "你好。", false).unwrap(),
+            "(cheerful tone)你好。"
+        );
+        assert!(styled_text(Some("半句(话"), "你好。", false).is_err());
+        assert!(styled_text(Some("cheerful tone"), "你好。", true).is_err());
     }
 }

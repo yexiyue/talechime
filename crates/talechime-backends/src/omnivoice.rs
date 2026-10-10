@@ -26,7 +26,7 @@ pub fn capabilities(directory: &Path) -> anyhow::Result<Capabilities> {
         voice_names: [("narrator".into(), "自然音色（模型默认）".into())].into(),
         native_streaming: false,
         cloning: true,
-        style: false,
+        style: true,
         compiled_devices: Vec::new(),
         pronunciation: false,
         continuation: true,
@@ -125,6 +125,10 @@ impl Backend for OmniBackend {
                     context,
                     request.seed,
                     resolved,
+                    request
+                        .style
+                        .filter(|value| !value.trim().is_empty())
+                        .map(str::to_owned),
                 ))
                 .await
                 .map_err(|_| BackendError::Synthesis("Omni inference thread exited".into()))?;
