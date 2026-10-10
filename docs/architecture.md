@@ -123,6 +123,19 @@ ListeningSession 是执行 owner，Listening 是该 owner 与库自建事件接�
 producer 在当前执行内保存最多一个 `SpeechContext`（不可变共享 PCM 与生成文字），
 与全局音色缓存和模型张量隔离。支持的 Backend 通过 `Backend::stream` 的 `SegmentRequest`
 接收可选前段、逐段 seed 与已校验的生成参数。
+
+### 生成参数与 seed
+
+能力目录以 `ParameterSpec` 逐模型声明生成参数（名称/类型/范围/默认），`PlanRequest.params`
+与 `PlanSessionOptions.params` 在会话启动时按目录校验，未声明或越界显式拒绝；协议 v7
+内为加法式字段，无协商层。seed 由生产者统一派生：`Auto` 每次尝试独立随机（门禁重试换新），
+`Pinned(u64)` 按 hash(seed, 合成序号, attempt) 派生以复现。会话 `speed` 在模型声明原生
+`speed` 参数且宿主未显式设置时自动路由到生成期无损变速，sink 置 1.0；运行期改速按比例
+换算不叠加。逐段 style 由 `SpeechSpan.style` 携带：Qwen 1.7B CustomVoice（指令）、
+VoxCPM2（上游 `(description)text` 前缀，与接续组合待验收、当前显式拒绝）、OmniVoice
+（instruct 词表校验）、MOSS Local/Realtime（Instruction 槽位，逐段优先于同名参数）。
+各目录与真模型结论见[参数记录](records/params-exposure-2026-10-10.md)与
+[风格记录](records/style-exposure-2026-10-10.md)。
 候选在接收原始流时有界复制，播放无需等待候选完成；End 后且交付策略允许时才替换参考。
 门禁拒绝的尝试不进入候选，重试使用原快照。参考限额与重置语义见[库说明](library.md#段落内接续)。
 

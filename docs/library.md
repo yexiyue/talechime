@@ -117,6 +117,39 @@ cargo run --locked -p talechime --example host_thread
 
 首期交付顺序是 Talechime API 与确定性验收，再等待 CastGlean 标注契约完成，最后共同接入 TRNovel；当前不把阅读器兼容作为库接口约束。
 
+## 生成参数、seed 与原生语速
+
+`PlanSessionOptions` 与 `SynthesisOptions` 携带 `params: GenerationParams` 与
+`seed: SeedPolicy`。参数按准备后模型的能力目录（`Capabilities.parameters`，每项
+`ParameterSpec` 含名称/类型/范围/默认/描述）在会话启动时校验：未声明、类型不符或
+越界均显式拒绝，不静默忽略。协议侧 `PlanRequest.params` / `PlanRequest.seed` 是同一
+数据的 v7 加法式字段。
+
+```rust,ignore
+let mut params = talechime::GenerationParams::new();
+params.insert("steps", tts_protocol::ParamValue::Int(32));
+let options = talechime::PlanSessionOptions {
+    params,
+    seed: talechime::SeedPolicy::Pinned(7), // 默认 Auto：每次尝试独立随机
+    ..Default::default()
+};
+```
+
+`SeedPolicy::Auto` 为每次合成尝试解析新随机数，回读门禁重试因此换新采样，可逃逸采样
+性错读；`Pinned(u64)` 按 hash(seed, 合成序号, 重试次数) 派生，同计划可复现且重试仍
+变化。Pinned 复现以同一工具链与相同分段为前提（后端时长学习可能改变分段边界）。
+每后端的类型化构造器（`VoxCpmParams` / `QwenParams` / `OmniVoiceParams` /
+`MossParams`，`to_generation_params()` 转换）随对应后端 feature 从本 crate 导出。
+
+会话 `speed` 在模型声明 `speed` 参数（当前仅 OmniVoice）且宿主未显式设置时自动路由
+到生成期无损变速，播放 sink 置 1.0；运行期 `configure_playback` 的改速按
+新值÷原生值 换算 sink，不叠加。未声明 `speed` 的后端维持播放端变速。
+
+自定义 Backend 实现者现在实现单个入口 `fn stream(&self, request: SegmentRequest)
+-> Streaming`；请求携带 text/voice/style/context、本次尝试的具体 `seed` 与已校验的
+`params`。不支持逐段风格或接续的后端用 `request.reject_unsupported(style, continuation)`
+显式拒绝，不要静默忽略。
+
 ## 段落内接续
 
 `PlanSessionOptions::continuation` 与 `SynthesisOptions::continuation` 默认开启。

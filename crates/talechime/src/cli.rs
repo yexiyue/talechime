@@ -47,6 +47,10 @@ pub struct CliOptions {
     pub plan_file: Option<PathBuf>,
     pub after_chapter: bool,
     pub no_continuation: bool,
+    /// CLI generation parameters; applied on top of plan-file values.
+    pub params: Vec<(String, tts_protocol::ParamValue)>,
+    /// Pins sampling for a reproducible run; overrides a plan-file seed.
+    pub seed: Option<u64>,
     pub verification: tts_protocol::VerificationOptions,
     pub report_file: Option<PathBuf>,
 }
@@ -62,6 +66,8 @@ pub async fn run(
         plan_file,
         after_chapter,
         no_continuation,
+        params,
+        seed,
         mut verification,
         report_file,
     } = options;
@@ -91,9 +97,15 @@ pub async fn run(
         if data.len() > tts_protocol::MAX_MESSAGE_BYTES {
             anyhow::bail!("plan file exceeds transport limit");
         }
-        let input: tts_protocol::PlanRequest = serde_json::from_slice(&data)?;
+        let mut input: tts_protocol::PlanRequest = serde_json::from_slice(&data)?;
         if input.text != text || !input.sealed {
             anyhow::bail!("CLI requires a sealed plan with the exact file text");
+        }
+        for (name, value) in &params {
+            input.params.insert(name.clone(), value.clone());
+        }
+        if let Some(seed) = seed {
+            input.seed = Some(seed);
         }
         verification = input.verification.clone();
         continuation &= input.continuation;
@@ -196,6 +208,14 @@ pub async fn run(
                 restore_checkpoint,
                 verification,
                 continuation,
+                seed: talechime::SeedPolicy::from(seed),
+                params: {
+                    let mut generation = talechime::GenerationParams::new();
+                    for (name, value) in &params {
+                        generation.insert(name.clone(), value.clone());
+                    }
+                    generation
+                },
                 ..Default::default()
             },
         )

@@ -88,6 +88,12 @@ struct Args {
     /// Explicitly restart this file from its beginning, ignoring a stored checkpoint.
     #[arg(long, conflicts_with = "protocol")]
     restart: bool,
+    /// Generation parameter for the prepared model, repeatable (name=value).
+    #[arg(long, value_parser = parse_param)]
+    param: Vec<(String, tts_protocol::ParamValue)>,
+    /// Pin sampling for a reproducible run; default draws fresh randomness.
+    #[arg(long)]
+    seed: Option<u64>,
     /// Override the listening configuration path.
     #[arg(long)]
     config: Option<PathBuf>,
@@ -97,6 +103,24 @@ struct Args {
     /// Override the independent listening checkpoint directory.
     #[arg(long)]
     checkpoint_dir: Option<PathBuf>,
+}
+
+/// Parse name=value where the value is an int, float or quoted-by-shape text.
+fn parse_param(raw: &str) -> Result<(String, tts_protocol::ParamValue), String> {
+    let (name, value) = raw
+        .split_once('=')
+        .ok_or_else(|| format!("expected name=value, got {raw}"))?;
+    if name.is_empty() {
+        return Err("parameter name must not be empty".into());
+    }
+    let value = if let Ok(int) = value.parse::<i64>() {
+        tts_protocol::ParamValue::Int(int)
+    } else if let Ok(float) = value.parse::<f64>() {
+        tts_protocol::ParamValue::Float(float)
+    } else {
+        tts_protocol::ParamValue::Text(value.to_owned())
+    };
+    Ok((name.to_owned(), value))
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -225,6 +249,8 @@ async fn main() -> anyhow::Result<()> {
                     plan_file: args.plan,
                     after_chapter: args.after_chapter,
                     no_continuation: args.no_continuation,
+                    params: args.param,
+                    seed: args.seed,
                     verification: tts_protocol::VerificationOptions {
                         policy: match args.verify {
                             VerifyMode::Off => tts_protocol::VerificationPolicy::Off,
@@ -259,6 +285,46 @@ fn parse_device(value: &str) -> Result<tts_protocol::Device, String> {
 #[cfg(test)]
 mod argument_tests {
     use super::*;
+    #[test]
+    fn param_flags_parse_typed_values_and_seed() {
+        let args = Args::try_parse_from([
+            "talechime",
+            "chapter.txt",
+            "--param",
+            "steps=32",
+            "--param",
+            "temperature=0.8",
+            "--param",
+            "language=english",
+            "--seed",
+            "7",
+        ])
+        .unwrap();
+        assert_eq!(
+            args.param,
+            vec![
+                ("steps".to_string(), tts_protocol::ParamValue::Int(32)),
+                (
+                    "temperature".to_string(),
+                    tts_protocol::ParamValue::Float(0.8)
+                ),
+                (
+                    "language".to_string(),
+                    tts_protocol::ParamValue::Text("english".into())
+                ),
+            ]
+        );
+        assert_eq!(args.seed, Some(7));
+        assert!(Args::try_parse_from(["talechime", "chapter.txt", "--param", "steps"]).is_err());
+        assert!(Args::try_parse_from(["talechime", "chapter.txt", "--param", "=5"]).is_err());
+        assert!(
+            !Args::try_parse_from(["talechime", "chapter.txt"])
+                .unwrap()
+                .param
+                .iter()
+                .any(|(name, _)| name == "steps")
+        );
+    }
     #[test]
     fn continuation_flag_defaults_on_and_can_override_a_plan() {
         assert!(

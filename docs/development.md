@@ -82,6 +82,8 @@ target/release/examples/moss_continuation_codec NANO_DIR
 ```
 
 将 `on` 换成 `off` 并使用另一输出目录生成对照；Qwen Base 先通过 `voices import` 导入准确转写的参考音色。
+探针支持尾部旗标：`--seed n` 钉住采样（默认 42）、`--param name=value`（可重复，按当前模型
+目录校验）、`--style 描述`（逐段风格）。summary.json 记录实际 seed、参数与 style。
 探针输出完整与逐段 float32 WAV、PCM16 回读 WAV、原文范围、首个 PCM 延迟、合成耗时及 RTF；
 用 `/usr/bin/time -l` 额外记录进程峰值内存。`readback-corpus.json` 可传入上面的 `asr_readback`。
 取消、错误不会自动退回独立生成；失败保留已产生的音频与错误摘要。

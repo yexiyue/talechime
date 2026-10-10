@@ -86,10 +86,10 @@ cargo run --release -- --restart chapter.txt
 | --- | --- | --- |
 | MOSS Nano | Candle（默认） | CPU；显式 feature 启用 Metal / CUDA；支持段落内接续 |
 | MOSS Nano ONNX | ONNX Runtime | 显式选择 `nano`；可选 ORT provider，须核验实际算子与硬件覆盖 |
-| MOSS Local / Realtime | Candle | 可选 CUDA / Metal，GPU 试用模型 |
+| MOSS Local / Realtime | Candle | 可选 CUDA / Metal，GPU 试用模型；逐段风格与 Local 语言标签 |
 | Qwen3-TTS | Candle | CustomVoice 预置音色；1.7B CustomVoice 支持风格；Base 支持参考克隆 |
-| VoxCPM2 | Candle | Q8 GGUF 路径与实验 BF16 路径；参考音色与设计，按编译设备使用 |
-| OmniVoice | Candle | 参考音色与设计；当前为语义分段生成，不是原生实时流式 |
+| VoxCPM2 | Candle | Q8 GGUF 路径与实验 BF16 路径；参考音色与设计，逐段风格（与接续互斥待验收） |
+| OmniVoice | Candle | 参考音色与设计，逐段风格与生成期原生语速；当前为语义分段生成，不是原生实时流式 |
 
 ```bash
 # NVIDIA：源码构建 Qwen CUDA
@@ -186,6 +186,28 @@ flowchart LR
 ## 可选回读校验
 
 首版内置 Qwen3-ASR 0.6B 主识别与 SenseVoiceSmall 复核，默认关闭。库支持独立报告、仅报告合成及逐片段门禁/有界重试；标准发行包包含 `asr`，嵌入库按需启用该 feature。准备模型与合成分开，调用过程中不隐式下载。使用方法及边界见[回读校验](docs/readback.md)。
+
+## 生成参数、seed 与逐段风格
+
+每个模型在能力目录里声明可用的生成参数（名称/类型/范围/默认），未声明、类型不符或越界
+的参数在启动时显式拒绝。采样 seed 默认每次尝试独立随机（回读门禁重试换新 seed），可用
+`--seed` 钉住以便复现。会话 `speed` 在模型支持生成期原生语速（当前仅 OmniVoice）时自动
+走无损变速，运行期改速按比例换算、不叠加。
+
+```sh
+# VoxCPM 提高 flow-matching 步数并钉住 seed
+talechime --backend voxcpm --param steps=32 --param temperature=0.9 --seed 7 chapter.txt
+# Qwen 指定语言与采样参数
+talechime --backend qwen --model 1.7b-customvoice --param language=english --param top_p=0.85 chapter.txt
+```
+
+当前目录：VoxCPM2（steps/cfg/temperature/max_duration）、Qwen（采样参数/language/
+max_duration/chunk_frames）、OmniVoice（num_step/guidance_scale/language/speed）、
+MOSS Local/Realtime（instruction/max_duration，Local 另有 language）；Nano 仅消费 seed。
+逐段风格（`VoiceSpan.style`）现支持 Qwen 1.7B CustomVoice、VoxCPM2（与接续互斥待验收）、
+OmniVoice instruct 与 MOSS Instruction 槽位。详见
+[参数记录](docs/records/params-exposure-2026-10-10.md)与
+[风格记录](docs/records/style-exposure-2026-10-10.md)。
 
 ## 段落内接续
 
