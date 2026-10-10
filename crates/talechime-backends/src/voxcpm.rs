@@ -2,6 +2,7 @@
 mod cache;
 pub mod design;
 pub mod models;
+pub mod params;
 pub mod resources;
 mod runtime;
 use std::path::{Path, PathBuf};
@@ -40,7 +41,7 @@ pub fn capabilities_for(directory: &Path, model: models::Model) -> anyhow::Resul
         compiled_devices: Vec::new(),
         pronunciation: false,
         continuation: true,
-        parameters: Vec::new(),
+        parameters: params::catalog(),
     };
     for voice in voice_store_for(directory, model)?.list()? {
         caps.voice_names.insert(voice.id.clone(), voice.name);
@@ -141,6 +142,7 @@ impl Backend for VoxBackend {
                     context: context.cloned(),
                     text: text.into(),
                     voice: voice.into(),
+                    options: params::resolve(request.params, request.seed),
                     audio,
                 })
                 .await

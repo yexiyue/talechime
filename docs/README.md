@@ -23,7 +23,9 @@
 
 ## 模型与平台验收
 
-- [生成参数与 seed 的协议及后端缝](records/generation-params-seam-2026-10-10.md)：ParameterSpec 目录、PlanRequest.params/seed、Backend 单请求入口与生产者 seed 策略；后端参数消费在后续记录。
+- [生成参数与 seed 的协议及后端缝](records/generation-params-seam-2026-10-10.md)：ParameterSpec 目录、PlanRequest.params/seed、Backend 单请求入口与生产者 seed 策略。
+
+- [四后端生成参数与 seed 接入](records/params-exposure-2026-10-10.md)：参数目录、类型化构造器、OmniVoice 原生语速自动路由与 VoxCPM 真模型复现验证。
 
 - [其他模型接续](records/continuation-all-models-2026-10-10.md)：Qwen 1.7B Base、VoxCPM2、MOSS Local / Realtime 的格式与验证边界。
 

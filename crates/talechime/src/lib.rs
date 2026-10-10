@@ -50,6 +50,16 @@ pub use tts_core::verification::{
     VerificationOptions, VerificationPolicy, VerificationReport, VerificationVerdict, Verifier,
 };
 
+/// Typed per-model generation parameter builders; available with each backend feature.
+#[cfg(feature = "moss-candle")]
+pub use tts_backends::moss::candle::params::MossParams;
+#[cfg(feature = "omnivoice")]
+pub use tts_backends::omnivoice::params::OmniVoiceParams;
+#[cfg(feature = "qwen")]
+pub use tts_backends::qwen::params::QwenParams;
+#[cfg(feature = "voxcpm")]
+pub use tts_backends::voxcpm::params::VoxCpmParams;
+
 #[cfg(feature = "asr")]
 pub use tts_backends::asr::ReadbackModelOptions;
 /// Explicitly prepare the selected native CPU ASR group and drain progress concurrently.

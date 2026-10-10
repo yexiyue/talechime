@@ -1314,3 +1314,80 @@ async fn continuation_across_spans_resets_voice_style_seek_and_recovery_in_both_
         })
         .await;
 }
+
+#[tokio::test]
+async fn native_speed_routes_to_generation_and_divides_out_of_the_sink() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let mut h = Harness::new();
+            // Declare a native speed parameter on the prepared backend.
+            h.backend.caps.borrow_mut().parameters = vec![tts_protocol::ParameterSpec {
+                name: "speed".into(),
+                kind: tts_protocol::ParamKind::Float { min: 0.5, max: 2.0 },
+                default: tts_protocol::ParamValue::Float(1.0),
+                description: String::new(),
+            }];
+            let mut plan = h.plan("甲乙");
+            plan.append(vec![span(0, 3, "A"), span(3, 6, "A")]).unwrap();
+            plan.seal().unwrap();
+            h.manager
+                .start_plan(
+                    "native".into(),
+                    plan,
+                    PlanSessionOptions {
+                        speed: 1.5,
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            // The session routes the requested rate into generation; the sink stays 1.0.
+            assert_eq!(h.player.settings.get(), (1.0, 1.0));
+            // Runtime rate changes divide the native speed out instead of compounding.
+            h.manager.configure_playback("native", 1.0, 2.0).unwrap();
+            let (_, sink) = h.player.settings.get();
+            assert!((sink - 2.0 / 1.5).abs() < 1e-6, "{sink}");
+            h.drive(true, |h| h.ended("native", EndReason::Completed))
+                .await;
+            assert!(
+                h.backend.calls.borrow().iter().all(|call| call.params
+                    == [("speed".to_string(), tts_protocol::ParamValue::Float(1.5))])
+            );
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn backends_without_native_speed_keep_playback_routing() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let mut h = Harness::new();
+            let mut plan = h.plan("甲乙");
+            plan.append(vec![span(0, 3, "A"), span(3, 6, "A")]).unwrap();
+            plan.seal().unwrap();
+            h.manager
+                .start_plan(
+                    "playback".into(),
+                    plan,
+                    PlanSessionOptions {
+                        speed: 1.5,
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(h.player.settings.get(), (1.0, 1.5));
+            h.manager.configure_playback("playback", 1.0, 2.0).unwrap();
+            assert_eq!(h.player.settings.get(), (1.0, 2.0));
+            h.drive(true, |h| h.ended("playback", EndReason::Completed))
+                .await;
+            assert!(
+                h.backend
+                    .calls
+                    .borrow()
+                    .iter()
+                    .all(|call| call.params.is_empty())
+            );
+        })
+        .await;
+}

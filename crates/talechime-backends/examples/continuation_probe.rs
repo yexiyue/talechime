@@ -196,9 +196,37 @@ async fn main() -> anyhow::Result<()> {
 async fn run() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().collect();
     anyhow::ensure!(
-        args.len() == 8,
-        "backend verified-model-directory output-directory cpu|metal|cuda voice on|off corpus.txt"
+        args.len() >= 8,
+        "backend model-dir output-dir cpu|metal|cuda voice on|off corpus.txt [--seed n] [--param name=value]..."
     );
+    let mut seed: u64 = 42;
+    let mut params = tts_core::params::GenerationParams::new();
+    let mut extra = args[8..].iter();
+    while let Some(flag) = extra.next() {
+        match flag.as_str() {
+            "--seed" => {
+                seed = extra
+                    .next()
+                    .and_then(|value| value.parse().ok())
+                    .ok_or_else(|| anyhow::anyhow!("--seed requires a number"))?;
+            }
+            "--param" => {
+                let entry = extra
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--param requires name=value"))?;
+                let (name, value) = entry
+                    .split_once('=')
+                    .ok_or_else(|| anyhow::anyhow!("--param requires name=value"))?;
+                params.insert(
+                    name,
+                    serde_json::from_str::<tts_protocol::ParamValue>(value)
+                        .map_err(|e| anyhow::anyhow!("invalid param value: {e}"))?,
+                );
+            }
+            other => anyhow::bail!("unknown flag {other}"),
+        }
+    }
+
     let directory = PathBuf::from(&args[2]);
     let output = PathBuf::from(&args[3]);
     std::fs::create_dir_all(&output)?;
@@ -294,6 +322,9 @@ async fn run() -> anyhow::Result<()> {
     preparation.await?;
     let load_ms = started.elapsed().as_millis();
     let caps = backend.capabilities();
+    if let Err(error) = params.validate(&caps.parameters) {
+        anyhow::bail!("{error}");
+    }
     let metrics = Rc::new(RefCell::new(vec![]));
     let observed = Rc::new(Observed {
         inner: backend,
@@ -308,6 +339,8 @@ async fn run() -> anyhow::Result<()> {
         None,
         SynthesisOptions {
             continuation,
+            params: params.clone(),
+            seed: tts_core::SeedPolicy::Pinned(seed),
             ..Default::default()
         },
     )?;
@@ -390,7 +423,11 @@ async fn run() -> anyhow::Result<()> {
         "segments": *metrics.borrow(),
         "source_hash": tts_protocol::text_hash(&text),
         "completed": true,
-        "seed": 42,
+        "seed": seed,
+        "params": params
+            .iter()
+            .map(|(name, value)| (name.to_string(), serde_json::to_value(value).unwrap()))
+            .collect::<serde_json::Map<String, serde_json::Value>>(),
         "listening_acceptance": "pending",
     });
     std::fs::write(

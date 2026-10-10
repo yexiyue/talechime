@@ -1,5 +1,5 @@
 //! Model ownership, generation and recovery are confined to this thread.
-use super::{MAX_FRAMES, available_devices, compiled_devices};
+use super::{available_devices, compiled_devices};
 use qwen3_tts::{Language, Qwen3TTS, Speaker, SynthesisOptions};
 use std::path::PathBuf;
 use tokio::sync::{mpsc, oneshot};
@@ -11,6 +11,11 @@ pub(super) struct Request {
     pub(super) text: String,
     pub(super) voice: String,
     pub(super) style: Option<String>,
+    pub(super) options: SynthesisOptions,
+    /// None keeps the CJK text heuristic.
+    pub(super) language: Option<Language>,
+    /// None uses the device default (CUDA 20, otherwise 10).
+    pub(super) chunk_frames: Option<usize>,
     pub(super) audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
 }
 
@@ -92,22 +97,23 @@ fn generate(
     prompts: &mut std::collections::HashMap<String, qwen3_tts::VoiceClonePrompt>,
     request: &Request,
 ) -> Result<(), BackendError> {
-    let language = if request
-        .text
-        .chars()
-        .any(|c| matches!(c, '\u{3400}'..='\u{9fff}'))
-    {
-        Language::Chinese
-    } else {
-        Language::English
-    };
+    let language = request.language.unwrap_or_else(|| {
+        if request
+            .text
+            .chars()
+            .any(|c| matches!(c, '\u{3400}'..='\u{9fff}'))
+        {
+            Language::Chinese
+        } else {
+            Language::English
+        }
+    });
     let initialization = std::time::Instant::now();
-    let options = SynthesisOptions {
-        max_length: MAX_FRAMES,
-        chunk_frames: if model.device().is_cuda() { 20 } else { 10 },
-        seed: Some(42),
-        ..Default::default()
-    };
+    let mut options = request.options.clone();
+    options.chunk_frames =
+        request
+            .chunk_frames
+            .unwrap_or(if model.device().is_cuda() { 20 } else { 10 });
     let transient = request
         .context
         .as_ref()

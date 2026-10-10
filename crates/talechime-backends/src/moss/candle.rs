@@ -1,5 +1,6 @@
 //! GPU trial models share native computation and model-scoped reference voices.
 pub mod design;
+pub mod params;
 pub mod resources;
 mod runtime;
 use std::path::{Path, PathBuf};
@@ -58,7 +59,7 @@ pub fn capabilities(root: &Path, mode: Mode) -> anyhow::Result<Capabilities> {
         style: false,
         pronunciation: false,
         continuation: true,
-        parameters: Vec::new(),
+        parameters: params::catalog(),
         compiled_devices: compiled_devices(),
     };
     for voice in voice_store(&mode.directory(root), mode)?.list()? {
@@ -140,6 +141,7 @@ impl Backend for CandleBackend {
                     "unknown MOSS voice or empty text".into(),
                 ));
             }
+            let resolved = params::resolve(request.params);
             let (audio, receiver) = mpsc::channel(1);
             self.requests
                 .as_ref()
@@ -148,6 +150,8 @@ impl Backend for CandleBackend {
                     context: context.cloned(),
                     text: text.into(),
                     voice: voice.into(),
+                    seed: request.seed,
+                    resolved,
                     audio,
                 })
                 .await

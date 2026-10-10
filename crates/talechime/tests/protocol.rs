@@ -264,6 +264,25 @@ fn backend_directory_and_switch_are_lightweight() {
             caps.backend, caps.model
         );
     }
+    // Declared generation catalogs are model-specific and self-consistent.
+    for caps in &catalog {
+        for spec in &caps.parameters {
+            assert!(spec.has_valid_default(), "{}", spec.name);
+        }
+        match caps.backend.as_str() {
+            #[cfg(feature = "voxcpm")]
+            "voxcpm" => assert!(caps.parameters.iter().any(|spec| spec.name == "steps")),
+            #[cfg(feature = "omnivoice")]
+            "omnivoice" => assert!(caps.parameters.iter().any(|spec| spec.name == "speed")),
+            #[cfg(feature = "qwen")]
+            "qwen" => assert!(
+                caps.parameters
+                    .iter()
+                    .any(|spec| spec.name == "temperature")
+            ),
+            _ => {}
+        }
+    }
     for (revision, backend, voice) in [(0, "qwen", "uncle_fu"), (1, "moss", "Weiguo")] {
         let changed = worker.send(
             &format!("switch-{revision}"),

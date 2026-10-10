@@ -1,6 +1,7 @@
 //! Candle adapter; model tensors remain on a dedicated inference thread.
 pub mod design;
 pub mod models;
+pub mod params;
 pub mod resources;
 mod runtime;
 mod text;
@@ -44,7 +45,7 @@ pub fn capabilities() -> Capabilities {
         compiled_devices: Vec::new(),
         pronunciation: false,
         continuation: false,
-        parameters: Vec::new(),
+        parameters: params::catalog(),
     }
 }
 pub fn model_capabilities(model: models::Model) -> Capabilities {
@@ -231,6 +232,7 @@ impl Backend for QwenBackend {
                     "empty Qwen synthesis text".into(),
                 ));
             }
+            let resolved = params::resolve(request.params, request.seed)?;
             let (audio, receiver) = mpsc::channel(1);
             self.requests
                 .as_ref()
@@ -240,6 +242,9 @@ impl Backend for QwenBackend {
                     voice: voice.into(),
                     context: context.cloned(),
                     style: style.filter(|v| !v.trim().is_empty()).map(str::to_owned),
+                    options: resolved.options,
+                    language: resolved.language,
+                    chunk_frames: resolved.chunk_frames,
                     audio,
                 })
                 .await

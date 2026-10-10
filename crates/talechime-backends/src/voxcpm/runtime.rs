@@ -8,6 +8,7 @@ pub(super) struct Request {
     pub context: Option<tts_core::SpeechContext>,
     pub text: String,
     pub voice: String,
+    pub options: Options,
     pub audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
 }
 pub(super) fn candle_device(device: Device) -> candle_core::Result<candle_core::Device> {
@@ -95,7 +96,7 @@ fn generate(
         .generate(
             &request.text,
             reference.as_ref(),
-            &Options::default(),
+            &request.options,
             &cancel,
             |samples| {
                 if request.audio.is_closed() {

@@ -18,6 +18,8 @@ pub(super) struct Request {
     context: Option<tts_core::SpeechContext>,
     text: String,
     voice: String,
+    seed: u64,
+    resolved: super::params::Resolved,
     audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
 }
 impl Request {
@@ -26,11 +28,15 @@ impl Request {
         voice: &str,
         audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
         context: Option<&tts_core::SpeechContext>,
+        seed: u64,
+        resolved: super::params::Resolved,
     ) -> Self {
         Self {
             context: context.cloned(),
             text: text.into(),
             voice: voice.into(),
+            seed,
+            resolved,
             audio,
         }
     }
@@ -71,6 +77,14 @@ pub(super) fn run(
         pipeline.set_cancellation_probe(Some(::omnivoice::stage0_model::CancellationProbe(
             Arc::new(move || audio.is_closed()),
         )));
+        if let Err(error) = pipeline.set_seed(request.seed)
+            && !request.audio.is_closed()
+        {
+            let _ = request
+                .audio
+                .blocking_send(Err(BackendError::Synthesis(error.to_string())));
+            continue;
+        }
         if let Err(error) = generate(&pipeline, &directory, &request)
             && !request.audio.is_closed()
         {
@@ -129,7 +143,12 @@ fn prompt(pipeline: &Pipeline, directory: &Path, voice: &str) -> anyhow::Result<
 }
 fn generate(pipeline: &Pipeline, directory: &Path, request: &Request) -> Result<(), BackendError> {
     let started = std::time::Instant::now();
-    let mut input = GenerationRequest::new_text_only(&request.text).with_language("zh");
+    let mut input = GenerationRequest::new_text_only(&request.text)
+        .with_language(request.resolved.language.clone())
+        .with_generation_config(request.resolved.config.clone());
+    if let Some(speed) = request.resolved.speed {
+        input.speeds = vec![Some(speed)];
+    }
     if let Some(context) = &request.context {
         let samples = crate::reference::mono(context.pcm(), 24000)
             .map_err(|e| BackendError::Synthesis(e.to_string()))?;

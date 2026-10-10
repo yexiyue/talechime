@@ -1,5 +1,6 @@
 //! Semantic-segment synthesis on the shared Candle runtime.
 pub mod design;
+pub mod params;
 pub mod resources;
 mod runtime;
 use std::path::{Path, PathBuf};
@@ -29,7 +30,7 @@ pub fn capabilities(directory: &Path) -> anyhow::Result<Capabilities> {
         compiled_devices: Vec::new(),
         pronunciation: false,
         continuation: true,
-        parameters: Vec::new(),
+        parameters: params::catalog(),
     };
     for voice in voice_store(directory)?.list()? {
         caps.voice_names.insert(voice.id.clone(), voice.name);
@@ -112,11 +113,19 @@ impl Backend for OmniBackend {
                     "unknown Omni voice or empty text".into(),
                 ));
             }
+            let resolved = params::resolve(request.params)?;
             let (audio, receiver) = mpsc::channel(1);
             self.requests
                 .as_ref()
                 .expect("live inference thread")
-                .send(runtime::Request::new(text, voice, audio, context))
+                .send(runtime::Request::new(
+                    text,
+                    voice,
+                    audio,
+                    context,
+                    request.seed,
+                    resolved,
+                ))
                 .await
                 .map_err(|_| BackendError::Synthesis("Omni inference thread exited".into()))?;
             Ok(receiver)

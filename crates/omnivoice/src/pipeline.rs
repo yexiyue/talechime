@@ -240,6 +240,10 @@ impl Pipeline {
     pub fn set_cancellation_probe(&self, probe: Option<crate::stage0_model::CancellationProbe>) {
         self.stage0.set_cancellation_probe(probe);
     }
+    /// Seed the stochastic stage for upcoming generations; callers serialize requests.
+    pub fn set_seed(&self, seed: u64) -> Result<()> {
+        self.stage0.set_seed(seed)
+    }
 
     pub fn cancellation_requested(&self) -> bool {
         self.stage0.cancellation_requested()

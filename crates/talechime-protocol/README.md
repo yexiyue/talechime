@@ -56,4 +56,7 @@ TextRange 是同一份完整正文的 UTF-8 左闭右开字节范围。正文不
 `Capabilities.parameters` 是所选模型声明的生成参数目录（名称、类型/范围、默认值与描述）；
 `PlanRequest.params` 按名称携带本次执行的设定值，`PlanRequest.seed` 可选地钉住采样以便
 复现。未在目录中声明、类型不符或越界的参数在会话启动时被显式拒绝，不会静默忽略。
-两者均为 v7 内的加法式可选字段。当前各后端目录尚为空，参数消费与目录声明见后续记录。
+两者均为 v7 内的加法式可选字段。当前目录：VoxCPM2（steps/cfg/temperature/max_duration）、
+Qwen（采样参数/language/max_duration/chunk_frames）、OmniVoice（num_step/guidance_scale/
+language/speed）、MOSS Local/Realtime（instruction/max_duration）；Nano 与 ONNX 目录为空，
+仅消费 seed。详见[参数接入记录](../../docs/records/params-exposure-2026-10-10.md)。

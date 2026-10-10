@@ -50,6 +50,12 @@ impl ParamValue {
     }
 }
 
+impl From<f32> for ParamValue {
+    fn from(value: f32) -> Self {
+        ParamValue::Float(f64::from(value))
+    }
+}
+
 /// The accepted type and range of one declared parameter.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

@@ -105,6 +105,15 @@ impl Drop for WriteGuard {
     }
 }
 
+/// The execution's lossless generation speed, if a native speed parameter is set.
+fn native_speed(params: &crate::params::GenerationParams) -> f32 {
+    match params.get("speed") {
+        Some(tts_protocol::ParamValue::Float(value)) if *value != 1.0 => *value as f32,
+        Some(tts_protocol::ParamValue::Int(value)) if *value != 1 => *value as f32,
+        _ => 1.0,
+    }
+}
+
 struct Job {
     id: String,
     source: SourceSnapshot,
@@ -250,10 +259,23 @@ impl SessionManager {
             return Err(PlanError::NotOpen(PlanState::Failed).into());
         }
         plan.validate_capabilities(&self.backend.capabilities())?;
+        let caps = self.backend.capabilities();
         options
             .params
-            .validate(&self.backend.capabilities().parameters)
+            .validate(&caps.parameters)
             .map_err(SessionError::Invalid)?;
+        let mut params = options.params.clone();
+        // Route playback speed into lossless generation when the model declares
+        // a native speed parameter and the host did not set one explicitly.
+        if options.speed != 1.0
+            && params.get("speed").is_none()
+            && caps.parameters.iter().any(|spec| spec.name == "speed")
+        {
+            params.insert("speed", tts_protocol::ParamValue::from(options.speed));
+            params
+                .validate(&caps.parameters)
+                .map_err(SessionError::Invalid)?;
+        }
         crate::config::validate_playback(options.volume, options.speed)
             .map_err(|error| SessionError::Invalid(error.to_string()))?;
         let source = plan.source().clone();
@@ -281,7 +303,13 @@ impl SessionManager {
         }
         plan.validate_resume_byte(byte)?;
         self.stop().await?;
-        self.player.configure(options.volume, options.speed);
+        // A native speed parameter owns pacing; the sink stays at 1.0 then.
+        let sink_speed = if params.get("speed").is_some() {
+            1.0
+        } else {
+            options.speed
+        };
+        self.player.configure(options.volume, sink_speed);
         self.player.pause();
         self.used_ids.insert(id.clone());
         let phase = Rc::new(Cell::new(SessionState::Generating));
@@ -299,7 +327,7 @@ impl SessionManager {
             };
         input.verification = options.verification.clone();
         input.continuation = options.continuation;
-        input.params = options.params.clone();
+        input.params = params;
         input.seed = options.seed;
         let input = Rc::new(input);
         let writes = Arc::new(PendingWrites::default());
@@ -430,6 +458,8 @@ impl SessionManager {
     }
 
     /// Change only playback settings without touching the fixed voice assignments.
+    /// When generation already runs at a native speed, the sink divides it out so
+    /// the requested rate stays effective without compounding.
     pub fn configure_playback(
         &self,
         id: &str,
@@ -441,7 +471,8 @@ impl SessionManager {
         let job = self.active(id)?;
         job.speed.set(speed);
         job.volume.set(volume);
-        self.player.configure(volume, speed);
+        self.player
+            .configure(volume, speed / native_speed(&job.input.params));
         Ok(())
     }
 

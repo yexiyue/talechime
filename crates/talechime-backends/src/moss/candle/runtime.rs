@@ -9,6 +9,8 @@ pub(super) struct Request {
     pub context: Option<tts_core::SpeechContext>,
     pub text: String,
     pub voice: String,
+    pub seed: u64,
+    pub resolved: super::params::Resolved,
     pub audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
 }
 pub(super) fn device(selected: tts_protocol::Device) -> anyhow::Result<Device> {
@@ -112,6 +114,9 @@ fn generate(
     };
     codec.reset_decoder();
     let mut generation = Generation::new(&request.text);
+    generation.seed = request.seed;
+    generation.max_frames = request.resolved.max_frames;
+    generation.instruction = request.resolved.instruction.as_deref();
     generation.reference = reference.as_deref().or_else(|| {
         if mode == Mode::Realtime {
             continuation.as_deref()
