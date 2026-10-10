@@ -137,3 +137,117 @@ impl Nano {
         anyhow::bail!("Nano frame limit reached before end-of-speech")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn real_nano_generation_logits_match_official_reference() -> anyhow::Result<()> {
+        let (Some(directory), Some(reference)) = (
+            std::env::var_os("TRNOVEL_MOSS_NANO_CANDLE_DIR"),
+            std::env::var_os("TALECHIME_NANO_GENERATION_REFERENCE"),
+        ) else {
+            return Ok(());
+        };
+        let cases: Vec<serde_json::Value> = serde_json::from_slice(&std::fs::read(reference)?)?;
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        let device = Device::new_metal(0)?;
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        let device = Device::Cpu;
+        let mut model = Nano::load(&std::path::PathBuf::from(directory).join("tts"), &device)?;
+        for (index, case) in cases.iter().enumerate() {
+            let rows: Vec<Vec<u32>> = serde_json::from_value(case["rows"].clone())?;
+            let frames: Vec<Vec<u32>> = serde_json::from_value(case["frames"].clone())?;
+            let text_logits: Vec<Vec<f32>> = serde_json::from_value(case["text_logits"].clone())?;
+            let audio_logits: Vec<Vec<Vec<f32>>> =
+                serde_json::from_value(case["audio_logits"].clone())?;
+            model.global.reset();
+            let mut x = model.embeds(&rows)?;
+            let mut maximum = 0f32;
+            for (step, expected_text) in text_logits.iter().enumerate() {
+                let hidden = model.global.forward(&x, &|| false)?;
+                let hidden = hidden.i((.., hidden.dim(1)? - 1, ..))?.unsqueeze(1)?;
+                model.local.reset();
+                let local = model.local.forward(&hidden, &|| false)?.squeeze(1)?;
+                let logits = model
+                    .text_head
+                    .forward(&local)?
+                    .flatten_all()?
+                    .to_vec1::<f32>()?;
+                for (id, expected) in [9, 7].into_iter().zip(expected_text) {
+                    maximum = maximum.max((logits[id] - expected).abs());
+                }
+                if step == frames.len() {
+                    break;
+                }
+                let mut local_input = model.text.forward(&Tensor::new(&[[9u32]], &device)?)?;
+                for channel in 0..16 {
+                    let local = model.local.forward(&local_input, &|| false)?.squeeze(1)?;
+                    let logits = model.audio_heads[channel]
+                        .forward(&local)?
+                        .flatten_all()?
+                        .to_vec1::<f32>()?;
+                    for (actual, expected) in
+                        logits.iter().step_by(64).zip(&audio_logits[channel][step])
+                    {
+                        maximum = maximum.max((actual - expected).abs());
+                    }
+                    local_input = model.audio[channel]
+                        .forward(&Tensor::new(&[[frames[step][channel]]], &device)?)?;
+                }
+                let mut row = vec![9];
+                row.extend_from_slice(&frames[step]);
+                x = model.embeds(&[row])?;
+            }
+            eprintln!(
+                "Nano teacher-forced case {index}, {} frames: maximum logit error {maximum}",
+                frames.len()
+            );
+            assert!(
+                maximum < 1e-3,
+                "Nano case {index} differs from official logits"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn real_nano_transformers_match_official_reference() -> anyhow::Result<()> {
+        let (Some(directory), Some(reference)) = (
+            std::env::var_os("TRNOVEL_MOSS_NANO_CANDLE_DIR"),
+            std::env::var_os("TALECHIME_NANO_TTS_REFERENCE"),
+        ) else {
+            return Ok(());
+        };
+        let reference: serde_json::Value = serde_json::from_slice(&std::fs::read(reference)?)?;
+        let rows: Vec<Vec<u32>> = serde_json::from_value(reference["rows"].clone())?;
+        #[allow(unused_mut)]
+        let mut devices = vec![Device::Cpu];
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        devices.push(Device::new_metal(0)?);
+        for device in devices {
+            let mut model = Nano::load(&std::path::PathBuf::from(&directory).join("tts"), &device)?;
+            let x = model.embeds(&rows)?;
+            let h = model.global.forward(&x, &|| false)?;
+            let h = h.i((.., h.dim(1)? - 1, ..))?.unsqueeze(1)?;
+            let slot = model.text.forward(&Tensor::new(&[[9u32]], &device)?)?;
+            let local = model
+                .local
+                .forward(&Tensor::cat(&[&h, &slot], 1)?, &|| false)?;
+            for (name, actual) in [("global", h), ("local", local)] {
+                let expected: Vec<f32> = serde_json::from_value(reference[name].clone())?;
+                let actual = actual.flatten_all()?.to_vec1::<f32>()?;
+                assert_eq!(actual.len(), expected.len());
+                let error = actual
+                    .iter()
+                    .zip(expected)
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0f32, f32::max);
+                eprintln!("Nano {device:?} {name} reference maximum error: {error}");
+                assert!(error < 1e-3, "Nano {name} differs from official reference");
+            }
+        }
+        Ok(())
+    }
+}

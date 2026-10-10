@@ -499,7 +499,7 @@ impl AudioCodec {
         );
         Ok(samples)
     }
-    /// Encode interleaved reference audio at the codec sample rate, padding the final frame.
+    /// Encode interleaved audio, excluding the padded frame from the valid codes.
     pub fn encode(
         &mut self,
         samples: &[f32],
@@ -523,7 +523,11 @@ impl AudioCodec {
         for stage in &mut self.encoder {
             x = stage.forward(&x, true, cancelled)?;
         }
-        self.quantizer.encode(&x, channels, cancelled)
+        // Upstream pads storage but propagates the unpadded input length through
+        // each patch with floor division. Padded codes are not reference audio.
+        let mut frames = self.quantizer.encode(&x, channels, cancelled)?;
+        frames.truncate(samples.len() / frame_samples);
+        Ok(frames)
     }
 }
 
@@ -632,6 +636,45 @@ mod nano_tests {
             );
             codec.reset_decoder();
             assert!(codec.decode(&frames[..3], &|| true).is_err());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn real_nano_encoder_matches_official_reference() -> anyhow::Result<()> {
+        let (Some(directory), Some(reference)) = (
+            std::env::var_os("TRNOVEL_MOSS_NANO_CANDLE_DIR"),
+            std::env::var_os("TALECHIME_NANO_ENCODER_REFERENCE"),
+        ) else {
+            return Ok(());
+        };
+        let reference: serde_json::Value = serde_json::from_slice(&std::fs::read(reference)?)?;
+        let samples: Vec<f32> = serde_json::from_value(reference["samples"].clone())?;
+        let expected: Vec<Vec<u32>> = serde_json::from_value(reference["codes"].clone())?;
+        #[allow(unused_mut)]
+        let mut devices = vec![Device::Cpu];
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        devices.push(Device::new_metal(0)?);
+        for device in devices {
+            let mut codec = AudioCodec::load(
+                &std::path::PathBuf::from(&directory).join("codec"),
+                &device,
+                DType::F32,
+            )?;
+            let actual = codec.encode(&samples, 16, &|| false)?;
+            assert_eq!(actual.len(), expected.len());
+            let matches = actual
+                .iter()
+                .flatten()
+                .zip(expected.iter().flatten())
+                .filter(|(a, b)| a == b)
+                .count();
+            let total = expected.len() * 16;
+            eprintln!("Nano {device:?} encoder reference agreement: {matches}/{total}");
+            assert!(
+                matches * 100 >= total * 99,
+                "Nano encoder differs from official reference"
+            );
         }
         Ok(())
     }

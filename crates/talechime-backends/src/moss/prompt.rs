@@ -27,6 +27,14 @@ pub(super) fn rows(
         }
         Ok(())
     };
+    // The manifest stores encoded template text only. The official builder
+    // separately prepends the user message's im_start control token.
+    text_row(
+        &mut rows,
+        config["im_start_token_id"]
+            .as_i64()
+            .ok_or_else(|| anyhow::anyhow!("missing Nano im_start token"))? as i32,
+    );
     append(&mut rows, "user_prompt_prefix_token_ids")?;
     if let Some(none_tokens) = continuation {
         for &token in none_tokens {
@@ -71,6 +79,30 @@ pub(super) fn rows(
 mod tests {
     use super::*;
     #[test]
+    fn pinned_official_builder_matches_every_clone_and_continuation_row() {
+        let manifest: Value =
+            serde_json::from_str(include_str!("assets/browser_poc_manifest.json")).unwrap();
+        let reference: Value =
+            serde_json::from_str(include_str!("assets/nano-prompt-reference.json")).unwrap();
+        for case in reference["cases"].as_array().unwrap() {
+            let tokens: Vec<i32> = serde_json::from_value(case["tokens"].clone()).unwrap();
+            let codes: Vec<Vec<i32>> = serde_json::from_value(case["codes"].clone()).unwrap();
+            let none: Vec<i32> = serde_json::from_value(case["none_tokens"].clone()).unwrap();
+            let expected: Vec<Vec<i32>> = serde_json::from_value(case["rows"].clone()).unwrap();
+            let actual = rows(
+                &manifest,
+                &tokens,
+                &codes,
+                case["continuation"]
+                    .as_bool()
+                    .unwrap()
+                    .then_some(none.as_slice()),
+            )
+            .unwrap();
+            assert_eq!(actual, expected.into_iter().flatten().collect::<Vec<_>>());
+        }
+    }
+    #[test]
     fn official_continuation_moves_codes_to_assistant_and_has_no_user_audio() {
         let manifest: Value =
             serde_json::from_str(include_str!("assets/browser_poc_manifest.json")).unwrap();
@@ -85,7 +117,9 @@ mod tests {
         assert_eq!(cr[cr.len() - 2][0], 9);
         assert_eq!(&cr[cr.len() - 2][1..], &codes[0]);
         assert_eq!(cr.last().unwrap()[0], 9);
-        let prefix = manifest["prompt_templates"]["user_prompt_prefix_token_ids"]
+        assert_eq!(cr[0][0], 4);
+        assert_eq!(vr[0][0], 4);
+        let prefix = 1 + manifest["prompt_templates"]["user_prompt_prefix_token_ids"]
             .as_array()
             .unwrap()
             .len();
