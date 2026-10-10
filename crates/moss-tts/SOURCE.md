@@ -11,3 +11,10 @@ Both upstream codebases use Apache-2.0; LICENSE and NOTICE are retained.
 This crate contains native Rust inference, not upstream CLI/server/training
 programs. Model resources are pinned in assets and downloaded separately.
 Local adaptations originated in TRNovel; see the root SOURCE.md.
+
+Nano GPT2 and stereo codec support were carried from TRNovel experiment
+`8be7d953fd91433569767404e5a7a37534956d5b`. Equations and prompt formats
+follow OpenMOSS/MOSS-TTS-Nano checkpoint `44502f80dbf9743528fa921cc544d662c685ebec`;
+attention conventions were cross-checked against Apache-2.0 community source
+https://github.com/ramishi/moss-tts-nano-rust-candle at
+`f4d3fcf4de9b4118ee664087f88495f4174836e1`. No gated weights are included.

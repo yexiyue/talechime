@@ -150,6 +150,10 @@ impl Registry {
             return voxcpm::models::Model::parse(model)
                 .map_or_else(|_| vec![], |model| model.compiled_devices());
         }
+        #[cfg(feature = "moss-nano-candle")]
+        if backend == "moss" && model == Some("nano-candle") {
+            return moss::nano::compiled_devices();
+        }
         #[cfg(feature = "moss-candle")]
         if backend == "moss" && model.is_some_and(|id| id != "nano") {
             return moss::candle::compiled_devices();
@@ -175,6 +179,10 @@ impl Registry {
                 .into_iter()
                 .filter(|device| compiled.contains(device))
                 .collect();
+        }
+        #[cfg(feature = "moss-nano-candle")]
+        if backend == "moss" && model == Some("nano-candle") {
+            return moss::nano::available_devices();
         }
         #[cfg(feature = "moss-candle")]
         if backend == "moss" && model.is_some_and(|id| id != "nano") {
@@ -208,6 +216,8 @@ impl Registry {
         let entries = vec![
             #[cfg(feature = "moss")]
             moss::capabilities(&self.root.join("moss"))?,
+            #[cfg(feature = "moss-nano-candle")]
+            moss::nano::capabilities(&self.root)?,
             #[cfg(feature = "moss-candle")]
             moss::candle::capabilities(&self.root, moss::candle::Mode::Local)?,
             #[cfg(feature = "moss-candle")]
@@ -354,6 +364,13 @@ impl Registry {
             }
             #[cfg(feature = "moss")]
             "moss" => {
+                #[cfg(feature = "moss-nano-candle")]
+                if model == Some("nano-candle") {
+                    moss::nano::prepare(&self.root, progress).await?;
+                    return Ok(Rc::new(
+                        moss::nano::NanoBackend::load_on(self.root.clone(), device).await?,
+                    ));
+                }
                 #[cfg(feature = "moss-candle")]
                 if let Some(model) = model.filter(|id| *id != "nano") {
                     let mode = moss::candle::Mode::parse(model)?;

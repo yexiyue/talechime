@@ -20,11 +20,25 @@ struct Metric {
     audio_seconds: f64,
 }
 #[cfg(feature = "moss")]
-struct SeededMoss(talechime_backends::moss::MossBackend);
+enum SeededMoss {
+    Onnx(talechime_backends::moss::MossBackend),
+    #[cfg(feature = "moss-nano-candle")]
+    Candle(talechime_backends::moss::nano::NanoBackend),
+}
+#[cfg(feature = "moss")]
+impl SeededMoss {
+    fn backend(&self) -> &dyn Backend {
+        match self {
+            Self::Onnx(backend) => backend,
+            #[cfg(feature = "moss-nano-candle")]
+            Self::Candle(backend) => backend,
+        }
+    }
+}
 #[cfg(feature = "moss")]
 impl Backend for SeededMoss {
     fn capabilities(&self) -> Capabilities {
-        self.0.capabilities()
+        self.backend().capabilities()
     }
     fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a> {
         self.stream_with_context(text, voice, None, None)
@@ -36,10 +50,15 @@ impl Backend for SeededMoss {
         _style: Option<&'a str>,
         context: Option<&'a SpeechContext>,
     ) -> Streaming<'a> {
-        Box::pin(
-            self.0
-                .stream_seeded_with_context(text, voice, Some(42), context),
-        )
+        match self {
+            Self::Onnx(backend) => {
+                Box::pin(backend.stream_seeded_with_context(text, voice, Some(42), context))
+            }
+            #[cfg(feature = "moss-nano-candle")]
+            Self::Candle(backend) => {
+                Box::pin(backend.stream_seeded_with_context(text, voice, 42, context))
+            }
+        }
     }
     fn next_segment<'a>(
         &'a self,
@@ -54,16 +73,16 @@ impl Backend for SeededMoss {
                 > + 'a,
         >,
     > {
-        self.0.next_segment(text)
+        self.backend().next_segment(text)
     }
     fn paragraph_end(&self, text: &str, remaining: &str) -> bool {
-        self.0.paragraph_end(text, remaining)
+        self.backend().paragraph_end(text, remaining)
     }
     fn select_voice(&self, voice: &str) {
-        self.0.select_voice(voice)
+        self.backend().select_voice(voice)
     }
     fn observe_duration(&self, text: &str, voice: &str, seconds: f64) {
-        self.0.observe_duration(text, voice, seconds)
+        self.backend().observe_duration(text, voice, seconds)
     }
 }
 struct Observed {
@@ -220,8 +239,15 @@ async fn run() -> anyhow::Result<()> {
         #[cfg(feature = "moss")]
         "moss" => {
             talechime_backends::moss::resources::prepare(&directory, progress.clone()).await?;
-            Rc::new(SeededMoss(
+            Rc::new(SeededMoss::Onnx(
                 talechime_backends::moss::MossBackend::load_on(directory, device).await?,
+            ))
+        }
+        #[cfg(feature = "moss-nano-candle")]
+        "moss-candle" => {
+            talechime_backends::moss::nano::prepare(&directory, progress.clone()).await?;
+            Rc::new(SeededMoss::Candle(
+                talechime_backends::moss::nano::NanoBackend::load_on(directory, device).await?,
             ))
         }
         #[cfg(feature = "qwen")]

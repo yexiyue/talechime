@@ -198,3 +198,17 @@ talechime --backend qwen --model 0.6b-base voices import reader --name "朗读" 
 talechime --backend qwen --model 0.6b-base --voice custom:reader chapter.txt
 talechime --no-continuation chapter.txt
 ```
+
+## Nano Candle 试听候选
+
+`moss-nano-candle` 是从既有实验分支移植的 Nano 原生实现，模型项为 `nano-candle`。
+`moss-nano-candle-metal` / `moss-nano-candle-cuda` 分别启用对应设备；CPU 始终可用。
+共享 Nano 音色 codes，并支持与 ONNX 相同的段落内接续规则。尚未取代 ONNX 默认，切换取决于试听。
+
+```sh
+cargo build --release --locked -p talechime --features moss-nano-candle-metal
+target/release/talechime --backend moss --model nano-candle --tts-device metal --voice Weiguo chapter.txt
+```
+
+权重使用独立固定 manifest 和 `resources/moss/models/nano-candle/REVISION/` 目录；没有旧目录自动回退。
+已有资源需显式指定 `--model-dir` 或手工搬迁，音色导入目前仍复用 Nano ONNX encoder。

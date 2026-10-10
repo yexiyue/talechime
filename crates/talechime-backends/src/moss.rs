@@ -5,6 +5,8 @@ pub mod candle;
 pub mod diagnostics;
 #[cfg(all(windows, feature = "directml-probe"))]
 pub mod directml_probe;
+#[cfg(feature = "moss-nano-candle")]
+pub mod nano;
 mod prompt;
 pub mod resources;
 mod runtime;
@@ -31,7 +33,8 @@ pub fn capabilities(directory: &std::path::Path) -> anyhow::Result<Capabilities>
         voices.push(voice.id);
     }
     Ok(Capabilities {
-        model: cfg!(feature = "moss-candle").then(|| "nano".into()),
+        model: cfg!(any(feature = "moss-candle", feature = "moss-nano-candle"))
+            .then(|| "nano".into()),
         model_name: "MOSS Nano".into(),
         backend: "moss".into(),
         voices,
