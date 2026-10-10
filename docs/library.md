@@ -116,3 +116,29 @@ cargo run --locked -p talechime --example host_thread
 库沿用现有模型 feature；`default-features = false` 可仅启用所需适配器或注入自定义 backend。`cli` feature 控制 executable 与 clap/crossterm 等 CLI 依赖；嵌入库设置 default-features=false，再选择所需模型，或直接注入自定义 Backend。播放器依赖仍参与 core 编译，运行时可不装配。CLI/worker 现在复用这个库入口，协议 v7 只有计划 start 路径，无旧版本协商层。音色资源版本/租约保护、真实模型听感和平台性能不能由本阶段夹具验证推断。
 
 首期交付顺序是 Talechime API 与确定性验收，再等待 CastGlean 标注契约完成，最后共同接入 TRNovel；当前不把阅读器兼容作为库接口约束。
+
+## 段落内接续
+
+`PlanSessionOptions::continuation` 与 `SynthesisOptions::continuation` 默认开启。
+`Engine::synthesize_with_options` / `synthesize_pcm_with_options` 接收直接合成选项；
+原便利入口使用默认设置。一次调用内部滚动使用上一段完整的生成文字与原始 PCM，
+独立调用不共享历史。只有能力目录 `continuation=true` 的 OmniVoice、Qwen **0.6B Base**、
+MOSS Nano 使用这一条件；其他模型保持既有合成方式。
+
+```rust,ignore
+let mut stream = engine.synthesize_with_options(
+    text, voice, None,
+    talechime::SynthesisOptions { continuation: false, ..Default::default() },
+)?;
+```
+
+软换行、生成分块与相同音色/风格的连续 span 保留一段参考。空段、装饰线、标题、
+音色或风格变化清空；新执行、seek、恢复、停止和失败也清空。两种播放策略遵循相同规则。
+参考是静音边界处理、音量和变速之前的完整音频，只接受 1–15 秒、最多 2048 UTF-8
+文字字节、非静音且有限的 PCM。前段与候选参考合计最多 16 MiB，超限整段丢弃并记录原因。
+只有显式 End 和成功交付的段落可以更新参考；门禁重试始终使用同一前段。
+回读发现异常但仍交付的音频不作为下一段参考。接续编码或推理失败会终止合成。
+
+Qwen `0.6b-base` 必须先导入带准确转写的参考音色，其资源与 `0.6b-customvoice`
+隔离，默认模型仍为 CustomVoice。接续不写入临时音色、不自动迁移或生成预置参考。
+能力标记表示实现已提供，听感改善须试听对照音频后单独验收。

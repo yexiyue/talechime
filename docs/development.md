@@ -67,3 +67,22 @@ cargo clippy --locked -p talechime --no-default-features --all-targets -- -D war
 无默认 feature 的二进制构建需显式加 cli，例如 `--features cli,qwen-metal`。core 当前仍编译播放器依赖，直接合成运行时不打开设备。
 
 ASR 普通测试使用确定性转写和合成夹具，不下载权重；原生前端用固定整数合成波形对照独立 kaldi-native-fbank 数值。手工真实模型探针：`cargo run --release --locked -p talechime-backends --features asr --example asr_readback -- QWEN_DIR SENSEVOICE_DIR CORPUS_JSON OUTPUT_JSON`。语料、模型、结果只放 Git 忽略目录；验证范围见[原生验收](records/asr-readback-mainline-2026-10-09.md)。
+
+## 段落内接续探针
+
+独立探针使用固定 manifest 校验模型，固定种子 42；真实模型、输入、对照 WAV 和报告都放忽略目录。
+
+```sh
+cargo build --release --locked -p talechime-backends --features qwen-metal,omnivoice-metal --example continuation_probe --example moss_continuation_codec
+target/release/examples/continuation_probe moss NANO_DIR target/continuation-evidence/moss-on cpu Weiguo on CORPUS_TXT
+target/release/examples/continuation_probe qwen BASE06_DIR target/continuation-evidence/qwen-on metal custom:reader on CORPUS_TXT
+target/release/examples/continuation_probe omnivoice OMNI_DIR target/continuation-evidence/omni-on metal narrator on CORPUS_TXT
+target/release/examples/moss_continuation_codec NANO_DIR
+```
+
+将 `on` 换成 `off` 并使用另一输出目录生成对照；Qwen Base 先通过 `voices import` 导入准确转写的参考音色。
+探针输出完整与逐段 float32 WAV、PCM16 回读 WAV、原文范围、首个 PCM 延迟、合成耗时及 RTF；
+用 `/usr/bin/time -l` 额外记录进程峰值内存。`readback-corpus.json` 可传入上面的 `asr_readback`。
+取消、错误不会自动退回独立生成；失败保留已产生的音频与错误摘要。
+Nano 数值探针对比分批前缀预热与整段预热后同一组新 codes 的 PCM，前缀音频本身不交付。
+[本次结果与限制](records/continuation-small-models-2026-10-10.md)包含固定语料、权重 revision、回读及试听边界。

@@ -7,6 +7,8 @@ pub mod audio;
 pub mod backend;
 pub mod checkpoint;
 pub mod config;
+mod continuation;
+pub use continuation::SpeechContext;
 pub mod download;
 mod error;
 pub mod paths;
@@ -26,5 +28,5 @@ pub use player::AudioPlayer;
 pub use player::Playback;
 pub use session::{
     CancellationHandle, PlanProgress, PlanSessionOptions, SpeechAudio, StagingError,
-    StagingOptions, SynthesisItem, SynthesisState, SynthesisStream,
+    StagingOptions, SynthesisItem, SynthesisOptions, SynthesisState, SynthesisStream,
 };

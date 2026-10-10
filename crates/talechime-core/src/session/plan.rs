@@ -6,6 +6,8 @@ use tokio::sync::Notify;
 /// Playback and recovery settings independent of a plan's voice assignments.
 #[derive(Debug, Clone)]
 pub struct PlanSessionOptions {
+    /// Keep one complete previous segment within a paragraph (default enabled).
+    pub continuation: bool,
     /// Output volume, 0..=10.
     pub volume: f32,
     /// Playback rate, 0.5..=2.
@@ -23,6 +25,7 @@ pub struct PlanSessionOptions {
 impl Default for PlanSessionOptions {
     fn default() -> Self {
         Self {
+            continuation: true,
             volume: 1.0,
             speed: 1.0,
             resume_byte: None,
@@ -51,6 +54,7 @@ pub struct PlanProgress {
 }
 
 pub(super) struct PlanInput {
+    pub(super) continuation: bool,
     pub(super) plan: RefCell<SpeechPlan>,
     pub(super) verifier: Option<Rc<crate::verification::Verifier>>,
     pub(super) verification: crate::verification::VerificationOptions,
@@ -63,6 +67,7 @@ pub(super) struct PlanInput {
 impl PlanInput {
     pub(super) fn new(plan: SpeechPlan, byte: usize) -> Self {
         Self {
+            continuation: true,
             plan: RefCell::new(plan),
             verifier: None,
             verification: crate::verification::VerificationOptions::default(),

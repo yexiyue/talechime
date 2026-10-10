@@ -126,6 +126,9 @@ pub struct Capabilities {
     pub style: bool,
     pub cloning: bool,
     pub pronunciation: bool,
+    /// Previous text/audio conditioning supported by this model.
+    #[serde(default)]
+    pub continuation: bool,
 }
 
 impl Capabilities {
@@ -302,6 +305,8 @@ pub struct PlanRequest {
     pub playback: PlanPlayback,
     pub resume_byte: Option<usize>,
     pub restore_checkpoint: bool,
+    #[serde(default = "enabled")]
+    pub continuation: bool,
     #[serde(default)]
     pub verification: crate::VerificationOptions,
 }
@@ -330,3 +335,7 @@ pub struct PlanProgressSnapshot {
 pub const MAX_PLAN_BATCH_SPANS: usize = 4096;
 /// Maximum accepted assignments per execution at the transport boundary.
 pub const MAX_PLAN_SPANS: usize = 65536;
+
+fn enabled() -> bool {
+    true
+}

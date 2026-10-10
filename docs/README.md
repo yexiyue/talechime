@@ -23,6 +23,8 @@
 
 ## 模型与平台验收
 
+- [三个小模型段落内接续](records/continuation-small-models-2026-10-10.md)：实现、固定种子开／关对照、decoder 数值验证及尚未完成的主观试听。
+
 - 通用：[模型分层](records/tts-model-tiers-acceptance.md)、[Metal 效率](records/metal-tts-efficiency.md)、[ORT rc.13 升级](records/ort-rc13-upgrade.md)。
 - MOSS：[Nano](records/moss-tts-acceptance.md)、[Candle](records/moss-candle-acceptance.md)、[macOS 1.7B 流式输出](records/moss-macos-streaming.md)、[连贯性与对齐](records/moss-continuity-acceptance.md)、[DirectML 实验](records/moss-directml-evaluation.md)。
 - Qwen：[Candle 集成](records/qwen-tts-acceptance.md)。

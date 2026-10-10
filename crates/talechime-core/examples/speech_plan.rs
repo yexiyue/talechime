@@ -16,6 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         style: false,
         cloning: false,
         pronunciation: false,
+        continuation: false,
     };
     let text = "他说：走吧。";
     let source = SourceSnapshot::new(

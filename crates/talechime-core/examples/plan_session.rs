@@ -26,6 +26,7 @@ impl Backend for DemoBackend {
             style: false,
             cloning: false,
             pronunciation: false,
+            continuation: false,
         }
     }
     fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a> {

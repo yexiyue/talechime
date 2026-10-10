@@ -16,6 +16,7 @@ fn capabilities(style: bool) -> Capabilities {
         style,
         cloning: false,
         pronunciation: false,
+        continuation: false,
     }
 }
 

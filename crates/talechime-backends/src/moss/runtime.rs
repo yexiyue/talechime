@@ -13,6 +13,11 @@ use std::{collections::HashMap, path::Path};
 use tts_core::backend::{AudioChunk, Pcm};
 
 type Feeds = HashMap<String, DynValue>;
+#[derive(Clone, Copy)]
+pub(super) struct ContinuationInput<'a> {
+    pub(super) context: &'a tts_core::SpeechContext,
+    pub(super) none_tokens: &'a [i32],
+}
 /// Output placement is separate from the product's persisted device choices.
 #[derive(Clone, Copy)]
 pub(super) enum Placement {
@@ -183,48 +188,6 @@ impl Runtime {
         .map(|s| s.end_profiling().map_err(Into::into))
         .collect()
     }
-    fn rows(&self, tokens: &[i32], codes: &[Vec<i32>]) -> anyhow::Result<Vec<i32>> {
-        let config = &self.manifest["tts_config"];
-        let templates = &self.manifest["prompt_templates"];
-        let mut rows = Vec::new();
-        let text_row = |rows: &mut Vec<i32>, token: i32| {
-            rows.push(token);
-            rows.extend([1024; 16]);
-        };
-        let append = |rows: &mut Vec<i32>, key: &str| -> anyhow::Result<()> {
-            for token in templates[key]
-                .as_array()
-                .ok_or_else(|| anyhow::anyhow!("invalid prompt template"))?
-            {
-                text_row(
-                    rows,
-                    token
-                        .as_i64()
-                        .ok_or_else(|| anyhow::anyhow!("invalid token"))?
-                        as i32,
-                );
-            }
-            Ok(())
-        };
-        append(&mut rows, "user_prompt_prefix_token_ids")?;
-        text_row(
-            &mut rows,
-            config["audio_start_token_id"].as_i64().unwrap_or(6) as i32,
-        );
-        for code in codes {
-            anyhow::ensure!(code.len() == 16, "invalid voice code width");
-            rows.push(8);
-            rows.extend(code);
-        }
-        text_row(&mut rows, 7);
-        append(&mut rows, "user_prompt_after_reference_token_ids")?;
-        for &token in tokens {
-            text_row(&mut rows, token);
-        }
-        append(&mut rows, "assistant_prompt_prefix_token_ids")?;
-        text_row(&mut rows, 6);
-        Ok(rows)
-    }
     fn codec_state(&self) -> anyhow::Result<(Feeds, Vec<(String, String)>)> {
         let mut state = Feeds::new();
         let mut mapping = Vec::new();
@@ -326,6 +289,10 @@ impl Runtime {
         wav: &Path,
     ) -> anyhow::Result<()> {
         let waveform = super::audio::read_wav(wav)?;
+        let codes = self.encode(waveform)?;
+        VoiceStore::new(&self.directory).save(id, name, codes)
+    }
+    fn encode(&mut self, waveform: Vec<f32>) -> anyhow::Result<Vec<Vec<i32>>> {
         let len = waveform.len() / 2;
         let mut outputs = run(
             &mut self.encoder,
@@ -337,29 +304,106 @@ impl Runtime {
         )?;
         let length = length(&outputs, "audio_code_lengths")?;
         let value = take(&mut outputs, "audio_codes")?;
-        let (_, data) = value.try_extract_tensor::<i32>()?;
+        let (shape, data) = value.try_extract_tensor::<i32>()?;
+        if std::env::var_os("NOVEL_TTS_DIAGNOSTICS").is_some() {
+            eprintln!("nano encode shape={shape:?} code_frames={length} input_samples={len}");
+        }
         anyhow::ensure!(
-            length > 0 && length * 16 <= data.len(),
+            shape.len() == 3
+                && shape[0] == 1
+                && shape[2] == 16
+                && length > 0
+                && length as i64 <= shape[1]
+                && length * 16 <= data.len()
+                && data[..length * 16]
+                    .iter()
+                    .all(|token| (0..1024).contains(token)),
             "invalid encoded reference audio"
         );
-        let codes = data[..length * 16]
+        Ok(data[..length * 16]
             .as_chunks::<16>()
             .0
             .iter()
             .map(|row| row.to_vec())
+            .collect())
+    }
+    pub(super) fn check_continuation_codec(
+        &mut self,
+        context: &tts_core::SpeechContext,
+    ) -> anyhow::Result<super::diagnostics::CodecContinuationReport> {
+        let codes = self.encode_context(context)?;
+        let prefix = codes.iter().flatten().copied().collect::<Vec<_>>();
+        let next = codes[codes.len().saturating_sub(3)..]
+            .iter()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        let (mut full, mapping) = self.codec_state()?;
+        let _discard = self.audio(&prefix, &mut full, &mapping)?;
+        let expected = self.audio(&next, &mut full, &mapping)?;
+        let (mut bounded, mapping) = self.codec_state()?;
+        for batch in codes.chunks(3) {
+            let frames = batch.iter().flatten().copied().collect::<Vec<_>>();
+            let _discard = self.audio(&frames, &mut bounded, &mapping)?;
+        }
+        let actual = self.audio(&next, &mut bounded, &mapping)?;
+        anyhow::ensure!(
+            actual.samples.len() == expected.samples.len(),
+            "prefix decoder batching changed output length"
+        );
+        let errors = actual
+            .samples
+            .iter()
+            .zip(&expected.samples)
+            .map(|(a, b)| f64::from(a - b))
+            .collect::<Vec<_>>();
+        Ok(super::diagnostics::CodecContinuationReport {
+            prefix_frames: codes.len(),
+            compared_samples: errors.len(),
+            max_abs_difference: errors.iter().copied().map(f64::abs).fold(0.0, f64::max) as f32,
+            rmse: (errors.iter().map(|v| v * v).sum::<f64>() / errors.len() as f64).sqrt(),
+        })
+    }
+    fn encode_context(
+        &mut self,
+        context: &tts_core::SpeechContext,
+    ) -> anyhow::Result<Vec<Vec<i32>>> {
+        let pcm = context.pcm();
+        anyhow::ensure!(
+            pcm.sample_rate == 48000 && pcm.channels == 2,
+            "Nano continuation requires its original 48 kHz stereo PCM"
+        );
+        let waveform = (0..2)
+            .flat_map(|channel| {
+                pcm.samples
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(move |frame| frame[channel])
+            })
             .collect();
-        VoiceStore::new(&self.directory).save(id, name, codes)
+        self.encode(waveform)
     }
     pub(super) fn generate(
         &mut self,
         tokens: Vec<i32>,
         voice: &str,
         seed: Option<u64>,
+        prefix: Option<ContinuationInput<'_>>,
         tx: &tokio::sync::mpsc::Sender<Result<AudioChunk, tts_core::backend::BackendError>>,
         stats: &mut GenerationStats,
     ) -> anyhow::Result<GenerationEnd> {
-        let codes = VoiceStore::new(&self.directory).codes(voice, &self.manifest)?;
-        let rows = self.rows(&tokens, &codes)?;
+        let codes = if let Some(prefix) = prefix {
+            self.encode_context(prefix.context)?
+        } else {
+            VoiceStore::new(&self.directory).codes(voice, &self.manifest)?
+        };
+        let rows = super::prompt::rows(
+            &self.manifest,
+            &tokens,
+            &codes,
+            prefix.map(|p| p.none_tokens),
+        )?;
         let count = rows.len() / 17;
         let mut outputs = run(
             &mut self.prefill,
@@ -387,6 +431,28 @@ impl Runtime {
             }
         };
         let (mut codec_state, mapping) = self.codec_state()?;
+        if prefix.is_some() {
+            // Advance all decoder caches with the prefix, without delivering prefix PCM.
+            for batch in codes.chunks(3) {
+                if tx.is_closed() {
+                    return Ok(GenerationEnd::Cancelled);
+                }
+                let frames = batch.iter().flatten().copied().collect::<Vec<_>>();
+                let prefix_pcm = self.audio(&frames, &mut codec_state, &mapping)?;
+                if std::env::var_os("NOVEL_TTS_DIAGNOSTICS").is_some() {
+                    eprintln!(
+                        "nano warm frames={} peak={}",
+                        batch.len(),
+                        prefix_pcm
+                            .samples
+                            .iter()
+                            .copied()
+                            .map(f32::abs)
+                            .fold(0.0, f32::max)
+                    );
+                }
+            }
+        }
         for (valid_length, step) in (count..).zip(0..375) {
             if tx.is_closed() {
                 return Ok(GenerationEnd::Cancelled);

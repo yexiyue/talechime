@@ -22,3 +22,12 @@ pub struct GenerationReport {
     pub end: GenerationEnd,
     pub error: Option<String>,
 }
+
+/// Numerical check of all-at-once versus bounded prefix decoder warmup.
+#[derive(Debug, Serialize)]
+pub struct CodecContinuationReport {
+    pub prefix_frames: usize,
+    pub compared_samples: usize,
+    pub max_abs_difference: f32,
+    pub rmse: f64,
+}

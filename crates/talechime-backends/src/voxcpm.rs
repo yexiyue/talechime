@@ -39,6 +39,7 @@ pub fn capabilities_for(directory: &Path, model: models::Model) -> anyhow::Resul
         style: false,
         compiled_devices: Vec::new(),
         pronunciation: false,
+        continuation: false,
     };
     for voice in voice_store_for(directory, model)?.list()? {
         caps.voice_names.insert(voice.id.clone(), voice.name);

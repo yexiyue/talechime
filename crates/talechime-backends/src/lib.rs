@@ -14,7 +14,12 @@ pub mod moss;
 pub mod omnivoice;
 #[cfg(feature = "qwen")]
 pub mod qwen;
-#[cfg(any(feature = "voxcpm", feature = "omnivoice", feature = "moss-candle"))]
+#[cfg(any(
+    feature = "qwen",
+    feature = "voxcpm",
+    feature = "omnivoice",
+    feature = "moss-candle"
+))]
 pub mod reference;
 #[cfg(any(
     feature = "moss",

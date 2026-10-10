@@ -31,6 +31,7 @@ impl Backend for Fixture {
             style: true,
             cloning: false,
             pronunciation: false,
+            continuation: false,
         }
     }
     fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a> {

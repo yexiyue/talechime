@@ -66,6 +66,24 @@ pub trait Backend {
             self.stream(text, voice)
         }
     }
+    /// Optional previous complete utterance, owned by this execution rather than a voice cache.
+    fn stream_with_context<'a>(
+        &'a self,
+        text: &'a str,
+        voice: &'a str,
+        style: Option<&'a str>,
+        context: Option<&'a crate::SpeechContext>,
+    ) -> Streaming<'a> {
+        if context.is_some() {
+            Box::pin(async {
+                Err(BackendError::Unsupported(
+                    "this model does not support continuation".into(),
+                ))
+            })
+        } else {
+            self.stream_with_style(text, voice, style)
+        }
+    }
     /// Collect a stream for offline export and model comparison.
     fn synthesize<'a>(&'a self, text: &'a str, voice: &'a str) -> Synthesis<'a> {
         Box::pin(async move {

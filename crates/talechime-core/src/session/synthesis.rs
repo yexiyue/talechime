@@ -63,6 +63,23 @@ impl CancellationHandle {
     }
 }
 
+/// Options for one independent direct synthesis execution.
+#[derive(Debug, Clone)]
+pub struct SynthesisOptions {
+    /// Previous complete segment conditioning, where supported.
+    pub continuation: bool,
+    /// Optional content verification before delivery.
+    pub verification: crate::verification::VerificationOptions,
+}
+impl Default for SynthesisOptions {
+    fn default() -> Self {
+        Self {
+            continuation: true,
+            verification: Default::default(),
+        }
+    }
+}
+
 /// Local bounded synthesis stream using the same segmentation and PCM rules as listening.
 /// Consume to Completed, or explicitly cancel and await cleanup. Drop only requests it.
 pub struct SynthesisStream {
@@ -101,6 +118,28 @@ impl SynthesisStream {
         verifier: Option<Rc<crate::verification::Verifier>>,
         verification: crate::verification::VerificationOptions,
     ) -> Result<Self, SessionError> {
+        Self::start_with_options(
+            backend,
+            text,
+            voice,
+            style,
+            verifier,
+            SynthesisOptions {
+                verification,
+                ..Default::default()
+            },
+        )
+    }
+    /// Start an isolated execution with explicit continuation and readback settings.
+    pub fn start_with_options(
+        backend: Rc<dyn Backend>,
+        text: impl Into<Arc<str>>,
+        voice: &str,
+        style: Option<String>,
+        verifier: Option<Rc<crate::verification::Verifier>>,
+        options: SynthesisOptions,
+    ) -> Result<Self, SessionError> {
+        let verification = options.verification;
         crate::verification::validate_options(&verification)?;
         if verification.policy != crate::verification::VerificationPolicy::Off && verifier.is_none()
         {
@@ -136,6 +175,7 @@ impl SynthesisStream {
         let mut input = PlanInput::new(plan, 0);
         input.verifier = verifier;
         input.verification = verification;
+        input.continuation = options.continuation;
         let input = Rc::new(input);
         let (done, completed) = watch::channel(false);
         let (producer, receiver) =

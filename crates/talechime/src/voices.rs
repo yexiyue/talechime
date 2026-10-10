@@ -258,8 +258,8 @@ pub async fn run(
         }
         let model = Model::parse(config.model.as_deref())?;
         anyhow::ensure!(
-            model == Model::Base17,
-            "reference voices require --model 1.7b-base"
+            model.is_base(),
+            "reference voices require --model 0.6b-base or 1.7b-base"
         );
         let store = voice_store(&model.directory(resources.root()), model)?;
         match command {

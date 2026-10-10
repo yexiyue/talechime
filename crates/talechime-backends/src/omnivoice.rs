@@ -28,6 +28,7 @@ pub fn capabilities(directory: &Path) -> anyhow::Result<Capabilities> {
         style: false,
         compiled_devices: Vec::new(),
         pronunciation: false,
+        continuation: true,
     };
     for voice in voice_store(directory)?.list()? {
         caps.voice_names.insert(voice.id.clone(), voice.name);
@@ -102,7 +103,21 @@ impl Backend for OmniBackend {
         self.caps.clone()
     }
     fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a> {
+        self.stream_with_context(text, voice, None, None)
+    }
+    fn stream_with_context<'a>(
+        &'a self,
+        text: &'a str,
+        voice: &'a str,
+        style: Option<&'a str>,
+        context: Option<&'a tts_core::SpeechContext>,
+    ) -> Streaming<'a> {
         Box::pin(async move {
+            if style.is_some_and(|s| !s.trim().is_empty()) {
+                return Err(BackendError::Unsupported(
+                    "OmniVoice does not support style".into(),
+                ));
+            }
             if !self.caps.voices.iter().any(|id| id == voice) || text.trim().is_empty() {
                 return Err(BackendError::Unsupported(
                     "unknown Omni voice or empty text".into(),
@@ -112,7 +127,7 @@ impl Backend for OmniBackend {
             self.requests
                 .as_ref()
                 .expect("live inference thread")
-                .send(runtime::Request::new(text, voice, audio))
+                .send(runtime::Request::new(text, voice, audio, context))
                 .await
                 .map_err(|_| BackendError::Synthesis("Omni inference thread exited".into()))?;
             Ok(receiver)

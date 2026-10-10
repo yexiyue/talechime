@@ -185,3 +185,16 @@ flowchart LR
 ## 可选回读校验
 
 首版内置 Qwen3-ASR 0.6B 主识别与 SenseVoiceSmall 复核，默认关闭。库支持独立报告、仅报告合成及逐片段门禁/有界重试；标准发行包包含 `asr`，嵌入库按需启用该 feature。准备模型与合成分开，调用过程中不隐式下载。使用方法及边界见[回读校验](docs/readback.md)。
+
+## 段落内接续
+
+OmniVoice、Qwen **0.6B Base** 与 MOSS Nano 默认使用前段完整文字/音频条件，软换行和
+同音色连续分块保留参考，硬段落及音色变化重置。`--no-continuation` 可关闭，优先于计划文件。
+支持接续不代表主观听感已验收；规则及库选项见[段落内接续](docs/library.md#段落内接续)。
+
+```sh
+# Qwen Base 需要自行导入带准确转写的参考；CustomVoice 默认选择保持不变。
+talechime --backend qwen --model 0.6b-base voices import reader --name "朗读" --text "参考音频的准确文字" reference.wav
+talechime --backend qwen --model 0.6b-base --voice custom:reader chapter.txt
+talechime --no-continuation chapter.txt
+```

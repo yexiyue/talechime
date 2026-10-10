@@ -186,6 +186,7 @@ mod tests {
             compiled_devices: Vec::new(),
             cloning: false,
             pronunciation: false,
+            continuation: false,
         }
     }
 
@@ -337,6 +338,7 @@ mod tests {
             compiled_devices: Vec::new(),
             cloning: false,
             pronunciation: false,
+            continuation: false,
         };
         let patch = ConfigPatch {
             volume: Some(0.5),

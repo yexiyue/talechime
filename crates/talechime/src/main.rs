@@ -82,6 +82,9 @@ struct Args {
     /// Generate and verify the whole chapter on disk before playback.
     #[arg(long, conflicts_with = "protocol")]
     after_chapter: bool,
+    /// Disable previous-segment conditioning, including when a plan enables it.
+    #[arg(long, conflicts_with = "protocol")]
+    no_continuation: bool,
     /// Explicitly restart this file from its beginning, ignoring a stored checkpoint.
     #[arg(long, conflicts_with = "protocol")]
     restart: bool,
@@ -221,6 +224,7 @@ async fn main() -> anyhow::Result<()> {
                     restore_checkpoint: !args.restart,
                     plan_file: args.plan,
                     after_chapter: args.after_chapter,
+                    no_continuation: args.no_continuation,
                     verification: tts_protocol::VerificationOptions {
                         policy: match args.verify {
                             VerifyMode::Off => tts_protocol::VerificationPolicy::Off,
@@ -255,6 +259,26 @@ fn parse_device(value: &str) -> Result<tts_protocol::Device, String> {
 #[cfg(test)]
 mod argument_tests {
     use super::*;
+    #[test]
+    fn continuation_flag_defaults_on_and_can_override_a_plan() {
+        assert!(
+            !Args::try_parse_from(["talechime", "chapter.txt"])
+                .unwrap()
+                .no_continuation
+        );
+        assert!(
+            Args::try_parse_from([
+                "talechime",
+                "chapter.txt",
+                "--plan",
+                "p.json",
+                "--no-continuation"
+            ])
+            .unwrap()
+            .no_continuation
+        );
+        assert!(Args::try_parse_from(["talechime", "--protocol", "--no-continuation"]).is_err());
+    }
     #[test]
     fn plan_and_playback_flags_do_not_change_machine_mode_or_voice_selection() {
         assert!(

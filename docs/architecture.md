@@ -117,3 +117,14 @@ ListeningSession 是执行 owner，Listening 是该 owner 与库自建事件接�
 ## 可选内容门禁
 
 计划执行与直接 PCM 流共用 producer。开启回读时，producer 有界收集实际 TTS 片段，经 Verifier 主识别/跨家族复核后先发布报告，再发布接受的 PCM；只对共同确认异常重合成同一片段。报告-only 也收集片段，但不阻止内容异常的交付。AfterChapterReady 在这一阶段之后暂存，全章成功才进入播放。原生 ASR 各有请求容量为 1 的 owner，取消会终止请求并在显式关闭时等待在途工作。报告与 PCM 保持原有有界背压，不在事件转发层另建后台队列。契约及模型组见[回读校验](readback.md)。
+
+## 执行级接续参考
+
+producer 在当前执行内保存最多一个 `SpeechContext`（不可变共享 PCM 与生成文字），
+与全局音色缓存和模型张量隔离。支持的 Backend 通过 `stream_with_context` 接收可选前段。
+候选在接收原始流时有界复制，播放无需等待候选完成；End 后且交付策略允许时才替换参考。
+门禁拒绝的尝试不进入候选，重试使用原快照。参考限额与重置语义见[库说明](library.md#段落内接续)。
+
+MOSS Nano 用前段转写与当前文字建立无用户参考的 continuation prompt，把音频 codes 放入
+assistant 前缀；codec 先消费前缀建立状态，丢弃前缀 PCM 后只输出新帧。Qwen 0.6B Base
+复用 Base ICL 编码，OmniVoice 复用 VoiceClonePrompt；临时 prompt 均只存在原生 owner 的内存中。

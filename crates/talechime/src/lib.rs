@@ -33,8 +33,8 @@ pub use engine::{Engine, EngineError, ModelOptions, PcmStream, run_local};
 pub use listening::{Listening, ListeningHandle, ListeningOptions, ListeningSession};
 pub use tts_core::{
     CancellationHandle, PlanError, PlanProgress, PlanSessionOptions, PlanState, Playback,
-    PlaybackPolicy, SourceSnapshot, SpeechAudio, SpeechPlan, SpeechSpan, StagingError,
-    StagingOptions, SynthesisItem, SynthesisState, VoiceSnapshot,
+    PlaybackPolicy, SourceSnapshot, SpeechAudio, SpeechContext, SpeechPlan, SpeechSpan,
+    StagingError, StagingOptions, SynthesisItem, SynthesisOptions, SynthesisState, VoiceSnapshot,
     backend::{AudioChunk, Backend, BackendError, Pcm, Segmentation, Streaming},
     session::{SessionError, SessionEvent},
 };

@@ -35,6 +35,7 @@ struct Call {
 struct FixtureBackend {
     caps: RefCell<Capabilities>,
     calls: RefCell<Vec<Call>>,
+    contexts: RefCell<Vec<Option<String>>>,
     selected: RefCell<Vec<String>>,
     observed: RefCell<Vec<String>>,
     mode: Cell<Mode>,
@@ -57,8 +58,10 @@ impl FixtureBackend {
                 style: true,
                 cloning: false,
                 pronunciation: false,
+                continuation: false,
             }),
             calls: RefCell::new(vec![]),
+            contexts: RefCell::new(vec![]),
             selected: RefCell::new(vec![]),
             observed: RefCell::new(vec![]),
             mode: Cell::new(Mode::Normal),
@@ -127,6 +130,18 @@ impl Backend for FixtureBackend {
             });
             Ok(rx)
         })
+    }
+    fn stream_with_context<'a>(
+        &'a self,
+        text: &'a str,
+        voice: &'a str,
+        style: Option<&'a str>,
+        context: Option<&'a talechime_core::SpeechContext>,
+    ) -> Streaming<'a> {
+        self.contexts
+            .borrow_mut()
+            .push(context.map(|c| c.text().into()));
+        self.stream_with_style(text, voice, style)
     }
     fn segments<'a>(&'a self, text: &'a str) -> Segmentation<'a> {
         Box::pin(async move {
@@ -1228,6 +1243,86 @@ async fn staged_stop_waits_for_paused_reader_and_removes_storage_before_returnin
             h.manager.stop().await.unwrap();
             assert_eq!(stage_count(root.path()), 0);
             assert_eq!(h.player.queued.get(), Duration::ZERO);
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn continuation_across_spans_resets_voice_style_seek_and_recovery_in_both_strategies() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            for policy in [PlaybackPolicy::Streaming, PlaybackPolicy::AfterChapterReady] {
+                let mut h = Harness::new();
+                h.backend.caps.borrow_mut().continuation = true;
+                let text = "甲乙丙丁戊己";
+                let caps = h.backend.capabilities();
+                let mut plan = SpeechPlan::new(
+                    h.plan(text).source().clone(),
+                    VoiceSnapshot::new(
+                        &caps.backend,
+                        caps.model.as_deref(),
+                        &caps,
+                        caps.voices.clone(),
+                    )
+                    .unwrap(),
+                    policy,
+                );
+                plan.append(vec![
+                    span(0, 3, "A"),
+                    span(3, 6, "A"),
+                    span(6, 9, "B"),
+                    SpeechSpan::new(TextRange { start: 9, end: 12 }, "B", Some("calm".into())),
+                    SpeechSpan::new(TextRange { start: 12, end: 15 }, "B", Some("calm".into())),
+                    span(15, 18, "B"),
+                ])
+                .unwrap();
+                plan.seal().unwrap();
+                let directory = tempfile::tempdir().unwrap();
+                let options = PlanSessionOptions {
+                    staging: talechime_core::StagingOptions {
+                        directory: Some(directory.path().into()),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                h.manager
+                    .start_plan("before".into(), plan.clone(), options.clone())
+                    .await
+                    .unwrap();
+                h.manager.pause("before").await.unwrap();
+                h.drive(false, |h| {
+                    h.manager.plan_progress("before").unwrap().generated_end == 18
+                })
+                .await;
+                assert_eq!(
+                    *h.backend.contexts.borrow(),
+                    [None, Some("甲".into()), None, None, Some("丁".into()), None]
+                );
+                let count = h.backend.contexts.borrow().len();
+                h.manager
+                    .seek_plan("before", "after".into(), 12)
+                    .await
+                    .unwrap();
+                h.manager.resume("after").await.unwrap();
+                h.drive(true, |h| h.ended("after", EndReason::Completed))
+                    .await;
+                assert!(h.backend.contexts.borrow()[count].is_none());
+                let count = h.backend.contexts.borrow().len();
+                h.manager
+                    .start_plan(
+                        "resume".into(),
+                        plan,
+                        PlanSessionOptions {
+                            resume_byte: Some(3),
+                            ..options
+                        },
+                    )
+                    .await
+                    .unwrap();
+                h.drive(true, |h| h.ended("resume", EndReason::Completed))
+                    .await;
+                assert!(h.backend.contexts.borrow()[count].is_none());
+            }
         })
         .await;
 }

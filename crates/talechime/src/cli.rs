@@ -46,6 +46,7 @@ pub struct CliOptions {
     pub restore_checkpoint: bool,
     pub plan_file: Option<PathBuf>,
     pub after_chapter: bool,
+    pub no_continuation: bool,
     pub verification: tts_protocol::VerificationOptions,
     pub report_file: Option<PathBuf>,
 }
@@ -60,6 +61,7 @@ pub async fn run(
         restore_checkpoint,
         plan_file,
         after_chapter,
+        no_continuation,
         mut verification,
         report_file,
     } = options;
@@ -76,6 +78,7 @@ pub async fn run(
         book: canonical.to_string_lossy().into(),
         chapter: "file".into(),
     };
+    let mut continuation = !no_continuation;
     let (plan, resume_byte, restore_checkpoint) = if let Some(path) = plan_file {
         // Bound file reads before deserialization. Full plans only; stdin worker handles increments.
         use tokio::io::AsyncReadExt;
@@ -93,6 +96,7 @@ pub async fn run(
             anyhow::bail!("CLI requires a sealed plan with the exact file text");
         }
         verification = input.verification.clone();
+        continuation &= input.continuation;
         (
             crate::plan_input::build(
                 &input,
@@ -191,6 +195,7 @@ pub async fn run(
                 resume_byte,
                 restore_checkpoint,
                 verification,
+                continuation,
                 ..Default::default()
             },
         )

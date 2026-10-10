@@ -7,6 +7,7 @@ use tts_core::backend::{AudioChunk, BackendError, Pcm};
 use tts_protocol::{Device, Event};
 
 pub(super) struct Request {
+    pub(super) context: Option<tts_core::SpeechContext>,
     pub(super) text: String,
     pub(super) voice: String,
     pub(super) style: Option<String>,
@@ -107,7 +108,22 @@ fn generate(
         seed: Some(42),
         ..Default::default()
     };
-    let mut stream = if request.voice.starts_with("custom:") {
+    let transient = request
+        .context
+        .as_ref()
+        .map(|context| {
+            let samples = crate::reference::mono(context.pcm(), 24000).map_err(inference_error)?;
+            model
+                .create_voice_clone_prompt(
+                    &qwen3_tts::AudioBuffer::new(samples, 24000),
+                    Some(&super::text::normalize(context.text())),
+                )
+                .map_err(inference_error)
+        })
+        .transpose()?;
+    let mut stream = if let Some(prompt) = &transient {
+        model.synthesize_voice_clone_streaming(&request.text, prompt, language, options)
+    } else if request.voice.starts_with("custom:") {
         if !prompts.contains_key(&request.voice) {
             let variant = super::models::Model::detect(directory).map_err(inference_error)?;
             let store = super::voice_store(directory, variant).map_err(inference_error)?;

@@ -14,7 +14,7 @@ moss = ["dep:ort", "dep:sentencepiece-rs", "dep:rand", "dep:hound", "dep:rubato"
 moss-candle = ["moss", "dep:moss-tts", "dep:candle-core"]
 moss-candle-cuda = ["moss-candle", "moss-tts/cuda"]
 moss-candle-metal = ["moss-candle", "moss-tts/metal", "tts-candle-platform/metal"]
-qwen = ["dep:qwen3-tts", "dep:hound"]
+qwen = ["dep:qwen3-tts", "dep:hound", "dep:rubato"]
 qwen-metal = ["qwen", "qwen3-tts/metal", "tts-candle-platform/metal"]
 qwen-cuda = ["qwen", "qwen3-tts/cuda"]
 voxcpm = ["dep:voxcpm", "dep:candle-core", "dep:hound", "dep:rubato"]
@@ -92,3 +92,11 @@ required-features = ["voxcpm"]
 [[example]]
 name = "asr_readback"
 required-features = ["asr"]
+
+[[example]]
+name = "continuation_probe"
+required-features = ["moss", "qwen", "omnivoice"]
+
+[[example]]
+name = "moss_continuation_codec"
+required-features = ["moss"]

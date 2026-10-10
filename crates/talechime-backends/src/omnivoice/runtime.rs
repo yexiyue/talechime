@@ -15,6 +15,7 @@ use tts_core::backend::{AudioChunk, BackendError, Pcm};
 use tts_protocol::Device;
 
 pub(super) struct Request {
+    context: Option<tts_core::SpeechContext>,
     text: String,
     voice: String,
     audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
@@ -24,8 +25,10 @@ impl Request {
         text: &str,
         voice: &str,
         audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
+        context: Option<&tts_core::SpeechContext>,
     ) -> Self {
         Self {
+            context: context.cloned(),
             text: text.into(),
             voice: voice.into(),
             audio,
@@ -127,7 +130,19 @@ fn prompt(pipeline: &Pipeline, directory: &Path, voice: &str) -> anyhow::Result<
 fn generate(pipeline: &Pipeline, directory: &Path, request: &Request) -> Result<(), BackendError> {
     let started = std::time::Instant::now();
     let mut input = GenerationRequest::new_text_only(&request.text).with_language("zh");
-    if request.voice.starts_with("custom:") {
+    if let Some(context) = &request.context {
+        let samples = crate::reference::mono(context.pcm(), 24000)
+            .map_err(|e| BackendError::Synthesis(e.to_string()))?;
+        let prompt = pipeline
+            .create_voice_clone_prompt_from_audio(
+                &ReferenceAudioInput::Waveform(WaveformInput::mono(samples, 24000)),
+                Some(context.text()),
+                false,
+                None,
+            )
+            .map_err(|e| BackendError::Synthesis(e.to_string()))?;
+        input = input.with_voice_clone_prompt(prompt);
+    } else if request.voice.starts_with("custom:") {
         input = input.with_voice_clone_prompt(
             prompt(pipeline, directory, &request.voice)
                 .map_err(|e| BackendError::Unsupported(e.to_string()))?,

@@ -118,11 +118,26 @@ mod tests {
                 playback: PlanPlayback::Streaming,
                 resume_byte: None,
                 restore_checkpoint: true,
+                continuation: true,
                 verification: Default::default(),
             })),
         }
     }
 
+    #[test]
+    fn continuation_defaults_on_and_can_be_disabled_without_changing_v7() {
+        let mut json = serde_json::to_value(request()).unwrap();
+        json["payload"]
+            .as_object_mut()
+            .unwrap()
+            .remove("continuation");
+        let parsed: Request = serde_json::from_value(json.clone()).unwrap();
+        assert!(matches!(parsed.command,Command::Start(plan) if plan.continuation));
+        json["payload"]["continuation"] = serde_json::json!(false);
+        let parsed: Request = serde_json::from_value(json).unwrap();
+        assert!(matches!(parsed.command,Command::Start(plan) if !plan.continuation));
+        assert_eq!(PROTOCOL_VERSION, 7);
+    }
     #[test]
     fn removed_alignment_settings_are_rejected_in_config_updates() {
         for patch in [
@@ -262,6 +277,7 @@ mod plan_tests {
             playback: PlanPlayback::AfterChapterReady,
             resume_byte: Some(0),
             restore_checkpoint: false,
+            continuation: true,
             verification: Default::default(),
         };
         for command in [

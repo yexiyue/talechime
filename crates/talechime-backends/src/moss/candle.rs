@@ -57,6 +57,7 @@ pub fn capabilities(root: &Path, mode: Mode) -> anyhow::Result<Capabilities> {
         cloning: true,
         style: false,
         pronunciation: false,
+        continuation: false,
         compiled_devices: compiled_devices(),
     };
     for voice in voice_store(&mode.directory(root), mode)?.list()? {

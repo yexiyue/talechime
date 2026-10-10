@@ -356,6 +356,7 @@ impl Worker {
                             resume_byte: input.resume_byte,
                             restore_checkpoint: input.restore_checkpoint,
                             verification: input.verification.clone(),
+                            continuation: input.continuation,
                             ..Default::default()
                         },
                     )
@@ -624,6 +625,7 @@ mod plan_tests {
             playback,
             resume_byte: Some(0),
             restore_checkpoint: false,
+            continuation: true,
             verification: Default::default(),
         }
     }

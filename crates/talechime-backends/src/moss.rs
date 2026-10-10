@@ -5,6 +5,7 @@ pub mod candle;
 pub mod diagnostics;
 #[cfg(all(windows, feature = "directml-probe"))]
 pub mod directml_probe;
+mod prompt;
 pub mod resources;
 mod runtime;
 mod text;
@@ -41,15 +42,22 @@ pub fn capabilities(directory: &std::path::Path) -> anyhow::Result<Capabilities>
         style: false,
         compiled_devices: Vec::new(),
         pronunciation: false,
+        continuation: true,
     })
 }
 enum Work {
     Generate {
         tokens: Vec<i32>,
+        none_tokens: Vec<i32>,
+        context: Option<tts_core::SpeechContext>,
         voice: String,
         seed: Option<u64>,
         audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
         report: Option<(String, oneshot::Sender<diagnostics::GenerationReport>)>,
+    },
+    CheckCodec {
+        context: tts_core::SpeechContext,
+        reply: oneshot::Sender<anyhow::Result<diagnostics::CodecContinuationReport>>,
     },
     Import {
         id: String,
@@ -135,6 +143,8 @@ impl MossBackend {
                     match job {
                         Work::Generate {
                             tokens,
+                            none_tokens,
+                            context,
                             voice,
                             seed,
                             audio,
@@ -144,7 +154,7 @@ impl MossBackend {
                             let token_count = tokens.len();
                             let mut stats = GenerationStats::default();
                             let result = if audio.is_closed() { Ok(GenerationEnd::Cancelled) }
-                                else { runtime.generate(tokens, &voice, seed, &audio, &mut stats) };
+                                else { runtime.generate(tokens, &voice, seed, context.as_ref().map(|context| runtime::ContinuationInput {context,none_tokens:&none_tokens}), &audio, &mut stats) };
                             let (end, error) = match result {
                                 Ok(GenerationEnd::FrameLimit) => (GenerationEnd::FrameLimit, Some("MOSS frame limit reached before end-of-speech; block was not completed".to_string())),
                                 Ok(end) => (end, None),
@@ -171,6 +181,9 @@ impl MossBackend {
                             }
                         }
 
+                        Work::CheckCodec {context,reply} => {
+                            if !reply.is_closed() { let _=reply.send(runtime.check_continuation_codec(&context)); }
+                        }
                         Work::Import {
                             id,
                             name,
@@ -215,6 +228,22 @@ impl MossBackend {
             .await?;
         result.await?
     }
+    /// Compare prefix warmup batching against the official full-prefix decode.
+    /// This explicit probe returns numeric evidence; it does not synthesize or persist audio.
+    pub async fn check_continuation_codec(
+        &self,
+        context: &tts_core::SpeechContext,
+    ) -> anyhow::Result<diagnostics::CodecContinuationReport> {
+        let (reply, result) = oneshot::channel();
+        self.owner
+            .sender()?
+            .send(Work::CheckCodec {
+                context: context.clone(),
+                reply,
+            })
+            .await?;
+        result.await?
+    }
     /// Seeded streams support deterministic comparisons with the official runtime.
     pub async fn stream_seeded(
         &self,
@@ -222,7 +251,18 @@ impl MossBackend {
         voice: &str,
         seed: Option<u64>,
     ) -> Result<tts_core::backend::AudioStream, BackendError> {
-        self.request(text, voice, seed, None).await
+        self.stream_seeded_with_context(text, voice, seed, None)
+            .await
+    }
+    /// Deterministic continuation comparisons; temporary reference remains request-local.
+    pub async fn stream_seeded_with_context(
+        &self,
+        text: &str,
+        voice: &str,
+        seed: Option<u64>,
+        context: Option<&tts_core::SpeechContext>,
+    ) -> Result<tts_core::backend::AudioStream, BackendError> {
+        self.request(text, voice, seed, None, context).await
     }
     /// Generate optional evidence without exposing model details to core.
     pub async fn stream_diagnosed(
@@ -238,7 +278,7 @@ impl MossBackend {
         BackendError,
     > {
         let (reply, report) = oneshot::channel();
-        let stream = self.request(text, voice, seed, Some(reply)).await?;
+        let stream = self.request(text, voice, seed, Some(reply), None).await?;
         Ok((stream, report))
     }
     async fn request(
@@ -247,14 +287,26 @@ impl MossBackend {
         voice: &str,
         seed: Option<u64>,
         report: Option<oneshot::Sender<diagnostics::GenerationReport>>,
+        context: Option<&tts_core::SpeechContext>,
     ) -> Result<tts_core::backend::AudioStream, BackendError> {
         let text = text::normalize(text);
         if text.is_empty() {
             return Err(BackendError::Unsupported("no speakable text".into()));
         }
+        let effective = context.map_or_else(
+            || text.clone(),
+            |previous| text::normalize(previous.text()) + &text,
+        );
+        let none_tokens = self
+            .tokenizer
+            .encode_to_ids("None")
+            .map_err(|e| BackendError::Synthesis(e.to_string()))?
+            .into_iter()
+            .map(|id| id as i32)
+            .collect();
         let tokens = self
             .tokenizer
-            .encode_to_ids(&text)
+            .encode_to_ids(&effective)
             .map_err(|e| BackendError::Synthesis(e.to_string()))?
             .into_iter()
             .map(|id| id as i32)
@@ -264,6 +316,8 @@ impl MossBackend {
             .sender()?
             .send(Work::Generate {
                 tokens,
+                none_tokens,
+                context: context.cloned(),
                 voice: voice.into(),
                 seed,
                 audio,
@@ -280,6 +334,22 @@ impl Backend for MossBackend {
     }
     fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a> {
         Box::pin(self.stream_seeded(text, voice, None))
+    }
+    fn stream_with_context<'a>(
+        &'a self,
+        text: &'a str,
+        voice: &'a str,
+        style: Option<&'a str>,
+        context: Option<&'a tts_core::SpeechContext>,
+    ) -> Streaming<'a> {
+        Box::pin(async move {
+            if style.is_some_and(|s| !s.trim().is_empty()) {
+                return Err(BackendError::Unsupported(
+                    "MOSS Nano does not support style".into(),
+                ));
+            }
+            self.request(text, voice, None, None, context).await
+        })
     }
     fn paragraph_end(&self, segment: &str, remaining: &str) -> bool {
         text::paragraph_end(segment, remaining)

@@ -80,7 +80,8 @@ pub use plan::{PlanProgress, PlanSessionOptions};
 use prefetch::{Budget, Packet};
 pub use staging::{StagingError, StagingOptions};
 pub use synthesis::{
-    CancellationHandle, SpeechAudio, SynthesisItem, SynthesisState, SynthesisStream,
+    CancellationHandle, SpeechAudio, SynthesisItem, SynthesisOptions, SynthesisState,
+    SynthesisStream,
 };
 
 struct AbortOnDrop(JoinHandle<()>);
@@ -208,6 +209,7 @@ impl SessionManager {
                 speed: config.speed,
                 resume_byte: request.resume_byte,
                 restore_checkpoint: request.restore_checkpoint,
+                continuation: true,
                 staging: StagingOptions::default(),
                 verification: crate::verification::VerificationOptions::default(),
             },
@@ -290,6 +292,7 @@ impl SessionManager {
                 self.verifier.as_ref().map(|verifier| verifier.scoped())
             };
         input.verification = options.verification.clone();
+        input.continuation = options.continuation;
         let input = Rc::new(input);
         let writes = Arc::new(PendingWrites::default());
         let runner = Runner {
@@ -667,6 +670,7 @@ impl SessionManager {
                 speed,
                 resume_byte: Some(byte),
                 restore_checkpoint: false,
+                continuation: job.input.continuation,
                 staging: job.staging.clone(),
                 verification: job.verification.clone(),
             },
@@ -726,6 +730,7 @@ mod tests {
                 compiled_devices: Vec::new(),
                 cloning: false,
                 pronunciation: false,
+                continuation: false,
             }
         }
         fn stream<'a>(&'a self, _: &'a str, _: &'a str) -> Streaming<'a> {

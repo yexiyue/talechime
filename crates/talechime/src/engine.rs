@@ -219,14 +219,32 @@ impl Engine {
         style: Option<String>,
         verification: crate::VerificationOptions,
     ) -> Result<PcmStream, EngineError> {
+        self.synthesize_with_options(
+            text,
+            voice,
+            style,
+            crate::SynthesisOptions {
+                verification,
+                ..Default::default()
+            },
+        )
+    }
+    /// Explicit settings for one isolated execution; history never crosses calls.
+    pub fn synthesize_with_options(
+        &self,
+        text: impl Into<Arc<str>>,
+        voice: &str,
+        style: Option<String>,
+        options: crate::SynthesisOptions,
+    ) -> Result<PcmStream, EngineError> {
         self.available()?;
-        let stream = SynthesisStream::start_verified(
+        let stream = SynthesisStream::start_with_options(
             self.backend()?,
             text,
             voice,
             style,
             self.verifier.clone(),
-            verification,
+            options,
         )?;
         let owner = Rc::new(());
         self.active.replace(Some(Active::Synthesis {
@@ -246,12 +264,24 @@ impl Engine {
         style: Option<String>,
         max_bytes: usize,
     ) -> Result<Pcm, EngineError> {
+        self.synthesize_pcm_with_options(text, voice, style, max_bytes, Default::default())
+            .await
+    }
+    /// Collect an isolated execution with explicit continuation and verification.
+    pub async fn synthesize_pcm_with_options(
+        &self,
+        text: impl Into<Arc<str>>,
+        voice: &str,
+        style: Option<String>,
+        max_bytes: usize,
+        options: crate::SynthesisOptions,
+    ) -> Result<Pcm, EngineError> {
         if max_bytes == 0 {
             return Err(EngineError::InvalidOptions(
                 "collection limit must be nonzero",
             ));
         }
-        self.synthesize(text, voice, style)?
+        self.synthesize_with_options(text, voice, style, options)?
             .collect(max_bytes)
             .await
     }
