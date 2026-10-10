@@ -320,10 +320,30 @@ async fn run() -> anyhow::Result<()> {
         wav(&path, pcm)?;
         let readback = output.join(format!("readback-{:03}.wav", i + 1));
         wav16(&readback, pcm)?;
-        corpus.push(serde_json::json!({"id":format!("{}-{}-{}",args[1],args[6],i+1),"text":text[range.start..range.end],"file":readback.canonicalize()?,"range":range}));
+        corpus.push(serde_json::json!({
+            "id": format!("{}-{}-{}", args[1], args[6], i + 1),
+            "text": text[range.start..range.end],
+            "file": readback.canonicalize()?,
+            "range": range,
+        }));
     }
     let seconds = audio.samples.len() as f64 / audio.sample_rate as f64 / audio.channels as f64;
-    let result = serde_json::json!({"backend":caps.backend,"model":caps.model,"device":format!("{device:?}"),"voice":args[5],"continuation":continuation,"load_and_verify_ms":load_ms,"elapsed_ms":elapsed_ms,"audio_seconds":seconds,"rtf":elapsed_ms as f64 / 1000.0 / seconds,"segments":*metrics.borrow(),"source_hash":tts_protocol::text_hash(&text),"completed":true,"seed":42,"listening_acceptance":"pending"});
+    let result = serde_json::json!({
+        "backend": caps.backend,
+        "model": caps.model,
+        "device": format!("{device:?}"),
+        "voice": args[5],
+        "continuation": continuation,
+        "load_and_verify_ms": load_ms,
+        "elapsed_ms": elapsed_ms,
+        "audio_seconds": seconds,
+        "rtf": elapsed_ms as f64 / 1000.0 / seconds,
+        "segments": *metrics.borrow(),
+        "source_hash": tts_protocol::text_hash(&text),
+        "completed": true,
+        "seed": 42,
+        "listening_acceptance": "pending",
+    });
     std::fs::write(
         output.join("summary.json"),
         serde_json::to_vec_pretty(&result)?,

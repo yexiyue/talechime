@@ -297,20 +297,8 @@ impl MossBackend {
             || text.clone(),
             |previous| text::normalize(previous.text()) + &text,
         );
-        let none_tokens = self
-            .tokenizer
-            .encode_to_ids("None")
-            .map_err(|e| BackendError::Synthesis(e.to_string()))?
-            .into_iter()
-            .map(|id| id as i32)
-            .collect();
-        let tokens = self
-            .tokenizer
-            .encode_to_ids(&effective)
-            .map_err(|e| BackendError::Synthesis(e.to_string()))?
-            .into_iter()
-            .map(|id| id as i32)
-            .collect();
+        let none_tokens = self.encode_tokens("None")?;
+        let tokens = self.encode_tokens(&effective)?;
         let (audio, stream) = mpsc::channel(1);
         self.owner
             .sender()?
@@ -326,6 +314,15 @@ impl MossBackend {
             .await
             .map_err(|_| BackendError::Synthesis("inference thread exited".into()))?;
         Ok(stream)
+    }
+    fn encode_tokens(&self, text: &str) -> Result<Vec<i32>, BackendError> {
+        Ok(self
+            .tokenizer
+            .encode_to_ids(text)
+            .map_err(|e| BackendError::Synthesis(e.to_string()))?
+            .into_iter()
+            .map(|id| id as i32)
+            .collect())
     }
 }
 impl Backend for MossBackend {
