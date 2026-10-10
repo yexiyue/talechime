@@ -49,7 +49,7 @@ brew install yexiyue/tap/talechime
 irm https://github.com/yexiyue/talechime/releases/latest/download/talechime-installer.ps1 | iex
 ```
 
-也可从 [GitHub Releases](https://github.com/yexiyue/talechime/releases) 下载 `.tar.xz` / `.zip`，解压后加入 PATH。标准包包含 Nano、Qwen / VoxCPM / OmniVoice；Mac 增加 Metal 与 MOSS Candle Metal，Windows/Linux 使用 CPU。CUDA 保留源码构建与编译 CI。模型按需下载，安装包不含模型权重。
+也可从 [GitHub Releases](https://github.com/yexiyue/talechime/releases) 下载 `.tar.xz` / `.zip`，解压后加入 PATH。标准包包含 Nano、Qwen / VoxCPM / OmniVoice；Mac 增加 Metal（含 Nano、Local / Realtime Candle），Windows/Linux 使用 CPU。CUDA 保留源码构建与编译 CI。模型按需下载，安装包不含模型权重。
 
 Mac 标准包要求 macOS 15+（Candle Metal residency set API）。Linux 标准包基于 Ubuntu 24.04 构建，需要 glibc 2.39+、对应的 libstdc++ 和 ALSA 运行库。Windows 使用动态 MSVC CRT，需要 Visual C++ Redistributable。帮助与协议握手不要求模型、CUDA、GPU 或音频设备。
 
@@ -66,7 +66,7 @@ cargo run -- voices list
 cargo run --release -- chapter.txt
 ```
 
-默认构建包含 MOSS Nano。新用户的实际默认模型由本构建中的模型及设备目录决定；已有配置保留用户选择。可显式指定 CPU MOSS：
+默认构建包含 Candle MOSS Nano（`nano-candle`）。新用户的实际默认模型由本构建中的模型及设备目录决定；已有配置保留用户选择。可显式指定 CPU MOSS：
 
 ```bash
 cargo run --release -- --backend moss --tts-device cpu chapter.txt
@@ -84,7 +84,8 @@ cargo run --release -- --restart chapter.txt
 
 | 后端 | 当前实现 | 设备与能力边界 |
 | --- | --- | --- |
-| MOSS Nano | ONNX Runtime | CPU 默认基线；可选 ORT provider，须核验实际算子与硬件覆盖 |
+| MOSS Nano | Candle（默认） | CPU；显式 feature 启用 Metal / CUDA；支持段落内接续 |
+| MOSS Nano ONNX | ONNX Runtime | 显式选择 `nano`；可选 ORT provider，须核验实际算子与硬件覆盖 |
 | MOSS Local / Realtime | Candle | 可选 CUDA / Metal，GPU 试用模型 |
 | Qwen3-TTS | Candle | CustomVoice 预置音色；1.7B CustomVoice 支持风格；Base 支持参考克隆 |
 | VoxCPM2 | Candle | Q8 GGUF 路径与实验 BF16 路径；参考音色与设计，按编译设备使用 |
@@ -199,11 +200,12 @@ talechime --backend qwen --model 0.6b-base --voice custom:reader chapter.txt
 talechime --no-continuation chapter.txt
 ```
 
-## Nano Candle 试听候选
+## Nano Candle 默认实现
 
 `moss-nano-candle` 是从既有实验分支移植的 Nano 原生实现，模型项为 `nano-candle`。
 `moss-nano-candle-metal` / `moss-nano-candle-cuda` 分别启用对应设备；CPU 始终可用。
-共享 Nano 音色 codes，并支持与 ONNX 相同的段落内接续规则。尚未取代 ONNX 默认，切换取决于试听。
+共享 Nano 音色 codes，并支持段落内接续。官方 prompt 修正后，本次固定语料试听已获用户确认，现作为默认 Nano 实现。
+ONNX 保留为显式模型项 `nano`；已有配置若明确选择该项，仍按原选择执行，可用 `--model nano-candle` 切换。
 
 ```sh
 cargo build --release --locked -p talechime --features moss-nano-candle-metal

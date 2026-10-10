@@ -1,4 +1,4 @@
-//! Experimental Candle Nano adapter; shares Nano voice codes with ONNX.
+//! Candle Nano adapter; shares Nano voice codes with ONNX.
 use candle_core::{DType, Device as CandleDevice};
 use sentencepiece_rs::SentencePieceProcessor;
 use std::{
@@ -16,7 +16,7 @@ pub fn capabilities(root: &Path) -> anyhow::Result<Capabilities> {
     let mut caps = super::capabilities(&root.join("moss"))?;
     caps.continuation = true;
     caps.model = Some("nano-candle".into());
-    caps.model_name = "MOSS Nano Candle（实验）".into();
+    caps.model_name = "MOSS Nano Candle".into();
     caps.compiled_devices = compiled_devices();
     Ok(caps)
 }
@@ -407,11 +407,12 @@ mod tests {
         assert!(thread.join().unwrap().is_err());
     }
     #[test]
-    fn catalog_shares_nano_voices_and_keeps_onnx_as_default() -> anyhow::Result<()> {
+    fn catalog_shares_nano_voices_and_defaults_to_candle() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
         let registry = crate::Registry::new(Some(root.path().into()))?;
-        let onnx = registry.capabilities_for("moss", None)?;
-        let candle = registry.capabilities_for("moss", Some("nano-candle"))?;
+        let onnx = registry.capabilities_for("moss", Some("nano"))?;
+        let candle = registry.capabilities_for("moss", None)?;
+        assert_eq!(candle.model.as_deref(), Some("nano-candle"));
         assert_eq!(onnx.model.as_deref(), Some("nano"));
         assert_eq!(onnx.voices, candle.voices);
         assert_eq!(candle.default_voice, "Weiguo");

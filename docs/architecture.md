@@ -125,6 +125,8 @@ producer 在当前执行内保存最多一个 `SpeechContext`（不可变共享 
 候选在接收原始流时有界复制，播放无需等待候选完成；End 后且交付策略允许时才替换参考。
 门禁拒绝的尝试不进入候选，重试使用原快照。参考限额与重置语义见[库说明](library.md#段落内接续)。
 
+默认 MOSS Nano 使用 Candle，ONNX 保留为显式 `nano` 模型项。未指定 MOSS 模型时，能力目录、
+设备选择、准备路径与校准 revision 均解析到 `nano-candle`（已编译时）；只启用 `moss` 的构建使用 ONNX。
 MOSS Nano 用前段转写与当前文字建立无用户参考的 continuation prompt，把音频 codes 放入
 assistant 前缀；codec 先消费前缀建立状态，丢弃前缀 PCM 后只输出新帧。Qwen 0.6B Base
 复用 Base ICL 编码，OmniVoice 复用 VoiceClonePrompt；临时 prompt 均只存在原生 owner 的内存中。

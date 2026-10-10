@@ -34,7 +34,7 @@ def smoke(directory: Path, suffix: str = '') -> None:
             assert messages[0]['type'] == 'ready' and messages[0]['protocol_version'] == version
             assert messages[-1]['type'] == 'accepted'
         assert not (state / 'config.json').exists(), 'Handshake persisted user configuration'
-        assert not list((state / 'models').rglob('*.onnx')), 'Handshake downloaded models'
+        assert not any(p.is_file() for p in (state / 'models').rglob('*')), 'Handshake downloaded models'
     print('Talechime passed protocol handshake without model preparation.')
 
 

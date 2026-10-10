@@ -159,7 +159,8 @@ pub(super) async fn prepare(
     if config.tts_device == Device::Auto
         && selected != Device::Cpu
         && config.backend == "moss"
-        && config.model.as_deref().is_none_or(|id| id == "nano")
+        && (config.model.as_deref() == Some("nano")
+            || (config.model.is_none() && !cfg!(feature = "moss-nano-candle")))
     {
         drop(backend);
         backend = Rc::new(
@@ -198,6 +199,10 @@ pub(super) fn tts_revision(config: &Config) -> &'static str {
     if backend == "omnivoice" {
         return tts_backends::omnivoice::resources::REVISION;
     }
+    #[cfg(feature = "moss-nano-candle")]
+    if backend == "moss" && config.model.as_deref().is_none_or(|id| id == "nano-candle") {
+        return tts_backends::moss::nano::REVISION;
+    }
     #[cfg(feature = "moss-candle")]
     if backend == "moss"
         && let Some(model) = config.model.as_deref().filter(|id| *id != "nano")
@@ -218,4 +223,25 @@ pub(super) fn tts_revision(config: &Config) -> &'static str {
     }
     let _ = backend;
     "unavailable"
+}
+
+#[cfg(all(test, feature = "moss-nano-candle"))]
+mod nano_revision_tests {
+    use super::*;
+    #[test]
+    fn default_and_explicit_candle_use_native_revision() {
+        let mut config = Config {
+            backend: "moss".into(),
+            model: None,
+            ..Default::default()
+        };
+        assert_eq!(tts_revision(&config), tts_backends::moss::nano::REVISION);
+        config.model = Some("nano-candle".into());
+        assert_eq!(tts_revision(&config), tts_backends::moss::nano::REVISION);
+        config.model = Some("nano".into());
+        assert_eq!(
+            tts_revision(&config),
+            tts_backends::moss::resources::REVISION
+        );
+    }
 }

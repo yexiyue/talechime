@@ -23,7 +23,7 @@
 
 ## 模型与平台验收
 
-- [Nano Candle 试听候选](records/moss-nano-candle-trial-2026-10-10.md)：原实验移植、接续、CPU/Metal 数值与内容风险；未取代默认实现。
+- [Nano Candle 验证与默认切换](records/moss-nano-candle-trial-2026-10-10.md)：原实验移植、官方实现对照、数值验证与试听确认；现为默认 Nano 实现。
 
 - [三个小模型段落内接续](records/continuation-small-models-2026-10-10.md)：实现、固定种子开／关对照、decoder 数值验证及尚未完成的主观试听。
 

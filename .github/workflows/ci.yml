@@ -24,7 +24,7 @@ jobs:
         shell: bash
         run: |
           cargo clippy --locked -p talechime --no-default-features --all-targets -- -D warnings
-          for feature in moss qwen voxcpm omnivoice moss-candle asr; do
+          for feature in moss qwen voxcpm omnivoice moss-candle moss-nano-candle asr; do
             cargo clippy --locked -p talechime --no-default-features --features "$feature" --all-targets -- -D warnings
           done
       - run: cargo doc --locked --no-deps --document-private-items --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/moss-candle,talechime/asr --examples

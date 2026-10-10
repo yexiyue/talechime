@@ -551,7 +551,7 @@ mod tests {
         };
         let store = ConfigStore::new(root.path().join("config.json")).with_defaults(defaults);
         let old = store
-            .initialize(&resources.capabilities("moss").unwrap())
+            .initialize(&resources.capabilities_for("moss", Some("nano")).unwrap())
             .unwrap();
         let original = std::fs::read(store.path()).unwrap();
         let checkpoints = CheckpointStore::new(root.path().join("checkpoints"));
@@ -567,7 +567,7 @@ mod tests {
         );
         worker.manager = Some(
             crate::app_session::AppSession::with_player(
-                Rc::new(SilentBackend(resources.capabilities("moss").unwrap())),
+                Rc::new(SilentBackend(resources.capabilities_for("moss", Some("nano")).unwrap())),
                 player.clone(),
                 &checkpoints,
                 events,

@@ -8,7 +8,7 @@ description = "Native model adapters for Talechime"
 repository = "https://github.com/yexiyue/talechime"
 
 [features]
-default = ["moss"]
+default = ["moss-nano-candle"]
 asr = ["dep:qwen3-asr", "dep:candle-core", "dep:ort", "dep:kaldi-fbank", "dep:rubato", "dep:hound"]
 moss = ["dep:ort", "dep:sentencepiece-rs", "dep:rand", "dep:hound", "dep:rubato"]
 moss-nano-candle = ["moss", "dep:moss-tts", "dep:candle-core"]

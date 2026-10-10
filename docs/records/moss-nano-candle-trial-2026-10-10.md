@@ -6,7 +6,7 @@
 `8be7d953fd91433569767404e5a7a37534956d5b` 移植 Nano 部分到
 Talechime `codex/moss-nano-candle-trial`，没有移植该分支的 Qwen／OmniVoice ONNX 实验。
 模型项 `moss/nano-candle`，CPU 可用，Metal／CUDA 使用各自显式 feature。
-当前默认 Nano 仍是 ONNX，未合并主线或替换默认；主观听感由用户对照试听决定。
+初次候选时默认 Nano 仍是 ONNX；后续官方实现对照、修正与用户试听确认见文末，现已切换默认。
 
 本次原生接续版有过早结束的内容风险，即使听感改善，也应先处理此项再考虑默认替换。
 关闭接续的相同末句正常生成 4.64 秒；开启接续只生成一帧（0.08 秒）后模型返回 EOS。
@@ -150,3 +150,21 @@ TRNOVEL_MOSS_NANO_CANDLE_DIR=NATIVE_MODEL_DIR TALECHIME_NANO_GENERATION_REFERENC
 rustdoc（warnings denied）通过。Metal release CLI／探针已重新构建，真实 encoder、Transformer、
 逐帧 logits 验证分别记录在忽略目录的 encoder-fixed.log、tts-metal.log、teacher-forced.log。
 Python 参考工具实际生成参考和三段 WAV，并通过语法检查；没有 CUDA 本机验证。
+
+## 试听确认与默认切换
+
+用户对上述 prompt 修正后的 Candle 音频明确反馈“听感没啥问题了”。本次固定语料的主观
+音色、衔接和响度试听记录为通过；这是该候选与样本的确认，不扩大为所有音色／文本的普遍保证。
+此前 RMS 变化和初次候选风险作为历史证据保留。
+
+默认 Cargo 构建启用 `moss-nano-candle`，标准发行编译 Nano Metal；未指定 MOSS 模型时，
+目录、设备、资源准备均选择 Candle，校准 revision 使用原生固定权重 revision。
+ONNX 保留为显式 `nano` 项；既有明确选择仍保留，不自动迁移模型或音色文件。
+纯 `moss` feature 仍可单独构建 ONNX。Qwen 默认设备选择规则与 Local／Realtime 模型保持现有行为。
+Native CUDA／Metal CI 加入 Nano 编译 feature，发行 workflow 由 cargo-dist 0.32.0 重新生成。
+
+默认切换验证：默认工作区 442 项、扩展 CPU all-targets 456 项测试通过；无默认 feature
+的库检查 29 项（含 17 项集成测试及 rustdoc 示例）通过。格式、Clippy（含 Metal feature）、
+独立 ONNX feature Clippy、rustdoc（warnings denied）、cargo-dist generate --check / plan
+通过。Metal release CLI 已构建，无模型协议握手通过且未写配置／下载模型；能力目录优先
+返回 `nano-candle`，显式 `nano` 仍可用。跨平台 CUDA 编译由现有 CI 验证，本机未验收 CUDA。

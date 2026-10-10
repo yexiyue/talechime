@@ -26,10 +26,11 @@ CLI 与 backends 使用同名开关，计算库只提供 `cuda` / `metal` 平台
 
 | 层次 | 开关 | 含义 |
 | --- | --- | --- |
-| 模型适配器 | `moss`、`qwen`、`voxcpm`、`omnivoice` | 启用对应模型；默认 `moss` 使用 Nano ONNX |
+| 模型适配器 | `moss`、`qwen`、`voxcpm`、`omnivoice` | 启用对应模型；默认构建启用 `moss-nano-candle`；单独启用 `moss` 保留 ONNX |
 | 回读模型组 | `asr` | Qwen3-ASR 0.6B Candle CPU + SenseVoiceSmall INT8 ORT CPU；合成策略仍默认关闭 |
+| Nano 默认实现 | `moss-nano-candle` | 在 MOSS 目录优先选择原生 Nano；ONNX 仍可显式选择 |
 | MOSS 实验实现 | `moss-candle` | 在 MOSS 目录增加 Local / Realtime；生产入口目前仅开放 GPU |
-| Candle 加速 | `qwen-cuda` / `qwen-metal`、`voxcpm-cuda` / `voxcpm-metal`、`omnivoice-cuda` / `omnivoice-metal`、`moss-candle-cuda` / `moss-candle-metal` | 启用对应适配器及计算库加速；按目标平台门控 |
+| Candle 加速 | `qwen-cuda` / `qwen-metal`、`voxcpm-cuda` / `voxcpm-metal`、`omnivoice-cuda` / `omnivoice-metal`、`moss-candle-cuda` / `moss-candle-metal`、`moss-nano-candle-cuda` / `moss-nano-candle-metal` | 启用对应适配器及计算库加速；按目标平台门控 |
 | ORT provider | `ort-cuda`、`ort-coreml` | 为 Nano 提供 provider，不自动启用模型适配器 |
 
 适配器层不提供通用 `metal` / `cuda` 开关；选择加速时必须明确模型。旧 `metal` / `coreml` 名称已移除，改用 `qwen-metal` / `ort-coreml`。加速开关包含对应模型开关，发行配置无需重复列出模型。`directml-probe` 仅是 backends 的实验 example，不暴露产品设备。

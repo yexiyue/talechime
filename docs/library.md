@@ -8,7 +8,7 @@
 
 ```toml
 [dependencies]
-talechime = { path = "../talechime/crates/talechime", default-features = false, features = ["moss"] }
+talechime = { path = "../talechime/crates/talechime", default-features = false, features = ["moss-nano-candle"] }
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 ```
 

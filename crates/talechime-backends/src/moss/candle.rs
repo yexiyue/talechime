@@ -163,7 +163,7 @@ mod tests {
     fn nano_identity_and_candle_devices_remain_separate() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
         let registry = crate::Registry::new(Some(root.path().into()))?;
-        let nano = registry.capabilities_for("moss", None)?;
+        let nano = registry.capabilities_for("moss", Some("nano"))?;
         assert_eq!(nano.model.as_deref(), Some("nano"));
         assert!(nano.matches("moss", None));
         assert_eq!(nano.default_voice, "Weiguo");

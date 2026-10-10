@@ -15,7 +15,7 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [features]
-default = ["cli", "moss"]
+default = ["cli", "moss-nano-candle"]
 asr = ["tts-backends/asr", "dep:hound"]
 cli = ["dep:clap", "dep:crossterm", "dep:futures", "dep:serde_json", "dep:tempfile"]
 moss = ["tts-backends/moss"]

@@ -314,7 +314,9 @@ fn cli_rejects_open_or_mismatched_plan_before_model_preparation() {
             text: text.into(),
             text_hash: tts_protocol::text_hash(text),
             backend: "moss".into(),
-            model: if cfg!(any(feature = "moss-candle", feature = "moss-nano-candle")) {
+            model: if cfg!(feature = "moss-nano-candle") {
+                Some("nano-candle".into())
+            } else if cfg!(feature = "moss-candle") {
                 Some("nano".into())
             } else {
                 None

@@ -132,7 +132,7 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
-    /// Omitted model IDs select the first (legacy) entry for that backend.
+    /// Omitted model IDs select the first catalog entry for that backend.
     pub fn matches(&self, backend: &str, model: Option<&str>) -> bool {
         self.backend == backend && model.is_none_or(|id| self.model.as_deref() == Some(id))
     }

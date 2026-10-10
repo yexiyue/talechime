@@ -85,7 +85,15 @@ impl Registry {
                     qwen::compiled_devices()
                 }
             }
-            #[cfg(feature = "moss")]
+            #[cfg(feature = "moss-nano-candle")]
+            "moss" => {
+                if available {
+                    moss::nano::available_devices()
+                } else {
+                    moss::nano::compiled_devices()
+                }
+            }
+            #[cfg(all(feature = "moss", not(feature = "moss-nano-candle")))]
             "moss" => {
                 if available {
                     devices::available()
@@ -151,12 +159,16 @@ impl Registry {
                 .map_or_else(|_| vec![], |model| model.compiled_devices());
         }
         #[cfg(feature = "moss-nano-candle")]
-        if backend == "moss" && model == Some("nano-candle") {
+        if backend == "moss" && model.is_none_or(|id| id == "nano-candle") {
             return moss::nano::compiled_devices();
         }
         #[cfg(feature = "moss-candle")]
         if backend == "moss" && model.is_some_and(|id| id != "nano") {
             return moss::candle::compiled_devices();
+        }
+        #[cfg(feature = "moss")]
+        if backend == "moss" && model == Some("nano") {
+            return devices::compiled();
         }
         let _ = model;
         self.compiled_devices(backend)
@@ -181,12 +193,16 @@ impl Registry {
                 .collect();
         }
         #[cfg(feature = "moss-nano-candle")]
-        if backend == "moss" && model == Some("nano-candle") {
+        if backend == "moss" && model.is_none_or(|id| id == "nano-candle") {
             return moss::nano::available_devices();
         }
         #[cfg(feature = "moss-candle")]
         if backend == "moss" && model.is_some_and(|id| id != "nano") {
             return moss::candle::available_devices();
+        }
+        #[cfg(feature = "moss")]
+        if backend == "moss" && model == Some("nano") {
+            return devices::available();
         }
         let _ = model;
         self.available_devices(backend)
@@ -214,10 +230,10 @@ impl Registry {
     }
     pub fn catalog(&self) -> anyhow::Result<Vec<Capabilities>> {
         let entries = vec![
-            #[cfg(feature = "moss")]
-            moss::capabilities(&self.root.join("moss"))?,
             #[cfg(feature = "moss-nano-candle")]
             moss::nano::capabilities(&self.root)?,
+            #[cfg(feature = "moss")]
+            moss::capabilities(&self.root.join("moss"))?,
             #[cfg(feature = "moss-candle")]
             moss::candle::capabilities(&self.root, moss::candle::Mode::Local)?,
             #[cfg(feature = "moss-candle")]
@@ -286,7 +302,11 @@ impl Registry {
             });
         }
         if let Some(caps) = catalog.iter().find(|caps| {
-            caps.backend == "moss" && caps.model.as_deref().is_none_or(|id| id == "nano")
+            caps.backend == "moss"
+                && caps
+                    .model
+                    .as_deref()
+                    .is_none_or(|id| id == "nano" || id == "nano-candle")
         }) {
             return Ok(tts_protocol::Config {
                 backend: caps.backend.clone(),
@@ -365,7 +385,7 @@ impl Registry {
             #[cfg(feature = "moss")]
             "moss" => {
                 #[cfg(feature = "moss-nano-candle")]
-                if model == Some("nano-candle") {
+                if model.is_none_or(|id| id == "nano-candle") {
                     moss::nano::prepare(&self.root, progress).await?;
                     return Ok(Rc::new(
                         moss::nano::NanoBackend::load_on(self.root.clone(), device).await?,
@@ -388,5 +408,48 @@ impl Registry {
             }
             _ => anyhow::bail!("backend {id} is not compiled"),
         }
+    }
+}
+
+#[cfg(all(test, feature = "moss-nano-candle"))]
+mod nano_default_tests {
+    use super::*;
+    #[test]
+    fn omitted_moss_model_selects_candle_and_explicit_onnx_stays_available() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let resources = Registry::new(Some(root.path().to_owned()))?;
+        assert_eq!(
+            resources.capabilities("moss")?.model.as_deref(),
+            Some("nano-candle")
+        );
+        assert_eq!(
+            resources
+                .capabilities_for("moss", Some("nano"))?
+                .model
+                .as_deref(),
+            Some("nano")
+        );
+        assert_eq!(
+            resources.compiled_devices_for("moss", None),
+            moss::nano::compiled_devices()
+        );
+        assert_eq!(
+            resources.compiled_devices("moss"),
+            moss::nano::compiled_devices()
+        );
+        assert_eq!(
+            resources.compiled_devices_for("moss", Some("nano")),
+            devices::compiled()
+        );
+        let config = resources.default_config()?;
+        if config.backend == "moss" {
+            assert_eq!(config.model.as_deref(), Some("nano-candle"));
+        }
+        assert_eq!(
+            std::fs::read_dir(root.path())?.count(),
+            0,
+            "catalog must not prepare models"
+        );
+        Ok(())
     }
 }
