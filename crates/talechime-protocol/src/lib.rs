@@ -5,10 +5,12 @@
 mod codec;
 pub mod headings;
 mod message;
+mod params;
 mod verification;
 
 pub use codec::*;
 pub use message::*;
+pub use params::*;
 pub use verification::*;
 
 /// Supported protocol major version.

@@ -52,3 +52,8 @@ TextRange 是同一份完整正文的 UTF-8 左闭右开字节范围。正文不
 `PlanRequest.continuation` 默认 `true`；设为 `false` 可关闭本执行的段落内前段文字/音频条件。
 `Capabilities.continuation` 表示所选模型是否实现这一能力，缺省为 `false`。协议仍为 v7。
 参考不跨执行、seek、恢复或章节保存；具体边界与限额见[库说明](../../docs/library.md#段落内接续)。
+
+`Capabilities.parameters` 是所选模型声明的生成参数目录（名称、类型/范围、默认值与描述）；
+`PlanRequest.params` 按名称携带本次执行的设定值，`PlanRequest.seed` 可选地钉住采样以便
+复现。未在目录中声明、类型不符或越界的参数在会话启动时被显式拒绝，不会静默忽略。
+两者均为 v7 内的加法式可选字段。当前各后端目录尚为空，参数消费与目录声明见后续记录。

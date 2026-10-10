@@ -32,18 +32,13 @@ impl Backend for Fixture {
             cloning: false,
             pronunciation: false,
             continuation: false,
+            parameters: vec![],
         }
     }
-    fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a> {
-        self.stream_with_style(text, voice, None)
-    }
-    fn stream_with_style<'a>(
-        &'a self,
-        text: &'a str,
-        voice: &'a str,
-        style: Option<&'a str>,
-    ) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
+            request.reject_unsupported(true, false)?;
+            let (text, voice, style) = (request.text, request.voice, request.style);
             self.calls
                 .borrow_mut()
                 .push((text.into(), voice.into(), style.map(str::to_owned)));

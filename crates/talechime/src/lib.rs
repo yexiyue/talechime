@@ -32,14 +32,16 @@ mod model_preparation;
 pub use engine::{Engine, EngineError, ModelOptions, PcmStream, run_local};
 pub use listening::{Listening, ListeningHandle, ListeningOptions, ListeningSession};
 pub use tts_core::{
-    CancellationHandle, PlanError, PlanProgress, PlanSessionOptions, PlanState, Playback,
-    PlaybackPolicy, SourceSnapshot, SpeechAudio, SpeechContext, SpeechPlan, SpeechSpan,
-    StagingError, StagingOptions, SynthesisItem, SynthesisOptions, SynthesisState, VoiceSnapshot,
-    backend::{AudioChunk, Backend, BackendError, Pcm, Segmentation, Streaming},
+    CancellationHandle, GenerationParams, PlanError, PlanProgress, PlanSessionOptions, PlanState,
+    Playback, PlaybackPolicy, SeedPolicy, SourceSnapshot, SpeechAudio, SpeechContext, SpeechPlan,
+    SpeechSpan, StagingError, StagingOptions, SynthesisItem, SynthesisOptions, SynthesisState,
+    VoiceSnapshot,
+    backend::{AudioChunk, Backend, BackendError, Pcm, SegmentRequest, Segmentation, Streaming},
     session::{SessionError, SessionEvent},
 };
 pub use tts_protocol::{
-    Capabilities, Device, EndReason, Event, SessionState, SourceId, TextRange, text_hash,
+    Capabilities, Device, EndReason, Event, ParamKind, ParamValue, ParameterSpec, SessionState,
+    SourceId, TextRange, text_hash,
 };
 
 pub use tts_core::verification::{

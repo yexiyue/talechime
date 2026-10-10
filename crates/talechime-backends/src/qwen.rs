@@ -44,6 +44,7 @@ pub fn capabilities() -> Capabilities {
         compiled_devices: Vec::new(),
         pronunciation: false,
         continuation: false,
+        parameters: Vec::new(),
     }
 }
 pub fn model_capabilities(model: models::Model) -> Capabilities {
@@ -195,25 +196,10 @@ impl Backend for QwenBackend {
         capabilities_at(&self.directory, self.model)
             .unwrap_or_else(|_| model_capabilities(self.model))
     }
-    fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a> {
-        self.stream_with_style(text, voice, None)
-    }
-    fn stream_with_style<'a>(
-        &'a self,
-        text: &'a str,
-        voice: &'a str,
-        style: Option<&'a str>,
-    ) -> Streaming<'a> {
-        self.stream_with_context(text, voice, style, None)
-    }
-    fn stream_with_context<'a>(
-        &'a self,
-        text: &'a str,
-        voice: &'a str,
-        style: Option<&'a str>,
-        context: Option<&'a tts_core::SpeechContext>,
-    ) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
+            let (text, voice, style, context) =
+                (request.text, request.voice, request.style, request.context);
             if context.is_some() && !self.model.is_base() {
                 return Err(BackendError::Unsupported(
                     "continuation requires Qwen Base".into(),
@@ -336,6 +322,20 @@ mod tests {
         assert!(validate_completion(false, true).is_err());
         assert!(validate_completion(true, false).is_err());
     }
+    fn request<'a>(
+        params: &'a tts_core::params::GenerationParams,
+        text: &'a str,
+        voice: &'a str,
+    ) -> tts_core::backend::SegmentRequest<'a> {
+        tts_core::backend::SegmentRequest {
+            text,
+            voice,
+            style: None,
+            context: None,
+            seed: 42,
+            params,
+        }
+    }
     #[tokio::test]
     async fn real_model_streams_and_releases_cancelled_request() {
         let Some(directory) = std::env::var_os("TRNOVEL_QWEN_MODEL_DIR") else {
@@ -344,8 +344,18 @@ mod tests {
         let backend = QwenBackend::load_on(directory.into(), Device::Cpu)
             .await
             .unwrap();
-        assert!(backend.stream("hello", "invalid").await.is_err());
-        let mut stream = backend.stream("你好。", "uncle_fu").await.unwrap();
+        let params = tts_core::params::GenerationParams::new();
+        assert!(
+            backend
+                .stream(request(&params, "hello", "invalid"))
+                .await
+                .is_err()
+        );
+        let params = tts_core::params::GenerationParams::new();
+        let mut stream = backend
+            .stream(request(&params, "你好。", "uncle_fu"))
+            .await
+            .unwrap();
         let pcm = match stream.recv().await.unwrap().unwrap() {
             AudioChunk::Pcm(pcm) => pcm,
             _ => panic!("missing PCM"),
@@ -353,7 +363,11 @@ mod tests {
         assert_eq!(pcm.sample_rate, 24000);
         pcm.duration_ms().unwrap();
         drop(stream);
-        let mut stream = backend.stream("谢谢。", "uncle_fu").await.unwrap();
+        let params = tts_core::params::GenerationParams::new();
+        let mut stream = backend
+            .stream(request(&params, "谢谢。", "uncle_fu"))
+            .await
+            .unwrap();
         let mut samples = 0;
         while let Some(chunk) = stream.recv().await {
             match chunk.unwrap() {

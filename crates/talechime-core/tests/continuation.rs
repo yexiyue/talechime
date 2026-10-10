@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 use talechime_core::{
-    SpeechContext, SynthesisOptions, SynthesisState, SynthesisStream,
+    SynthesisOptions, SynthesisState, SynthesisStream,
     backend::{AudioChunk, Backend, BackendError, Pcm, Segmentation, Streaming},
     text::TextSegment,
     verification::*,
@@ -13,7 +13,13 @@ use talechime_core::{
 use tokio::sync::mpsc;
 use tts_protocol::Capabilities;
 
-type Call = (String, Option<(String, f32)>);
+#[derive(Debug, PartialEq)]
+struct Call {
+    text: String,
+    previous: Option<(String, f32)>,
+    seed: u64,
+    params: Vec<(String, tts_protocol::ParamValue)>,
+}
 
 #[derive(Default)]
 struct Fixture {
@@ -37,22 +43,30 @@ impl Backend for Fixture {
             cloning: false,
             pronunciation: false,
             continuation: true,
+            parameters: vec![tts_protocol::ParameterSpec {
+                name: "gain".into(),
+                kind: tts_protocol::ParamKind::Int { min: 0, max: 10 },
+                default: tts_protocol::ParamValue::Int(3),
+                description: "fixture gain".into(),
+            }],
         }
     }
-    fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a> {
-        self.stream_with_context(text, voice, None, None)
-    }
-    fn stream_with_context<'a>(
-        &'a self,
-        text: &'a str,
-        _voice: &'a str,
-        _style: Option<&'a str>,
-        context: Option<&'a SpeechContext>,
-    ) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            let previous = context.map(|c| (c.text().to_owned(), c.pcm().samples[0]));
-            self.calls.borrow_mut().push((text.into(), previous));
-            if context.is_some() && self.reject_context.get() {
+            let previous = request
+                .context
+                .map(|c| (c.text().to_owned(), c.pcm().samples[0]));
+            self.calls.borrow_mut().push(Call {
+                text: request.text.into(),
+                previous,
+                seed: request.seed,
+                params: request
+                    .params
+                    .iter()
+                    .map(|(name, value)| (name.to_owned(), value.clone()))
+                    .collect(),
+            });
+            if request.context.is_some() && self.reject_context.get() {
                 return Err(BackendError::Synthesis("reference encoding failed".into()));
             }
             let value = self.calls.borrow().len() as f32 / 100.0;
@@ -122,17 +136,21 @@ async fn defaults_soft_lines_hard_paragraphs_and_independent_calls() {
             drain(&mut stream).await.unwrap();
             {
                 let calls = backend.calls.borrow();
-                assert!(calls[0].1.is_none());
-                assert_eq!(calls[1].1, Some(("甲。".into(), 0.01)));
-                assert!(calls[2].1.is_none());
-                assert_eq!(calls[3].1, Some(("丙。".into(), 0.03)));
+                assert!(calls[0].previous.is_none());
+                assert_eq!(calls[1].previous, Some(("甲。".into(), 0.01)));
+                assert!(calls[2].previous.is_none());
+                assert_eq!(calls[3].previous, Some(("丙。".into(), 0.03)));
             }
             let mut next = start(backend.clone(), "戊。己。", true);
             drain(&mut next).await.unwrap();
-            assert!(backend.calls.borrow()[4].1.is_none());
+            assert!(backend.calls.borrow()[4].previous.is_none());
             let mut off = start(backend.clone(), "庚。辛。", false);
             drain(&mut off).await.unwrap();
-            assert!(backend.calls.borrow()[6..].iter().all(|c| c.1.is_none()));
+            assert!(
+                backend.calls.borrow()[6..]
+                    .iter()
+                    .all(|c| c.previous.is_none())
+            );
         })
         .await;
 }
@@ -146,11 +164,11 @@ async fn concurrent_executions_and_cancelled_or_disconnected_streams_are_isolate
             let (a, b) = tokio::join!(drain(&mut a), drain(&mut b));
             a.unwrap();
             b.unwrap();
-            for (text, prior) in backend.calls.borrow().iter() {
-                match text.as_str() {
-                    "甲。" | "丙。" => assert!(prior.is_none()),
-                    "乙。" => assert_eq!(prior.as_ref().unwrap().0, "甲。"),
-                    "丁。" => assert_eq!(prior.as_ref().unwrap().0, "丙。"),
+            for call in backend.calls.borrow().iter() {
+                match call.text.as_str() {
+                    "甲。" | "丙。" => assert!(call.previous.is_none()),
+                    "乙。" => assert_eq!(call.previous.as_ref().unwrap().0, "甲。"),
+                    "丁。" => assert_eq!(call.previous.as_ref().unwrap().0, "丙。"),
                     _ => unreachable!(),
                 }
             }
@@ -164,7 +182,7 @@ async fn concurrent_executions_and_cancelled_or_disconnected_streams_are_isolate
             backend.missing_end.set(false);
             let mut fresh = start(backend.clone(), "壬。", true);
             drain(&mut fresh).await.unwrap();
-            assert!(backend.calls.borrow().last().unwrap().1.is_none());
+            assert!(backend.calls.borrow().last().unwrap().previous.is_none());
         })
         .await;
 }
@@ -176,7 +194,7 @@ async fn overlong_reference_resets_without_interrupting_delivery() {
             backend.seconds.set(16);
             let mut stream = start(backend.clone(), "甲。乙。", true);
             drain(&mut stream).await.unwrap();
-            assert!(backend.calls.borrow().iter().all(|c| c.1.is_none()));
+            assert!(backend.calls.borrow().iter().all(|c| c.previous.is_none()));
         })
         .await;
 }
@@ -253,9 +271,12 @@ async fn gate_retries_snapshot_previous_and_report_only_errors_clear_it() {
             {
                 let calls = backend.calls.borrow();
                 assert_eq!(calls.len(), 4);
-                assert_eq!(calls[1].1, calls[2].1);
-                assert_eq!(calls[3].1.as_ref().unwrap().0, "阳光照亮河面。");
-                assert_eq!(calls[3].1.as_ref().unwrap().1, 0.03);
+                assert_eq!(calls[1].previous, calls[2].previous);
+                // The gated retry resamples: identical context, different seed.
+                assert_ne!(calls[1].seed, calls[2].seed);
+                assert_ne!(calls[0].seed, calls[1].seed);
+                assert_eq!(calls[3].previous.as_ref().unwrap().0, "阳光照亮河面。");
+                assert_eq!(calls[3].previous.as_ref().unwrap().1, 0.03);
             }
             backend.calls.borrow_mut().clear();
             let mut stream = SynthesisStream::start_with_options(
@@ -277,7 +298,7 @@ async fn gate_retries_snapshot_previous_and_report_only_errors_clear_it() {
             )
             .unwrap();
             drain(&mut stream).await.unwrap();
-            assert!(backend.calls.borrow()[2].1.is_none());
+            assert!(backend.calls.borrow()[2].previous.is_none());
         })
         .await;
 }
@@ -292,7 +313,104 @@ async fn prefix_failure_terminates_without_independent_fallback() {
             assert!(drain(&mut stream).await.is_err());
             assert_eq!(stream.state(), SynthesisState::Failed);
             assert_eq!(backend.calls.borrow().len(), 2);
-            assert!(backend.calls.borrow()[1].1.is_some());
+            assert!(backend.calls.borrow()[1].previous.is_some());
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn pinned_seeds_reproduce_and_params_reach_the_backend() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let backend = Rc::new(Fixture::default());
+            let text = "甲。乙。丙。";
+            let options = |seed: u64, params: talechime_core::GenerationParams| SynthesisOptions {
+                params,
+                seed: talechime_core::SeedPolicy::Pinned(seed),
+                ..Default::default()
+            };
+            let mut params = talechime_core::GenerationParams::new();
+            params.insert("gain", tts_protocol::ParamValue::Int(5));
+            let mut first = SynthesisStream::start_with_options(
+                backend.clone(),
+                text,
+                "a",
+                None,
+                None,
+                options(9, params.clone()),
+            )
+            .unwrap();
+            drain(&mut first).await.unwrap();
+            let initial: Vec<u64> = backend
+                .calls
+                .borrow()
+                .iter()
+                .map(|call| call.seed)
+                .collect();
+            assert!(initial.windows(2).all(|pair| pair[0] != pair[1]));
+            assert!(backend.calls.borrow().iter().all(
+                |call| call.params == [("gain".to_string(), tts_protocol::ParamValue::Int(5))]
+            ));
+
+            // Same pin and same plan reproduce the exact seed sequence.
+            let mut repeat = SynthesisStream::start_with_options(
+                backend.clone(),
+                text,
+                "a",
+                None,
+                None,
+                options(9, params.clone()),
+            )
+            .unwrap();
+            drain(&mut repeat).await.unwrap();
+            let replay: Vec<u64> = backend.calls.borrow()[initial.len()..]
+                .iter()
+                .map(|call| call.seed)
+                .collect();
+            assert_eq!(initial, replay);
+
+            // A different pin and an out-of-range value are both explicit errors.
+            let mut other = SynthesisStream::start_with_options(
+                backend.clone(),
+                text,
+                "a",
+                None,
+                None,
+                options(10, params),
+            )
+            .unwrap();
+            drain(&mut other).await.unwrap();
+            let diverged: Vec<u64> = backend.calls.borrow()[initial.len() * 2..]
+                .iter()
+                .map(|call| call.seed)
+                .collect();
+            assert_ne!(initial, diverged);
+            let mut unknown = talechime_core::GenerationParams::new();
+            unknown.insert("temperature", tts_protocol::ParamValue::Float(0.5));
+            assert!(
+                SynthesisStream::start_with_options(
+                    backend.clone(),
+                    text,
+                    "a",
+                    None,
+                    None,
+                    options(9, unknown),
+                )
+                .is_err()
+            );
+            let mut out_of_range = talechime_core::GenerationParams::new();
+            out_of_range.insert("gain", tts_protocol::ParamValue::Int(99));
+            assert!(
+                SynthesisStream::start_with_options(
+                    backend.clone(),
+                    text,
+                    "a",
+                    None,
+                    None,
+                    options(9, out_of_range),
+                )
+                .is_err()
+            );
         })
         .await;
 }

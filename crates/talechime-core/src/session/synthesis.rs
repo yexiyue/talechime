@@ -68,6 +68,10 @@ impl CancellationHandle {
 pub struct SynthesisOptions {
     /// Previous complete segment conditioning, where supported.
     pub continuation: bool,
+    /// Generation parameters validated against the prepared model's catalog.
+    pub params: crate::params::GenerationParams,
+    /// Sampling seed policy; Auto draws fresh randomness per attempt.
+    pub seed: crate::params::SeedPolicy,
     /// Optional content verification before delivery.
     pub verification: crate::verification::VerificationOptions,
 }
@@ -75,6 +79,8 @@ impl Default for SynthesisOptions {
     fn default() -> Self {
         Self {
             continuation: true,
+            params: crate::params::GenerationParams::default(),
+            seed: crate::params::SeedPolicy::default(),
             verification: Default::default(),
         }
     }
@@ -145,6 +151,11 @@ impl SynthesisStream {
         {
             return Err(crate::verification::VerificationError::NotPrepared.into());
         }
+        let caps = backend.capabilities();
+        options
+            .params
+            .validate(&caps.parameters)
+            .map_err(SessionError::Invalid)?;
         let verifier = if verification.policy == crate::verification::VerificationPolicy::Off {
             None
         } else {
@@ -154,7 +165,6 @@ impl SynthesisStream {
             .as_ref()
             .map_or_else(Arc::default, |verifier| verifier.work());
         let text = text.into();
-        let caps = backend.capabilities();
         let voices = VoiceSnapshot::new(
             &caps.backend,
             caps.model.as_deref(),
@@ -176,6 +186,8 @@ impl SynthesisStream {
         input.verifier = verifier;
         input.verification = verification;
         input.continuation = options.continuation;
+        input.params = options.params;
+        input.seed = options.seed;
         let input = Rc::new(input);
         let (done, completed) = watch::channel(false);
         let (producer, receiver) =

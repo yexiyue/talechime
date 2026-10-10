@@ -44,50 +44,50 @@ impl Pcm {
 /// Local future: model objects and audio devices stay on their owning thread.
 pub type Synthesis<'a> = Pin<Box<dyn Future<Output = Result<Pcm, BackendError>> + 'a>>;
 
+/// One synthesis request crossing the backend boundary.
+///
+/// Style, continuation context, the concrete sampling seed and validated
+/// generation parameters travel together; backends reject what their model
+/// does not support instead of silently ignoring it.
+pub struct SegmentRequest<'a> {
+    pub text: &'a str,
+    pub voice: &'a str,
+    /// Optional per-utterance style instruction.
+    pub style: Option<&'a str>,
+    /// Optional previous complete utterance, owned by this execution rather than a voice cache.
+    pub context: Option<&'a crate::SpeechContext>,
+    /// Concrete sampling seed resolved by the session producer for this attempt.
+    pub seed: u64,
+    /// Host-supplied generation parameters, validated at session start.
+    pub params: &'a crate::params::GenerationParams,
+}
+
+impl SegmentRequest<'_> {
+    /// Reject a style or continuation conditioning the model does not support.
+    pub fn reject_unsupported(&self, style: bool, continuation: bool) -> Result<(), BackendError> {
+        if !style && self.style.is_some_and(|value| !value.trim().is_empty()) {
+            return Err(BackendError::Unsupported(
+                "this model does not support speaking style".into(),
+            ));
+        }
+        if !continuation && self.context.is_some() {
+            return Err(BackendError::Unsupported(
+                "this model does not support continuation".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Domain interface shared by real and deterministic testing backends.
 pub trait Backend {
     fn capabilities(&self) -> Capabilities;
     /// Primary synthesis boundary. Every successful segment terminates with End.
-    fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a>;
-    /// Optional per-utterance style; unsupported instructions fail explicitly.
-    fn stream_with_style<'a>(
-        &'a self,
-        text: &'a str,
-        voice: &'a str,
-        style: Option<&'a str>,
-    ) -> Streaming<'a> {
-        if style.is_some_and(|v| !v.trim().is_empty()) {
-            Box::pin(async {
-                Err(BackendError::Unsupported(
-                    "this model does not support speaking style".into(),
-                ))
-            })
-        } else {
-            self.stream(text, voice)
-        }
-    }
-    /// Optional previous complete utterance, owned by this execution rather than a voice cache.
-    fn stream_with_context<'a>(
-        &'a self,
-        text: &'a str,
-        voice: &'a str,
-        style: Option<&'a str>,
-        context: Option<&'a crate::SpeechContext>,
-    ) -> Streaming<'a> {
-        if context.is_some() {
-            Box::pin(async {
-                Err(BackendError::Unsupported(
-                    "this model does not support continuation".into(),
-                ))
-            })
-        } else {
-            self.stream_with_style(text, voice, style)
-        }
-    }
+    fn stream<'a>(&'a self, request: SegmentRequest<'a>) -> Streaming<'a>;
     /// Collect a stream for offline export and model comparison.
-    fn synthesize<'a>(&'a self, text: &'a str, voice: &'a str) -> Synthesis<'a> {
+    fn synthesize<'a>(&'a self, request: SegmentRequest<'a>) -> Synthesis<'a> {
         Box::pin(async move {
-            let mut stream = self.stream(text, voice).await?;
+            let mut stream = self.stream(request).await?;
             let mut audio: Option<Pcm> = None;
             while let Some(chunk) = stream.recv().await {
                 match chunk? {

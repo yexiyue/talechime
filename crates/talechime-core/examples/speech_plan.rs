@@ -17,6 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cloning: false,
         pronunciation: false,
         continuation: false,
+        parameters: vec![],
     };
     let text = "他说：走吧。";
     let source = SourceSnapshot::new(

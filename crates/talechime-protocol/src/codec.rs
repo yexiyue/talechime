@@ -119,6 +119,8 @@ mod tests {
                 resume_byte: None,
                 restore_checkpoint: true,
                 continuation: true,
+                params: Default::default(),
+                seed: None,
                 verification: Default::default(),
             })),
         }
@@ -136,6 +138,26 @@ mod tests {
         json["payload"]["continuation"] = serde_json::json!(false);
         let parsed: Request = serde_json::from_value(json).unwrap();
         assert!(matches!(parsed.command,Command::Start(plan) if !plan.continuation));
+        assert_eq!(PROTOCOL_VERSION, 7);
+    }
+
+    #[test]
+    fn params_and_seed_default_off_and_roundtrip_without_changing_v7() {
+        let mut json = serde_json::to_value(request()).unwrap();
+        json["payload"].as_object_mut().unwrap().remove("params");
+        json["payload"].as_object_mut().unwrap().remove("seed");
+        let parsed: Request = serde_json::from_value(json.clone()).unwrap();
+        assert!(matches!(parsed.command, Command::Start(plan)
+            if plan.params.is_empty() && plan.seed.is_none()));
+        json["payload"]["params"] =
+            serde_json::json!({"steps": 32, "temperature": 0.8, "language": "english"});
+        json["payload"]["seed"] = serde_json::json!(7);
+        let parsed: Request = serde_json::from_value(json).unwrap();
+        assert!(matches!(parsed.command, Command::Start(plan)
+            if plan.params.get("steps") == Some(&ParamValue::Int(32))
+                && plan.params.get("temperature") == Some(&ParamValue::Float(0.8))
+                && plan.params.get("language") == Some(&ParamValue::Text("english".into()))
+                && plan.seed == Some(7)));
         assert_eq!(PROTOCOL_VERSION, 7);
     }
     #[test]
@@ -278,6 +300,8 @@ mod plan_tests {
             resume_byte: Some(0),
             restore_checkpoint: false,
             continuation: true,
+            params: Default::default(),
+            seed: None,
             verification: Default::default(),
         };
         for command in [

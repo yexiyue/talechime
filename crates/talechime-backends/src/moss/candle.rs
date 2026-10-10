@@ -58,6 +58,7 @@ pub fn capabilities(root: &Path, mode: Mode) -> anyhow::Result<Capabilities> {
         style: false,
         pronunciation: false,
         continuation: true,
+        parameters: Vec::new(),
         compiled_devices: compiled_devices(),
     };
     for voice in voice_store(&mode.directory(root), mode)?.list()? {
@@ -130,22 +131,10 @@ impl Backend for CandleBackend {
     fn capabilities(&self) -> Capabilities {
         self.caps.clone()
     }
-    fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a> {
-        self.stream_with_context(text, voice, None, None)
-    }
-    fn stream_with_context<'a>(
-        &'a self,
-        text: &'a str,
-        voice: &'a str,
-        style: Option<&'a str>,
-        context: Option<&'a tts_core::SpeechContext>,
-    ) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            if style.is_some_and(|s| !s.trim().is_empty()) {
-                return Err(BackendError::Unsupported(
-                    "style is unavailable for this model".into(),
-                ));
-            }
+            request.reject_unsupported(self.caps.style, self.caps.continuation)?;
+            let (text, voice, context) = (request.text, request.voice, request.context);
             if text.trim().is_empty() || !self.caps.voices.iter().any(|id| id == voice) {
                 return Err(BackendError::Unsupported(
                     "unknown MOSS voice or empty text".into(),

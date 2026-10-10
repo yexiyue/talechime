@@ -67,7 +67,17 @@ async fn run() -> anyhow::Result<()> {
     let backend = load().await?;
     let load_ms = started.elapsed().as_millis();
     if std::env::var_os("NOVEL_TTS_PROBE_CANCEL").is_some() {
-        let mut stream = backend.stream(&text, &args[6]).await?;
+        let params = tts_core::params::GenerationParams::new();
+        let mut stream = backend
+            .stream(tts_core::backend::SegmentRequest {
+                text: &text,
+                voice: &args[6],
+                style: None,
+                context: None,
+                seed: 42,
+                params: &params,
+            })
+            .await?;
         anyhow::ensure!(
             matches!(stream.recv().await.transpose()?, Some(AudioChunk::Pcm(_))),
             "no PCM before cancel"
@@ -75,7 +85,17 @@ async fn run() -> anyhow::Result<()> {
         drop(stream);
     }
     if std::env::var_os("NOVEL_TTS_PROBE_CANCEL_EARLY").is_some() {
-        let stream = backend.stream(&text, &args[6]).await?;
+        let params = tts_core::params::GenerationParams::new();
+        let stream = backend
+            .stream(tts_core::backend::SegmentRequest {
+                text: &text,
+                voice: &args[6],
+                style: None,
+                context: None,
+                seed: 42,
+                params: &params,
+            })
+            .await?;
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         drop(stream);
     }
@@ -90,8 +110,16 @@ async fn run() -> anyhow::Result<()> {
         let offset = audio
             .as_ref()
             .map_or(0, |pcm: &tts_core::backend::Pcm| pcm.samples.len());
+        let params = tts_core::params::GenerationParams::new();
         let mut stream = backend
-            .stream_with_style(&segment.text, &args[6], style.as_deref())
+            .stream(tts_core::backend::SegmentRequest {
+                text: &segment.text,
+                voice: &args[6],
+                style: style.as_deref(),
+                context: None,
+                seed: 42,
+                params: &params,
+            })
             .await?;
         let mut ended = false;
         while let Some(chunk) = stream.recv().await {
@@ -159,7 +187,17 @@ async fn run() -> anyhow::Result<()> {
         serde_json::json!({"backend":args[1],"device":format!("{device:?}"),"load_ms":load_ms,"first_pcm_ms":first,"generate_ms":generate_ms,"audio_seconds":duration,"segments":segments.len(),"rtf":generate_ms as f64 / 1000.0 / duration,"eos":true})
     );
     if std::env::var_os("NOVEL_TTS_PROBE_DROP_EARLY").is_some() {
-        let stream = backend.stream(&text, &args[6]).await?;
+        let params = tts_core::params::GenerationParams::new();
+        let stream = backend
+            .stream(tts_core::backend::SegmentRequest {
+                text: &text,
+                voice: &args[6],
+                style: None,
+                context: None,
+                seed: 42,
+                params: &params,
+            })
+            .await?;
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         drop(stream);
         let cancelled = Instant::now();

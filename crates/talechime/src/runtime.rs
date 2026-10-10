@@ -345,6 +345,7 @@ impl Worker {
                     Ok(config) => config,
                     Err(error) => return Response::error("config_invalid", "config", error),
                 };
+                let (params, seed) = crate::plan_input::generation(input);
                 let result = manager
                     .control
                     .start(
@@ -357,6 +358,8 @@ impl Worker {
                             restore_checkpoint: input.restore_checkpoint,
                             verification: input.verification.clone(),
                             continuation: input.continuation,
+                            params,
+                            seed,
                             ..Default::default()
                         },
                     )
@@ -462,7 +465,7 @@ mod tests {
         fn capabilities(&self) -> tts_protocol::Capabilities {
             self.0.clone()
         }
-        fn stream<'a>(&'a self, _: &'a str, _: &'a str) -> Streaming<'a> {
+        fn stream<'a>(&'a self, _: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
             Box::pin(async { Err(BackendError::Synthesis("not used".into())) })
         }
     }
@@ -626,6 +629,8 @@ mod plan_tests {
             resume_byte: Some(0),
             restore_checkpoint: false,
             continuation: true,
+            params: Default::default(),
+            seed: None,
             verification: Default::default(),
         }
     }

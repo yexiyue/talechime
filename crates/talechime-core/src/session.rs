@@ -210,6 +210,8 @@ impl SessionManager {
                 resume_byte: request.resume_byte,
                 restore_checkpoint: request.restore_checkpoint,
                 continuation: true,
+                params: Default::default(),
+                seed: Default::default(),
                 staging: StagingOptions::default(),
                 verification: crate::verification::VerificationOptions::default(),
             },
@@ -248,6 +250,10 @@ impl SessionManager {
             return Err(PlanError::NotOpen(PlanState::Failed).into());
         }
         plan.validate_capabilities(&self.backend.capabilities())?;
+        options
+            .params
+            .validate(&self.backend.capabilities().parameters)
+            .map_err(SessionError::Invalid)?;
         crate::config::validate_playback(options.volume, options.speed)
             .map_err(|error| SessionError::Invalid(error.to_string()))?;
         let source = plan.source().clone();
@@ -293,6 +299,8 @@ impl SessionManager {
             };
         input.verification = options.verification.clone();
         input.continuation = options.continuation;
+        input.params = options.params.clone();
+        input.seed = options.seed;
         let input = Rc::new(input);
         let writes = Arc::new(PendingWrites::default());
         let runner = Runner {
@@ -671,6 +679,8 @@ impl SessionManager {
                 resume_byte: Some(byte),
                 restore_checkpoint: false,
                 continuation: job.input.continuation,
+                params: job.input.params.clone(),
+                seed: job.input.seed,
                 staging: job.staging.clone(),
                 verification: job.verification.clone(),
             },
@@ -731,9 +741,10 @@ mod tests {
                 cloning: false,
                 pronunciation: false,
                 continuation: false,
+                parameters: Vec::new(),
             }
         }
-        fn stream<'a>(&'a self, _: &'a str, _: &'a str) -> Streaming<'a> {
+        fn stream<'a>(&'a self, _: crate::backend::SegmentRequest<'a>) -> Streaming<'a> {
             Box::pin(async move {
                 let index = self.calls.get();
                 self.calls.set(index + 1);
@@ -811,7 +822,7 @@ mod tests {
             }
             .capabilities()
         }
-        fn stream<'a>(&'a self, _: &'a str, _: &'a str) -> Streaming<'a> {
+        fn stream<'a>(&'a self, _: crate::backend::SegmentRequest<'a>) -> Streaming<'a> {
             Box::pin(async move {
                 let (tx, rx) = mpsc::channel(1);
                 let gate = self.0.clone();
@@ -1174,7 +1185,7 @@ mod tests {
             }
             .capabilities()
         }
-        fn stream<'a>(&'a self, _: &'a str, _: &'a str) -> Streaming<'a> {
+        fn stream<'a>(&'a self, _: crate::backend::SegmentRequest<'a>) -> Streaming<'a> {
             Box::pin(async move {
                 let (tx, rx) = mpsc::channel(4);
                 for channels in [1, if self.format_change { 2 } else { 1 }] {

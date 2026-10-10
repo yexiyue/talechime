@@ -46,6 +46,7 @@ pub fn capabilities(directory: &std::path::Path) -> anyhow::Result<Capabilities>
         compiled_devices: Vec::new(),
         pronunciation: false,
         continuation: true,
+        parameters: Vec::new(),
     })
 }
 enum Work {
@@ -332,23 +333,17 @@ impl Backend for MossBackend {
     fn capabilities(&self) -> Capabilities {
         self.capabilities.clone()
     }
-    fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a> {
-        Box::pin(self.stream_seeded(text, voice, None))
-    }
-    fn stream_with_context<'a>(
-        &'a self,
-        text: &'a str,
-        voice: &'a str,
-        style: Option<&'a str>,
-        context: Option<&'a tts_core::SpeechContext>,
-    ) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            if style.is_some_and(|s| !s.trim().is_empty()) {
-                return Err(BackendError::Unsupported(
-                    "MOSS Nano does not support style".into(),
-                ));
-            }
-            self.request(text, voice, None, None, context).await
+            request.reject_unsupported(self.capabilities.style, self.capabilities.continuation)?;
+            self.request(
+                request.text,
+                request.voice,
+                Some(request.seed),
+                None,
+                request.context,
+            )
+            .await
         })
     }
     fn paragraph_end(&self, segment: &str, remaining: &str) -> bool {

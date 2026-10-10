@@ -11,6 +11,7 @@ mod continuation;
 pub use continuation::SpeechContext;
 pub mod download;
 mod error;
+pub mod params;
 pub mod paths;
 mod plan;
 pub mod player;
@@ -21,6 +22,7 @@ pub mod verification;
 pub mod voices;
 
 pub use error::{ResourceError, Result};
+pub use params::{GenerationParams, SeedPolicy};
 pub use plan::{
     PlanError, PlanState, PlaybackPolicy, SourceSnapshot, SpeechPlan, SpeechSpan, VoiceSnapshot,
 };

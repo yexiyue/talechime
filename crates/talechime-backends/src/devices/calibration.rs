@@ -135,8 +135,18 @@ pub async fn synthesis(backend: &dyn Backend, voice: &str) -> anyhow::Result<Mea
     let mut measurements = Vec::new();
     for i in 0..8 {
         let start = Instant::now();
+        let text = "你好，欢迎使用听书功能。今天我们一起阅读一个故事。";
+        let params = tts_core::params::GenerationParams::new();
         let mut stream = backend
-            .stream("你好，欢迎使用听书功能。今天我们一起阅读一个故事。", voice)
+            .stream(tts_core::backend::SegmentRequest {
+                text,
+                voice,
+                style: None,
+                context: None,
+                // Fixed seed keeps timing runs comparable across devices.
+                seed: 42,
+                params: &params,
+            })
             .await?;
         let mut first = None;
         let mut ended = false;

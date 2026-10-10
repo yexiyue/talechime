@@ -6,7 +6,7 @@ use std::{
     time::Instant,
 };
 use tts_core::{
-    SpeechContext, SynthesisOptions, SynthesisState, SynthesisStream,
+    SynthesisOptions, SynthesisState, SynthesisStream,
     backend::{AudioChunk, Backend, Pcm, Segmentation, Streaming},
 };
 use tts_protocol::{Capabilities, Device};
@@ -40,24 +40,21 @@ impl Backend for SeededMoss {
     fn capabilities(&self) -> Capabilities {
         self.backend().capabilities()
     }
-    fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a> {
-        self.stream_with_context(text, voice, None, None)
-    }
-    fn stream_with_context<'a>(
-        &'a self,
-        text: &'a str,
-        voice: &'a str,
-        _style: Option<&'a str>,
-        context: Option<&'a SpeechContext>,
-    ) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         match self {
-            Self::Onnx(backend) => {
-                Box::pin(backend.stream_seeded_with_context(text, voice, Some(42), context))
-            }
+            Self::Onnx(backend) => Box::pin(backend.stream_seeded_with_context(
+                request.text,
+                request.voice,
+                Some(request.seed),
+                request.context,
+            )),
             #[cfg(feature = "moss-nano-candle")]
-            Self::Candle(backend) => {
-                Box::pin(backend.stream_seeded_with_context(text, voice, 42, context))
-            }
+            Self::Candle(backend) => Box::pin(backend.stream_seeded_with_context(
+                request.text,
+                request.voice,
+                request.seed,
+                request.context,
+            )),
         }
     }
     fn next_segment<'a>(
@@ -93,25 +90,13 @@ impl Backend for Observed {
     fn capabilities(&self) -> Capabilities {
         self.inner.capabilities()
     }
-    fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a> {
-        self.stream_with_context(text, voice, None, None)
-    }
-    fn stream_with_context<'a>(
-        &'a self,
-        text: &'a str,
-        voice: &'a str,
-        style: Option<&'a str>,
-        context: Option<&'a SpeechContext>,
-    ) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
             let started = Instant::now();
-            let mut incoming = self
-                .inner
-                .stream_with_context(text, voice, style, context)
-                .await?;
+            let text = request.text.to_owned();
+            let continued = request.context.is_some();
+            let mut incoming = self.inner.stream(request).await?;
             let metrics = self.metrics.clone();
-            let text = text.to_owned();
-            let continued = context.is_some();
             let (tx, rx) = tokio::sync::mpsc::channel(1);
             tokio::task::spawn_local(async move {
                 let mut first = None;

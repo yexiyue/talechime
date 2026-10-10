@@ -27,10 +27,12 @@ impl Backend for DemoBackend {
             cloning: false,
             pronunciation: false,
             continuation: false,
+            parameters: vec![],
         }
     }
-    fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
+            let (text, voice) = (request.text, request.voice);
             println!("generate {voice}: {text}");
             let (tx, rx) = mpsc::channel(2);
             tx.send(Ok(AudioChunk::Pcm(Pcm {

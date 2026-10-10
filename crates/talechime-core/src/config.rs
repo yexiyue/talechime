@@ -187,6 +187,7 @@ mod tests {
             cloning: false,
             pronunciation: false,
             continuation: false,
+            parameters: Vec::new(),
         }
     }
 
@@ -339,6 +340,7 @@ mod tests {
             cloning: false,
             pronunciation: false,
             continuation: false,
+            parameters: Vec::new(),
         };
         let patch = ConfigPatch {
             volume: Some(0.5),

@@ -232,24 +232,16 @@ impl Backend for NanoBackend {
     fn capabilities(&self) -> Capabilities {
         self.caps.clone()
     }
-    fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a> {
-        Box::pin(self.stream_seeded(text, voice, rand::random()))
-    }
-    fn stream_with_context<'a>(
-        &'a self,
-        text: &'a str,
-        voice: &'a str,
-        style: Option<&'a str>,
-        context: Option<&'a tts_core::SpeechContext>,
-    ) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            if style.is_some_and(|s| !s.trim().is_empty()) {
-                return Err(BackendError::Unsupported(
-                    "Nano Candle does not support style".into(),
-                ));
-            }
-            self.stream_seeded_with_context(text, voice, rand::random(), context)
-                .await
+            request.reject_unsupported(self.caps.style, self.caps.continuation)?;
+            self.stream_seeded_with_context(
+                request.text,
+                request.voice,
+                request.seed,
+                request.context,
+            )
+            .await
         })
     }
     fn paragraph_end(&self, segment: &str, remaining: &str) -> bool {

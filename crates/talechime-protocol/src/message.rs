@@ -1,3 +1,4 @@
+use crate::params::{ParamValue, ParameterSpec};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -129,6 +130,9 @@ pub struct Capabilities {
     /// Previous text/audio conditioning supported by this model.
     #[serde(default)]
     pub continuation: bool,
+    /// Generation parameters this model accepts; see [`crate::ParameterSpec`].
+    #[serde(default)]
+    pub parameters: Vec<ParameterSpec>,
 }
 
 impl Capabilities {
@@ -307,6 +311,12 @@ pub struct PlanRequest {
     pub restore_checkpoint: bool,
     #[serde(default = "enabled")]
     pub continuation: bool,
+    /// Generation parameters validated against the prepared model's catalog.
+    #[serde(default)]
+    pub params: BTreeMap<String, ParamValue>,
+    /// Pin sampling for reproducible runs; omitted means per-attempt randomness.
+    #[serde(default)]
+    pub seed: Option<u64>,
     #[serde(default)]
     pub verification: crate::VerificationOptions,
 }

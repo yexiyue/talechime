@@ -48,6 +48,7 @@ pub(super) fn spawn(
         let result: Result<(), SessionError> = async {
             let budget = Budget::default();
             let mut index = 0;
+            let mut call = 0u64;
             let enabled = input.continuation && backend.capabilities().continuation;
             let mut context = None;
             let mut identity: Option<(String, Option<String>)> = None;
@@ -122,20 +123,32 @@ pub(super) fn spawn(
                     let (mut audio, trusted) = if input.verification.policy
                         == crate::verification::VerificationPolicy::Off
                     {
+                        let seed = input.seed.resolve(call, 0);
+                        call += 1;
                         (
                             backend
-                                .stream_with_context(
-                                    &segment.text,
-                                    span.voice(),
-                                    span.style(),
-                                    context.as_ref(),
-                                )
+                                .stream(crate::backend::SegmentRequest {
+                                    text: &segment.text,
+                                    voice: span.voice(),
+                                    style: span.style(),
+                                    context: context.as_ref(),
+                                    seed,
+                                    params: &input.params,
+                                })
                                 .await?,
                             true,
                         )
                     } else {
-                        verified_audio(backend, input, &segment, &span, context.as_ref(), &tx)
-                            .await?
+                        verified_audio(
+                            backend,
+                            input,
+                            &segment,
+                            &span,
+                            context.as_ref(),
+                            &mut call,
+                            &tx,
+                        )
+                        .await?
                     };
                     tx.send(Ok(Item::Start(range)))
                         .await
@@ -215,6 +228,7 @@ async fn verified_audio(
     segment: &crate::text::TextSegment,
     span: &SpeechSpan,
     context: Option<&crate::SpeechContext>,
+    call: &mut u64,
     tx: &mpsc::Sender<Result<Item, SessionError>>,
 ) -> Result<(crate::backend::AudioStream, bool), SessionError> {
     use crate::verification::*;
@@ -227,8 +241,17 @@ async fn verified_audio(
     let options = &input.verification;
     let mut attempt = 0;
     let (pcm, trusted) = loop {
+        // Retries resolve a fresh seed so gated resynthesis can escape a
+        // sampling-induced misreading instead of repeating it verbatim.
         let stream = backend
-            .stream_with_context(&segment.text, span.voice(), span.style(), context)
+            .stream(crate::backend::SegmentRequest {
+                text: &segment.text,
+                voice: span.voice(),
+                style: span.style(),
+                context,
+                seed: input.seed.resolve(*call, attempt),
+                params: &input.params,
+            })
             .await?;
         let pcm = collect_segment(stream, options).await?;
         let report = verifier
@@ -268,6 +291,7 @@ async fn verified_audio(
             VerificationPolicy::Off => break (pcm, true),
         }
     };
+    *call += 1;
     // The bounded segment is already complete; no detached forwarding task is needed.
     let (sender, receiver) = mpsc::channel(2);
     sender

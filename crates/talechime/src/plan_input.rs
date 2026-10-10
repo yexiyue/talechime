@@ -46,6 +46,15 @@ pub fn check_batch(count: usize, accepted: usize) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Transport generation settings; validation against the catalog stays in core.
+pub fn generation(input: &PlanRequest) -> (talechime::GenerationParams, talechime::SeedPolicy) {
+    let mut params = talechime::GenerationParams::new();
+    for (name, value) in &input.params {
+        params.insert(name.clone(), value.clone());
+    }
+    (params, talechime::SeedPolicy::from(input.seed))
+}
+
 pub fn progress(input: talechime::PlanProgress) -> tts_protocol::PlanProgressSnapshot {
     tts_protocol::PlanProgressSnapshot {
         input_state: match input.input_state {

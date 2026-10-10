@@ -29,6 +29,7 @@ pub fn capabilities(directory: &Path) -> anyhow::Result<Capabilities> {
         compiled_devices: Vec::new(),
         pronunciation: false,
         continuation: true,
+        parameters: Vec::new(),
     };
     for voice in voice_store(directory)?.list()? {
         caps.voice_names.insert(voice.id.clone(), voice.name);
@@ -102,22 +103,10 @@ impl Backend for OmniBackend {
     fn capabilities(&self) -> Capabilities {
         self.caps.clone()
     }
-    fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a> {
-        self.stream_with_context(text, voice, None, None)
-    }
-    fn stream_with_context<'a>(
-        &'a self,
-        text: &'a str,
-        voice: &'a str,
-        style: Option<&'a str>,
-        context: Option<&'a tts_core::SpeechContext>,
-    ) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            if style.is_some_and(|s| !s.trim().is_empty()) {
-                return Err(BackendError::Unsupported(
-                    "OmniVoice does not support style".into(),
-                ));
-            }
+            request.reject_unsupported(self.caps.style, self.caps.continuation)?;
+            let (text, voice, context) = (request.text, request.voice, request.context);
             if !self.caps.voices.iter().any(|id| id == voice) || text.trim().is_empty() {
                 return Err(BackendError::Unsupported(
                     "unknown Omni voice or empty text".into(),

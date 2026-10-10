@@ -121,7 +121,8 @@ ListeningSession 是执行 owner，Listening 是该 owner 与库自建事件接�
 ## 执行级接续参考
 
 producer 在当前执行内保存最多一个 `SpeechContext`（不可变共享 PCM 与生成文字），
-与全局音色缓存和模型张量隔离。支持的 Backend 通过 `stream_with_context` 接收可选前段。
+与全局音色缓存和模型张量隔离。支持的 Backend 通过 `Backend::stream` 的 `SegmentRequest`
+接收可选前段、逐段 seed 与已校验的生成参数。
 候选在接收原始流时有界复制，播放无需等待候选完成；End 后且交付策略允许时才替换参考。
 门禁拒绝的尝试不进入候选，重试使用原快照。参考限额与重置语义见[库说明](library.md#段落内接续)。
 

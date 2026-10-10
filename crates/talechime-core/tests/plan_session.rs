@@ -30,6 +30,22 @@ struct Call {
     text: String,
     voice: String,
     style: Option<String>,
+    seed: u64,
+    params: Vec<(String, tts_protocol::ParamValue)>,
+}
+
+/// Seed and params vary per policy; existing assertions cover text/voice/style.
+fn call_shapes(calls: &[Call]) -> Vec<(&str, &str, Option<&str>)> {
+    calls
+        .iter()
+        .map(|call| {
+            (
+                call.text.as_str(),
+                call.voice.as_str(),
+                call.style.as_deref(),
+            )
+        })
+        .collect()
 }
 
 struct FixtureBackend {
@@ -59,6 +75,7 @@ impl FixtureBackend {
                 cloning: false,
                 pronunciation: false,
                 continuation: false,
+                parameters: vec![],
             }),
             calls: RefCell::new(vec![]),
             contexts: RefCell::new(vec![]),
@@ -81,21 +98,27 @@ impl Backend for FixtureBackend {
     fn observe_duration(&self, _: &str, voice: &str, _: f64) {
         self.observed.borrow_mut().push(voice.into());
     }
-    fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a> {
-        self.stream_with_style(text, voice, None)
-    }
-    fn stream_with_style<'a>(
-        &'a self,
-        text: &'a str,
-        voice: &'a str,
-        style: Option<&'a str>,
-    ) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
+            let (style, continuation) = {
+                let caps = self.caps.borrow();
+                (caps.style, caps.continuation)
+            };
+            request.reject_unsupported(style, continuation)?;
             self.calls.borrow_mut().push(Call {
-                text: text.into(),
-                voice: voice.into(),
-                style: style.map(str::to_owned),
+                text: request.text.into(),
+                voice: request.voice.into(),
+                style: request.style.map(str::to_owned),
+                seed: request.seed,
+                params: request
+                    .params
+                    .iter()
+                    .map(|(name, value)| (name.to_owned(), value.clone()))
+                    .collect(),
             });
+            self.contexts
+                .borrow_mut()
+                .push(request.context.map(|c| c.text().into()));
             let (tx, rx) = mpsc::channel(1);
             let mode = self.mode.get();
             let chunks = self.chunks.clone();
@@ -130,18 +153,6 @@ impl Backend for FixtureBackend {
             });
             Ok(rx)
         })
-    }
-    fn stream_with_context<'a>(
-        &'a self,
-        text: &'a str,
-        voice: &'a str,
-        style: Option<&'a str>,
-        context: Option<&'a talechime_core::SpeechContext>,
-    ) -> Streaming<'a> {
-        self.contexts
-            .borrow_mut()
-            .push(context.map(|c| c.text().into()));
-        self.stream_with_style(text, voice, style)
     }
     fn segments<'a>(&'a self, text: &'a str) -> Segmentation<'a> {
         Box::pin(async move {
@@ -300,23 +311,11 @@ async fn same_backend_switches_a_b_a_inside_voice_boundaries() {
             h.drive(true, |h| h.ended("roles", EndReason::Completed))
                 .await;
             assert_eq!(
-                *h.backend.calls.borrow(),
+                call_shapes(&h.backend.calls.borrow()),
                 [
-                    Call {
-                        text: "甲".into(),
-                        voice: "A".into(),
-                        style: None
-                    },
-                    Call {
-                        text: "乙".into(),
-                        voice: "B".into(),
-                        style: Some("calm".into())
-                    },
-                    Call {
-                        text: "丙".into(),
-                        voice: "A".into(),
-                        style: None
-                    }
+                    ("甲", "A", None),
+                    ("乙", "B", Some("calm")),
+                    ("丙", "A", None)
                 ]
             );
             assert_eq!(*h.backend.selected.borrow(), ["A", "B", "A"]);
@@ -588,19 +587,8 @@ async fn seek_inside_an_open_assignment_retains_style_and_allows_new_id_append()
                 .await;
             let calls = h.backend.calls.borrow();
             assert_eq!(
-                calls[count..],
-                [
-                    Call {
-                        text: "乙".into(),
-                        voice: "A".into(),
-                        style: Some("calm".into())
-                    },
-                    Call {
-                        text: "丙丁".into(),
-                        voice: "B".into(),
-                        style: None
-                    }
-                ]
+                call_shapes(&calls[count..]),
+                [("乙", "A", Some("calm")), ("丙丁", "B", None)]
             );
         })
         .await;

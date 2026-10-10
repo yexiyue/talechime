@@ -8,6 +8,10 @@ use tokio::sync::Notify;
 pub struct PlanSessionOptions {
     /// Keep one complete previous segment within a paragraph (default enabled).
     pub continuation: bool,
+    /// Generation parameters validated against the prepared model's catalog.
+    pub params: crate::params::GenerationParams,
+    /// Sampling seed policy; Auto draws fresh randomness per attempt.
+    pub seed: crate::params::SeedPolicy,
     /// Output volume, 0..=10.
     pub volume: f32,
     /// Playback rate, 0.5..=2.
@@ -26,6 +30,8 @@ impl Default for PlanSessionOptions {
     fn default() -> Self {
         Self {
             continuation: true,
+            params: crate::params::GenerationParams::default(),
+            seed: crate::params::SeedPolicy::default(),
             volume: 1.0,
             speed: 1.0,
             resume_byte: None,
@@ -55,6 +61,8 @@ pub struct PlanProgress {
 
 pub(super) struct PlanInput {
     pub(super) continuation: bool,
+    pub(super) params: crate::params::GenerationParams,
+    pub(super) seed: crate::params::SeedPolicy,
     pub(super) plan: RefCell<SpeechPlan>,
     pub(super) verifier: Option<Rc<crate::verification::Verifier>>,
     pub(super) verification: crate::verification::VerificationOptions,
@@ -68,6 +76,8 @@ impl PlanInput {
     pub(super) fn new(plan: SpeechPlan, byte: usize) -> Self {
         Self {
             continuation: true,
+            params: crate::params::GenerationParams::default(),
+            seed: crate::params::SeedPolicy::default(),
             plan: RefCell::new(plan),
             verifier: None,
             verification: crate::verification::VerificationOptions::default(),

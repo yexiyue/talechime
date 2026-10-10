@@ -26,7 +26,17 @@ async fn main() -> anyhow::Result<()> {
     let backend = talechime_backends::qwen::QwenBackend::load_on(directory, device).await?;
     let load_ms = started.elapsed().as_millis();
     if std::env::var("NOVEL_TTS_PROBE_CANCEL").is_ok() {
-        let mut cancelled = backend.stream(&text, &voice).await?;
+        let params = tts_core::params::GenerationParams::new();
+        let mut cancelled = backend
+            .stream(tts_core::backend::SegmentRequest {
+                text: &text,
+                voice: &voice,
+                style: None,
+                context: None,
+                seed: 42,
+                params: &params,
+            })
+            .await?;
         anyhow::ensure!(
             matches!(
                 cancelled.recv().await.transpose()?,
@@ -40,8 +50,16 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("cancel_receiver_ms={}", cancelled_at.elapsed().as_millis());
     }
     let started = Instant::now();
+    let params = tts_core::params::GenerationParams::new();
     let mut stream = backend
-        .stream_with_style(&text, &voice, style.as_deref())
+        .stream(tts_core::backend::SegmentRequest {
+            text: &text,
+            voice: &voice,
+            style: style.as_deref(),
+            context: None,
+            seed: 42,
+            params: &params,
+        })
         .await?;
     let mut samples = Vec::new();
     let mut first_ms = None;
