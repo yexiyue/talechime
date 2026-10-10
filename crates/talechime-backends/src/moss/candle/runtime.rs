@@ -91,14 +91,7 @@ fn generate(
         .as_ref()
         .map(|context| {
             let samples = crate::reference::mono(context.pcm(), 24000)?;
-            codec.encode(
-                &samples,
-                match mode {
-                    Mode::Local => 32,
-                    Mode::Realtime => 16,
-                },
-                &|| request.audio.is_closed(),
-            )
+            codec.encode(&samples, mode.codebooks(), &|| request.audio.is_closed())
         })
         .transpose()?;
     let reference = if continuation.is_none() && request.voice.starts_with("custom:") {
@@ -203,10 +196,7 @@ fn prompt(
     let path = store.path(voice)?;
     let wav = path.join("reference.wav");
     let digest = format!("{:x}", Sha256::digest(std::fs::read(&wav)?));
-    let codebooks = match mode {
-        Mode::Local => 32,
-        Mode::Realtime => 16,
-    };
+    let codebooks = mode.codebooks();
     let cache = path.join("moss-prompt.json");
     if cache.exists() {
         let cached: CachedCodes = serde_json::from_reader(std::fs::File::open(&cache)?)?;

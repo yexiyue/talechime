@@ -1347,12 +1347,113 @@ async fn native_speed_routes_to_generation_and_divides_out_of_the_sink() {
             h.manager.configure_playback("native", 1.0, 2.0).unwrap();
             let (_, sink) = h.player.settings.get();
             assert!((sink - 2.0 / 1.5).abs() < 1e-6, "{sink}");
-            h.drive(true, |h| h.ended("native", EndReason::Completed))
+            h.manager
+                .seek_plan("native", "resumed".into(), 0)
+                .await
+                .unwrap();
+            let (_, sink) = h.player.settings.get();
+            assert!((sink - 2.0 / 1.5).abs() < 1e-6, "seek lost speed: {sink}");
+            h.drive(true, |h| h.ended("resumed", EndReason::Completed))
                 .await;
             assert!(
                 h.backend.calls.borrow().iter().all(|call| call.params
                     == [("speed".to_string(), tts_protocol::ParamValue::Float(1.5))])
             );
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn explicit_native_speed_wins_initially_and_survives_seek() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let mut h = Harness::new();
+            h.backend.caps.borrow_mut().parameters = vec![tts_protocol::ParameterSpec {
+                name: "speed".into(),
+                kind: tts_protocol::ParamKind::Float { min: 0.5, max: 2.0 },
+                default: tts_protocol::ParamValue::Float(1.0),
+                description: String::new(),
+            }];
+            let mut plan = h.plan("甲乙");
+            plan.append(vec![span(0, 6, "A")]).unwrap();
+            plan.seal().unwrap();
+            let mut params = talechime_core::GenerationParams::new();
+            params.insert("speed", tts_protocol::ParamValue::Float(1.5));
+            h.manager
+                .start_plan(
+                    "explicit".into(),
+                    plan,
+                    PlanSessionOptions {
+                        speed: 2.0,
+                        params,
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(h.player.settings.get(), (1.0, 1.0));
+            h.manager
+                .seek_plan("explicit", "resumed".into(), 0)
+                .await
+                .unwrap();
+            assert_eq!(h.player.settings.get(), (1.0, 1.0));
+            h.drive(true, |h| h.ended("resumed", EndReason::Completed))
+                .await;
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn legacy_settings_divide_out_native_generation_speed() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let mut h = Harness::new();
+            h.backend.caps.borrow_mut().parameters = vec![tts_protocol::ParameterSpec {
+                name: "speed".into(),
+                kind: tts_protocol::ParamKind::Float { min: 0.5, max: 2.0 },
+                default: tts_protocol::ParamValue::Float(1.0),
+                description: String::new(),
+            }];
+            let text = "甲乙";
+            let source = h.plan(text).source().source().clone();
+            let mut config = Config {
+                backend: "fixture".into(),
+                model: Some("shared".into()),
+                voice: "A".into(),
+                speed: 1.5,
+                ..Default::default()
+            };
+            h.manager
+                .start(
+                    "legacy".into(),
+                    talechime_core::session::StartRequest {
+                        source,
+                        text: text.into(),
+                        text_hash: text_hash(text),
+                        resume_byte: None,
+                        restore_checkpoint: false,
+                    },
+                    &config,
+                )
+                .await
+                .unwrap();
+            assert_eq!(h.player.settings.get(), (1.0, 1.0));
+            config.volume = 0.5;
+            assert!(
+                !h.manager
+                    .update_settings("unused".into(), &config)
+                    .await
+                    .unwrap()
+            );
+            assert_eq!(h.player.settings.get(), (0.5, 1.0));
+            config.speed = 2.0;
+            h.manager
+                .update_settings("unused".into(), &config)
+                .await
+                .unwrap();
+            assert!((h.player.settings.get().1 - 2.0 / 1.5).abs() < 1e-6);
+            h.drive(true, |h| h.ended("legacy", EndReason::Completed))
+                .await;
         })
         .await;
 }

@@ -140,10 +140,11 @@ pub(super) fn resolve(
     params: &GenerationParams,
     seed: u64,
 ) -> Result<Resolved, tts_core::backend::BackendError> {
-    let float = |name: &str, fallback: f64| match params.get(name) {
-        Some(ParamValue::Float(v)) => *v,
-        Some(ParamValue::Int(v)) => *v as f64,
-        _ => fallback,
+    let float = |name: &str, fallback: f64| {
+        params
+            .get(name)
+            .and_then(ParamValue::as_f64)
+            .unwrap_or(fallback)
     };
     let language = match params.get("language") {
         Some(ParamValue::Text(name)) if !name.eq_ignore_ascii_case("auto") => {

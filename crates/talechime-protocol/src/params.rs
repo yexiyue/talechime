@@ -39,13 +39,25 @@ impl ParamValue {
             ParamValue::Int(v) => v.to_string(),
             ParamValue::Float(v) => v.to_string(),
             ParamValue::Text(v) => {
-                let mut short = v.clone();
-                short.truncate(30);
-                if short.len() < v.len() {
+                let mut end = v.len().min(30);
+                while !v.is_char_boundary(end) {
+                    end -= 1;
+                }
+                let mut short = v[..end].to_owned();
+                if end < v.len() {
                     short.push('…');
                 }
                 short
             }
+        }
+    }
+
+    /// Numeric values widen to f64; other parameter kinds stay distinct.
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Self::Int(value) => Some(*value as f64),
+            Self::Float(value) => Some(*value),
+            _ => None,
         }
     }
 }
@@ -132,6 +144,22 @@ impl ParameterSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_multibyte_values_produce_bounded_diagnostics() {
+        for text in ["a中文".repeat(10), "😀".repeat(10)] {
+            let value = ParamValue::Text(text.clone());
+            let preview = value.preview();
+            assert!(preview.ends_with('…'));
+            assert!(preview.len() <= 33);
+            assert!(text.starts_with(preview.trim_end_matches('…')));
+            assert!(
+                spec(ParamKind::Int { min: 1, max: 2 })
+                    .validate(&value)
+                    .is_err()
+            );
+        }
+    }
 
     fn spec(kind: ParamKind) -> ParameterSpec {
         ParameterSpec {

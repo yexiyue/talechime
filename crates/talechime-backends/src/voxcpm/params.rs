@@ -91,20 +91,17 @@ impl VoxCpmParams {
 
 /// Resolve validated parameters plus the attempt seed into native options.
 pub(super) fn resolve(params: &GenerationParams, seed: u64) -> Options {
-    let value = |name: &str| params.get(name).cloned();
     let float = |name: &str, fallback: f64| {
-        match value(name) {
-            Some(ParamValue::Float(v)) => v,
-            // Session validation already widened integer literals to floats.
-            Some(ParamValue::Int(v)) => v as f64,
-            _ => fallback,
-        }
+        params
+            .get(name)
+            .and_then(ParamValue::as_f64)
+            .unwrap_or(fallback)
     };
     let max_duration = float("max_duration", DEFAULT_MAX_FRAMES as f64 / FRAME_HZ);
     Options {
         seed,
-        steps: match value("steps") {
-            Some(ParamValue::Int(v)) => v as usize,
+        steps: match params.get("steps") {
+            Some(ParamValue::Int(v)) => *v as usize,
             _ => 10,
         },
         cfg: float("cfg", 2.0),

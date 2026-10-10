@@ -54,6 +54,23 @@ pub struct CliOptions {
     pub verification: tts_protocol::VerificationOptions,
     pub report_file: Option<PathBuf>,
 }
+
+fn generation_settings(
+    plan_params: &std::collections::BTreeMap<String, tts_protocol::ParamValue>,
+    plan_seed: Option<u64>,
+    overrides: &[(String, tts_protocol::ParamValue)],
+    seed: Option<u64>,
+) -> (talechime::GenerationParams, talechime::SeedPolicy) {
+    let mut params = talechime::GenerationParams::new();
+    for (name, value) in plan_params
+        .iter()
+        .chain(overrides.iter().map(|(name, value)| (name, value)))
+    {
+        params.insert(name.clone(), value.clone());
+    }
+    (params, talechime::SeedPolicy::from(seed.or(plan_seed)))
+}
+
 pub async fn run(
     file: PathBuf,
     store: ConfigStore,
@@ -85,6 +102,8 @@ pub async fn run(
         chapter: "file".into(),
     };
     let mut continuation = !no_continuation;
+    let (mut generation_params, mut seed_policy) =
+        generation_settings(&Default::default(), None, &params, seed);
     let (plan, resume_byte, restore_checkpoint) = if let Some(path) = plan_file {
         // Bound file reads before deserialization. Full plans only; stdin worker handles increments.
         use tokio::io::AsyncReadExt;
@@ -97,16 +116,12 @@ pub async fn run(
         if data.len() > tts_protocol::MAX_MESSAGE_BYTES {
             anyhow::bail!("plan file exceeds transport limit");
         }
-        let mut input: tts_protocol::PlanRequest = serde_json::from_slice(&data)?;
+        let input: tts_protocol::PlanRequest = serde_json::from_slice(&data)?;
         if input.text != text || !input.sealed {
             anyhow::bail!("CLI requires a sealed plan with the exact file text");
         }
-        for (name, value) in &params {
-            input.params.insert(name.clone(), value.clone());
-        }
-        if let Some(seed) = seed {
-            input.seed = Some(seed);
-        }
+        (generation_params, seed_policy) =
+            generation_settings(&input.params, input.seed, &params, seed);
         verification = input.verification.clone();
         continuation &= input.continuation;
         (
@@ -146,6 +161,13 @@ pub async fn run(
             restore_checkpoint,
         )
     };
+    generation_params
+        .validate(
+            &resources
+                .capabilities_for(&config.backend, config.model.as_deref())?
+                .parameters,
+        )
+        .map_err(anyhow::Error::msg)?;
     tts_core::verification::validate_options(&verification)?;
     let readback = verification.policy != tts_protocol::VerificationPolicy::Off;
     #[cfg(not(feature = "asr"))]
@@ -208,14 +230,8 @@ pub async fn run(
                 restore_checkpoint,
                 verification,
                 continuation,
-                seed: talechime::SeedPolicy::from(seed),
-                params: {
-                    let mut generation = talechime::GenerationParams::new();
-                    for (name, value) in &params {
-                        generation.insert(name.clone(), value.clone());
-                    }
-                    generation
-                },
+                seed: seed_policy,
+                params: generation_params,
                 ..Default::default()
             },
         )
@@ -287,6 +303,31 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plan_generation_settings_survive_and_cli_values_override_them() {
+        use tts_protocol::ParamValue;
+        let plan = [
+            ("steps".to_owned(), ParamValue::Int(16)),
+            ("cfg".to_owned(), ParamValue::Float(1.5)),
+        ]
+        .into();
+        let (params, seed) = generation_settings(&plan, Some(7), &[], None);
+        assert_eq!(params.get("steps"), Some(&ParamValue::Int(16)));
+        assert_eq!(seed, talechime::SeedPolicy::Pinned(7));
+        let (params, seed) = generation_settings(
+            &plan,
+            Some(7),
+            &[("steps".into(), ParamValue::Int(32))],
+            Some(8),
+        );
+        assert_eq!(params.get("steps"), Some(&ParamValue::Int(32)));
+        assert_eq!(params.get("cfg"), Some(&ParamValue::Float(1.5)));
+        assert_eq!(seed, talechime::SeedPolicy::Pinned(8));
+        let (params, seed) = generation_settings(&Default::default(), None, &[], None);
+        assert!(params.is_empty());
+        assert_eq!(seed, talechime::SeedPolicy::Auto);
+    }
 
     #[tokio::test]
     async fn control_acknowledgement_allows_draining_a_full_event_queue() {

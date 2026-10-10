@@ -32,6 +32,7 @@
 - [ASR 语言自动检测与音频标签捕获](records/asr-language-labels-2026-10-10.md)：Qwen3-ASR auto 语言、SenseVoice 情感/事件标签进报告。
 
 - [其他模型接续](records/continuation-all-models-2026-10-10.md)：Qwen 1.7B Base、VoxCPM2、MOSS Local / Realtime 的格式与验证边界。
+- [接续与后续改动审查](records/continuation-review-2026-10-10.md)：八项修复、两处简化及本轮测试结果。
 
 - [Nano Candle 验证与默认切换](records/moss-nano-candle-trial-2026-10-10.md)：原实验移植、官方实现对照、数值验证与试听确认；现为默认 Nano 实现。
 

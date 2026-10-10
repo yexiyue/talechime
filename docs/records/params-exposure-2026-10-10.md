@@ -14,8 +14,8 @@
 - **OmniVoice**：`num_step`、`guidance_scale`、`language`（约 700 种内建，未知名从上游的
   静默 "None" 改为显式报错）、`speed`（0.5..2.0 生成期原生语速）。seed 经新增
   `Pipeline::set_seed` 逐请求设置。
-- **MOSS Local/Realtime（Candle）**：`instruction`（user_inst 模板 Instruction 槽位）、
-  `max_duration`（25 Hz，默认 750 帧=30 秒）。`Generation.seed`/`max_frames`/`instruction`
+- **MOSS Local/Realtime（Candle）**：Local 的 `instruction`（user_inst 模板 Instruction 槽位）、
+  `max_duration`（12.5 Hz，默认 375 帧=30 秒）。`Generation.seed`/`max_frames`/`instruction`
   逐请求填充；Nano/ONNX 只消费 seed（Nano 原本随机，ONNX 原本 None=随机，行为不变，
   来源改为生产者派生）。
 - 每后端提供类型化构造器（`QwenParams`/`VoxCpmParams`/`OmniVoiceParams`/`MossParams`，
@@ -54,3 +54,11 @@ OmniVoice 未知语言显式报错、语速路由两方向（声明 `speed` 的�
 483 项测试、逐特性 Clippy（warnings denied）、rustdoc 通过。
 
 对照文件：`target/params-exposure/{voxcpm-seed7-a,voxcpm-seed7-b,voxcpm-seed8}/`。
+
+## 审查修正
+
+Realtime 仅声明 max_duration；instruction 与 language 均属于 Local 的模板槽位。
+seek 保留生成参数与当前有效播放速度，运行时倍率仍除以原生速度；旧 update_settings 路径采用相同换算。
+
+固定 codec 每帧为 1920 个 24 kHz 样本，实际帧率为 12.5 Hz；此前按 25 Hz 换算会把
+max_duration 放大一倍。已纠正换算与默认帧上限，并让 Local 的类型化构造器包含 language。

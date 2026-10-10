@@ -133,7 +133,7 @@ producer 在当前执行内保存最多一个 `SpeechContext`（不可变共享 
 `speed` 参数且宿主未显式设置时自动路由到生成期无损变速，sink 置 1.0；运行期改速按比例
 换算不叠加。逐段 style 由 `SpeechSpan.style` 携带：Qwen 1.7B CustomVoice（指令）、
 VoxCPM2（上游 `(description)text` 前缀，与接续组合待验收、当前显式拒绝）、OmniVoice
-（instruct 词表校验）、MOSS Local/Realtime（Instruction 槽位，逐段优先于同名参数）。
+（instruct 词表校验）、MOSS Local（Instruction 槽位，逐段优先于同名参数）；Realtime 不声明风格或 instruction。
 各目录与真模型结论见[参数记录](records/params-exposure-2026-10-10.md)与
 [风格记录](records/style-exposure-2026-10-10.md)。
 候选在接收原始流时有界复制，播放无需等待候选完成；End 后且交付策略允许时才替换参考。

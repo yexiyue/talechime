@@ -86,7 +86,7 @@ cargo run --release -- --restart chapter.txt
 | --- | --- | --- |
 | MOSS Nano | Candle（默认） | CPU；显式 feature 启用 Metal / CUDA；支持段落内接续 |
 | MOSS Nano ONNX | ONNX Runtime | 显式选择 `nano`；可选 ORT provider，须核验实际算子与硬件覆盖 |
-| MOSS Local / Realtime | Candle | 可选 CUDA / Metal，GPU 试用模型；逐段风格与 Local 语言标签 |
+| MOSS Local / Realtime | Candle | 可选 CUDA / Metal，GPU 试用模型；Local 支持逐段风格与语言标签 |
 | Qwen3-TTS | Candle | CustomVoice 预置音色；1.7B CustomVoice 支持风格；Base 支持参考克隆 |
 | VoxCPM2 | Candle | Q8 GGUF 路径与实验 BF16 路径；参考音色与设计，逐段风格（与接续互斥待验收） |
 | OmniVoice | Candle | 参考音色与设计，逐段风格与生成期原生语速；当前为语义分段生成，不是原生实时流式 |
@@ -203,9 +203,9 @@ talechime --backend qwen --model 1.7b-customvoice --param language=english --par
 
 当前目录：VoxCPM2（steps/cfg/temperature/max_duration）、Qwen（采样参数/language/
 max_duration/chunk_frames）、OmniVoice（num_step/guidance_scale/language/speed）、
-MOSS Local/Realtime（instruction/max_duration，Local 另有 language）；Nano 仅消费 seed。
+MOSS Local（instruction/language/max_duration）与 Realtime（max_duration）；Nano 仅消费 seed。
 逐段风格（`VoiceSpan.style`）现支持 Qwen 1.7B CustomVoice、VoxCPM2（与接续互斥待验收）、
-OmniVoice instruct 与 MOSS Instruction 槽位。详见
+OmniVoice instruct 与 MOSS Local Instruction 槽位。详见
 [参数记录](docs/records/params-exposure-2026-10-10.md)与
 [风格记录](docs/records/style-exposure-2026-10-10.md)。
 

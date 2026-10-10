@@ -107,18 +107,12 @@ pub(super) fn resolve(
     if let Some(ParamValue::Int(steps)) = params.get("num_step") {
         config.num_step = *steps as usize;
     }
-    if let Some(value) = params.get("guidance_scale") {
-        config.guidance_scale = match value {
-            ParamValue::Float(v) => *v as f32,
-            ParamValue::Int(v) => *v as f32,
-            _ => config.guidance_scale,
-        };
+    if let Some(value) = params.get("guidance_scale").and_then(ParamValue::as_f64) {
+        config.guidance_scale = value as f32;
     }
-    let speed = params.get("speed").map(|value| match value {
-        ParamValue::Float(v) => *v as f32,
-        ParamValue::Int(v) => *v as f32,
-        _ => 1.0,
-    });
+    let speed = params
+        .get("speed")
+        .map(|value| value.as_f64().unwrap_or(1.0) as f32);
     Ok(Resolved {
         config,
         language,

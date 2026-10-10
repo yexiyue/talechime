@@ -167,15 +167,14 @@ impl Backend for VoxBackend {
 /// segment there, so the combination is rejected until listening
 /// acceptance proves it.
 fn styled_text(style: Option<&str>, text: &str, continued: bool) -> Result<String, BackendError> {
-    let styled = !style.is_some_and(|value| value.trim().is_empty());
-    if styled && continued {
+    let style = style
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_default();
+    if !style.is_empty() && continued {
         return Err(BackendError::Unsupported(
             "Vox style is unavailable together with continuation until accepted".into(),
         ));
     }
-    let style = style
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_default();
     if style.contains('(') || style.contains(')') {
         return Err(BackendError::Unsupported(
             "Vox style descriptions must not contain parentheses".into(),
@@ -206,6 +205,7 @@ mod tests {
     #[test]
     fn style_wraps_the_target_text_like_the_upstream_convention() {
         assert_eq!(styled_text(None, "你好。", false).unwrap(), "你好。");
+        assert_eq!(styled_text(None, "你好。", true).unwrap(), "你好。");
         assert_eq!(styled_text(Some("  "), "你好。", true).unwrap(), "你好。");
         assert_eq!(
             styled_text(Some("cheerful tone"), "你好。", false).unwrap(),

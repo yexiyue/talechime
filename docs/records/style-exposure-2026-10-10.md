@@ -3,7 +3,7 @@
 ## 范围
 
 在参数/seed 接入（`ac292b4`）之上，把逐段 `SpeechSpan.style`（协议 `VoiceSpan.style`）
-接入三个后端的能力目录；Qwen Custom17 原本已支持。core/协议管道自 T0 起就逐段携带
+接入三个后端的能力目录（MOSS 仅 Local）；Qwen Custom17 原本已支持。core/协议管道自 T0 起就逐段携带
 style，本阶段只打开后端开关并接线：
 
 - **VoxCPM2**：`caps.style=true`。style 按上游 README 的官方约定渲染为
@@ -12,7 +12,7 @@ style，本阶段只打开后端开关并接线：
   且 README 明确展示参考音频＋描述前缀的 Controllable Voice Cloning。
 - **OmniVoice**：`caps.style=true`。style 经 `with_instruct` 逐请求注入，前端
   `resolve_instruct` 的词表/互斥校验对朗读路径同样生效，非法词显式报错。
-- **MOSS Local/Realtime（Candle）**：`caps.style=true`。span.style 逐请求写入
+- **MOSS Local（Candle）**：`caps.style=true`。span.style 逐请求写入
   `Generation.instruction`（Instruction 槽位），逐段 style 优先于同名执行参数。
 - **MOSS language 槽位**：核实官方 `build_user_message` 签名后为 Local 增加
   `language` 参数（官方 v1.5 指南："when the language is known, set it"），
@@ -43,3 +43,8 @@ OmniVoice/MOSS 的 style×接续组合本轮未做真模型验证，听感未验
 扩展 CPU 特性 485 项测试、Clippy（warnings denied）、rustdoc 通过。
 
 对照文件：`target/params-exposure/{voxcpm-style,voxcpm-style-off}/`。
+
+## 审查修正
+
+Realtime 的固定官方消息格式没有 Local 的 Instruction 槽位，推理入口会拒绝非空 instruction；
+已撤回 Realtime 的 style 能力和 instruction 参数声明，保留 Local 支持。

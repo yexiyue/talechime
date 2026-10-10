@@ -107,11 +107,10 @@ impl Drop for WriteGuard {
 
 /// The execution's lossless generation speed, if a native speed parameter is set.
 fn native_speed(params: &crate::params::GenerationParams) -> f32 {
-    match params.get("speed") {
-        Some(tts_protocol::ParamValue::Float(value)) if *value != 1.0 => *value as f32,
-        Some(tts_protocol::ParamValue::Int(value)) if *value != 1 => *value as f32,
-        _ => 1.0,
-    }
+    params
+        .get("speed")
+        .and_then(tts_protocol::ParamValue::as_f64)
+        .unwrap_or(1.0) as f32
 }
 
 struct Job {
@@ -225,6 +224,7 @@ impl SessionManager {
                 verification: crate::verification::VerificationOptions::default(),
             },
             Some((config.voice.clone(), config.style.clone())),
+            None,
         )
         .await
     }
@@ -236,7 +236,7 @@ impl SessionManager {
         plan: SpeechPlan,
         options: PlanSessionOptions,
     ) -> Result<(), SessionError> {
-        self.start_input(id, plan, options, None).await
+        self.start_input(id, plan, options, None, None).await
     }
 
     async fn start_input(
@@ -245,6 +245,7 @@ impl SessionManager {
         plan: SpeechPlan,
         options: PlanSessionOptions,
         legacy_settings: Option<(String, Option<String>)>,
+        resumed_speed: Option<f32>,
     ) -> Result<(), SessionError> {
         crate::verification::validate_options(&options.verification)?;
         if options.verification.policy != crate::verification::VerificationPolicy::Off
@@ -303,13 +304,17 @@ impl SessionManager {
         }
         plan.validate_resume_byte(byte)?;
         self.stop().await?;
-        // A native speed parameter owns pacing; the sink stays at 1.0 then.
-        let sink_speed = if params.get("speed").is_some() {
-            1.0
-        } else {
-            options.speed
-        };
-        self.player.configure(options.volume, sink_speed);
+        // Explicit native speed owns initial pacing. A resumed execution keeps
+        // its effective playback rate, including any runtime adjustment.
+        let speed = resumed_speed.unwrap_or_else(|| {
+            if params.get("speed").is_some() {
+                native_speed(&params)
+            } else {
+                options.speed
+            }
+        });
+        self.player
+            .configure(options.volume, speed / native_speed(&params));
         self.player.pause();
         self.used_ids.insert(id.clone());
         let phase = Rc::new(Cell::new(SessionState::Generating));
@@ -317,7 +322,7 @@ impl SessionManager {
         let paused = Rc::new(Cell::new(false));
         let terminal = Rc::new(Cell::new(false));
         let buffering = Rc::new(Cell::new(true));
-        let speed = Rc::new(Cell::new(options.speed));
+        let speed = Rc::new(Cell::new(speed));
         let mut input = PlanInput::new(plan, byte);
         input.verifier =
             if options.verification.policy == crate::verification::VerificationPolicy::Off {
@@ -560,11 +565,14 @@ impl SessionManager {
             }
             return Ok(true);
         }
-        if let Some(job) = &self.job {
+        let sink_speed = if let Some(job) = &self.job {
             job.speed.set(config.speed);
             job.volume.set(config.volume);
-        }
-        self.player.configure(config.volume, config.speed);
+            config.speed / native_speed(&job.input.params)
+        } else {
+            config.speed
+        };
+        self.player.configure(config.volume, sink_speed);
         Ok(false)
     }
 
@@ -701,7 +709,7 @@ impl SessionManager {
         let job = self.active(old_id)?;
         let plan = job.input.plan.borrow().clone();
         let paused = job.paused.get();
-        self.start_plan(
+        self.start_input(
             new_id.clone(),
             plan,
             PlanSessionOptions {
@@ -715,6 +723,8 @@ impl SessionManager {
                 staging: job.staging.clone(),
                 verification: job.verification.clone(),
             },
+            None,
+            Some(speed),
         )
         .await?;
         if paused {

@@ -38,6 +38,12 @@ impl Mode {
             .join(self.id())
             .join(self.revision())
     }
+    fn codebooks(self) -> usize {
+        match self {
+            Self::Local => 32,
+            Self::Realtime => 16,
+        }
+    }
 }
 pub fn voice_store(directory: &Path, mode: Mode) -> anyhow::Result<tts_core::voices::VoiceStore> {
     tts_core::voices::VoiceStore::new(directory, "moss", mode.id(), mode.revision())
@@ -56,7 +62,7 @@ pub fn capabilities(root: &Path, mode: Mode) -> anyhow::Result<Capabilities> {
         voice_names: [("narrator".into(), "随机音色（建议导入或设计音色）".into())].into(),
         native_streaming: true,
         cloning: true,
-        style: true,
+        style: mode == Mode::Local,
         pronunciation: false,
         continuation: true,
         parameters: params::catalog(mode == Mode::Local),
@@ -186,6 +192,7 @@ mod tests {
             assert!(!caps.compiled_devices.contains(&Device::Cpu));
             assert_eq!(caps.default_voice, "narrator");
             assert!(caps.cloning && caps.native_streaming && caps.continuation);
+            assert_eq!(caps.style, mode == Mode::Local);
         }
         assert!(
             !root.path().join("moss").exists(),
