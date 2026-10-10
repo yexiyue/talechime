@@ -76,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
         };
         // Inject the independently recorded transcripts to exercise production comparison without another model run.
         let report = if let (Ok(a), Ok(b)) = (&qwen, &sense) {
-            struct Recorded(RecognizerIdentity, String);
+            struct Recorded(RecognizerIdentity, tts_core::verification::Transcript);
             impl Recognizer for Recorded {
                 fn identity(&self) -> RecognizerIdentity {
                     self.0.clone()
@@ -114,8 +114,16 @@ async fn main() -> anyhow::Result<()> {
             None
         };
         eprintln!("{} qwen={qwen:?} sense={sense:?}", case.id);
-        rows.push(serde_json::json!({"id":case.id,"qwen":qwen.as_ref().ok(),"qwen_error":qwen.err().map(|e|e.to_string()),
-            "sensevoice":sense.as_ref().ok(),"sensevoice_error":sense.err().map(|e|e.to_string()),"qwen_s":qwen_s,"sensevoice_s":sense_s,"report":report}));
+        let qwen_row = qwen.as_ref().ok().map(|result| {
+            serde_json::json!({
+            "text": result.text, "labels": result.labels})
+        });
+        let sense_row = sense.as_ref().ok().map(|result| {
+            serde_json::json!({
+            "text": result.text, "labels": result.labels})
+        });
+        rows.push(serde_json::json!({"id":case.id,"qwen":qwen_row,"qwen_error":qwen.err().map(|e|e.to_string()),
+            "sensevoice":sense_row,"sensevoice_error":sense.err().map(|e|e.to_string()),"qwen_s":qwen_s,"sensevoice_s":sense_s,"report":report}));
         std::fs::write(
             &args[4],
             serde_json::to_vec_pretty(

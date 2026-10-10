@@ -75,11 +75,11 @@ impl SenseVoice {
         samples: &[f32],
         cancelled: &AtomicBool,
         run_options: &RunOptions,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<tts_core::verification::Transcript> {
         let fbank = frontend(samples);
         let frames = fbank.num_frames_ready() as usize;
         if frames == 0 {
-            return Ok(String::new());
+            return Ok(tts_core::verification::Transcript::text(String::new()));
         }
         let length = frames.div_ceil(self.shift);
         let dim = self.width * 80;
@@ -114,6 +114,7 @@ impl SenseVoice {
         );
         let mut last = usize::MAX;
         let mut text = String::new();
+        let mut labels: Vec<String> = Vec::new();
         for row in logits.chunks_exact(self.tokens.len()) {
             anyhow::ensure!(row.iter().all(|x| x.is_finite()), "nonfinite ASR logits");
             let token = row
@@ -124,13 +125,21 @@ impl SenseVoice {
                 .ok_or_else(|| anyhow::anyhow!("empty ASR logits"))?;
             if token != last && token != 0 {
                 let piece = &self.tokens[token];
-                if !piece.starts_with("<|") {
+                if piece.starts_with("<|") {
+                    // Emotion/event/language tags are report metadata, not text.
+                    if !labels.iter().any(|label| label == piece) {
+                        labels.push(piece.to_owned());
+                    }
+                } else {
                     text.push_str(piece);
                 }
             }
             last = token;
         }
-        Ok(text.replace('▁', " ").trim().into())
+        Ok(tts_core::verification::Transcript {
+            text: text.replace('▁', " ").trim().to_owned(),
+            labels,
+        })
     }
 }
 

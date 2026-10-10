@@ -31,7 +31,34 @@ pub trait Recognizer {
         }
     }
 }
-pub type Recognition<'a> = Pin<Box<dyn Future<Output = Result<String, VerificationError>> + 'a>>;
+/// A recognizer result: comparison text plus optional audio labels such as
+/// SenseVoice emotion/event tags. Labels are report metadata only.
+#[derive(Debug, Clone)]
+pub struct Transcript {
+    pub text: String,
+    pub labels: Vec<String>,
+}
+impl Transcript {
+    /// A plain transcript without labels.
+    pub fn text(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            labels: Vec::new(),
+        }
+    }
+}
+impl From<&str> for Transcript {
+    fn from(text: &str) -> Self {
+        Self::text(text)
+    }
+}
+impl From<String> for Transcript {
+    fn from(text: String) -> Self {
+        Self::text(text)
+    }
+}
+pub type Recognition<'a> =
+    Pin<Box<dyn Future<Output = Result<Transcript, VerificationError>> + 'a>>;
 /// A transcription and optional per-request native completion receipt.
 /// Send `true` or close the sender only after all native work has stopped.
 pub struct RecognitionRequest<'a> {
@@ -298,23 +325,26 @@ impl Verifier {
             .await
             .unwrap_or(Err(VerificationError::Timeout));
         match result {
-            Ok(text) if text.chars().count() <= 1024 => ReadbackEvidence {
+            Ok(transcript) if transcript.text.chars().count() <= 1024 => ReadbackEvidence {
                 recognizer: recognizer.identity(),
-                differences: comparison::compare(&self.normalization, request, &text),
-                transcript: Some(text),
+                differences: comparison::compare(&self.normalization, request, &transcript.text),
+                transcript: Some(transcript.text),
                 error: None,
+                labels: transcript.labels,
             },
             Ok(_) => ReadbackEvidence {
                 recognizer: recognizer.identity(),
                 transcript: None,
                 error: Some("ASR transcript exceeds 1024 characters".into()),
                 differences: vec![],
+                labels: vec![],
             },
             Err(error) => ReadbackEvidence {
                 recognizer: recognizer.identity(),
                 transcript: None,
                 error: Some(error.to_string()),
                 differences: vec![],
+                labels: vec![],
             },
         }
     }

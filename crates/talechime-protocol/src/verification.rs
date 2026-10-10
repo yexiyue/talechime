@@ -76,6 +76,10 @@ pub struct ReadbackEvidence {
     pub transcript: Option<String>,
     pub error: Option<String>,
     pub differences: Vec<ReadbackDifference>,
+    /// Recognizer-side audio labels (emotion/event/language tags); empty when
+    /// the recognizer does not produce them. Text comparison never uses them.
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 /// One actual synthesis attempt. A report never proves playback completion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

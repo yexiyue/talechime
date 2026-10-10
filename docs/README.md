@@ -29,6 +29,8 @@
 
 - [逐段风格的开放与组合边界](records/style-exposure-2026-10-10.md)：VoxCPM/OmniVoice/MOSS style 接线、MOSS language 槽位与 VoxCPM style×接续的显式拒绝。
 
+- [ASR 语言自动检测与音频标签捕获](records/asr-language-labels-2026-10-10.md)：Qwen3-ASR auto 语言、SenseVoice 情感/事件标签进报告。
+
 - [其他模型接续](records/continuation-all-models-2026-10-10.md)：Qwen 1.7B Base、VoxCPM2、MOSS Local / Realtime 的格式与验证边界。
 
 - [Nano Candle 验证与默认切换](records/moss-nano-candle-trial-2026-10-10.md)：原实验移植、官方实现对照、数值验证与试听确认；现为默认 Nano 实现。

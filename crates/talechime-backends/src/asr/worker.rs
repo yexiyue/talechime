@@ -14,7 +14,7 @@ struct Request {
     cancelled: Arc<AtomicBool>,
     run: Arc<ort::session::RunOptions>,
     _completion: Completion,
-    result: oneshot::Sender<Result<String, VerificationError>>,
+    result: oneshot::Sender<Result<tts_core::verification::Transcript, VerificationError>>,
 }
 struct Owner {
     jobs: Option<mpsc::Sender<Request>>,
@@ -120,19 +120,22 @@ pub(super) async fn spawn(
                 if request.result.is_closed() || request.cancelled.load(Ordering::Relaxed) {
                     continue;
                 }
-                let result = (|| -> anyhow::Result<String> {
+                let result = (|| -> anyhow::Result<tts_core::verification::Transcript> {
                     let samples = mono_16k(&request.audio)?;
                     // Exact silence must not become a generative ASR hallucination.
                     if samples.iter().all(|x| x.abs() <= 1e-7) {
-                        return Ok(String::new());
+                        return Ok(tts_core::verification::Transcript::text(String::new()));
                     }
                     match &mut model {
                         Loaded::Qwen(model) => {
-                            let mut options = qwen3_asr::TranscribeOptions::default()
-                                .with_language("Chinese")
-                                .with_max_new_tokens(256);
+                            // Language auto-detection: generation params may set any
+                            // catalog language, and forced Chinese misreads the rest.
+                            let mut options =
+                                qwen3_asr::TranscribeOptions::default().with_max_new_tokens(512);
                             options.cancelled = request.cancelled.clone();
-                            Ok(model.transcribe_samples(&samples, options)?.text)
+                            Ok(tts_core::verification::Transcript::text(
+                                model.transcribe_samples(&samples, options)?.text,
+                            ))
                         }
                         Loaded::SenseVoice(model) => {
                             model.transcribe(&samples, &request.cancelled, &request.run)

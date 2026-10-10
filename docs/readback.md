@@ -79,3 +79,13 @@ v7 `PlanRequest` 可添加以下 `verification` 字段；省略即关闭，仍�
 ## 验证与候选
 
 选型和原生运行证据见[主线验收记录](records/asr-readback-mainline-2026-10-09.md)，候选对照见[选型 spike](records/asr-spike-2026-10-09.md)。Whisper large-v3-turbo、Qwen 1.7B、FireRed 保留实验候选，未作为内置可切换适配器交付。宿主可以用其他 `Recognizer` 组合，只要求明确模型身份与不同家族复核。小样本不证明自然漏读召回率或人工听感。
+
+
+## 语言自动检测与音频标签
+
+Qwen3-ASR 主识别使用模型自身的语言自动检测（此前强制 Chinese，与生成侧开放的
+language 参数不兼容）；`max_new_tokens` 恢复为 512 以覆盖较长非中文段。SenseVoice
+复核在解码时捕获 `<|…|>` 情感/事件/语言标签，作为 `ReadbackEvidence.labels`
+（v7 加法式字段）进入报告与 `asr_readback` 探针输出；文本比对仍不使用这些标签。
+这为逐段风格标注（读取侧情感标签反哺生成侧 style 指令）提供数据源，尚未接入
+任何自动策略。
