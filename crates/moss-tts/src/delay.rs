@@ -85,6 +85,10 @@ impl DelayModel {
         cancelled: &impl Fn() -> bool,
         mut frame: impl FnMut(&[u32]) -> anyhow::Result<bool>,
     ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            request.continuation.is_none(),
+            "VoiceDesign does not support continuation"
+        );
         // Reference delay patterns differ from Local; never reuse Local encoded rows.
         anyhow::ensure!(
             request.reference.is_none(),

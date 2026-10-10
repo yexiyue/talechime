@@ -117,16 +117,21 @@ impl LocalModel {
             reference,
             max_frames,
             seed,
+            ref continuation,
         } = *request;
         self.global.reset();
         self.depth.reset();
-        let rows = crate::prompt::text_prompt(
+        let joined = continuation.as_ref().map(|c| format!("{}{text}", c.text));
+        let mut rows = crate::prompt::text_prompt(
             &self.tokenizer,
             &self.config,
-            text,
+            joined.as_deref().unwrap_or(text),
             instruction,
             reference,
         )?;
+        if let Some(context) = continuation {
+            crate::prompt::append_continuation(&mut rows, &self.config, context.codes)?;
+        }
         let embedded = self.embed(&rows)?;
         let mut hidden = self.global.forward(&embedded, cancelled)?;
         let mut history: Vec<Vec<u32>> = (0..=self.config.n_vq)

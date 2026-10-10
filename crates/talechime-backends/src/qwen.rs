@@ -50,7 +50,7 @@ pub fn model_capabilities(model: models::Model) -> Capabilities {
     let mut caps = capabilities();
     caps.model = Some(model.id().into());
     caps.model_name = model.name().into();
-    caps.continuation = model == models::Model::Base06;
+    caps.continuation = model.is_base();
     caps.style = model == models::Model::Custom17;
     if model.is_base() {
         caps.voices.clear();
@@ -214,9 +214,9 @@ impl Backend for QwenBackend {
         context: Option<&'a tts_core::SpeechContext>,
     ) -> Streaming<'a> {
         Box::pin(async move {
-            if context.is_some() && self.model != models::Model::Base06 {
+            if context.is_some() && !self.model.is_base() {
                 return Err(BackendError::Unsupported(
-                    "continuation requires Qwen 0.6B Base".into(),
+                    "continuation requires Qwen Base".into(),
                 ));
             }
             if style.is_some_and(|v| !v.trim().is_empty())
@@ -287,34 +287,30 @@ mod tests {
     use runtime::validate_completion;
     use tts_core::backend::AudioChunk;
     #[test]
-    fn continuation_is_only_exposed_for_small_base_with_imported_voices() {
+    fn continuation_is_only_exposed_for_base_with_imported_voices() {
         for model in [
             models::Model::Custom06,
             models::Model::Custom17,
-            models::Model::Base17,
+            models::Model::Design17,
         ] {
             assert!(!model_capabilities(model).continuation);
         }
         let temp = tempfile::tempdir().unwrap();
-        let model = models::Model::Base06;
-        let caps = capabilities_at(temp.path(), model).unwrap();
-        assert!(caps.continuation && caps.cloning && caps.voices.is_empty());
         let reference = temp.path().join("test.wav");
         std::fs::write(&reference, b"placeholder").unwrap();
-        voice_store(temp.path(), model)
-            .unwrap()
-            .import("custom:test", "Test", &reference, "准确参考转写", None)
-            .unwrap();
-        assert_eq!(
-            capabilities_at(temp.path(), model).unwrap().voices,
-            ["custom:test"]
-        );
-        assert!(
-            capabilities_at(temp.path(), models::Model::Base17)
+        for model in [models::Model::Base06, models::Model::Base17] {
+            let directory = model.directory(temp.path());
+            let caps = capabilities_at(&directory, model).unwrap();
+            assert!(caps.continuation && caps.cloning && caps.voices.is_empty());
+            voice_store(&directory, model)
                 .unwrap()
-                .voices
-                .is_empty()
-        );
+                .import("custom:test", "Test", &reference, "准确参考转写", None)
+                .unwrap();
+            assert_eq!(
+                capabilities_at(&directory, model).unwrap().voices,
+                ["custom:test"]
+            );
+        }
         assert_eq!(models::Model::parse(None).unwrap(), models::Model::Custom06);
     }
     #[test]

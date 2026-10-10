@@ -58,7 +58,7 @@ GNU release runner 为 Ubuntu 24.04，最低 glibc 2.39，ORT 1.28 预编译库�
 
 ## 仅库构建
 
-`talechime` 默认启用 cli 与 moss。嵌入库用 `default-features = false` 再选择模型 feature；cli 门控 executable、clap/crossterm 与终端控制依赖。无模型库测试可运行：
+`talechime` 默认启用 cli 与 moss-nano-candle。嵌入库用 `default-features = false` 再选择模型 feature；cli 门控 executable、clap/crossterm 与终端控制依赖。无模型库测试可运行：
 
 ```sh
 cargo test --locked -p talechime --no-default-features --test library
@@ -87,3 +87,9 @@ target/release/examples/moss_continuation_codec NANO_DIR
 取消、错误不会自动退回独立生成；失败保留已产生的音频与错误摘要。
 Nano 数值探针对比分批前缀预热与整段预热后同一组新 codes 的 PCM，前缀音频本身不交付。
 [本次结果与限制](records/continuation-small-models-2026-10-10.md)包含固定语料、权重 revision、回读及试听边界。
+
+其他模型复用上述探针：`qwen-base17` 的目录是 Base 1.7B revision 目录；`voxcpm` /
+`voxcpm-bf16` 使用对应 revision 目录；`moss-local` / `moss-realtime` 使用资源根目录，
+由各自固定 manifest 校验模型与 codec。构建探针时增加 `voxcpm-metal,moss-candle-metal`，
+CUDA 可替换为相应 `-cuda` feature 与 `cuda` 设备。使用 `on` / `off` 生成对照；
+BF16 仍只开放 CUDA。听感与真实平台数值验收单独记录，不由能力标记推断。

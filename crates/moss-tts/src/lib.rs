@@ -57,8 +57,15 @@ impl Model {
     }
 }
 
+/// Complete previous transcription and encoded audio, borrowed for one request.
+pub struct Continuation<'a> {
+    pub text: &'a str,
+    pub codes: &'a [Vec<u32>],
+}
+
 /// Input and generation budget shared by model schedulers.
 pub struct Generation<'a> {
+    pub continuation: Option<Continuation<'a>>,
     pub text: &'a str,
     pub instruction: Option<&'a str>,
     pub reference: Option<&'a [Vec<u32>]>,
@@ -69,6 +76,7 @@ impl<'a> Generation<'a> {
     pub fn new(text: &'a str) -> Self {
         Self {
             text,
+            continuation: None,
             instruction: None,
             reference: None,
             max_frames: 750,

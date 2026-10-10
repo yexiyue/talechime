@@ -18,3 +18,7 @@ follow OpenMOSS/MOSS-TTS-Nano checkpoint `44502f80dbf9743528fa921cc544d662c685eb
 attention conventions were cross-checked against Apache-2.0 community source
 https://github.com/ramishi/moss-tts-nano-rust-candle at
 `f4d3fcf4de9b4118ee664087f88495f4174836e1`. No gated weights are included.
+
+Realtime previous-turn rows are tested against the pinned upstream
+`make_user_prompt` formatter using synthetic text/audio token fixtures.
+`tools/tts/realtime_prompt_reference.py` regenerates these fixtures without weights.

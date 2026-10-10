@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use tokio::sync::{mpsc, oneshot};
 use tts_core::backend::{AudioChunk, BackendError, Pcm};
 pub(super) struct Request {
+    pub context: Option<tts_core::SpeechContext>,
     pub text: String,
     pub voice: String,
     pub audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
@@ -66,46 +67,7 @@ pub(super) fn run(
         if request.audio.is_closed() {
             continue;
         }
-        let result = (|| -> anyhow::Result<()> {
-            let reference = if request.voice.starts_with("custom:") {
-                Some(prompt(
-                    &mut codec,
-                    &mode.directory(&root),
-                    mode,
-                    &request.voice,
-                    &|| request.audio.is_closed(),
-                )?)
-            } else {
-                None
-            };
-            codec.reset_decoder();
-            let mut generation = Generation::new(&request.text);
-            generation.reference = reference.as_deref();
-            let mut pending = Vec::new();
-            let mut delivered = false;
-            model.generate(&generation, &|| request.audio.is_closed(), |frame| {
-                pending.push(frame.to_vec());
-                if pending.len() == 5 {
-                    deliver(&mut codec, &pending, &request.audio)?;
-                    pending.clear();
-                    delivered = true;
-                }
-                Ok(!request.audio.is_closed())
-            })?;
-            if !pending.is_empty() {
-                deliver(&mut codec, &pending, &request.audio)?;
-                delivered = true;
-            }
-            anyhow::ensure!(
-                delivered && !request.audio.is_closed(),
-                "empty or cancelled generation"
-            );
-            request
-                .audio
-                .blocking_send(Ok(AudioChunk::End))
-                .map_err(|_| anyhow::anyhow!("generation cancelled"))?;
-            Ok(())
-        })();
+        let result = generate(&mut model, &mut codec, &root, mode, &request);
         if let Err(error) = result
             && !request.audio.is_closed()
         {
@@ -115,6 +77,91 @@ pub(super) fn run(
         }
     }
 }
+fn generate(
+    model: &mut Model,
+    codec: &mut AudioCodec,
+    root: &Path,
+    mode: Mode,
+    request: &Request,
+) -> anyhow::Result<()> {
+    let continuation = request
+        .context
+        .as_ref()
+        .map(|context| {
+            let samples = crate::reference::mono(context.pcm(), 24000)?;
+            codec.encode(
+                &samples,
+                match mode {
+                    Mode::Local => 32,
+                    Mode::Realtime => 16,
+                },
+                &|| request.audio.is_closed(),
+            )
+        })
+        .transpose()?;
+    let reference = if continuation.is_none() && request.voice.starts_with("custom:") {
+        Some(prompt(
+            codec,
+            &mode.directory(root),
+            mode,
+            &request.voice,
+            &|| request.audio.is_closed(),
+        )?)
+    } else {
+        None
+    };
+    codec.reset_decoder();
+    let mut generation = Generation::new(&request.text);
+    generation.reference = reference.as_deref().or_else(|| {
+        if mode == Mode::Realtime {
+            continuation.as_deref()
+        } else {
+            None
+        }
+    });
+    generation.continuation =
+        request
+            .context
+            .as_ref()
+            .zip(continuation.as_deref())
+            .map(|(context, codes)| moss_tts::Continuation {
+                text: context.text(),
+                codes,
+            });
+    if mode == Mode::Local
+        && let Some(codes) = &continuation
+    {
+        // Prime the causal decoder, but never deliver the already-played prefix.
+        for frames in codes.chunks(5) {
+            codec.decode(frames, &|| request.audio.is_closed())?;
+        }
+    }
+    let mut pending = Vec::new();
+    let mut delivered = false;
+    model.generate(&generation, &|| request.audio.is_closed(), |frame| {
+        pending.push(frame.to_vec());
+        if pending.len() == 5 {
+            deliver(codec, &pending, &request.audio)?;
+            pending.clear();
+            delivered = true;
+        }
+        Ok(!request.audio.is_closed())
+    })?;
+    if !pending.is_empty() {
+        deliver(codec, &pending, &request.audio)?;
+        delivered = true;
+    }
+    anyhow::ensure!(
+        delivered && !request.audio.is_closed(),
+        "empty or cancelled generation"
+    );
+    request
+        .audio
+        .blocking_send(Ok(AudioChunk::End))
+        .map_err(|_| anyhow::anyhow!("generation cancelled"))?;
+    Ok(())
+}
+
 fn deliver(
     codec: &mut AudioCodec,
     frames: &[Vec<u32>],

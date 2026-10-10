@@ -57,7 +57,7 @@ pub fn capabilities(root: &Path, mode: Mode) -> anyhow::Result<Capabilities> {
         cloning: true,
         style: false,
         pronunciation: false,
-        continuation: false,
+        continuation: true,
         compiled_devices: compiled_devices(),
     };
     for voice in voice_store(&mode.directory(root), mode)?.list()? {
@@ -131,7 +131,21 @@ impl Backend for CandleBackend {
         self.caps.clone()
     }
     fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a> {
+        self.stream_with_context(text, voice, None, None)
+    }
+    fn stream_with_context<'a>(
+        &'a self,
+        text: &'a str,
+        voice: &'a str,
+        style: Option<&'a str>,
+        context: Option<&'a tts_core::SpeechContext>,
+    ) -> Streaming<'a> {
         Box::pin(async move {
+            if style.is_some_and(|s| !s.trim().is_empty()) {
+                return Err(BackendError::Unsupported(
+                    "style is unavailable for this model".into(),
+                ));
+            }
             if text.trim().is_empty() || !self.caps.voices.iter().any(|id| id == voice) {
                 return Err(BackendError::Unsupported(
                     "unknown MOSS voice or empty text".into(),
@@ -142,6 +156,7 @@ impl Backend for CandleBackend {
                 .as_ref()
                 .expect("live inference owner")
                 .send(runtime::Request {
+                    context: context.cloned(),
                     text: text.into(),
                     voice: voice.into(),
                     audio,
@@ -173,7 +188,7 @@ mod tests {
             assert_eq!(caps.compiled_devices, compiled_devices());
             assert!(!caps.compiled_devices.contains(&Device::Cpu));
             assert_eq!(caps.default_voice, "narrator");
-            assert!(caps.cloning && caps.native_streaming);
+            assert!(caps.cloning && caps.native_streaming && caps.continuation);
         }
         assert!(
             !root.path().join("moss").exists(),

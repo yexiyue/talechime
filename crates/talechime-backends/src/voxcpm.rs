@@ -39,7 +39,7 @@ pub fn capabilities_for(directory: &Path, model: models::Model) -> anyhow::Resul
         style: false,
         compiled_devices: Vec::new(),
         pronunciation: false,
-        continuation: false,
+        continuation: true,
     };
     for voice in voice_store_for(directory, model)?.list()? {
         caps.voice_names.insert(voice.id.clone(), voice.name);
@@ -124,7 +124,21 @@ impl Backend for VoxBackend {
         self.caps.clone()
     }
     fn stream<'a>(&'a self, text: &'a str, voice: &'a str) -> Streaming<'a> {
+        self.stream_with_context(text, voice, None, None)
+    }
+    fn stream_with_context<'a>(
+        &'a self,
+        text: &'a str,
+        voice: &'a str,
+        style: Option<&'a str>,
+        context: Option<&'a tts_core::SpeechContext>,
+    ) -> Streaming<'a> {
         Box::pin(async move {
+            if style.is_some_and(|s| !s.trim().is_empty()) {
+                return Err(BackendError::Unsupported(
+                    "style is unavailable for this model".into(),
+                ));
+            }
             if !self.caps.voices.iter().any(|id| id == voice) || text.trim().is_empty() {
                 return Err(BackendError::Unsupported(
                     "unknown Vox voice or empty text".into(),
@@ -135,6 +149,7 @@ impl Backend for VoxBackend {
                 .as_ref()
                 .expect("live inference thread")
                 .send(runtime::Request {
+                    context: context.cloned(),
                     text: text.into(),
                     voice: voice.into(),
                     audio,
@@ -146,5 +161,21 @@ impl Backend for VoxBackend {
     }
     fn segments<'a>(&'a self, source: &'a str) -> Segmentation<'a> {
         Box::pin(async move { Ok(tts_core::text::preprocess_text(source, 180)) })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn both_weight_variants_support_continuation_without_preparing_assets() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        for model in [models::Model::Q8, models::Model::OriginalBf16] {
+            let caps = capabilities_for(&model.directory(root.path()), model)?;
+            assert!(caps.continuation);
+            assert_eq!(caps.default_voice, "narrator");
+        }
+        assert_eq!(std::fs::read_dir(root.path())?.count(), 0);
+        Ok(())
     }
 }

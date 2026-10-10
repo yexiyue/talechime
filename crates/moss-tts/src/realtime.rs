@@ -1,4 +1,5 @@
 //! MOSS Realtime: initial text lookahead followed by one text token per frame.
+mod prompt;
 use crate::{
     Generation,
     config::TransformerConfig,
@@ -141,7 +142,18 @@ impl RealtimeModel {
             }
             rows.extend(self.text("<|im_end|>\n")?.into_iter().map(row));
         }
-        rows.extend(self.text("<|im_start|>assistant\n")?.into_iter().map(row));
+        if let Some(context) = &request.continuation {
+            rows.extend(prompt::previous_turn(
+                &self.text("<|im_end|>\n<|im_start|>user\n")?,
+                &self.text(context.text)?,
+                &self.text("<|im_end|>\n<|im_start|>assistant\n")?,
+                context.codes,
+                self.cfg.text_pad,
+                self.cfg.audio_pad_token,
+            )?);
+        } else {
+            rows.extend(self.text("<|im_start|>assistant\n")?.into_iter().map(row));
+        }
         let text = self.text(request.text)?;
         anyhow::ensure!(!text.is_empty(), "empty Realtime tokenization");
         let index = text.len().min(12);

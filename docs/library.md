@@ -122,8 +122,8 @@ cargo run --locked -p talechime --example host_thread
 `PlanSessionOptions::continuation` 与 `SynthesisOptions::continuation` 默认开启。
 `Engine::synthesize_with_options` / `synthesize_pcm_with_options` 接收直接合成选项；
 原便利入口使用默认设置。一次调用内部滚动使用上一段完整的生成文字与原始 PCM，
-独立调用不共享历史。只有能力目录 `continuation=true` 的 OmniVoice、Qwen **0.6B Base**、
-MOSS Nano 使用这一条件；其他模型保持既有合成方式。
+独立调用不共享历史。只有能力目录 `continuation=true` 的 OmniVoice、Qwen **0.6B / 1.7B Base**、
+VoxCPM2、MOSS Nano / Local / Realtime 使用这一条件；Qwen CustomVoice / VoiceDesign 不支持。
 
 ```rust,ignore
 let mut stream = engine.synthesize_with_options(
@@ -139,6 +139,6 @@ let mut stream = engine.synthesize_with_options(
 只有显式 End 和成功交付的段落可以更新参考；门禁重试始终使用同一前段。
 回读发现异常但仍交付的音频不作为下一段参考。接续编码或推理失败会终止合成。
 
-Qwen `0.6b-base` 必须先导入带准确转写的参考音色，其资源与 `0.6b-customvoice`
+Qwen `0.6b-base` / `1.7b-base` 必须先导入带准确转写的参考音色，其资源与 CustomVoice
 隔离，默认模型仍为 CustomVoice。接续不写入临时音色、不自动迁移或生成预置参考。
 能力标记表示实现已提供，听感改善须试听对照音频后单独验收。

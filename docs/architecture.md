@@ -128,5 +128,9 @@ producer 在当前执行内保存最多一个 `SpeechContext`（不可变共享 
 默认 MOSS Nano 使用 Candle，ONNX 保留为显式 `nano` 模型项。未指定 MOSS 模型时，能力目录、
 设备选择、准备路径与校准 revision 均解析到 `nano-candle`（已编译时）；只启用 `moss` 的构建使用 ONNX。
 MOSS Nano 用前段转写与当前文字建立无用户参考的 continuation prompt，把音频 codes 放入
-assistant 前缀；codec 先消费前缀建立状态，丢弃前缀 PCM 后只输出新帧。Qwen 0.6B Base
-复用 Base ICL 编码，OmniVoice 复用 VoiceClonePrompt；临时 prompt 均只存在原生 owner 的内存中。
+assistant 前缀；codec 先消费前缀建立状态，丢弃前缀 PCM 后只输出新帧。Local 使用官方
+无参考 user 消息与 assistant 音频前缀，采用相同 decoder 预热规则。Realtime 按官方
+make_user_prompt 把前段文字与音频按 12 token 延迟打包为前一轮上下文，并将同一音频
+用作滚动音色参考；它从新 assistant 轮次生成，属于上下文接续而非 Local 的音频前缀格式。
+Qwen 0.6B / 1.7B Base 复用 Base ICL 编码，OmniVoice 复用 VoiceClonePrompt，VoxCPM2
+使用前段转写与 16 kHz 音频建立 continuation reference；临时 prompt 均只存在原生 owner 的内存中。

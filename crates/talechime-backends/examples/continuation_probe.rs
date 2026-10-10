@@ -212,7 +212,7 @@ async fn run() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().collect();
     anyhow::ensure!(
         args.len() == 8,
-        "backend verified-model-directory output-directory cpu|metal voice on|off corpus.txt"
+        "backend verified-model-directory output-directory cpu|metal|cuda voice on|off corpus.txt"
     );
     let directory = PathBuf::from(&args[2]);
     let output = PathBuf::from(&args[3]);
@@ -220,6 +220,7 @@ async fn run() -> anyhow::Result<()> {
     let device = match args[4].as_str() {
         "cpu" => Device::Cpu,
         "metal" => Device::Metal,
+        "cuda" => Device::Cuda,
         _ => anyhow::bail!("invalid device"),
     };
     let continuation = match args[6].as_str() {
@@ -251,14 +252,51 @@ async fn run() -> anyhow::Result<()> {
             ))
         }
         #[cfg(feature = "qwen")]
-        "qwen" => {
-            talechime_backends::qwen::resources::prepare_model(
+        "qwen" | "qwen-base17" => {
+            let model = if args[1] == "qwen-base17" {
+                talechime_backends::qwen::models::Model::Base17
+            } else {
+                talechime_backends::qwen::models::Model::Base06
+            };
+            talechime_backends::qwen::resources::prepare_model(&directory, model, progress.clone())
+                .await?;
+            Rc::new(talechime_backends::qwen::QwenBackend::load_on(directory, device).await?)
+        }
+        #[cfg(feature = "voxcpm")]
+        "voxcpm" | "voxcpm-bf16" => {
+            let model = if args[1] == "voxcpm-bf16" {
+                talechime_backends::voxcpm::models::Model::OriginalBf16
+            } else {
+                talechime_backends::voxcpm::models::Model::Q8
+            };
+            talechime_backends::voxcpm::resources::prepare_model(
                 &directory,
-                talechime_backends::qwen::models::Model::Base06,
+                model,
                 progress.clone(),
             )
             .await?;
-            Rc::new(talechime_backends::qwen::QwenBackend::load_on(directory, device).await?)
+            Rc::new(
+                talechime_backends::voxcpm::VoxBackend::load_model_on(directory, model, device)
+                    .await?,
+            )
+        }
+        #[cfg(feature = "moss-candle")]
+        "moss-local" | "moss-realtime" => {
+            let mode = if args[1] == "moss-local" {
+                talechime_backends::moss::candle::Mode::Local
+            } else {
+                talechime_backends::moss::candle::Mode::Realtime
+            };
+            talechime_backends::moss::candle::resources::prepare(
+                &directory,
+                mode,
+                progress.clone(),
+            )
+            .await?;
+            Rc::new(
+                talechime_backends::moss::candle::CandleBackend::load_on(directory, mode, device)
+                    .await?,
+            )
         }
         #[cfg(feature = "omnivoice")]
         "omnivoice" => {

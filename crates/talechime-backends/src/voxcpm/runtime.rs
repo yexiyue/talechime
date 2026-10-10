@@ -5,6 +5,7 @@ use tts_core::backend::{AudioChunk, BackendError, Pcm};
 use tts_protocol::Device;
 use voxcpm::{Model, Options, Outcome};
 pub(super) struct Request {
+    pub context: Option<tts_core::SpeechContext>,
     pub text: String,
     pub voice: String,
     pub audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
@@ -65,7 +66,15 @@ fn generate(
     request: &Request,
 ) -> Result<(), BackendError> {
     let cancel = || request.audio.is_closed();
-    let reference = if request.voice.starts_with("custom:") {
+    let reference = if let Some(context) = &request.context {
+        let samples = crate::reference::mono(context.pcm(), 16000)
+            .map_err(|e| BackendError::Synthesis(e.to_string()))?;
+        Some(
+            model
+                .reference(&samples, Some(context.text().into()), &cancel)
+                .map_err(|e| BackendError::Synthesis(e.to_string()))?,
+        )
+    } else if request.voice.starts_with("custom:") {
         Some(
             cache
                 .reference(model, variant, device, directory, &request.voice, &cancel)

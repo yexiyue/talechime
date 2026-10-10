@@ -189,7 +189,7 @@ flowchart LR
 
 ## 段落内接续
 
-OmniVoice、Qwen **0.6B Base** 与 MOSS Nano 默认使用前段完整文字/音频条件，软换行和
+OmniVoice、Qwen **0.6B / 1.7B Base**、VoxCPM2 与 MOSS Nano / Local / Realtime 默认使用前段完整文字/音频条件，软换行和
 同音色连续分块保留参考，硬段落及音色变化重置。`--no-continuation` 可关闭，优先于计划文件。
 支持接续不代表主观听感已验收；规则及库选项见[段落内接续](docs/library.md#段落内接续)。
 

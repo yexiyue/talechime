@@ -251,6 +251,19 @@ fn backend_directory_and_switch_are_lightweight() {
         ]
     );
     assert_eq!(catalog[0].default_voice, "Weiguo");
+    for caps in &catalog {
+        let supported = match (caps.backend.as_str(), caps.model.as_deref()) {
+            ("qwen", Some("0.6b-base" | "1.7b-base")) => true,
+            ("qwen", _) => false,
+            ("moss" | "voxcpm" | "omnivoice", _) => true,
+            _ => panic!("unexpected model in catalog"),
+        };
+        assert_eq!(
+            caps.continuation, supported,
+            "{}/ {:?}",
+            caps.backend, caps.model
+        );
+    }
     for (revision, backend, voice) in [(0, "qwen", "uncle_fu"), (1, "moss", "Weiguo")] {
         let changed = worker.send(
             &format!("switch-{revision}"),
