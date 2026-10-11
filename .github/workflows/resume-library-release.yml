@@ -1,0 +1,61 @@
+name: Resume validated library release
+on:
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: Original Publish Rust libraries run whose checks passed
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: publish-rust-libraries
+  cancel-in-progress: false
+jobs:
+  resume:
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - name: Verify original release checks
+        id: validated
+        uses: actions/github-script@v7
+        env:
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+        with:
+          script: |
+            if (!/^\d+$/.test(process.env.RELEASE_RUN_ID)) {
+              throw new Error('Invalid release run ID');
+            }
+            const run_id = Number(process.env.RELEASE_RUN_ID);
+            const { data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id });
+            if (run.path !== '.github/workflows/publish-libraries.yml' || run.status !== 'completed') {
+              throw new Error('Expected a completed original library release run');
+            }
+            const required = [
+              'Run cargo fmt --all --check',
+              'Run cargo test --locked --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/moss-candle,talechime/asr --lib --tests --examples',
+              'Run cargo clippy --locked --workspace --all-targets --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/moss-candle,talechime/asr -- -D warnings',
+              'Run cargo test --locked -p talechime --no-default-features',
+              'Run cargo doc --locked --no-deps --document-private-items --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/moss-candle,talechime/asr --examples',
+            ];
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, { ...context.repo, run_id });
+            const checked = jobs.some(job => job.name === 'publish' && required.every(name =>
+              job.steps.some(step => step.name === name && step.conclusion === 'success')));
+            if (!checked || !/^[0-9a-f]{40}$/.test(run.head_sha)) {
+              throw new Error('Original source has not passed every required check');
+            }
+            core.setOutput('sha', run.head_sha);
+            core.info(`Resuming validated source ${run.head_sha} from run ${run_id}`);
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.validated.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libssl-dev pkg-config cmake ninja-build
+      - name: Resume dependency publication
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: python3 .github/scripts/publish-libraries.py
