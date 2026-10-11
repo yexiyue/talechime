@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.89"
 license = "MIT"
 description = "Compile-target feature selection for the shared Candle runtime"
+repository = "https://github.com/yexiyue/talechime"
 
 [features]
 default = []

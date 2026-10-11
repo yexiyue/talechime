@@ -3,6 +3,8 @@ name="omnivoice"
 version="0.1.0"
 edition="2024"
 license="Apache-2.0"
+description="Native Candle OmniVoice inference for Talechime"
+repository="https://github.com/yexiyue/talechime"
 [dependencies]
 tts-candle-platform = { workspace = true, optional = true }
 candle-core.workspace=true

@@ -11,10 +11,7 @@ pub async fn prepare(directory: &Path, progress: mpsc::Sender<Event>) -> anyhow:
     )
     .await?;
     let temporary = tempfile::NamedTempFile::new_in(directory)?;
-    std::io::Write::write_all(
-        &mut temporary.as_file(),
-        include_bytes!("../../../omnivoice/assets/omnivoice.artifacts.json"),
-    )?;
+    std::io::Write::write_all(&mut temporary.as_file(), omnivoice::ARTIFACTS_JSON)?;
     temporary.persist(directory.join("omnivoice.artifacts.json"))?;
     Ok(())
 }

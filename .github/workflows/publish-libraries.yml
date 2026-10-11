@@ -1,0 +1,34 @@
+name: Publish Rust libraries
+on:
+  push:
+    tags: ['talechime-libs-v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: publish-rust-libraries
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libssl-dev pkg-config cmake ninja-build
+      - run: cargo fmt --all --check
+      - run: cargo test --locked --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/moss-candle,talechime/asr --lib --tests --examples
+      - run: cargo clippy --locked --workspace --all-targets --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/moss-candle,talechime/asr -- -D warnings
+      - run: cargo test --locked -p talechime --no-default-features
+      - run: cargo doc --locked --no-deps --document-private-items --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/moss-candle,talechime/asr --examples
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - name: Publish dependency graph
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: python3 .github/scripts/publish-libraries.py

@@ -37,6 +37,19 @@ CLI 与 backends 使用同名开关，计算库只提供 `cuda` / `metal` 平台
 
 Cargo 会统一同一计算库的 feature，可能使依赖同时拥有多个加速实现；各适配器仍按自己的开关报告设备，不能以底层 Candle 的统一 feature 推断模型可用性。MOSS 两种实现共用一个后端目录，`moss-candle` 依赖 `moss` 是当前设计；CPU Nano 与 GPU 实验模型的差异保留。
 
+## Rust 库发布
+
+`talechime-libs-v*` 标签触发独立库发布流程，不触发应用安装包构建。流程先完成 CPU
+模型组合的测试、Clippy、格式、rustdoc 和纯库检查，再按依赖顺序执行 `cargo publish`。
+协议 v7 使用 `talechime-protocol 0.2.0`，不兼容已发布的 0.1.0 / 协议 v5。
+Qwen 计算库使用 `talechime-qwen3-tts` / `talechime-qwen3-asr`，避免占用其他作者的包名；
+Rust 导入名不变。开发对照用 `voxcpm-sys` 不发布。
+
+发布失败后只重跑原提交的工作流；脚本查询同版本并核验 `.cargo_vcs_info.json` 的提交，
+已从该提交发布的包跳过，其他来源或 yanked 版本明确失败。上传结果未知时不会自动换版本。
+Cargo 发布验证会从打包源码构建，不依赖兄弟 crate 的文件系统路径。共享资源清单由计算库
+导出常量，核心测试夹具包含在核心包内。
+
 ## 原生验收
 
 迁移不升级模型、不改 PCM、EOS、取消、用户数据和检查点语义。历史数值与人工试听结论位于 `docs/records/`，平台差异、未通过项与实验入口必须如实记录。迁移后仍应执行独立协议握手、配置隔离、默认/扩展 CPU 构建及 GPU 编译检查。

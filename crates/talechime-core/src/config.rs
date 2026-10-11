@@ -307,7 +307,7 @@ mod tests {
     fn load_and_drop_do_not_write_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
-        let original = include_str!("../../talechime-protocol/tests/fixtures/preferences.json");
+        let original = include_str!("../tests/fixtures/preferences.json");
         std::fs::write(&path, original).unwrap();
         let store = ConfigStore::new(&path);
         let config = store.load().unwrap();
@@ -321,11 +321,7 @@ mod tests {
     fn commits_preserve_unknown_fields_and_reject_stale_revision() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
-        std::fs::write(
-            &path,
-            include_str!("../../talechime-protocol/tests/fixtures/preferences.json"),
-        )
-        .unwrap();
+        std::fs::write(&path, include_str!("../tests/fixtures/preferences.json")).unwrap();
         let store = ConfigStore::new(path);
         let voices = Capabilities {
             model: None,

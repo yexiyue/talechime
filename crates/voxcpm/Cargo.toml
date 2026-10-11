@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.89"
 license = "Apache-2.0"
 description = "Native Candle VoxCPM2 inference from the production GGUF weights"
+repository = "https://github.com/yexiyue/talechime"
 
 [features]
 default = []

@@ -2,6 +2,18 @@
 //!
 //! Model scheduling and the audio codec are independent of downloads, playback
 //! and configuration. Candidates remain outside the worker catalog until verified.
+/// Pinned resource manifests shared with host adapters.
+pub mod manifests {
+    /// Local model resources.
+    pub const LOCAL: &str = include_str!("../assets/local-1.7b.json");
+    /// Realtime model resources.
+    pub const REALTIME: &str = include_str!("../assets/realtime-1.7b.json");
+    /// Shared audio codec resources.
+    pub const CODEC: &str = include_str!("../assets/codec.json");
+    /// Voice-design model resources.
+    pub const VOICE_DESIGN: &str = include_str!("../assets/voice-design-1.7b.json");
+}
+
 pub mod codec;
 pub mod config;
 pub mod delay;

@@ -1,5 +1,8 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
+/// Pinned artifact metadata shared with host adapters.
+pub const ARTIFACTS_JSON: &[u8] = include_bytes!("../assets/omnivoice.artifacts.json");
+
 pub mod artifacts;
 pub mod audio_input;
 pub mod audio_tokenizer;

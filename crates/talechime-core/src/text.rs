@@ -282,11 +282,9 @@ mod tests {
 
     #[test]
     fn baseline_segments_keep_the_existing_speech_text() {
-        let text = include_str!("../../talechime-protocol/tests/fixtures/narration.txt");
-        let baseline: serde_json::Value = serde_json::from_str(include_str!(
-            "../../talechime-protocol/tests/fixtures/baseline-segments.json"
-        ))
-        .unwrap();
+        let text = include_str!("../tests/fixtures/narration.txt");
+        let baseline: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/baseline-segments.json")).unwrap();
         let actual = preprocess_text(text, 200);
         let rows = baseline.as_array().unwrap();
         assert_eq!(actual.len(), rows.len());

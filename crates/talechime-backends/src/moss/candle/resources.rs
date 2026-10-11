@@ -32,8 +32,8 @@ async fn manifest(
 }
 pub async fn prepare(root: &Path, mode: Mode, progress: mpsc::Sender<Event>) -> anyhow::Result<()> {
     let json = match mode {
-        Mode::Local => include_str!("../../../../moss-tts/assets/local-1.7b.json"),
-        Mode::Realtime => include_str!("../../../../moss-tts/assets/realtime-1.7b.json"),
+        Mode::Local => moss_tts::manifests::LOCAL,
+        Mode::Realtime => moss_tts::manifests::REALTIME,
     };
     manifest(&mode.directory(root), mode.id(), json, progress.clone()).await?;
     codec(root, progress).await
@@ -42,7 +42,7 @@ async fn codec(root: &Path, progress: mpsc::Sender<Event>) -> anyhow::Result<()>
     manifest(
         &codec_directory(root),
         "codec",
-        include_str!("../../../../moss-tts/assets/codec.json"),
+        moss_tts::manifests::CODEC,
         progress,
     )
     .await
@@ -51,7 +51,7 @@ pub async fn prepare_design(root: &Path, progress: mpsc::Sender<Event>) -> anyho
     manifest(
         &design_directory(root),
         "voice-design-1.7b",
-        include_str!("../../../../moss-tts/assets/voice-design-1.7b.json"),
+        moss_tts::manifests::VOICE_DESIGN,
         progress.clone(),
     )
     .await?;
