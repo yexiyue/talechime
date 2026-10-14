@@ -21,6 +21,10 @@
 - [工具链与平台](knowledge/toolchain.md)：原生依赖、设备探测、构建、平台限制和实验记录。
 - [会话与宿主集成](knowledge/booksource.md)：从 TRNovel 提取的听书知识；原阅读器专属条目为历史背景。
 
+## 实施路线
+
+- [独立生成与长文本表达：Candle 实施计划](independent-tts-candle-plan.md)：候选模型可行性、试听筛选、分阶段移植、逐段表演计划与验收条件；尚未实现的规划。
+
 ## 模型与平台验收
 
 - [生成参数与 seed 的协议及后端缝](records/generation-params-seam-2026-10-10.md)：ParameterSpec 目录、PlanRequest.params/seed、Backend 单请求入口与生产者 seed 策略。
