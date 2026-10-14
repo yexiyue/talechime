@@ -19,7 +19,9 @@
 1. **消歧模型**：起步以 g2pW 建立基线（BERT 级、官方 ONNX checkpoint、简体与拼音输出，`tts-backend-plan.md:112`）；小说领域增量微调——人名读音、古风用词、口语语气词，数据用蒸馏管道产出，配方与 CastGlean 四分类器同构（encoder 全参微调）。变调/轻声/儿化等确定性规则保留在 G2P 内，神经模型只负责歧义字判定。
 2. **前端归属纪律不变**（`tts-backend-plan.md:68`）：不把一个后端的注音/拼音结果传给其他后端。神经消歧模型输出标准拼音，可以共享；各后端自持拼音 → 音素/token 的映射，Kokoro 的 v1.1-zh 注音 token、声调与词表必须对齐，不混用旧 IPA 路径。
 3. **注入接口**：`KokoroTts::synth` 当时内部自动调用 G2P、无外部音素注入的公开方法（`tts-backend-plan.md:117`）。替换前端需要为封装增加显式音素合成接口，拼音字符串不得当作普通正文送入。
-4. **ZipVoice**：同为非 AR 声学前端，消歧模型与拼音→音素映射模式可复用，但其问题不止 G2P——前端是 vendored eSpeak（原生依赖，当年连同后端一起移除以简化工具链），且 CPU 实测 RTF 1.12–1.20 > 1、首 PCM 4.9–6.6s、峰值内存 ~1.1GB（`tts-model-tiers-acceptance.md`），听感本身是当时第二名。读音修复只是复活的必要条件，性能与前端重写需另立决策；一期只做 Kokoro。
+4. **ZipVoice**：同为非 AR 声学前端，消歧模型与拼音→音素映射模式可复用（"17 组官方完整前端音素对照"映射数据已整理），但其问题不止 G2P——前端是 vendored eSpeak（原生依赖，当年连同后端一起移除以简化工具链），且 CPU 实测 RTF 1.12–1.20 > 1、首 PCM 4.9–6.6s、峰值内存 ~1.1GB（`tts-model-tiers-acceptance.md`），听感本身是当时第二名。读音修复只是复活的必要条件，性能与前端重写需另立决策；一期只做 Kokoro。
+   - **Rust 化可行性（2026-10-14 核查）**：无障碍。声学模型（多步 ODE 前向 + Vocos ISTFT）全是标准算子，Candle 移植与既有四个后端同类且零原生依赖；FFT/ISTFT 走 rustfft（仓库先例：qwen3-asr `mel.rs`）；eSpeak 前端由共享 G2P 替代。社区无现成 Rust 移植（k2 系走 ONNX 导出），属移植活。**性能债与实现语言无关**：CPU RTF>1 根因是模型规模 × ODE 步数 × CPU 算力，重写仅可能改善内存（省 ORT arena ~1.1GB）与首响延迟。非 AR，`continuation=false` 同云后端降级语义。
+   - **档位定位（2026-10-14 决策）**：ZipVoice 定位**轻量 GPU 档**，取其听感优势（用户听感判断：当时第二名，优于 OmniVoice），GPU 推理绕开 CPU RTF 债；不做 CPU 草稿档候选。Kokoro 反之定位 CPU 草稿档——用户听感判断其**无情感/表现力弱**，草稿档的校对用途可容忍该短板。
 
 ## 验收设计
 
@@ -30,7 +32,7 @@
 
 ## 战略位置
 
-- 多音字解决 → Kokoro/ZipVoice 类 CPU 后端复活 → 无 GPU 的"本地草稿"档位成立。引擎三档：CPU 本地草稿、GPU 本地草稿+终稿、云端终稿（云端后端为另一条规划线，`Backend` trait 与 `Capabilities` 已具备引擎无关形状）。
+- 多音字解决 → Kokoro 复活 → 无 GPU 的"本地草稿"档位成立；ZipVoice 以轻量 GPU 档回归（听感优势，GPU 绕开 RTF 债）。引擎档位：CPU 本地草稿（Kokoro，快而免费，无情感可容忍）、GPU 轻量（ZipVoice，听感）、GPU 本地草稿+终稿（现有 Candle 系）、云端终稿（云端后端为另一条规划线，`Backend` trait 与 `Capabilities` 已具备引擎无关形状）。
 - 本任务同时是训练能力验证的首个完整闭环：蒸馏数据 → 全参微调 → 部署（ONNX/ort 或 candle）→ readback 验收。
 
 ## 明确不做
