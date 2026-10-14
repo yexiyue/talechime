@@ -42,7 +42,7 @@ cargo run --locked -p talechime-core --example plan_session -- --after-chapter
 
 ### 原有会话 API
 
-原 `novel-tts` 库更名为 `talechime-core`。消费者在 Cargo.toml 中使用 `tts-core = { package = "talechime-core", version = "0.4.0" }`，Rust 引用为 `tts_core`；当前工作区也可使用对应 path 依赖。
+原 `novel-tts` 库更名为 `talechime-core`。消费者在 Cargo.toml 中使用 `tts-core = { package = "talechime-core", version = "0.4.1" }`，Rust 引用为 `tts_core`；当前工作区也可使用对应 path 依赖。
 
 此次重构移除 `NovelTTS`、`ChapterTTS`、`Player` 和无界音频 queue API，不再公开 Kokoro 或 rodio 类型。使用 `backend::Backend`、`player::Playback` 和 `session::SessionManager`；位置为 `TextRange` 原文 UTF-8 字节范围，结束原因是 completed/cancelled/failed。示例见 `../talechime-backends/examples/moss.rs`。
 

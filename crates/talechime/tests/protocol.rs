@@ -405,3 +405,75 @@ fn cli_rejects_open_or_mismatched_plan_before_model_preparation() {
         assert!(!root.path().join("positions").exists());
     }
 }
+
+#[cfg(feature = "moss")]
+#[test]
+fn default_home_migration_keeps_hello_lightweight_and_legacy_voices_visible() {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::create_dir(home.path().join(".novel")).unwrap();
+    std::fs::write(
+        home.path().join(".novel/tts_config.json"),
+        r#"{"backend":"kokoro","voice":"Zf001","volume":0.7,"speed":1.3,"auto_play":true}"#,
+    )
+    .unwrap();
+    let models = home.path().join(".novel-tts/moss/models");
+    std::fs::create_dir_all(&models).unwrap();
+    let fake_weights = std::fs::File::create(models.join("fake.bin")).unwrap();
+    fake_weights.set_len(32 * 1024 * 1024).unwrap();
+    tts_backends::moss::voices::VoiceStore::new(&home.path().join(".novel-tts/moss"))
+        .save(
+            "custom:reader".into(),
+            "Legacy Reader".into(),
+            vec![vec![1; 16]; 20],
+        )
+        .unwrap();
+    let began = std::time::Instant::now();
+    let mut child = ProcessCommand::new(env!("CARGO_BIN_EXE_talechime"))
+        .arg("--protocol")
+        .env("HOME", home.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    for (id, command) in [
+        ("hello", Command::Hello),
+        ("config", Command::GetConfig),
+        ("end", Command::Shutdown),
+    ] {
+        input
+            .write_all(
+                &encode(&Request {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: id.into(),
+                    session_id: None,
+                    command,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    drop(input);
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(began.elapsed() < std::time::Duration::from_secs(5));
+    let messages: Vec<Message> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(messages.iter().any(|message| matches!(&message.event, Event::Ready(ready) if ready.iter().any(|caps| caps.voices.iter().any(|voice| voice == "custom:reader")))));
+    assert!(messages.iter().any(|message| matches!(&message.event, Event::Config(config) if config.backend != "kokoro" && config.volume == 0.7 && config.speed == 1.3 && config.auto_play)));
+    assert!(
+        !home
+            .path()
+            .join(".talechime/resources/moss/models/fake.bin")
+            .exists()
+    );
+    assert!(home.path().join(".novel-tts/moss/models/fake.bin").exists());
+}

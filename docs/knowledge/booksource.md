@@ -347,3 +347,13 @@ Backend 必须声明稳定资源身份，custom 音色暂不缓存。候选使�
 缓存命中仅使 generated_end 到全文；played_end 与检查点仍由实际播放推进。
 候选以 talechime-candidate-*.staging 命名，在写入 MAGIC 前取得文件锁；prune 仅回收能取得锁且标记有效的孤儿。
 空文件（创建窗口）、未知文件与仍有执行持锁的候选不会删除，强制退出遗留文件在后续 prune 时释放。
+
+
+### 2026-10-14 旧 worker 数据自动迁移
+
+只有默认路径的 Talechime 可执行程序显式调用 LegacyMigration；AppPaths 和宿主 library 没有迁移副作用。
+旧配置与检查点在启动复制；支持的旧配置保留字节，退休/缺 backend 转当前默认模型并保留播放偏好和未知字段。
+startup 音色以完整 bundle 有界迁移（总 64 MiB，JSON 2 MiB，参考 32 MiB），确保 Hello 能列旧 custom 音色。
+实际 Prepare 在 blocking owner 内继续校验并流式迁剩余音色和模型；资源普通 tree 跳过 voices，不能绕过验证。
+新 voice bundle 整包优先，避免旧 reference 混入新 metadata。每阶段成功 marker + 文件锁，逐文件 atomic noclobber，源保留。
+取消先置标记、每 1 MiB 检查，再等待 CopyWork.closed 释放 migration 文件锁；不能只 abort 外层 future。

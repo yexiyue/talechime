@@ -165,7 +165,7 @@ flowchart LR
 | 听书恢复点 | `~/.talechime/checkpoints/` |
 | 模型、音色、编码缓存与校准资源 | `~/.talechime/resources/` |
 
-保留 `--config`、`--checkpoint-dir`、`--model-dir` 显式参数。旧 `novel-tts` 入口已移除，旧目录不读取、不删除、不自动迁移；复用已有资源见[手工搬迁](docs/migration.md)。配置使用修订检查和原子替换，损坏数据不覆盖；退休后端需手工重新选择。
+保留 `--config`、`--checkpoint-dir`、`--model-dir` 显式参数。旧 `novel-tts` 入口已移除。0.4.1 起默认路径自动迁移旧配置、检查点和资源，保留原文件并优先使用已有新数据；显式自定义路径不迁移。见[自动迁移与手工补救](docs/migration.md)。配置使用修订检查和原子替换，损坏数据不覆盖；退休后端需手工重新选择。
 
 ## 路线图
 

@@ -35,6 +35,8 @@ impl Response {
 }
 
 pub struct Worker {
+    pub(crate) legacy_migration: Option<tts_core::migration::LegacyMigration>,
+    migration_copy: Option<crate::migration::CopyWork>,
     readback_models: bool,
     store: ConfigStore,
     checkpoints: CheckpointStore,
@@ -57,6 +59,8 @@ impl Worker {
     ) -> Self {
         Self {
             readback_models: false,
+            legacy_migration: None,
+            migration_copy: None,
             store,
             checkpoints,
             resources,
@@ -169,6 +173,9 @@ impl Worker {
             let _ = task.await;
             self.disconnect_progress();
         }
+        if let Some(copy) = self.migration_copy.take() {
+            copy.cancel_and_wait().await;
+        }
         self.resource_state = SessionState::Idle;
     }
     fn disconnect_progress(&mut self) {
@@ -280,7 +287,11 @@ impl Worker {
                             return Response::error("backend_unavailable", "model", error);
                         }
                     };
-                    let config = match self.store.initialize(&caps) {
+                    let config = match if self.legacy_migration.is_some() {
+                        Ok(config)
+                    } else {
+                        self.store.initialize(&caps)
+                    } {
                         Ok(config) => config,
                         Err(error) => return Response::error("config_invalid", "config", error),
                     };
@@ -296,7 +307,20 @@ impl Worker {
                         }
                     }));
                     let readback = self.readback_models;
+                    let migration = self.legacy_migration.clone();
+                    let store = self.store.clone();
+                    let copy = crate::migration::CopyWork::default();
+                    self.migration_copy = Some(copy.clone());
                     self.preparing = Some(tokio::task::spawn_local(async move {
+                        let migrating = migration.is_some();
+                        crate::migration::resources(migration, Some(&progress), copy).await;
+                        let config = if migrating {
+                            let caps = resources
+                                .capabilities_for(&config.backend, config.model.as_deref())?;
+                            store.initialize(&caps)?
+                        } else {
+                            config
+                        };
                         crate::preparation::prepare_models(resources, config, progress, readback)
                             .await
                     }));

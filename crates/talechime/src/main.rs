@@ -4,6 +4,7 @@ mod cli;
 #[path = "../tests/library/fixture.rs"]
 #[allow(dead_code)] // Binary adapter tests use only normal/long fixture modes.
 mod fixture;
+mod migration;
 mod plan_input;
 mod preparation;
 mod protocol;
@@ -142,6 +143,27 @@ fn parse_param(raw: &str) -> Result<(String, tts_protocol::ParamValue), String> 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    let legacy_migration =
+        if args.config.is_none() && args.checkpoint_dir.is_none() && args.model_dir.is_none() {
+            let paths = tts_core::paths::AppPaths::user_default()?;
+            let home = paths
+                .root()
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("application home unavailable"))?;
+            let migration = tts_core::migration::LegacyMigration::from_home(home);
+            migration::startup(&migration, &resources::Resources::new(None)?);
+            Some(migration)
+        } else {
+            None
+        };
+    if !args.protocol {
+        migration::resources(
+            legacy_migration.clone(),
+            None,
+            migration::CopyWork::default(),
+        )
+        .await;
+    }
     #[cfg(feature = "asr")]
     if let Some(Commands::Verify {
         text,
@@ -249,7 +271,14 @@ async fn main() -> anyhow::Result<()> {
             }
             voices::run(command, resources, &selection).await
         } else if args.protocol {
-            protocol::run(config, checkpoints, resources, args.readback_models).await
+            protocol::run(
+                config,
+                checkpoints,
+                resources,
+                args.readback_models,
+                legacy_migration,
+            )
+            .await
         } else {
             cli::run(
                 args.file.ok_or_else(|| {

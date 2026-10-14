@@ -1,12 +1,19 @@
-# 手工搬迁旧听书数据
+# 自动迁移与手工补救
 
-关闭旧 worker 并备份。新版不读取、不删除旧目录，不自动迁移退休后端。
+0.4.1 起，使用默认路径的 Talechime 在启动时自动迁移旧听书数据。请先退出旧程序；迁移保留原文件，不删除旧目录，也不覆盖已有新数据。直接使用 Rust 库不会迁移宿主文件。
 
-1. 将 `~/.novel/tts_config.json` 复制到 `~/.talechime/config.json`。
-2. 将 `~/.novel/tts/checkpoints/` 内容复制到 `~/.talechime/checkpoints/`。
-3. 将 `~/.novel-tts/` 的全部内容整体复制到 `~/.talechime/resources/`，保留模型、音色、编码缓存和校准文件的相对结构，不增加旧目录名这一层。
-4. 若已有新配置或资源，先人工核对/合并，不覆盖新数据。旧 Kokoro / ZipVoice 配置需手工选择支持的模型、音色和设备，或移开配置后重新设置。
+| 旧位置 | 新位置 |
+| --- | --- |
+| `~/.novel/tts_config.json` | `~/.talechime/config.json` |
+| `~/.novel/tts/checkpoints/` | `~/.talechime/checkpoints/` |
+| `~/.novel-tts/` 的内容 | `~/.talechime/resources/`，保持相对结构 |
 
-显式 `--config`、`--model-dir`、`--checkpoint-dir` 仍然有效。检查点格式、正文摘要和字节坐标保持原样。仅路径变化不会要求重新下载模型；完整资源仍需校验。旧文件可在确认后自行删除。
+小配置、检查点和受限的音色数据在启动时迁入。大模型资源在实际准备模型或操作音色时复制，协议 Hello 不等待权重搬迁；无需重新下载完整的旧资源，准备时仍校验固定模型清单。
 
-TRNovel 的阅读数据、外观、阅读偏好和 worker 路径由 TRNovel 自己管理，见其[迁移指南](https://yexiyue.github.io/TRNovel/guides/migration/)。JSON Lines 继续使用 v5，应用版本无需一致。
+迁移使用锁、逐文件原子发布与分阶段完成标记。新文件或音色集合已存在时保留新数据；损坏、权限错误或无法识别的旧数据留在原位置并显示提示，未完成阶段下次重试。取消资源复制后等待当前复制任务释放所有权，随后才允许重新准备。
+
+旧配置使用已退休的 Kokoro / ZipVoice，或没有 backend 时，选择当前构建可用的默认模型、音色和设备，保留有效音量、速度、自动续章与未知配置字段，并提示原配置位置。不能通过当前能力校验的其他旧配置不发布。迁移会静态校验检查点 JSON、格式版本、摘要格式与来源文件名；实际恢复时继续验证当前正文摘要及 UTF-8 字节边界，不把路径搬迁当作正文验收。
+
+任一显式 `--config`、`--model-dir`、`--checkpoint-dir` 都会跳过默认目录自动迁移。手工使用这些路径，或处理冲突时，先备份，在目标不存在同名数据时复制；原目录内容直接放进 resources，不再增加 `.novel-tts` 层。
+
+TRNovel 的阅读数据与偏好由 TRNovel 0.18.0 自动迁移，见[阅读器迁移指南](https://yexiyue.github.io/TRNovel/guides/migration/)。两个应用通过 JSON Lines v7 通信，应用版本无需一致；普通阅读不依赖听书程序。旧目录确认无用后可由用户自行删除。

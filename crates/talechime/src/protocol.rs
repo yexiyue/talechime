@@ -83,6 +83,7 @@ pub async fn run(
     checkpoints: CheckpointStore,
     resources: Resources,
     readback_models: bool,
+    migration: Option<tts_core::migration::LegacyMigration>,
 ) -> anyhow::Result<()> {
     let (input_tx, mut input) = mpsc::channel(8);
     // A dedicated stdin thread can end with the process even if a broken parent
@@ -122,6 +123,7 @@ pub async fn run(
         &mut input,
         messages,
         readback_models,
+        migration,
     )
     .await;
     let written = tokio::time::timeout(Duration::from_secs(3), writer).await;
@@ -139,10 +141,12 @@ async fn serve(
     input: &mut mpsc::Receiver<Result<Option<Vec<u8>>, tts_protocol::ProtocolError>>,
     messages: mpsc::Sender<Message>,
     readback_models: bool,
+    migration: Option<tts_core::migration::LegacyMigration>,
 ) -> anyhow::Result<()> {
     let (events, session_events) = mpsc::channel::<SessionEvent>(64);
     let (progress, model_events) = mpsc::channel::<Event>(16);
     let mut worker = Worker::new(store, checkpoints, resources, events, progress);
+    worker.legacy_migration = migration;
     worker.enable_readback_models(readback_models);
     serve_worker(worker, session_events, model_events, input, messages).await
 }

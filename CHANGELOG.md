@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1 — 2026-10-14
+
+- Automatically migrate default legacy settings, checkpoints and resources without overwriting current data or removing originals. Custom paths and library path resolution remain explicit.
+- Keep protocol handshakes lightweight while copying large model resources during preparation; validate old voice bundles before making them visible.
+- Preserve completed migration stages and wait for cancelled copy work before preparing another model.
+
 ## 0.4.0 — 2026-10-14
 
 - Add whole-chapter audio caching for sealed plans with pinned seeds, preset voices and stable backend resource identities. Cache hits replay without synthesis; cancelled, failed and abandoned candidates are cleaned safely.

@@ -8,7 +8,7 @@
 
 ```toml
 [dependencies]
-talechime = { version = "0.4.0", default-features = false, features = ["moss-nano-candle"] }
+talechime = { version = "0.4.1", default-features = false, features = ["moss-nano-candle"] }
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 ```
 

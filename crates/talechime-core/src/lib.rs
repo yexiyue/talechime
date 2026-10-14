@@ -11,6 +11,7 @@ mod continuation;
 pub use continuation::SpeechContext;
 pub mod download;
 mod error;
+pub mod migration;
 pub mod params;
 pub mod paths;
 mod plan;
