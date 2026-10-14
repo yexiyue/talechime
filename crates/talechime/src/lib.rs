@@ -32,10 +32,10 @@ mod model_preparation;
 pub use engine::{Engine, EngineError, ModelOptions, PcmStream, run_local};
 pub use listening::{Listening, ListeningHandle, ListeningOptions, ListeningSession};
 pub use tts_core::{
-    CancellationHandle, GenerationParams, PlanError, PlanProgress, PlanSessionOptions, PlanState,
-    Playback, PlaybackPolicy, SeedPolicy, SourceSnapshot, SpeechAudio, SpeechContext, SpeechPlan,
-    SpeechSpan, StagingError, StagingOptions, SynthesisItem, SynthesisOptions, SynthesisState,
-    VoiceSnapshot,
+    CancellationHandle, ChapterCacheOptions, DEFAULT_MAX_BYTES, GenerationParams, PlanError,
+    PlanProgress, PlanSessionOptions, PlanState, Playback, PlaybackPolicy, SeedPolicy,
+    SourceSnapshot, SpeechAudio, SpeechContext, SpeechPlan, SpeechSpan, StagingError,
+    StagingOptions, SynthesisItem, SynthesisOptions, SynthesisState, VoiceSnapshot,
     backend::{AudioChunk, Backend, BackendError, Pcm, SegmentRequest, Segmentation, Streaming},
     session::{SessionError, SessionEvent},
 };

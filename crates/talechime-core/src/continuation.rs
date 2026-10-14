@@ -5,7 +5,32 @@ use std::sync::Arc;
 pub(crate) const MAX_BYTES: usize = 16 * 1024 * 1024;
 const MAX_TEXT_BYTES: usize = 2048;
 const MIN_SECONDS: u64 = 1;
-const MAX_SECONDS: u64 = 15;
+/// References at the moss segmentation ceiling (60 CJK chars ≈ 12–15 s of
+/// expressive narration) must survive as chain anchors, so the cap sits above
+/// the segmenter's emergency estimate.
+const MAX_SECONDS: u64 = 20;
+/// Default chained-audio budget before the reference re-anchors on the static
+/// voice. Self-chained generation drifts audibly after roughly ten sentences,
+/// so the default keeps chains well under that.
+pub(crate) const DEFAULT_CHAIN_SPAN_SECONDS: u64 = 45;
+
+pub(crate) fn validate_span(span: Option<u64>) -> Result<(), crate::session::SessionError> {
+    if span.is_some_and(|span| !(1..=3600).contains(&span)) {
+        return Err(crate::session::SessionError::Invalid(
+            "continuation span must be 1..=3600 seconds".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Whether accumulated chained audio has reached the re-anchor budget. The
+/// reset rides the next paragraph gap when one is available; a stream without
+/// gaps (dialogue lines, or the `none` policy) re-anchors mid-stream at twice
+/// the span instead of drifting unbounded.
+pub(crate) fn span_reset(chained_seconds: f64, span_seconds: u64, paragraph_gap: bool) -> bool {
+    let span = span_seconds as f64;
+    chained_seconds >= span && (paragraph_gap || chained_seconds >= span * 2.0)
+}
 /// Previous complete utterance and its unprocessed PCM. Cloning shares immutable data.
 #[derive(Debug, Clone)]
 pub struct SpeechContext {
@@ -27,7 +52,7 @@ impl SpeechContext {
             || !pcm.samples.iter().any(|v| v.abs() > 0.0001)
         {
             return Err(BackendError::Unsupported(
-                "continuation reference requires full non-silent 1..15s PCM and 1..2048 text bytes"
+                "continuation reference requires full non-silent 1..20s PCM and 1..2048 text bytes"
                     .into(),
             ));
         }
@@ -102,8 +127,15 @@ impl Candidate {
     }
 }
 
-/// Examine complete source lines, so a soft newline at a span boundary stays soft.
-pub(crate) fn hard_boundary(source: &str, start: usize, end: usize) -> bool {
+/// Examine complete source lines, so a soft newline at a span boundary stays
+/// soft. `boundary` decides which structural lines are allowed to reset the
+/// chain; `Paragraph` keeps the original behavior.
+pub(crate) fn hard_boundary(
+    source: &str,
+    start: usize,
+    end: usize,
+    boundary: tts_protocol::ContinuationBoundary,
+) -> bool {
     let anchor = if start > 0 && source.as_bytes().get(start - 1..start + 1) == Some(b"\r\n") {
         start - 1
     } else {
@@ -115,7 +147,15 @@ pub(crate) fn hard_boundary(source: &str, start: usize, end: usize) -> bool {
         let rest = &source[at..];
         let length = rest.find(['\r', '\n']).unwrap_or(rest.len());
         let line = &rest[..length];
-        let hard = crate::text::is_heading_line(line) || crate::text::is_non_spoken_line(line);
+        let hard = match boundary {
+            tts_protocol::ContinuationBoundary::Paragraph => {
+                crate::text::is_heading_line(line) || crate::text::is_non_spoken_line(line)
+            }
+            tts_protocol::ContinuationBoundary::Scene => {
+                crate::text::is_heading_line(line) || crate::text::is_decoration_line(line)
+            }
+            tts_protocol::ContinuationBoundary::None => false,
+        };
         if hard && (at >= start || !line.trim().is_empty()) {
             return true;
         }
@@ -145,7 +185,7 @@ mod tests {
     fn full_references_only_and_shared_raw_pcm() {
         for (text, audio) in [
             ("a", pcm(0, 0.1)),
-            ("a", pcm(16, 0.1)),
+            ("a", pcm(21, 0.1)),
             ("a", pcm(1, 0.0)),
             ("", pcm(1, 0.1)),
             ("a", pcm(1, f32::NAN)),
@@ -153,7 +193,7 @@ mod tests {
             assert!(SpeechContext::new(text, audio).is_err());
         }
         assert!(SpeechContext::new("字".repeat(683), pcm(1, 0.1)).is_err());
-        for seconds in [1, 15] {
+        for seconds in [1, 20] {
             let context = SpeechContext::new("a", pcm(seconds, 0.1)).unwrap();
             assert!(Arc::ptr_eq(&context.pcm, &context.clone().pcm));
         }
@@ -162,7 +202,7 @@ mod tests {
     fn overflow_drops_entire_candidate_and_keeps_previous_snapshot() {
         let previous = SpeechContext::new("a", pcm(1, 0.2)).unwrap();
         let mut candidate = Candidate::new(Some(&previous), true, "b");
-        candidate.push(&pcm(15, 0.1)).unwrap();
+        candidate.push(&pcm(20, 0.1)).unwrap();
         candidate.push(&pcm(1, 0.1)).unwrap();
         assert!(candidate.finish("b").is_none());
         assert_eq!(previous.pcm().samples[0], 0.2);
@@ -183,10 +223,11 @@ mod tests {
     }
     #[test]
     fn source_boundaries_distinguish_soft_lines_and_crlf() {
+        use tts_protocol::ContinuationBoundary::Paragraph;
         for text in ["甲\n乙", "甲\r\n乙", "甲\r乙"] {
             let start = text.find('乙').unwrap();
-            assert!(!hard_boundary(text, 0, text.len()));
-            assert!(!hard_boundary(text, start - 1, start));
+            assert!(!hard_boundary(text, 0, text.len(), Paragraph));
+            assert!(!hard_boundary(text, start - 1, start, Paragraph));
         }
         for text in [
             "甲\n\n乙",
@@ -195,7 +236,46 @@ mod tests {
             "甲\n第二章\n乙",
             "甲\n\u{200b}\n乙",
         ] {
-            assert!(hard_boundary(text, 0, text.len()), "{text:?}");
+            assert!(hard_boundary(text, 0, text.len(), Paragraph), "{text:?}");
         }
+    }
+    #[test]
+    fn boundary_policies_control_which_structure_resets_the_chain() {
+        use tts_protocol::ContinuationBoundary::{None, Paragraph, Scene};
+        // A real novel layout: every paragraph gap is a blank line.
+        let paragraphs = "第一段。\n\n第二段。\n\n第三段。";
+        let second = paragraphs.find("第二段").unwrap();
+        // Gap between the first and second paragraph, as the producer scans it.
+        let gap = hard_boundary(paragraphs, "第一段。".len(), second, Scene);
+        assert!(!gap);
+        assert!(hard_boundary(
+            paragraphs,
+            "第一段。".len(),
+            second,
+            Paragraph
+        ));
+        for text in ["甲\n第二章\n乙", "甲\n====\n乙"] {
+            assert!(hard_boundary(text, 0, text.len(), Scene), "{text:?}");
+        }
+        // Blank content stays soft under Scene; only Paragraph resets on it.
+        let zero_width = "甲\n\u{200b}\n乙";
+        assert!(!hard_boundary(zero_width, 0, zero_width.len(), Scene));
+        let space = "甲\n \n乙";
+        assert!(!hard_boundary(space, 0, space.len(), Scene));
+        for text in ["甲\n\n乙", "甲\n第二章\n乙", "甲\n----\n乙"] {
+            assert!(!hard_boundary(text, 0, text.len(), None), "{text:?}");
+        }
+    }
+    #[test]
+    fn span_resets_wait_for_a_gap_before_the_hard_ceiling() {
+        // Below the span nothing resets, gap or not.
+        assert!(!span_reset(0.0, 45, true));
+        assert!(!span_reset(44.9, 45, true));
+        // At the span a paragraph gap re-anchors; mid-stream waits.
+        assert!(span_reset(45.0, 45, true));
+        assert!(!span_reset(45.0, 45, false));
+        assert!(!span_reset(89.9, 45, false));
+        // Twice the span re-anchors even without any paragraph gap.
+        assert!(span_reset(90.0, 45, false));
     }
 }

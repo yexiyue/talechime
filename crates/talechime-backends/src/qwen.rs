@@ -140,6 +140,7 @@ pub struct QwenBackend {
     thread: Option<std::thread::JoinHandle<()>>,
     model: models::Model,
     directory: PathBuf,
+    cache_identity: Option<String>,
 }
 impl QwenBackend {
     pub async fn load_on(directory: PathBuf, device: Device) -> Result<Self, BackendError> {
@@ -168,6 +169,10 @@ impl QwenBackend {
                 "Qwen device {device:?} is unavailable"
             )));
         }
+        // Recovery may replace the execution device; only fixed paths can reuse audio.
+        let cache_identity = (recovery.is_none() || device == Device::Cpu).then(|| {
+            crate::cache_identity::identity("qwen-candle", model.revision(), device, &directory)
+        });
         let (requests, jobs) = mpsc::channel::<Request>(1);
         let (ready, loaded) = oneshot::channel();
         let model_directory = directory.clone();
@@ -183,6 +188,7 @@ impl QwenBackend {
             thread: Some(thread),
             model,
             directory: model_directory,
+            cache_identity,
         };
         loaded
             .await
@@ -192,6 +198,9 @@ impl QwenBackend {
 }
 
 impl Backend for QwenBackend {
+    fn cache_identity(&self) -> Option<String> {
+        self.cache_identity.clone()
+    }
     fn capabilities(&self) -> Capabilities {
         // A corrupt voice record is reported by catalog/stream validation; do not invent a voice.
         capabilities_at(&self.directory, self.model)

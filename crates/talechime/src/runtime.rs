@@ -346,6 +346,16 @@ impl Worker {
                     Err(error) => return Response::error("config_invalid", "config", error),
                 };
                 let (params, seed) = crate::plan_input::generation(input);
+                // Chapter reuse lives beside the resources root so tests with
+                // temporary homes stay isolated from the user's cache.
+                let cache =
+                    self.resources
+                        .root()
+                        .parent()
+                        .map(|home| talechime::ChapterCacheOptions {
+                            directory: home.join("cache/chapters"),
+                            max_bytes: talechime::DEFAULT_MAX_BYTES,
+                        });
                 let result = manager
                     .control
                     .start(
@@ -358,6 +368,9 @@ impl Worker {
                             restore_checkpoint: input.restore_checkpoint,
                             verification: input.verification.clone(),
                             continuation: input.continuation,
+                            continuation_boundary: input.continuation_boundary,
+                            continuation_span: input.continuation_span,
+                            cache,
                             params,
                             seed,
                             ..Default::default()
@@ -629,6 +642,8 @@ mod plan_tests {
             resume_byte: Some(0),
             restore_checkpoint: false,
             continuation: true,
+            continuation_boundary: Default::default(),
+            continuation_span: None,
             params: Default::default(),
             seed: None,
             verification: Default::default(),

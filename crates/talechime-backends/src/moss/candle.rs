@@ -99,6 +99,7 @@ pub struct CandleBackend {
     requests: Option<mpsc::Sender<runtime::Request>>,
     thread: Option<std::thread::JoinHandle<()>>,
     caps: Capabilities,
+    cache_identity: String,
 }
 impl CandleBackend {
     pub async fn load_on(root: PathBuf, mode: Mode, device: Device) -> Result<Self, BackendError> {
@@ -109,6 +110,12 @@ impl CandleBackend {
         }
         let caps =
             capabilities(&root, mode).map_err(|e| BackendError::Initialize(e.to_string()))?;
+        let cache_identity = crate::cache_identity::identity(
+            "moss-candle",
+            &format!("{}/{}", mode.revision(), resources::CODEC_REVISION),
+            device,
+            &mode.directory(&root),
+        );
         let (requests, jobs) = mpsc::channel(1);
         let (ready, loaded) = oneshot::channel();
         let thread = std::thread::Builder::new()
@@ -119,6 +126,7 @@ impl CandleBackend {
             requests: Some(requests),
             thread: Some(thread),
             caps,
+            cache_identity,
         };
         loaded
             .await
@@ -135,6 +143,9 @@ impl Drop for CandleBackend {
     }
 }
 impl Backend for CandleBackend {
+    fn cache_identity(&self) -> Option<String> {
+        Some(self.cache_identity.clone())
+    }
     fn capabilities(&self) -> Capabilities {
         self.caps.clone()
     }

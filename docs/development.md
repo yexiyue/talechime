@@ -41,12 +41,17 @@ Cargo 会统一同一计算库的 feature，可能使依赖同时拥有多个加
 
 `talechime-libs-v*` 标签触发独立库发布流程，不触发应用安装包构建。流程先完成 CPU
 模型组合的测试、Clippy、格式、rustdoc 和纯库检查，再按依赖顺序执行 `cargo publish`。
-协议 v7 使用 `talechime-protocol 0.2.0`，不兼容已发布的 0.1.0 / 协议 v5。
+协议 v7 使用 `talechime-protocol 0.3.0`（新增加法字段 `PlanRequest.continuation_boundary`
+与 `continuation_span`，缺省值保持 0.2.0 行为；旧宿主发出的计划仍被接受），不兼容已发布
+的 0.1.0 / 协议 v5。
 Qwen 计算库使用 `talechime-qwen3-tts` / `talechime-qwen3-asr`，避免占用其他作者的包名；
 Rust 导入名不变。开发对照用 `voxcpm-sys` 不发布。
 
-发布失败后只重跑原提交的工作流；脚本查询同版本并核验 `.cargo_vcs_info.json` 的提交，
-已从该提交发布的包跳过，其他来源或 yanked 版本明确失败。上传结果未知时不会自动换版本。
+发布失败后只重跑原提交的工作流；脚本查询同版本并核验 `.cargo_vcs_info.json` 的提交和包目录。
+已从该提交发布的包跳过；来自可验证祖先提交的版本，仅在该包目录与根 `Cargo.toml`
+相对当前发布提交完全未变时跳过，允许新的库版本复用未修改的计算库。
+同版本源码已变、来源未知或不属于当前发布历史、包目录不符及 yanked 版本明确失败。
+发布及恢复 checkout 保留完整历史；上传结果未知时不会自动换版本。
 若只在上传阶段失败，可调用 `Resume validated library release`，传入原发布 run ID；流程
 通过 GitHub API 核验该提交的全部检查成功，再 checkout 原提交并继续发布，不重复已通过的检查。
 恢复流程仅对明确拒绝上传的 429 新包限流按服务端时间等待，再重新核验已发布版本；

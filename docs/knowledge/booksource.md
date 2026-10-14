@@ -328,3 +328,22 @@ Mac M4 Pro 的 0.11 原加载路径实测 Realtime 提前 EOS、Local 非法控�
 **正确做法**：GPU 加载 API 返回不等于异步设备工作已完成。此处将同步错误归入现有 Initialize 路径，不放宽静音/EOS 检查。流式验收记录逐 PCM 块到达时间：Realtime 热首块约 400ms、18 块、每块通常 400ms；默认 3 秒预缓冲使实际起声晚于首 PCM。测试前检查阅读器 worker 的图形内存，避免两套 1.7B/codec 同时驻留；macOS RSS 很低不表示 GPU 权重已释放。
 
 **相关文件**：`crates/talechime-backends/src/moss/candle/runtime.rs`、`crates/talechime-core/src/session/buffering.rs`、`crates/talechime-core/src/audio.rs`。
+
+### Nano Candle 首步空 EOS（2026-10-12）
+
+`Nano produced empty speech` 表示模型在第一步采样 audio_end，未交付任何新音频帧，不是阅读器的协议错误。适配器只对成功结束但零帧的结果最多尝试三次；后两次从原 seed 确定性派生不同的 32 位采样种子，固定输入仍可复现。重试保持同一文字、音色与接续 prompt，不退回独立合成，不跳过正文。模型每次生成会清空全局 KV；零帧时 codec 未消费新帧、消费者未收到 PCM，因此不会重复已交付音频。取消、推理/解码错误及已有帧的失败直接传播；三次仍为空则显式失败。
+
+**相关文件**：`crates/talechime-backends/src/moss/nano.rs`。
+
+显式真实模型探针使用已有资源：`TALECHIME_NANO_EMPTY_ROOT=~/.talechime/resources cargo test --release --locked -p talechime-backends --lib real_first_step_eos -- --nocapture`。M4 Pro CPU、Yuewen、固定种子 653637408 的短句在原始生成入口先复现零帧 EOS，修复入口输出 115200 个 stereo 48 kHz PCM 样本（1.2 秒）并正常 End。此结果验证空 EOS 恢复，不代替原失败章节复测或内容/听感验收；`target/nano-empty/real-eos.log` 保存本地证据。
+
+
+### 2026-10-14 整章缓存执行所有权
+
+整章音频复用只接受 sealed + pinned seed + 从零开始 + 回读 Off，开放计划不能用当前前缀计算整章键。
+Backend 必须声明稳定资源身份，custom 音色暂不缓存。候选使用目标目录内独立 TempPath，取消时由执行所有权清理；
+成功验证后用 hard_link 原子发布且保留执行句柄与私有路径；淘汰已发布路径不影响正在播放的 spool。
+缓存读取校验及淘汰在 blocking 线程运行，并计入 PendingWrites，保持 LocalSet 控制命令与停止排空语义。
+缓存命中仅使 generated_end 到全文；played_end 与检查点仍由实际播放推进。
+候选以 talechime-candidate-*.staging 命名，在写入 MAGIC 前取得文件锁；prune 仅回收能取得锁且标记有效的孤儿。
+空文件（创建窗口）、未知文件与仍有执行持锁的候选不会删除，强制退出遗留文件在后续 prune 时释放。

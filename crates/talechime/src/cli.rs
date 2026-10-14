@@ -47,6 +47,10 @@ pub struct CliOptions {
     pub plan_file: Option<PathBuf>,
     pub after_chapter: bool,
     pub no_continuation: bool,
+    /// Chain-reset policy override; plan-file policy applies when absent.
+    pub continuation_boundary: Option<tts_protocol::ContinuationBoundary>,
+    /// Chained seconds before re-anchoring; plan-file value applies when absent.
+    pub continuation_span: Option<u64>,
     /// CLI generation parameters; applied on top of plan-file values.
     pub params: Vec<(String, tts_protocol::ParamValue)>,
     /// Pins sampling for a reproducible run; overrides a plan-file seed.
@@ -83,6 +87,8 @@ pub async fn run(
         plan_file,
         after_chapter,
         no_continuation,
+        continuation_boundary,
+        continuation_span,
         params,
         seed,
         mut verification,
@@ -102,6 +108,9 @@ pub async fn run(
         chapter: "file".into(),
     };
     let mut continuation = !no_continuation;
+    let boundary_override = continuation_boundary;
+    let mut continuation_boundary = boundary_override.unwrap_or_default();
+    let mut continuation_span = continuation_span;
     let (mut generation_params, mut seed_policy) =
         generation_settings(&Default::default(), None, &params, seed);
     let (plan, resume_byte, restore_checkpoint) = if let Some(path) = plan_file {
@@ -124,6 +133,12 @@ pub async fn run(
             generation_settings(&input.params, input.seed, &params, seed);
         verification = input.verification.clone();
         continuation &= input.continuation;
+        if boundary_override.is_none() {
+            continuation_boundary = input.continuation_boundary;
+        }
+        if continuation_span.is_none() {
+            continuation_span = input.continuation_span;
+        }
         (
             crate::plan_input::build(
                 &input,
@@ -230,6 +245,8 @@ pub async fn run(
                 restore_checkpoint,
                 verification,
                 continuation,
+                continuation_boundary,
+                continuation_span,
                 seed: seed_policy,
                 params: generation_params,
                 ..Default::default()

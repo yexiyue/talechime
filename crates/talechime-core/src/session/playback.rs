@@ -15,6 +15,7 @@ pub(super) struct Runner {
     pub(super) text: Arc<str>,
     pub(super) writes: Arc<PendingWrites>,
     pub(super) staging: StagingOptions,
+    pub(super) cache: Option<Arc<super::cache::ChapterCache>>,
 }
 
 impl Runner {
@@ -55,32 +56,99 @@ impl Runner {
         })
         .await?;
         self.save(byte, false).await?;
-        let (mut producer, mut rx) = super::producer::spawn(
-            self.backend.clone(),
-            self.text.clone(),
-            input.clone(),
-            byte,
-            Some(self.writes.clone()),
-            None,
-        );
-        let mut staged = None;
         let after_chapter =
             input.plan.borrow().playback_policy() == PlaybackPolicy::AfterChapterReady;
-        if after_chapter {
-            let storage = super::staging::prepare(
-                &mut rx,
-                &self.staging,
-                self.writes.clone(),
-                &self.text,
-                byte,
-                Some((&self.id, &self.events)),
-            )
-            .await?;
+        // Whole-chapter cache: only deterministic, from-the-top runs may read
+        // or write it, and a hit skips synthesis entirely.
+        let cache_entry = after_chapter
+            .then(|| {
+                let cache = self.cache.as_ref()?;
+                let seed = cache.eligible(byte, &input.seed, &input.verification)?;
+                if input.plan.borrow().state() != PlanState::Sealed {
+                    return None;
+                }
+                let identity = self.backend.cache_identity()?;
+                let caps = self.backend.capabilities();
+                let spans: Vec<_> = input.plan.borrow().spans().to_vec();
+                if spans.iter().any(|span| span.voice().starts_with("custom:")) {
+                    return None;
+                }
+                let key = super::cache::ChapterCache::key(
+                    &identity,
+                    &caps.backend,
+                    caps.model.as_deref(),
+                    self.source.hash(),
+                    seed,
+                    &input,
+                    &spans,
+                );
+                Some((cache.clone(), key))
+            })
+            .flatten();
+        let mut producer;
+        let mut rx;
+        let mut staged = None;
+        let cached = if let Some((cache, key)) = &cache_entry {
+            let cache = cache.clone();
+            let key = key.clone();
+            let text = self.text.clone();
+            super::staging::io(self.writes.clone(), move || {
+                cache.prune();
+                Ok(cache.lookup(&key, &text))
+            })
+            .await?
+        } else {
+            None
+        };
+        if let Some(storage) = cached {
+            if let Some((_, key)) = cache_entry.as_ref() {
+                eprintln!("chapter cache hit {key}; skipping synthesis");
+            }
+            input.generated.set(self.text.len());
             input.ready.set(true);
             let (reader, replay) = super::staging::replay(storage.clone(), self.writes.clone());
             producer = reader;
             rx = replay;
             staged = Some(storage);
+        } else {
+            let (spawned, spawned_rx) = super::producer::spawn(
+                self.backend.clone(),
+                self.text.clone(),
+                input.clone(),
+                byte,
+                Some(self.writes.clone()),
+                None,
+            );
+            producer = spawned;
+            rx = spawned_rx;
+            if after_chapter {
+                let persist = cache_entry
+                    .as_ref()
+                    .map(|(cache, key)| cache.publish_path(key));
+                let storage = super::staging::prepare(
+                    &mut rx,
+                    &self.staging,
+                    self.writes.clone(),
+                    &self.text,
+                    byte,
+                    Some((&self.id, &self.events)),
+                    persist,
+                )
+                .await?;
+                input.ready.set(true);
+                let (reader, replay) = super::staging::replay(storage.clone(), self.writes.clone());
+                producer = reader;
+                rx = replay;
+                staged = Some(storage);
+                if let Some((cache, _)) = cache_entry.as_ref() {
+                    let cache = cache.clone();
+                    super::staging::io(self.writes.clone(), move || {
+                        cache.prune();
+                        Ok(())
+                    })
+                    .await?;
+                }
+            }
         }
         let _producer = producer;
         // Keep the private directory alive until playback finishes or is cancelled.

@@ -119,6 +119,8 @@ mod tests {
                 resume_byte: None,
                 restore_checkpoint: true,
                 continuation: true,
+                continuation_boundary: Default::default(),
+                continuation_span: None,
                 params: Default::default(),
                 seed: None,
                 verification: Default::default(),
@@ -139,6 +141,54 @@ mod tests {
         let parsed: Request = serde_json::from_value(json).unwrap();
         assert!(matches!(parsed.command,Command::Start(plan) if !plan.continuation));
         assert_eq!(PROTOCOL_VERSION, 7);
+    }
+
+    #[test]
+    fn continuation_boundary_defaults_to_paragraph_and_accepts_all_policies() {
+        let mut json = serde_json::to_value(request()).unwrap();
+        json["payload"]
+            .as_object_mut()
+            .unwrap()
+            .remove("continuation_boundary");
+        let parsed: Request = serde_json::from_value(json.clone()).unwrap();
+        assert!(matches!(parsed.command, Command::Start(plan)
+            if plan.continuation_boundary == ContinuationBoundary::Paragraph));
+        for (wire, expected) in [
+            ("scene", ContinuationBoundary::Scene),
+            ("none", ContinuationBoundary::None),
+            ("paragraph", ContinuationBoundary::Paragraph),
+        ] {
+            json["payload"]["continuation_boundary"] = serde_json::json!(wire);
+            let parsed: Request = serde_json::from_value(json.clone()).unwrap();
+            assert!(
+                matches!(parsed.command, Command::Start(ref plan)
+                if plan.continuation_boundary == expected),
+                "{wire}"
+            );
+            let round: serde_json::Value = serde_json::to_value(&parsed).unwrap();
+            assert_eq!(
+                round["payload"]["continuation_boundary"],
+                serde_json::json!(wire)
+            );
+        }
+        json["payload"]["continuation_boundary"] = serde_json::json!("chapter");
+        assert!(serde_json::from_value::<Request>(json).is_err());
+    }
+
+    #[test]
+    fn continuation_span_defaults_off_and_roundtrips_seconds() {
+        let mut json = serde_json::to_value(request()).unwrap();
+        json["payload"]
+            .as_object_mut()
+            .unwrap()
+            .remove("continuation_span");
+        let parsed: Request = serde_json::from_value(json.clone()).unwrap();
+        assert!(matches!(parsed.command, Command::Start(ref plan)
+            if plan.continuation_span.is_none()));
+        json["payload"]["continuation_span"] = serde_json::json!(120);
+        let parsed: Request = serde_json::from_value(json).unwrap();
+        assert!(matches!(parsed.command, Command::Start(ref plan)
+            if plan.continuation_span == Some(120)));
     }
 
     #[test]
@@ -300,6 +350,8 @@ mod plan_tests {
             resume_byte: Some(0),
             restore_checkpoint: false,
             continuation: true,
+            continuation_boundary: ContinuationBoundary::Scene,
+            continuation_span: Some(45),
             params: Default::default(),
             seed: None,
             verification: Default::default(),

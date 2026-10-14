@@ -68,6 +68,10 @@ impl CancellationHandle {
 pub struct SynthesisOptions {
     /// Previous complete segment conditioning, where supported.
     pub continuation: bool,
+    /// Source structure that resets the continuation chain.
+    pub continuation_boundary: tts_protocol::ContinuationBoundary,
+    /// Chained seconds before the reference re-anchors; `None` uses default.
+    pub continuation_span: Option<u64>,
     /// Generation parameters validated against the prepared model's catalog.
     pub params: crate::params::GenerationParams,
     /// Sampling seed policy; Auto draws fresh randomness per attempt.
@@ -79,6 +83,8 @@ impl Default for SynthesisOptions {
     fn default() -> Self {
         Self {
             continuation: true,
+            continuation_boundary: tts_protocol::ContinuationBoundary::Paragraph,
+            continuation_span: None,
             params: crate::params::GenerationParams::default(),
             seed: crate::params::SeedPolicy::default(),
             verification: Default::default(),
@@ -151,6 +157,7 @@ impl SynthesisStream {
         {
             return Err(crate::verification::VerificationError::NotPrepared.into());
         }
+        crate::continuation::validate_span(options.continuation_span)?;
         let caps = backend.capabilities();
         options
             .params
@@ -186,6 +193,8 @@ impl SynthesisStream {
         input.verifier = verifier;
         input.verification = verification;
         input.continuation = options.continuation;
+        input.continuation_boundary = options.continuation_boundary;
+        input.continuation_span = options.continuation_span;
         input.params = options.params;
         input.seed = options.seed;
         let input = Rc::new(input);

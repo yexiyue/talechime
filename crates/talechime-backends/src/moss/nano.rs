@@ -79,11 +79,18 @@ pub struct NanoBackend {
     thread: Option<std::thread::JoinHandle<()>>,
     tokenizer: Option<Arc<SentencePieceProcessor>>,
     caps: Capabilities,
+    cache_identity: String,
     estimate: std::cell::RefCell<(String, tts_core::text::duration::DurationEstimator)>,
 }
 impl NanoBackend {
     pub async fn load_on(root: PathBuf, selected: Device) -> Result<Self, BackendError> {
         let caps = capabilities(&root).map_err(|e| BackendError::Initialize(e.to_string()))?;
+        let cache_identity = crate::cache_identity::identity(
+            "moss-nano-candle",
+            REVISION,
+            selected,
+            &directory(&root),
+        );
         let (requests, mut jobs) = mpsc::channel::<Request>(1);
         let (ready, loaded) = oneshot::channel();
         let thread = std::thread::Builder::new()
@@ -136,6 +143,7 @@ impl NanoBackend {
             thread: Some(thread),
             tokenizer: None,
             caps,
+            cache_identity,
             estimate: std::cell::RefCell::new((String::new(), Default::default())),
         };
         struct Loading {
@@ -229,6 +237,9 @@ impl Drop for NanoBackend {
     }
 }
 impl Backend for NanoBackend {
+    fn cache_identity(&self) -> Option<String> {
+        Some(self.cache_identity.clone())
+    }
     fn capabilities(&self) -> Capabilities {
         self.caps.clone()
     }
@@ -331,7 +342,6 @@ fn generate(
         }
     }
     let mut pending = Vec::new();
-    let mut generated = 0usize;
     let send = |codec: &mut moss_tts::codec::AudioCodec,
                 pending: &mut Vec<Vec<u32>>|
      -> anyhow::Result<()> {
@@ -346,20 +356,83 @@ fn generate(
         pending.clear();
         Ok(())
     };
-    model.generate(&rows, 375, job.seed, &cancelled, |frame| {
-        generated += 1;
-        pending.push(frame);
-        if pending.len() == 3 {
-            send(codec, &mut pending)?;
-        }
-        Ok(())
+    generate_nonempty(job.seed, |seed| {
+        let mut generated = 0usize;
+        model.generate(&rows, 375, seed, &cancelled, |frame| {
+            generated += 1;
+            pending.push(frame);
+            if pending.len() == 3 {
+                send(codec, &mut pending)?;
+            }
+            Ok(())
+        })?;
+        Ok(generated)
     })?;
-    anyhow::ensure!(generated > 0, "Nano produced empty speech");
     if !pending.is_empty() {
         send(codec, &mut pending)?;
     }
     send_audio(&job.audio, Ok(AudioChunk::End), &cancelled)?;
     Ok(())
+}
+
+/// Nano may sample EOS at its first step. Retry only that zero-frame result:
+/// the decoder and consumer have received no new frames, so no PCM is replayed.
+/// Seed derivation stays reproducible and distinct in Nano's 32-bit sampler.
+fn generate_nonempty(
+    seed: u64,
+    mut generate: impl FnMut(u64) -> anyhow::Result<usize>,
+) -> anyhow::Result<()> {
+    for attempt in 0..3u32 {
+        let attempt_seed = (seed as u32).wrapping_add(attempt.wrapping_mul(0x9e37_79b9));
+        if generate(u64::from(attempt_seed))? > 0 {
+            return Ok(());
+        }
+    }
+    anyhow::bail!("Nano produced empty speech after 3 attempts")
+}
+
+#[cfg(test)]
+mod empty_eos_tests {
+    use super::*;
+
+    #[test]
+    fn empty_eos_retries_with_distinct_reproducible_seeds() {
+        let mut seeds = Vec::new();
+        generate_nonempty(u64::MAX, |seed| {
+            seeds.push(seed);
+            Ok(usize::from(seeds.len() == 2))
+        })
+        .unwrap();
+        assert_eq!(seeds, [u64::from(u32::MAX), 0x9e37_79b8]);
+    }
+
+    #[test]
+    fn empty_eos_has_a_fixed_attempt_limit() {
+        let mut attempts = 0;
+        let error = generate_nonempty(42, |_| {
+            attempts += 1;
+            Ok(0)
+        })
+        .unwrap_err();
+        assert_eq!(attempts, 3);
+        assert!(error.to_string().contains("empty speech after 3 attempts"));
+    }
+
+    #[test]
+    fn successful_generation_and_other_errors_are_never_retried() {
+        for fail in [false, true] {
+            let mut attempts = 0;
+            let result = generate_nonempty(42, |_| {
+                attempts += 1;
+                if fail {
+                    anyhow::bail!("cancelled or failed after partial output");
+                }
+                Ok(1)
+            });
+            assert_eq!(attempts, 1);
+            assert_eq!(result.is_err(), fail);
+        }
+    }
 }
 
 /// Keep bounded backpressure while allowing the owner to cancel a full queue.
@@ -384,6 +457,74 @@ fn send_audio(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn real_first_step_eos_recovers_without_skipping_text() -> anyhow::Result<()> {
+        let Some(root) = std::env::var_os("TALECHIME_NANO_EMPTY_ROOT") else {
+            return Ok(());
+        };
+        let root = PathBuf::from(root);
+        let dir = directory(&root);
+        let device = CandleDevice::Cpu;
+        let mut model = moss_tts::nano::Nano::load(&dir.join("tts"), &device)?;
+        let mut codec = moss_tts::codec::AudioCodec::load(&dir.join("codec"), &device, DType::F32)?;
+        let tokenizer = SentencePieceProcessor::open(dir.join("tts/tokenizer.model"))?;
+        let tokens: Vec<i32> = tokenizer
+            .encode_to_ids(&super::super::text::normalize("陆鸣喃喃。"))?
+            .into_iter()
+            .map(|id| id as i32)
+            .collect();
+        let manifest: serde_json::Value =
+            serde_json::from_str(include_str!("assets/browser_poc_manifest.json"))?;
+        let codes =
+            super::super::voices::VoiceStore::new(&root.join("moss")).codes("Yuewen", &manifest)?;
+        let flat = super::super::prompt::rows(&manifest, &tokens, &codes, None)?;
+        let rows: Vec<Vec<u32>> = flat
+            .as_chunks::<17>()
+            .0
+            .iter()
+            .map(|row| row.iter().map(|id| *id as u32).collect())
+            .collect();
+        // This LCG seed's first draw is 1 - 2^-24: it selects EOS for
+        // this real prompt, reproducing the original zero-frame failure.
+        let seed = 653_637_408;
+        let mut frames = 0;
+        model.generate(&rows, 375, seed, &|| false, |_| {
+            frames += 1;
+            Ok(())
+        })?;
+        assert_eq!(frames, 0, "probe must first reproduce empty EOS");
+        let (audio, mut stream) = mpsc::channel::<Result<AudioChunk, BackendError>>(1);
+        let consumer = std::thread::spawn(move || {
+            let mut samples = 0;
+            let mut ended = false;
+            while let Some(chunk) = stream.blocking_recv() {
+                match chunk.unwrap() {
+                    AudioChunk::Pcm(pcm) => samples += pcm.samples.len(),
+                    AudioChunk::End => {
+                        ended = true;
+                        break;
+                    }
+                }
+            }
+            (samples, ended)
+        });
+        let job = Request {
+            tokens,
+            none_tokens: vec![],
+            context: None,
+            voice: "Yuewen".into(),
+            seed,
+            audio,
+        };
+        let result = generate(&root, &mut model, &mut codec, &job, &|| false);
+        drop(job);
+        let (samples, ended) = consumer.join().unwrap();
+        result?;
+        eprintln!("Nano first-step EOS: zero initial frames; recovered {samples} PCM samples");
+        assert!(samples > 0 && ended);
+        Ok(())
+    }
+
     #[test]
     fn cancellation_releases_a_full_pcm_queue() {
         let (sender, _receiver) = mpsc::channel(1);

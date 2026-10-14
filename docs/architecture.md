@@ -122,7 +122,13 @@ ListeningSession 是执行 owner，Listening 是该 owner 与库自建事件接�
 
 producer 在当前执行内保存最多一个 `SpeechContext`（不可变共享 PCM 与生成文字），
 与全局音色缓存和模型张量隔离。支持的 Backend 通过 `Backend::stream` 的 `SegmentRequest`
-接收可选前段、逐段 seed 与已校验的生成参数。
+接收可选前段、逐段 seed 与已校验的生成参数。链何时因原文结构清空由宿主决定：
+协议 `PlanRequest.continuation_boundary`（v7 加法字段）取 `paragraph`（空行/装饰线/标题，
+缺省旧行为）、`scene`（仅标题与装饰线，空段落间隔保持接续）或 `none`；自链累积的音色漂移
+由 `continuation_span`（秒，缺省 45）封顶：预算耗尽后在下一个段落间隔重锚静态参考，
+无间隔流在两倍预算处中途重锚。CLI 另有 `--continuation-boundary` 与 `--continuation-span`
+覆盖 plan 文件取值。交付路径在同一次执行内做有界响度对齐，
+消除段间采样造成的能量台阶；参考与限额语义见[库说明](library.md#段落内接续)。
 
 ### 生成参数与 seed
 

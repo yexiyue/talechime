@@ -74,6 +74,7 @@ pub struct MossBackend {
     owner: InferenceOwner,
     tokenizer: Arc<SentencePieceProcessor>,
     capabilities: Capabilities,
+    cache_identity: Option<String>,
     estimate: std::cell::RefCell<(String, tts_core::text::duration::DurationEstimator)>,
 }
 
@@ -119,6 +120,15 @@ impl MossBackend {
         crate::devices::validate(device)
             .map_err(|error| BackendError::Initialize(error.to_string()))?;
         let caps = capabilities(&directory).map_err(|e| BackendError::Initialize(e.to_string()))?;
+        let cache_identity =
+            (recovery.is_none() || device == tts_protocol::Device::Cpu).then(|| {
+                crate::cache_identity::identity(
+                    "moss-nano-onnx",
+                    resources::REVISION,
+                    device,
+                    &directory,
+                )
+            });
         let (requests, mut jobs) = mpsc::channel(1);
         let (ready, loaded) = oneshot::channel();
         let thread = std::thread::Builder::new()
@@ -216,6 +226,7 @@ impl MossBackend {
             owner: loading.owner,
             tokenizer,
             capabilities: caps,
+            cache_identity,
             estimate: std::cell::RefCell::new((String::new(), Default::default())),
         })
     }
@@ -330,6 +341,9 @@ impl MossBackend {
     }
 }
 impl Backend for MossBackend {
+    fn cache_identity(&self) -> Option<String> {
+        self.cache_identity.clone()
+    }
     fn capabilities(&self) -> Capabilities {
         self.capabilities.clone()
     }

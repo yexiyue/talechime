@@ -82,6 +82,12 @@ impl SegmentRequest<'_> {
 /// Domain interface shared by real and deterministic testing backends.
 pub trait Backend {
     fn capabilities(&self) -> Capabilities;
+    /// Stable identity of the prepared implementation, device, model and voice
+    /// resources. Return `None` when reproducible cache reuse cannot be proven.
+    /// Changing any synthesis resource must change this identity.
+    fn cache_identity(&self) -> Option<String> {
+        None
+    }
     /// Primary synthesis boundary. Every successful segment terminates with End.
     fn stream<'a>(&'a self, request: SegmentRequest<'a>) -> Streaming<'a>;
     /// Collect a stream for offline export and model comparison.

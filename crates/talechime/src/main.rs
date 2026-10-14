@@ -85,6 +85,17 @@ struct Args {
     /// Disable previous-segment conditioning, including when a plan enables it.
     #[arg(long, conflicts_with = "protocol")]
     no_continuation: bool,
+    /// Structure that resets the continuation chain (paragraph|scene|none);
+    /// defaults to the plan's policy, then paragraph gaps.
+    #[arg(
+        long,
+        value_parser = parse_continuation_boundary,
+        conflicts_with = "protocol"
+    )]
+    continuation_boundary: Option<tts_protocol::ContinuationBoundary>,
+    /// Chained seconds before the voice re-anchors (default 45).
+    #[arg(long, conflicts_with = "protocol")]
+    continuation_span: Option<u64>,
     /// Explicitly restart this file from its beginning, ignoring a stored checkpoint.
     #[arg(long, conflicts_with = "protocol")]
     restart: bool,
@@ -103,6 +114,11 @@ struct Args {
     /// Override the independent listening checkpoint directory.
     #[arg(long)]
     checkpoint_dir: Option<PathBuf>,
+}
+
+fn parse_continuation_boundary(raw: &str) -> Result<tts_protocol::ContinuationBoundary, String> {
+    serde_json::from_value::<tts_protocol::ContinuationBoundary>(serde_json::json!(raw))
+        .map_err(|_| format!("expected paragraph, scene or none, got {raw}"))
 }
 
 /// Parse name=value where the value is an int, float or quoted-by-shape text.
@@ -249,6 +265,8 @@ async fn main() -> anyhow::Result<()> {
                     plan_file: args.plan,
                     after_chapter: args.after_chapter,
                     no_continuation: args.no_continuation,
+                    continuation_boundary: args.continuation_boundary,
+                    continuation_span: args.continuation_span,
                     params: args.param,
                     seed: args.seed,
                     verification: tts_protocol::VerificationOptions {

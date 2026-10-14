@@ -5,8 +5,8 @@ use std::{
     time::Duration,
 };
 use talechime_core::{
-    PlanSessionOptions, PlanState, Playback, PlaybackPolicy, SourceSnapshot, SpeechPlan,
-    SpeechSpan, VoiceSnapshot,
+    ChapterCacheOptions, DEFAULT_MAX_BYTES, PlanSessionOptions, PlanState, Playback,
+    PlaybackPolicy, SeedPolicy, SourceSnapshot, SpeechPlan, SpeechSpan, VoiceSnapshot,
     backend::{AudioChunk, Backend, Pcm, Segmentation, Streaming},
     checkpoint::CheckpointStore,
     session::{SessionEvent, SessionManager},
@@ -89,6 +89,9 @@ impl FixtureBackend {
 }
 
 impl Backend for FixtureBackend {
+    fn cache_identity(&self) -> Option<String> {
+        Some("fixture-v1".into())
+    }
     fn capabilities(&self) -> Capabilities {
         self.caps.borrow().clone()
     }
@@ -262,7 +265,10 @@ impl Harness {
         )
     }
     async fn drive(&mut self, play: bool, ready: impl Fn(&Self) -> bool) {
-        tokio::time::timeout(Duration::from_secs(3), async {
+        self.drive_for(Duration::from_secs(3), play, ready).await;
+    }
+    async fn drive_for(&mut self, deadline: Duration, play: bool, ready: impl Fn(&Self) -> bool) {
+        tokio::time::timeout(deadline, async {
             loop {
                 while let Ok(event) = self.rx.try_recv() {
                     self.events.push(event);
@@ -277,7 +283,10 @@ impl Harness {
             }
         })
         .await
-        .expect("session did not reach expected state");
+        .unwrap_or_else(|error| panic!(
+            "session did not reach expected state: {error}; events={} last={:?} queued={:?} cursor={:?} paused={} calls={}",
+            self.events.len(), self.events.last(), self.player.queued.get(), self.player.cursor.get(), self.player.paused.get(), self.backend.calls.borrow().len()
+        ));
     }
     fn ended(&self, id: &str, reason: EndReason) -> bool {
         self.events.iter().any(|event| {
@@ -883,6 +892,113 @@ fn staged(h: &Harness, text: &str) -> SpeechPlan {
     )
 }
 
+fn published_count(chapters: &std::path::Path) -> usize {
+    std::fs::read_dir(chapters)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "pcm"))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+#[tokio::test]
+async fn unavailable_chapter_cache_does_not_fail_playback() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let mut h = Harness::new();
+            let root = tempfile::tempdir().unwrap();
+            let cache_directory = root.path().join("blocked");
+            std::fs::write(&cache_directory, b"occupied").unwrap();
+            let mut plan = staged(&h, "甲乙");
+            plan.append(vec![span(0, 6, "A")]).unwrap();
+            plan.seal().unwrap();
+            h.manager
+                .start_plan(
+                    "fallback".into(),
+                    plan,
+                    PlanSessionOptions {
+                        seed: SeedPolicy::Pinned(42),
+                        cache: Some(ChapterCacheOptions {
+                            directory: cache_directory.clone(),
+                            max_bytes: DEFAULT_MAX_BYTES,
+                        }),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            h.drive(true, |h| h.ended("fallback", EndReason::Completed))
+                .await;
+            assert_eq!(std::fs::read(cache_directory).unwrap(), b"occupied");
+            assert_eq!(h.manager.plan_progress("fallback").unwrap().played_end, 6);
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn deterministic_staged_chapters_replay_from_the_cache_without_synthesis() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let mut h = Harness::new();
+            let cache_root = tempfile::tempdir().unwrap();
+            let options = || PlanSessionOptions {
+                seed: SeedPolicy::Pinned(42),
+                cache: Some(ChapterCacheOptions {
+                    directory: cache_root.path().join("chapters"),
+                    max_bytes: DEFAULT_MAX_BYTES,
+                }),
+                ..Default::default()
+            };
+            fn build(h: &Harness, first_voice: &str) -> SpeechPlan {
+                let mut plan = staged(h, "甲乙");
+                plan.append(vec![span(0, 3, first_voice), span(3, 6, "B")])
+                    .unwrap();
+                plan.seal().unwrap();
+                plan
+            }
+            h.manager
+                .start_plan("one".into(), build(&h, "A"), options())
+                .await
+                .unwrap();
+            h.drive(true, |h| h.ended("one", EndReason::Completed))
+                .await;
+            assert_eq!(h.backend.calls.borrow().len(), 2);
+            assert_eq!(published_count(&cache_root.path().join("chapters")), 1);
+            // Same deterministic request: pure replay, no synthesis calls.
+            h.manager
+                .start_plan("two".into(), build(&h, "A"), options())
+                .await
+                .unwrap();
+            h.drive(true, |h| h.ended("two", EndReason::Completed))
+                .await;
+            assert_eq!(h.backend.calls.borrow().len(), 2);
+            let progress = h.manager.plan_progress("two").unwrap();
+            assert_eq!(progress.played_end, 6);
+            assert_eq!(progress.generated_end, 6);
+            // A different voice assignment is a different key and regenerates.
+            h.manager
+                .start_plan("three".into(), build(&h, "B"), options())
+                .await
+                .unwrap();
+            h.drive(true, |h| h.ended("three", EndReason::Completed))
+                .await;
+            assert_eq!(h.backend.calls.borrow().len(), 4);
+            assert_eq!(published_count(&cache_root.path().join("chapters")), 2);
+            // Auto seed stays disposable: nothing new is published or reused.
+            h.manager
+                .start_plan("four".into(), build(&h, "A"), PlanSessionOptions::default())
+                .await
+                .unwrap();
+            h.drive(true, |h| h.ended("four", EndReason::Completed))
+                .await;
+            assert_eq!(h.backend.calls.borrow().len(), 6);
+            assert_eq!(published_count(&cache_root.path().join("chapters")), 2);
+        })
+        .await;
+}
+
 #[tokio::test]
 async fn staged_long_chapter_prepares_while_paused_then_replays_and_cleans() {
     tokio::task::LocalSet::new()
@@ -942,6 +1058,11 @@ async fn staged_incremental_input_waits_for_seal_and_cancel_removes_storage() {
                     "open-stage".into(),
                     plan,
                     PlanSessionOptions {
+                        seed: SeedPolicy::Pinned(42),
+                        cache: Some(ChapterCacheOptions {
+                            directory: root.path().join("chapters"),
+                            max_bytes: DEFAULT_MAX_BYTES,
+                        }),
                         staging: talechime_core::StagingOptions {
                             directory: Some(root.path().into()),
                             ..Default::default()
@@ -973,6 +1094,7 @@ async fn staged_incremental_input_waits_for_seal_and_cancel_removes_storage() {
             assert_eq!(h.player.queued.get(), Duration::ZERO);
             h.manager.stop().await.unwrap();
             assert_eq!(stage_count(root.path()), 0);
+            assert!(!root.path().join("chapters").exists());
         })
         .await;
 }
@@ -1185,8 +1307,12 @@ async fn staged_many_tiny_segments_drain_when_marker_queue_is_full() {
             })
             .await;
             h.manager.resume("tiny-stage").await.unwrap();
-            h.drive(true, |h| h.ended("tiny-stage", EndReason::Completed))
-                .await;
+            // Hundreds of blocking spool reads plus playback timer ticks can
+            // exceed the ordinary deadline under parallel workspace checks.
+            h.drive_for(Duration::from_secs(10), true, |h| {
+                h.ended("tiny-stage", EndReason::Completed)
+            })
+            .await;
             assert_eq!(
                 h.manager.plan_progress("tiny-stage").unwrap().played_end,
                 text.len()

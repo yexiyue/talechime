@@ -78,6 +78,7 @@ pub struct VoxBackend {
     requests: Option<mpsc::Sender<runtime::Request>>,
     thread: Option<std::thread::JoinHandle<()>>,
     caps: Capabilities,
+    cache_identity: String,
 }
 impl VoxBackend {
     pub async fn load_on(directory: PathBuf, device: Device) -> Result<Self, BackendError> {
@@ -95,6 +96,8 @@ impl VoxBackend {
         }
         let caps = capabilities_for(&directory, model)
             .map_err(|e| BackendError::Initialize(e.to_string()))?;
+        let cache_identity =
+            crate::cache_identity::identity("voxcpm-candle", model.revision(), device, &directory);
         let (requests, jobs) = mpsc::channel(1);
         let (ready, loaded) = oneshot::channel();
         let thread = std::thread::Builder::new()
@@ -106,6 +109,7 @@ impl VoxBackend {
             requests: Some(requests),
             thread: Some(thread),
             caps,
+            cache_identity,
         };
         loaded
             .await
@@ -122,6 +126,9 @@ impl Drop for VoxBackend {
     }
 }
 impl Backend for VoxBackend {
+    fn cache_identity(&self) -> Option<String> {
+        Some(self.cache_identity.clone())
+    }
     fn capabilities(&self) -> Capabilities {
         self.caps.clone()
     }
@@ -134,7 +141,7 @@ impl Backend for VoxBackend {
                     "unknown Vox voice or empty text".into(),
                 ));
             }
-            let text = styled_text(request.style, text, context.is_some())?;
+            let text = styled_text(request.style, text)?;
             let resolved = params::resolve(request.params, request.seed);
             let (audio, receiver) = mpsc::channel(1);
             self.requests
@@ -163,18 +170,13 @@ impl Backend for VoxBackend {
 ///
 /// Combined with execution-local continuation the prefix sits between the
 /// previous transcript and the target text; a real-model trial (see
-/// docs/records/params-exposure-2026-10-10.md) truncated the continued
-/// segment there, so the combination is rejected until listening
-/// acceptance proves it.
-fn styled_text(style: Option<&str>, text: &str, continued: bool) -> Result<String, BackendError> {
+/// docs/records/style-exposure-2026-10-10.md) truncated the continued
+/// segment there. The combination stays enabled for listening acceptance;
+/// a styled segment may therefore finish audibly short.
+fn styled_text(style: Option<&str>, text: &str) -> Result<String, BackendError> {
     let style = style
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_default();
-    if !style.is_empty() && continued {
-        return Err(BackendError::Unsupported(
-            "Vox style is unavailable together with continuation until accepted".into(),
-        ));
-    }
     if style.contains('(') || style.contains(')') {
         return Err(BackendError::Unsupported(
             "Vox style descriptions must not contain parentheses".into(),
@@ -204,14 +206,12 @@ mod tests {
     }
     #[test]
     fn style_wraps_the_target_text_like_the_upstream_convention() {
-        assert_eq!(styled_text(None, "你好。", false).unwrap(), "你好。");
-        assert_eq!(styled_text(None, "你好。", true).unwrap(), "你好。");
-        assert_eq!(styled_text(Some("  "), "你好。", true).unwrap(), "你好。");
+        assert_eq!(styled_text(None, "你好。").unwrap(), "你好。");
+        assert_eq!(styled_text(Some("  "), "你好。").unwrap(), "你好。");
         assert_eq!(
-            styled_text(Some("cheerful tone"), "你好。", false).unwrap(),
+            styled_text(Some("cheerful tone"), "你好。").unwrap(),
             "(cheerful tone)你好。"
         );
-        assert!(styled_text(Some("半句(话"), "你好。", false).is_err());
-        assert!(styled_text(Some("cheerful tone"), "你好。", true).is_err());
+        assert!(styled_text(Some("半句(话"), "你好。").is_err());
     }
 }

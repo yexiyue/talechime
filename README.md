@@ -12,7 +12,7 @@ Talechime 是一个 Rust 本地语音合成与长文听书项目，提供可复�
 
 [文档索引](docs/README.md) · [架构与集成](docs/architecture.md) · [Rust 库](docs/library.md) · [开发与验证](docs/development.md) · [品牌资产](docs/brand.md) · [迁移来源](SOURCE.md)
 
-> **状态：独立源码仓库，尚未发布新品牌安装包。** 当前可以从源码构建、朗读 UTF-8 文件、管理音色或作为本地 worker 接入应用。Rust 会话核心已支持同模型多音色增量计划及整章磁盘暂存后播放；CLI/worker 已使用统一计划入口；CastGlean 集成和通用有声书导出尚未实现。
+> **状态：独立源码仓库与 Rust 库；应用安装包通过发行工作流构建。** 当前可以从源码构建、朗读 UTF-8 文件、管理音色或作为本地 worker 接入应用。Rust 会话核心已支持同模型多音色增量计划及整章磁盘暂存后播放；CLI/worker 已使用统一计划入口；CastGlean 集成和通用有声书导出尚未实现。
 
 ## 已经能做什么
 
@@ -37,7 +37,7 @@ cargo run --locked -p talechime --example listen_plan
 
 ## Installation
 
-独立发行使用 cargo-dist **0.32.0**，只提供 `talechime`。首轮支持 Apple Silicon macOS、x86_64 Linux GNU、x86_64 Windows MSVC。新流程已配置，尚未创建正式应用 release tag；下列命令在首个新品牌应用 release 发布后可用。当前可使用源码构建。
+独立发行使用 cargo-dist **0.32.0**，只提供 `talechime`。首轮支持 Apple Silicon macOS、x86_64 Linux GNU、x86_64 Windows MSVC。安装包通过 GitHub Releases 提供；源码构建也可独立使用。
 
 ```sh
 # macOS / Linux
@@ -172,10 +172,11 @@ flowchart LR
 - [x] 从 TRNovel 提取独立 Rust workspace，确立通用库边界。
 - [x] 独立 CLI、项目文档与品牌资产。
 - [x] cargo-dist 发行配置与三个平台的隔离构建/启动 CI。
-- [ ] 创建首个正式应用 release，并完成真实模型跨平台试听。
+- [ ] 完成真实模型跨平台试听（各模型的验收边界见记录）。
 - [x] 通用朗读计划：同一模型内逐段指定音色/风格，连续播放。
 - [ ] CastGlean 标注适配、角色音色绑定和未知归属回退。
-- [ ] 长文音频导出与可复用音频缓存。
+- [x] 封闭整章计划的可复用音频缓存（预置音色、固定 seed）。
+- [ ] 长文音频导出。
 
 ## 开发与许可证
 

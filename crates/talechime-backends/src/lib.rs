@@ -5,6 +5,13 @@ pub mod asr;
     feature = "moss",
     feature = "qwen",
     feature = "voxcpm",
+    feature = "omnivoice"
+))]
+mod cache_identity;
+#[cfg(any(
+    feature = "moss",
+    feature = "qwen",
+    feature = "voxcpm",
     feature = "omnivoice",
 ))]
 pub mod devices;

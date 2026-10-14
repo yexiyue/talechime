@@ -29,6 +29,7 @@ pub use plan::{
 pub use player::AudioPlayer;
 pub use player::Playback;
 pub use session::{
-    CancellationHandle, PlanProgress, PlanSessionOptions, SpeechAudio, StagingError,
-    StagingOptions, SynthesisItem, SynthesisOptions, SynthesisState, SynthesisStream,
+    CancellationHandle, ChapterCacheOptions, DEFAULT_MAX_BYTES, PlanProgress, PlanSessionOptions,
+    SpeechAudio, StagingError, StagingOptions, SynthesisItem, SynthesisOptions, SynthesisState,
+    SynthesisStream,
 };

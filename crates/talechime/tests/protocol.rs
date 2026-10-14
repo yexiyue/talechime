@@ -368,6 +368,8 @@ fn cli_rejects_open_or_mismatched_plan_before_model_preparation() {
             resume_byte: Some(resume_byte),
             restore_checkpoint: false,
             continuation: true,
+            continuation_boundary: Default::default(),
+            continuation_span: None,
             params: Default::default(),
             seed: None,
             verification: Default::default(),

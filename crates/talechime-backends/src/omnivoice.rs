@@ -65,6 +65,7 @@ pub struct OmniBackend {
     requests: Option<mpsc::Sender<runtime::Request>>,
     thread: Option<std::thread::JoinHandle<()>>,
     caps: Capabilities,
+    cache_identity: String,
 }
 impl OmniBackend {
     pub async fn load_on(directory: PathBuf, device: Device) -> Result<Self, BackendError> {
@@ -74,6 +75,12 @@ impl OmniBackend {
             )));
         }
         let caps = capabilities(&directory).map_err(|e| BackendError::Initialize(e.to_string()))?;
+        let cache_identity = crate::cache_identity::identity(
+            "omnivoice-candle",
+            resources::REVISION,
+            device,
+            &directory,
+        );
         let (requests, jobs) = mpsc::channel(1);
         let (ready, loaded) = oneshot::channel();
         let thread = std::thread::Builder::new()
@@ -85,6 +92,7 @@ impl OmniBackend {
             requests: Some(requests),
             thread: Some(thread),
             caps,
+            cache_identity,
         };
         loaded
             .await
@@ -101,6 +109,9 @@ impl Drop for OmniBackend {
     }
 }
 impl Backend for OmniBackend {
+    fn cache_identity(&self) -> Option<String> {
+        Some(self.cache_identity.clone())
+    }
     fn capabilities(&self) -> Capabilities {
         self.caps.clone()
     }

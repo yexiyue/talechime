@@ -50,7 +50,13 @@ pub(super) fn spawn(
             let mut index = 0;
             let mut call = 0u64;
             let enabled = input.continuation && backend.capabilities().continuation;
+            let boundary = input.continuation_boundary;
+            let chain_span = input
+                .continuation_span
+                .unwrap_or(crate::continuation::DEFAULT_CHAIN_SPAN_SECONDS);
+            let mut leveling = crate::audio::leveling::LoudnessAligner::default();
             let mut context = None;
+            let mut chained = 0f64;
             let mut identity: Option<(String, Option<String>)> = None;
             let mut previous_end = byte;
             while let Some(span) = input.next(index).await {
@@ -62,6 +68,7 @@ pub(super) fn spawn(
                 let current = (span.voice().to_owned(), span.style().map(str::to_owned));
                 if identity.as_ref() != Some(&current) {
                     context = None;
+                    chained = 0.0;
                 }
                 identity = Some(current);
                 backend.select_voice(span.voice());
@@ -75,8 +82,10 @@ pub(super) fn spawn(
                             source_text,
                             previous_end,
                             assigned.end,
+                            boundary,
                         ) {
                             context = None;
+                            chained = 0.0;
                         }
                         previous_end = assigned.end;
                         break;
@@ -103,17 +112,40 @@ pub(super) fn spawn(
                     };
                     let paragraph_end =
                         backend.paragraph_end(&segment.text, &source_text[segment.end..]);
-                    let hard =
-                        crate::continuation::hard_boundary(source_text, range.start, range.end);
+                    let hard = crate::continuation::hard_boundary(
+                        source_text,
+                        range.start,
+                        range.end,
+                        boundary,
+                    );
+                    // A spent chain budget re-anchors on the static voice at
+                    // the next paragraph gap, or mid-stream at twice the span.
+                    let spanned = context.is_some()
+                        && crate::continuation::span_reset(
+                            chained,
+                            chain_span,
+                            crate::continuation::hard_boundary(
+                                source_text,
+                                previous_end,
+                                range.start,
+                                tts_protocol::ContinuationBoundary::Paragraph,
+                            ),
+                        );
+                    if spanned {
+                        eprintln!("continuation span reset after {chained:.1}s chained");
+                    }
                     if hard
+                        || spanned
                         || crate::continuation::hard_boundary(
                             source_text,
                             previous_end,
                             range.start,
+                            boundary,
                         )
                     {
                         context = None;
                     }
+                    let chained_before = context.is_some();
                     let mut candidate = crate::continuation::Candidate::new(
                         context.as_ref(),
                         enabled && !hard,
@@ -164,6 +196,7 @@ pub(super) fn spawn(
                                 let Some(pcm) = silence.push(pcm)? else {
                                     continue;
                                 };
+                                let pcm = leveling.push(&pcm);
                                 let packet = budget.acquire(pcm).await?;
                                 tx.send(Ok(Item::Audio(packet)))
                                     .await
@@ -171,6 +204,7 @@ pub(super) fn spawn(
                             }
                             crate::backend::AudioChunk::End => {
                                 if let Some(pcm) = silence.finish(paragraph_end)? {
+                                    let pcm = leveling.push(&pcm);
                                     let packet = budget.acquire(pcm).await?;
                                     tx.send(Ok(Item::Audio(packet)))
                                         .await
@@ -194,6 +228,12 @@ pub(super) fn spawn(
                     } else {
                         None
                     };
+                    if !chained_before || context.is_none() {
+                        chained = 0.0;
+                    }
+                    if context.is_some() {
+                        chained += generated_seconds;
+                    }
                     previous_end = range.end;
                     backend.observe_duration(&segment.text, span.voice(), generated_seconds);
                     tx.send(Ok(Item::End(range)))

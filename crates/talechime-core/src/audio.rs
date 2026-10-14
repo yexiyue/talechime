@@ -1,4 +1,5 @@
 //! Streaming boundary-silence processing; interior pauses remain unchanged.
+pub(crate) mod leveling;
 use crate::backend::{BackendError, Pcm};
 #[derive(Default)]
 pub struct BoundarySilence {

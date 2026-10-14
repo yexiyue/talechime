@@ -8,6 +8,7 @@ use std::{
 };
 
 const MAGIC: &[u8; 8] = b"TCHSTG01";
+const CANDIDATE_PREFIX: &str = "talechime-candidate-";
 const MAX_RECORD: usize = 16 * 1024 * 1024 + 6;
 
 /// Bounds for private, disposable chapter storage; never a persistent audio cache.
@@ -63,14 +64,22 @@ impl StagingOptions {
 }
 
 pub(super) struct Storage {
-    // Close handles before TempDir removal (required on Windows).
     file: Mutex<File>,
-    _owner: File,
-    // I/O closures retain this owner until their operation finishes.
-    _directory: tempfile::TempDir,
+    // Close handles before TempDir removal (required on Windows); persistent
+    // entries outlive the execution and are pruned only by the chapter cache.
+    _retention: Retention,
 }
 
-async fn io<T: Send + 'static>(
+enum Retention {
+    Temporary {
+        _owner: File,
+        _directory: tempfile::TempDir,
+    },
+    Candidate(tempfile::TempPath),
+    Persistent,
+}
+
+pub(super) async fn io<T: Send + 'static>(
     writes: Arc<PendingWrites>,
     work: impl FnOnce() -> Result<T, SessionError> + Send + 'static,
 ) -> Result<T, SessionError> {
@@ -339,9 +348,27 @@ fn create_storage(options: &StagingOptions) -> Result<Arc<Storage>, SessionError
     file.write_all(MAGIC)?;
     Ok(Arc::new(Storage {
         file: Mutex::new(file),
-        _owner: owner,
-        _directory: directory,
+        _retention: Retention::Temporary {
+            _owner: owner,
+            _directory: directory,
+        },
     }))
+}
+
+/// Open an already-published persistent spool for replay; the chapter cache
+/// owns its lifetime, so no temporary directory or lock marker is involved.
+pub(super) fn open_persistent(path: &std::path::Path) -> Result<Arc<Storage>, SessionError> {
+    let mut file = File::options().read(true).open(path)?;
+    rewind(&mut file)?;
+    Ok(Arc::new(Storage {
+        file: Mutex::new(file),
+        _retention: Retention::Persistent,
+    }))
+}
+
+/// Replayable spools must cover the exact source text before reuse.
+pub(super) fn validate(storage: &Storage, text: &str) -> Result<(), SessionError> {
+    verify(&mut storage.file.lock().unwrap(), text, 0)
 }
 
 // Only our marked, unlocked directories containing known regular files qualify.
@@ -393,9 +420,21 @@ pub(super) async fn prepare(
     text: &str,
     byte: usize,
     observer: Option<(&str, &mpsc::Sender<SessionEvent>)>,
+    persist: Option<std::path::PathBuf>,
 ) -> Result<Arc<Storage>, SessionError> {
     let limits = options.clone();
-    let storage = io(writes.clone(), move || create_storage(&limits)).await?;
+    let storage = match persist.clone() {
+        None => io(writes.clone(), move || create_storage(&limits)).await?,
+        Some(final_path) => {
+            io(writes.clone(), move || {
+                create_candidate(&final_path).or_else(|error| {
+                    eprintln!("chapter cache unavailable: {error}");
+                    create_storage(&limits)
+                })
+            })
+            .await?
+        }
+    };
     let mut bytes = 8;
     let mut count = 0;
     loop {
@@ -436,13 +475,76 @@ pub(super) async fn prepare(
     }
     let owner = storage.clone();
     let text = text.to_owned();
-    io(writes, move || {
+    io(writes.clone(), move || {
         let mut file = owner.file.lock().unwrap();
         file.sync_all()?;
         verify(&mut file, &text, byte)
     })
     .await?;
-    Ok(storage)
+    match persist {
+        None => Ok(storage),
+        Some(final_path) => io(writes, move || Ok(publish(storage, &final_path))).await,
+    }
+}
+
+// Each execution owns a unique candidate on the destination filesystem. Its
+// path is removed on cancellation, after any outstanding I/O closes the file.
+fn create_candidate(final_path: &std::path::Path) -> Result<Arc<Storage>, SessionError> {
+    let parent = final_path
+        .parent()
+        .ok_or_else(|| invalid("cache path has no parent"))?;
+    std::fs::create_dir_all(parent)?;
+    let candidate = tempfile::Builder::new()
+        .prefix(CANDIDATE_PREFIX)
+        .suffix(".staging")
+        .tempfile_in(parent)?;
+    let (mut file, path) = candidate.into_parts();
+    file.lock()?;
+    file.write_all(MAGIC)?;
+    Ok(Arc::new(Storage {
+        file: Mutex::new(file),
+        _retention: Retention::Candidate(path),
+    }))
+}
+
+/// Reclaim only our marked candidates whose execution no longer holds its lock.
+/// An empty candidate is still being created: its owner locks before writing
+/// MAGIC, so the creation-to-lock window never qualifies for removal.
+pub(super) fn cleanup_candidate(path: &std::path::Path) {
+    if !path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with(CANDIDATE_PREFIX) && name.ends_with(".staging"))
+    {
+        return;
+    }
+    let Ok(mut file) = File::options().read(true).write(true).open(path) else {
+        return;
+    };
+    if file.try_lock().is_err() {
+        return;
+    }
+    let mut marker = [0; 8];
+    if file.read_exact(&mut marker).is_err() || &marker != MAGIC {
+        return;
+    }
+    // Unique candidate paths are never reopened by a new execution. Close the
+    // probe before unlinking for Windows; active owners already failed try_lock.
+    drop(file);
+    let _ = std::fs::remove_file(path);
+}
+
+fn publish(storage: Arc<Storage>, final_path: &std::path::Path) -> Arc<Storage> {
+    if let Retention::Candidate(path) = &storage._retention {
+        // Publish without replacing another worker's entry. Keep the execution
+        // path and handle alive: pruning the published link cannot break replay.
+        if let Err(error) = std::fs::hard_link(path, final_path)
+            && error.kind() != std::io::ErrorKind::AlreadyExists
+        {
+            eprintln!("chapter cache publish skipped: {error}");
+        }
+    }
+    storage
 }
 
 pub(super) fn replay(
@@ -519,6 +621,77 @@ mod tests {
         file
     }
     #[test]
+    fn pruning_candidates_preserves_active_and_foreign_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("chapter.pcm");
+        let active = create_candidate(&target).unwrap();
+        let active_path = match &active._retention {
+            Retention::Candidate(path) => path.to_path_buf(),
+            _ => unreachable!(),
+        };
+        cleanup_candidate(&active_path);
+        assert!(active_path.exists());
+        let orphan = directory.path().join("talechime-candidate-orphan.staging");
+        std::fs::write(&orphan, MAGIC).unwrap();
+        let foreign = directory.path().join("talechime-candidate-foreign.staging");
+        std::fs::write(&foreign, b"personal").unwrap();
+        let creating = directory
+            .path()
+            .join("talechime-candidate-creating.staging");
+        std::fs::write(&creating, []).unwrap();
+        cleanup_candidate(&orphan);
+        cleanup_candidate(&foreign);
+        cleanup_candidate(&creating);
+        assert!(!orphan.exists());
+        assert!(foreign.exists());
+        assert!(creating.exists());
+    }
+
+    #[test]
+    fn candidates_are_execution_owned_and_cleaned_after_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("chapter.pcm");
+        let first = create_candidate(&target).unwrap();
+        let second = create_candidate(&target).unwrap();
+        let path = |storage: &Storage| match &storage._retention {
+            Retention::Candidate(path) => path.to_path_buf(),
+            _ => unreachable!(),
+        };
+        let first_path = path(&first);
+        let second_path = path(&second);
+        assert_ne!(first_path, second_path);
+        drop(first);
+        assert!(!first_path.exists());
+        assert!(second_path.exists());
+        drop(second);
+        assert!(!second_path.exists());
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn concurrent_publish_never_overwrites_another_chapter() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("chapter.pcm");
+        let first = create_candidate(&target).unwrap();
+        let second = create_candidate(&target).unwrap();
+        let published = publish(first, &target);
+        let other = publish(second, &target);
+        assert!(matches!(published._retention, Retention::Candidate(_)));
+        let other_path = match &other._retention {
+            Retention::Candidate(path) => path.to_path_buf(),
+            _ => panic!("duplicate publication must retain its private candidate"),
+        };
+        assert!(target.exists());
+        std::fs::remove_file(&target).unwrap();
+        // Pruning the published name leaves both active execution handles valid.
+        rewind(&mut published.file.lock().unwrap()).unwrap();
+        rewind(&mut other.file.lock().unwrap()).unwrap();
+        drop(other);
+        assert!(!other_path.exists());
+        assert!(!target.exists());
+    }
+
+    #[test]
     fn checks_version_checksum_truncation_and_trailing_data() {
         let mut file = fixture();
         verify(&mut file, "甲", 0).unwrap();
@@ -590,7 +763,7 @@ mod cleanup_tests {
         let second = create_storage(&options).unwrap();
         assert!(!orphan.exists());
         assert!(unknown.join("keep").exists());
-        assert!(active._directory.path().exists());
+        assert!(matches!(active._retention, Retention::Temporary { .. }));
         #[cfg(unix)]
         assert!(
             root.join("execution-link")
@@ -599,7 +772,10 @@ mod cleanup_tests {
                 .file_type()
                 .is_symlink()
         );
-        let active_path = active._directory.path().to_owned();
+        let active_path = match &active._retention {
+            Retention::Temporary { _directory, .. } => _directory.path().to_owned(),
+            _ => unreachable!(),
+        };
         drop(active);
         assert!(!active_path.exists());
         drop(second);

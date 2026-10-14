@@ -8,6 +8,12 @@ use tokio::sync::Notify;
 pub struct PlanSessionOptions {
     /// Keep one complete previous segment within a paragraph (default enabled).
     pub continuation: bool,
+    /// Source structure that resets the continuation chain; hosts own this
+    /// policy because only they know their text layout.
+    pub continuation_boundary: tts_protocol::ContinuationBoundary,
+    /// Chained seconds before the reference re-anchors on the static voice;
+    /// `None` uses the core default.
+    pub continuation_span: Option<u64>,
     /// Generation parameters validated against the prepared model's catalog.
     pub params: crate::params::GenerationParams,
     /// Sampling seed policy; Auto draws fresh randomness per attempt.
@@ -22,6 +28,8 @@ pub struct PlanSessionOptions {
     pub restore_checkpoint: bool,
     /// Private execution storage limits for AfterChapterReady.
     pub staging: StagingOptions,
+    /// Persistent whole-chapter reuse; `None` keeps every run disposable.
+    pub cache: Option<super::cache::ChapterCacheOptions>,
     /// Optional readback; prepare and attach a verifier before enabling.
     pub verification: crate::verification::VerificationOptions,
 }
@@ -30,6 +38,8 @@ impl Default for PlanSessionOptions {
     fn default() -> Self {
         Self {
             continuation: true,
+            continuation_boundary: tts_protocol::ContinuationBoundary::Paragraph,
+            continuation_span: None,
             params: crate::params::GenerationParams::default(),
             seed: crate::params::SeedPolicy::default(),
             volume: 1.0,
@@ -37,6 +47,7 @@ impl Default for PlanSessionOptions {
             resume_byte: None,
             restore_checkpoint: false,
             staging: StagingOptions::default(),
+            cache: None,
             verification: crate::verification::VerificationOptions::default(),
         }
     }
@@ -61,6 +72,8 @@ pub struct PlanProgress {
 
 pub(super) struct PlanInput {
     pub(super) continuation: bool,
+    pub(super) continuation_boundary: tts_protocol::ContinuationBoundary,
+    pub(super) continuation_span: Option<u64>,
     pub(super) params: crate::params::GenerationParams,
     pub(super) seed: crate::params::SeedPolicy,
     pub(super) plan: RefCell<SpeechPlan>,
@@ -76,6 +89,8 @@ impl PlanInput {
     pub(super) fn new(plan: SpeechPlan, byte: usize) -> Self {
         Self {
             continuation: true,
+            continuation_boundary: tts_protocol::ContinuationBoundary::Paragraph,
+            continuation_span: None,
             params: crate::params::GenerationParams::default(),
             seed: crate::params::SeedPolicy::default(),
             plan: RefCell::new(plan),

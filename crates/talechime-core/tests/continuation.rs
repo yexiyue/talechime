@@ -126,6 +126,32 @@ fn start(backend: Rc<Fixture>, text: &str, continuation: bool) -> SynthesisStrea
     .unwrap()
 }
 #[tokio::test]
+async fn direct_synthesis_rejects_invalid_chain_span_before_starting() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let backend = Rc::new(Fixture::default());
+            for span in [0, 3601] {
+                assert!(
+                    SynthesisStream::start_with_options(
+                        backend.clone(),
+                        "甲。",
+                        "a",
+                        None,
+                        None,
+                        SynthesisOptions {
+                            continuation_span: Some(span),
+                            ..Default::default()
+                        }
+                    )
+                    .is_err()
+                );
+            }
+            assert!(backend.calls.borrow().is_empty());
+        })
+        .await;
+}
+
+#[tokio::test]
 async fn defaults_soft_lines_hard_paragraphs_and_independent_calls() {
     tokio::task::LocalSet::new()
         .run_until(async {
@@ -150,6 +176,87 @@ async fn defaults_soft_lines_hard_paragraphs_and_independent_calls() {
                 backend.calls.borrow()[6..]
                     .iter()
                     .all(|c| c.previous.is_none())
+            );
+        })
+        .await;
+}
+#[tokio::test]
+async fn spent_chain_reanchors_at_paragraph_gaps_under_scene_policy() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let backend = Rc::new(Fixture::default());
+            let mut stream = SynthesisStream::start_with_options(
+                backend.clone(),
+                "甲。乙。\n\n丙。丁。\n\n戊。己。",
+                "a",
+                None,
+                None,
+                SynthesisOptions {
+                    continuation_boundary: tts_protocol::ContinuationBoundary::Scene,
+                    continuation_span: Some(2),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            drain(&mut stream).await.unwrap();
+            let previous: Vec<Option<String>> = backend
+                .calls
+                .borrow()
+                .iter()
+                .map(|call| call.previous.as_ref().map(|p| p.0.clone()))
+                .collect();
+            // Two 1s segments per span: the budget expires exactly at each
+            // paragraph gap, so every third segment re-anchors.
+            assert_eq!(
+                previous,
+                vec![
+                    None,
+                    Some("甲。".into()),
+                    None,
+                    Some("丙。".into()),
+                    None,
+                    Some("戊。".into()),
+                ]
+            );
+        })
+        .await;
+}
+#[tokio::test]
+async fn streams_without_paragraph_gaps_hit_the_mid_stream_ceiling() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let backend = Rc::new(Fixture::default());
+            let mut stream = SynthesisStream::start_with_options(
+                backend.clone(),
+                "甲。乙。丙。丁。戊。",
+                "a",
+                None,
+                None,
+                SynthesisOptions {
+                    continuation_boundary: tts_protocol::ContinuationBoundary::None,
+                    continuation_span: Some(2),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            drain(&mut stream).await.unwrap();
+            let previous: Vec<Option<String>> = backend
+                .calls
+                .borrow()
+                .iter()
+                .map(|call| call.previous.as_ref().map(|p| p.0.clone()))
+                .collect();
+            // No gap ever qualifies, so the chain runs to twice the span and
+            // then re-anchors mid-stream.
+            assert_eq!(
+                previous,
+                vec![
+                    None,
+                    Some("甲。".into()),
+                    Some("乙。".into()),
+                    Some("丙。".into()),
+                    None,
+                ]
             );
         })
         .await;
@@ -191,10 +298,60 @@ async fn overlong_reference_resets_without_interrupting_delivery() {
     tokio::task::LocalSet::new()
         .run_until(async {
             let backend = Rc::new(Fixture::default());
-            backend.seconds.set(16);
+            backend.seconds.set(21);
             let mut stream = start(backend.clone(), "甲。乙。", true);
             drain(&mut stream).await.unwrap();
             assert!(backend.calls.borrow().iter().all(|c| c.previous.is_none()));
+        })
+        .await;
+}
+#[tokio::test]
+async fn scene_policy_keeps_the_chain_across_paragraph_gaps() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let backend = Rc::new(Fixture::default());
+            let text = "甲。\n乙。\n\n丙。\n\n第二章\n丁。";
+            let mut scene = SynthesisStream::start_with_options(
+                backend.clone(),
+                text,
+                "a",
+                None,
+                None,
+                SynthesisOptions {
+                    continuation_boundary: tts_protocol::ContinuationBoundary::Scene,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            drain(&mut scene).await.unwrap();
+            {
+                let calls = backend.calls.borrow();
+                assert!(calls[0].previous.is_none());
+                // Soft newline and blank paragraph gap both keep the chain.
+                assert_eq!(calls[1].previous.as_ref().unwrap().0, "甲。");
+                assert_eq!(calls[2].previous.as_ref().unwrap().0, "乙。");
+                // A heading line still resets under the scene policy.
+                assert!(calls[3].previous.is_none());
+            }
+            backend.calls.borrow_mut().clear();
+            let mut unlimited = SynthesisStream::start_with_options(
+                backend.clone(),
+                text,
+                "a",
+                None,
+                None,
+                SynthesisOptions {
+                    continuation_boundary: tts_protocol::ContinuationBoundary::None,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            drain(&mut unlimited).await.unwrap();
+            let calls = backend.calls.borrow();
+            assert!(calls[0].previous.is_none());
+            for call in &calls[1..] {
+                assert!(call.previous.is_some());
+            }
         })
         .await;
 }

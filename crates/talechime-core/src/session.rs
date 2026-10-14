@@ -70,11 +70,13 @@ impl From<std::io::Error> for SessionError {
 }
 
 mod buffering;
+mod cache;
 mod plan;
 mod prefetch;
 mod producer;
 mod staging;
 mod synthesis;
+pub use cache::{ChapterCacheOptions, DEFAULT_MAX_BYTES};
 use plan::PlanInput;
 pub use plan::{PlanProgress, PlanSessionOptions};
 use prefetch::{Budget, Packet};
@@ -127,6 +129,7 @@ struct Job {
     input: Rc<PlanInput>,
     legacy_settings: Option<(String, Option<String>)>,
     staging: StagingOptions,
+    cache: Option<ChapterCacheOptions>,
     verification: crate::verification::VerificationOptions,
     task: Option<AbortOnDrop>,
 }
@@ -218,7 +221,10 @@ impl SessionManager {
                 resume_byte: request.resume_byte,
                 restore_checkpoint: request.restore_checkpoint,
                 continuation: true,
+                continuation_boundary: tts_protocol::ContinuationBoundary::Paragraph,
+                continuation_span: None,
                 params: Default::default(),
+                cache: None,
                 seed: Default::default(),
                 staging: StagingOptions::default(),
                 verification: crate::verification::VerificationOptions::default(),
@@ -331,11 +337,18 @@ impl SessionManager {
                 self.verifier.as_ref().map(|verifier| verifier.scoped())
             };
         input.verification = options.verification.clone();
+        crate::continuation::validate_span(options.continuation_span)?;
         input.continuation = options.continuation;
+        input.continuation_boundary = options.continuation_boundary;
+        input.continuation_span = options.continuation_span;
         input.params = params;
         input.seed = options.seed;
         let input = Rc::new(input);
         let writes = Arc::new(PendingWrites::default());
+        let cache_handle = options
+            .cache
+            .clone()
+            .map(|options| Arc::new(cache::ChapterCache::new(options)));
         let runner = Runner {
             id: id.clone(),
             source: source.clone(),
@@ -351,6 +364,7 @@ impl SessionManager {
             text: source.shared_text(),
             writes: writes.clone(),
             staging: options.staging.clone(),
+            cache: cache_handle.clone(),
         };
         let finished = terminal.clone();
         let final_phase = phase.clone();
@@ -416,6 +430,7 @@ impl SessionManager {
             input,
             legacy_settings,
             staging: options.staging,
+            cache: options.cache.clone(),
             verification: options.verification,
             task: Some(AbortOnDrop(task)),
         });
@@ -718,9 +733,12 @@ impl SessionManager {
                 resume_byte: Some(byte),
                 restore_checkpoint: false,
                 continuation: job.input.continuation,
+                continuation_boundary: job.input.continuation_boundary,
+                continuation_span: job.input.continuation_span,
                 params: job.input.params.clone(),
                 seed: job.input.seed,
                 staging: job.staging.clone(),
+                cache: job.cache.clone(),
                 verification: job.verification.clone(),
             },
             None,

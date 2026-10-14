@@ -1,6 +1,6 @@
 [package]
 name = "talechime"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
@@ -38,9 +38,9 @@ omnivoice-cuda = ["omnivoice", "tts-backends/omnivoice-cuda"]
 omnivoice-metal = ["omnivoice", "tts-backends/omnivoice-metal"]
 
 [dependencies]
-tts-backends = { package = "talechime-backends", path = "../talechime-backends", version = "0.1.0", default-features = false }
-tts-core = { package = "talechime-core", path = "../talechime-core", version = "0.3.0" }
-tts-protocol = { package = "talechime-protocol", path = "../talechime-protocol", version = "0.2.0" }
+tts-backends = { package = "talechime-backends", path = "../talechime-backends", version = "0.2.0", default-features = false }
+tts-core = { package = "talechime-core", path = "../talechime-core", version = "0.4.0" }
+tts-protocol = { package = "talechime-protocol", path = "../talechime-protocol", version = "0.3.0" }
 anyhow.workspace = true
 thiserror.workspace = true
 tokio-util.workspace = true
