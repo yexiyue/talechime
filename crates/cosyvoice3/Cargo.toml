@@ -1,0 +1,31 @@
+[package]
+name = "cosyvoice3"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "Apache-2.0"
+description = "Native Candle inference for Fun-CosyVoice3-0.5B with optional ORT reference paths"
+repository = "https://github.com/yexiyue/talechime"
+
+[features]
+default = []
+cuda = ["dep:tts-candle-platform", "tts-candle-platform/cuda"]
+metal = ["dep:tts-candle-platform", "tts-candle-platform/metal"]
+# Official ONNX artifacts: campplus / speech_tokenizer_v3 frontends and the
+# export_onnx.py flow estimator used for numeric comparison against Candle.
+ort = ["dep:ort"]
+
+[dependencies]
+candle-core.workspace = true
+candle-nn.workspace = true
+candle-transformers.workspace = true
+tts-candle-platform = { workspace = true, optional = true }
+tokenizers = { workspace = true, features = ["onig"] }
+serde.workspace = true
+serde_json.workspace = true
+ort = { workspace = true, optional = true }
+
+[dev-dependencies]
+anyhow.workspace = true
+hound.workspace = true
+tokio.workspace = true

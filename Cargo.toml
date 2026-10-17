@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/qwen3-asr", "crates/moss-tts", "crates/talechime", "crates/talechime-backends", "crates/talechime-core", "crates/talechime-protocol", "crates/omnivoice", "crates/qwen3-tts", "crates/tts-candle-platform", "crates/voxcpm", "crates/voxcpm-sys"]
+members = ["crates/cosyvoice3", "crates/qwen3-asr", "crates/moss-tts", "crates/talechime", "crates/talechime-backends", "crates/talechime-core", "crates/talechime-protocol", "crates/omnivoice", "crates/qwen3-tts", "crates/tts-candle-platform", "crates/voxcpm", "crates/voxcpm-sys"]
 default-members = ["crates/talechime"]
 resolver = "3"
 
