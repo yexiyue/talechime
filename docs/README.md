@@ -52,6 +52,7 @@
 - MOSS：[Nano](records/moss-tts-acceptance.md)、[Candle](records/moss-candle-acceptance.md)、[macOS 1.7B 流式输出](records/moss-macos-streaming.md)、[连贯性与对齐](records/moss-continuity-acceptance.md)、[DirectML 实验](records/moss-directml-evaluation.md)。
 - Qwen：[Candle 集成](records/qwen-tts-acceptance.md)。
 - VoxCPM：[Candle 移植](records/voxcpm-candle-acceptance.md)、[macOS 性能](records/voxcpm-macos-performance.md)。
+- IndexTTS 2.5：[官方 / 社区对照与修复](records/indextts-official-community-review-2026-10-17.md)、[性能优化与计时修复](records/indextts-candle-performance-2026-10-17.md)（三轮：RTF 0.70→0.47 ABBA 均值，codec 深度卷积与 BigVGAN FIR 批量卷积化；独立计算 crate；固定语料验证与人工试听边界分开记录）、[历史验收台账](records/indextts-candle-acceptance-2026-10-17.md)、[移植过程](records/indextts-candle-port.md)、[独立生成计划](independent-tts-candle-plan.md)。
 - ASR：[主线原生验收](records/asr-readback-mainline-2026-10-09.md)、[《蛊真人》验收（已中断）](records/guzhenren-readback-acceptance-2026-10-09.md)、[回读校验选型 spike](records/asr-spike-2026-10-09.md)：Qwen、SenseVoice、FireRed、Whisper 候选及当时未接入产品的边界；当前实现见主线记录。
 
 ## 播放、解耦与历史设计

@@ -813,7 +813,7 @@ async fn backend_disconnect_or_invalid_segmentation_fails_without_completion() {
 async fn sanitized_layout_completes_with_original_source_progress() {
     tokio::task::LocalSet::new()
         .run_until(async {
-            let text = "====\u{200B}====\n你\u{FEFF}好。\n\u{0}\u{200B}";
+            let text = "====\u{200B}====\n你\u{FEFF}好。\n！”\n\u{0}\u{200B}";
             for policy in [PlaybackPolicy::Streaming, PlaybackPolicy::AfterChapterReady] {
                 let mut h = Harness::new();
                 let base = h.plan(text);

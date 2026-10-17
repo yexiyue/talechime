@@ -66,11 +66,17 @@ pub fn sanitize_for_speech(text: &str) -> String {
     spoken
 }
 
-/// Whether a source line contains only whitespace, removable noise or decoration.
+/// Whether a source line contains only whitespace, removable noise, decoration,
+/// or sentence/quotation punctuation without pronounceable text.
 /// Used by segmenters and by the source-coverage validator.
 pub fn is_non_spoken_line(line: &str) -> bool {
     let spoken = sanitize_for_speech(line);
-    spoken.trim().is_empty() || is_decoration_line(&spoken)
+    spoken.trim().is_empty()
+        || is_decoration_line(&spoken)
+        || spoken
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .all(|c| "。！？!?，,；;：:….“”‘’\"'（）()《》〈〉「」『』【】[]、".contains(c))
 }
 
 /// 匹配主要句子结束标点符号（句号、感叹号、问号）
@@ -241,6 +247,16 @@ pub fn preprocess_text(text: &str, limit: usize) -> Vec<TextSegment> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn punctuation_only_is_layout_without_discarding_words_or_symbols() {
+        for layout in ["！”", "……", "\u{200b}！？\n”,", " 。 ” "] {
+            assert!(is_non_spoken_line(layout));
+        }
+        for spoken in ["你好！！”", "？！真的？", "3.14", "+", "%", "❤", "😊"] {
+            assert!(!is_non_spoken_line(spoken));
+            assert_eq!(sanitize_for_speech(spoken), spoken);
+        }
+    }
     #[test]
     fn speech_copy_drops_noise_and_keeps_line_structure() {
         let noisy = "你\u{200B}好，世\u{0}界。\r\n\u{FEFF}第二\u{AD}句\u{85}。\nC1\u{9F}尾\ta";

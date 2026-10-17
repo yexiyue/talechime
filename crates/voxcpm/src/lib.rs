@@ -10,6 +10,8 @@ mod transformer;
 #[cfg(test)]
 mod validation;
 mod weights;
+#[cfg(feature = "experimental-dual-reference")]
+pub use model::DualReference;
 pub use model::{Model, Options, Outcome, Reference, SAMPLE_RATE};
 pub use timing::Timings;
 pub mod tokenizer;

@@ -28,6 +28,7 @@
 mod engine;
 mod listening;
 mod model_preparation;
+mod voice_import;
 
 pub use engine::{Engine, EngineError, ModelOptions, PcmStream, run_local};
 pub use listening::{Listening, ListeningHandle, ListeningOptions, ListeningSession};
@@ -43,6 +44,7 @@ pub use tts_protocol::{
     Capabilities, Device, EndReason, Event, ParamKind, ParamValue, ParameterSpec, SessionState,
     SourceId, TextRange, text_hash,
 };
+pub use voice_import::{VoiceImportError, import_reference_voice, list_voices};
 
 pub use tts_core::verification::{
     DifferenceKind, ReadbackAudio, ReadbackDifference, ReadbackEvidence, ReadbackRequest,

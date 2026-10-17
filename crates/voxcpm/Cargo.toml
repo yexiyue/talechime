@@ -9,6 +9,7 @@ repository = "https://github.com/yexiyue/talechime"
 
 [features]
 default = []
+experimental-dual-reference = []
 cuda = ["dep:tts-candle-platform", "tts-candle-platform/cuda"]
 metal = ["dep:tts-candle-platform", "tts-candle-platform/metal"]
 

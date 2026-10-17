@@ -1927,6 +1927,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "indextts"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "candle-core",
+ "candle-nn",
+ "clap",
+ "hound",
+ "rand 0.9.5",
+ "regex",
+ "rustfft",
+ "serde",
+ "serde_json",
+ "tts-candle-platform",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4457,6 +4474,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 name = "tts-candle-platform"
 version = "0.1.0"
 dependencies = [
+ "candle-core",
  "candle-metal-kernels",
  "candle-nn",
  "candle-transformers",

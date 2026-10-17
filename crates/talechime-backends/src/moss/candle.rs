@@ -96,6 +96,8 @@ pub fn available_devices() -> Vec<Device> {
         .collect()
 }
 pub struct CandleBackend {
+    #[cfg(feature = "experimental-moss-reference-anchor")]
+    reference_anchor: bool,
     requests: Option<mpsc::Sender<runtime::Request>>,
     thread: Option<std::thread::JoinHandle<()>>,
     caps: Capabilities,
@@ -123,6 +125,8 @@ impl CandleBackend {
             .spawn(move || runtime::run(root, mode, device, jobs, ready))
             .map_err(|e| BackendError::Initialize(e.to_string()))?;
         let backend = Self {
+            #[cfg(feature = "experimental-moss-reference-anchor")]
+            reference_anchor: false,
             requests: Some(requests),
             thread: Some(thread),
             caps,
@@ -132,6 +136,19 @@ impl CandleBackend {
             .await
             .map_err(|_| BackendError::Initialize("MOSS Candle thread exited".into()))??;
         Ok(backend)
+    }
+    /// Experimental Realtime identity reference retained beside recent speech context.
+    #[cfg(feature = "experimental-moss-reference-anchor")]
+    pub fn with_reference_anchor(mut self) -> Result<Self, BackendError> {
+        if self.caps.model.as_deref() != Some(Mode::Realtime.id()) {
+            return Err(BackendError::Unsupported(
+                "reference anchor experiment requires MOSS Realtime".into(),
+            ));
+        }
+        self.reference_anchor = true;
+        self.cache_identity
+            .push_str("-experimental-reference-anchor-v1");
+        Ok(self)
     }
 }
 impl Drop for CandleBackend {
@@ -152,6 +169,12 @@ impl Backend for CandleBackend {
     fn stream<'a>(&'a self, request: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
             request.reject_unsupported(self.caps.style, self.caps.continuation)?;
+            #[cfg(feature = "experimental-moss-reference-anchor")]
+            if self.reference_anchor && !request.voice.starts_with("custom:") {
+                return Err(BackendError::Unsupported(
+                    "reference anchor requires an imported voice".into(),
+                ));
+            }
             let (text, voice, context) = (request.text, request.voice, request.context);
             if text.trim().is_empty() || !self.caps.voices.iter().any(|id| id == voice) {
                 return Err(BackendError::Unsupported(
@@ -168,6 +191,8 @@ impl Backend for CandleBackend {
                 .as_ref()
                 .expect("live inference owner")
                 .send(runtime::Request {
+                    #[cfg(feature = "experimental-moss-reference-anchor")]
+                    reference_anchor: self.reference_anchor,
                     context: context.cloned(),
                     text: text.into(),
                     voice: voice.into(),
@@ -188,6 +213,43 @@ impl Backend for CandleBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "experimental-moss-reference-anchor")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn reference_anchor_rejects_local_and_unanchored_default_voice() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let backend = |mode| -> anyhow::Result<CandleBackend> {
+            Ok(CandleBackend {
+                reference_anchor: false,
+                requests: None,
+                thread: None,
+                caps: capabilities(root.path(), mode)?,
+                cache_identity: "test".into(),
+            })
+        };
+        assert!(backend(Mode::Local)?.with_reference_anchor().is_err());
+        let realtime = backend(Mode::Realtime)?.with_reference_anchor()?;
+        assert!(
+            realtime
+                .cache_identity
+                .ends_with("-experimental-reference-anchor-v1")
+        );
+        let params = tts_core::params::GenerationParams::new();
+        assert!(matches!(
+            realtime
+                .stream(tts_core::backend::SegmentRequest {
+                    text: "测试",
+                    voice: "narrator",
+                    style: None,
+                    context: None,
+                    seed: 42,
+                    params: &params,
+                })
+                .await,
+            Err(BackendError::Unsupported(_))
+        ));
+        assert!(!root.path().join("moss").exists());
+        Ok(())
+    }
     #[test]
     fn nano_identity_and_candle_devices_remain_separate() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;

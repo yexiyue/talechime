@@ -10,10 +10,15 @@ repository = "https://github.com/yexiyue/talechime"
 [features]
 default = []
 cuda = ["dep:candle-transformers"]
+# Conv-heavy CUDA models route convolutions through cuDNN instead of
+# candle's unfold+matmul fallback (which rejects some strided layouts).
+# Additive: plain `cuda` builds keep the existing fallback path.
+cuda-cudnn = ["cuda", "dep:candle-core"]
 metal = ["dep:candle-nn", "dep:candle-metal-kernels"]
 
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
 candle-transformers = { workspace = true, features = ["cuda"], optional = true }
+candle-core = { workspace = true, features = ["cudnn"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 candle-nn = { workspace = true, features = ["metal"], optional = true }

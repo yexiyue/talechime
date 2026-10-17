@@ -75,6 +75,8 @@ pub fn available_devices() -> Vec<Device> {
         .collect()
 }
 pub struct VoxBackend {
+    #[cfg(feature = "experimental-dual-reference")]
+    dual_reference: bool,
     requests: Option<mpsc::Sender<runtime::Request>>,
     thread: Option<std::thread::JoinHandle<()>>,
     caps: Capabilities,
@@ -106,6 +108,8 @@ impl VoxBackend {
             .map_err(|e| BackendError::Initialize(e.to_string()))?;
         // Own the thread before awaiting initialization: cancellation must join it.
         let backend = Self {
+            #[cfg(feature = "experimental-dual-reference")]
+            dual_reference: false,
             requests: Some(requests),
             thread: Some(thread),
             caps,
@@ -115,6 +119,15 @@ impl VoxBackend {
             .await
             .map_err(|_| BackendError::Initialize("Vox inference thread exited".into()))??;
         Ok(backend)
+    }
+    /// Opt into experimental isolated reference plus rolling continuation.
+    /// Requires an imported voice; not enabled by CLI or protocol defaults.
+    #[cfg(feature = "experimental-dual-reference")]
+    pub fn with_dual_reference(mut self) -> Self {
+        self.dual_reference = true;
+        self.cache_identity
+            .push_str("-experimental-dual-reference-v1");
+        self
     }
 }
 impl Drop for VoxBackend {
@@ -135,6 +148,12 @@ impl Backend for VoxBackend {
     fn stream<'a>(&'a self, request: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
             request.reject_unsupported(self.caps.style, self.caps.continuation)?;
+            #[cfg(feature = "experimental-dual-reference")]
+            if self.dual_reference && !request.voice.starts_with("custom:") {
+                return Err(BackendError::Unsupported(
+                    "dual reference requires an imported voice".into(),
+                ));
+            }
             let (text, voice, context) = (request.text, request.voice, request.context);
             if !self.caps.voices.iter().any(|id| id == voice) || text.trim().is_empty() {
                 return Err(BackendError::Unsupported(
@@ -148,6 +167,8 @@ impl Backend for VoxBackend {
                 .as_ref()
                 .expect("live inference thread")
                 .send(runtime::Request {
+                    #[cfg(feature = "experimental-dual-reference")]
+                    dual_reference: self.dual_reference,
                     context: context.cloned(),
                     text,
                     voice: voice.into(),
