@@ -277,3 +277,44 @@ CUDA Clippy `--features cuda-cudnn --all-targets -- -D warnings` 亦通过。审
 本组生成耗时减少 **6.47%**。12 个输出逐段长度一致，相对审查前优化实现的 RMS 变化不超过 **1.0%**，非逐样本一致；不代表内容完整性或主观音质已验收。二进制 SHA-256、输出比较见 `target/indextts-review/comparison.json`；每轮目录 `process.json` 记录墙钟和开关。复现使用 §9 命令，将可执行文件替换为上述两个快照、输出目录分别设为新的忽略目录即可。
 
 明确保留的限制：默认 CUDA 整 codec 对 CPU oracle 的严格数值容差未通过（严格 F32 环境通过）；Metal 未实机验证；人工听感与 ASR 内容回读未执行。本轮未升级任何 native 依赖，未提交/推送代码。
+
+## 12. 最终代码与官方 Python 的当前对照
+
+§11 全部修复和简化完成后，用当前工作树重新构建 CUDA release examples（`corpus.exe` SHA-256 `2a2392eb…55fb`），与官方 Python 按 **Python A → Rust B → Rust B2 → Python A2** 串行交替对照。两端使用同一语料、参考音频、seed 7、`cuda`、2 轮（6 段 × 2 = 12 次）、`INDEXTTS_PROFILE=0`；Rust 使用转换后 checkpoint，Python 使用官方 checkpoint。未设置 `NVIDIA_TF32_OVERRIDE`，四次运行之间没有并行构建或推理。运行时 GPU 为 RTX 5070 / driver 616.56；结束后空闲状态约 41 °C、25.9 W、615 MHz SM clock。
+
+计时口径与 corpus runner 一致：`generate_secs` 从每次 `infer()` 调用开始，到 WAV 写出结束；`load_secs` 单独记录，不计入 RTF。“稳态”口径排除每个进程的第一条请求，用于移除首次 CUDA kernel/缓存初始化影响。
+
+| 运行 | 模型加载 | 成功 | 音频总时长 | 生成总耗时 | RTF | 首条耗时 | 除首条 RTF |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Python A | 18.121 s | 12/12 | 96.8905 s | 44.0878 s | 0.45503 | 4.6669 s | 0.41573 |
+| Rust B | 4.571 s | 12/12 | 98.5624 s | 41.6817 s | 0.42290 | 1.3676 s | 0.41763 |
+| Rust B2 | 2.114 s | 12/12 | 98.5624 s | 41.3808 s | 0.41984 | 1.3152 s | 0.41506 |
+| Python A2 | 14.672 s | 12/12 | 96.8905 s | 44.2309 s | 0.45650 | 3.4628 s | 0.42994 |
+
+按两次运行取均值：官方 Python 整体 RTF **0.45577**，Rust **0.42137**，Rust 低 **7.55%**；排除每个进程首条请求后，Python 稳态 RTF **0.42283**，Rust **0.41634**，Rust 低 **1.53%**。因此当前主要可感知优势来自首个推理请求（Python 3.46–4.67 s vs Rust 1.32–1.37 s）和模型加载（Python 14.7–18.1 s vs Rust 2.1–4.6 s）；在长会话稳态下，两端已经处于同一性能带，Rust 只有小幅领先。
+
+解释边界：两端 RNG 不 transferable，同 seed 下 Python 与 Rust 生成的音频长度不同（96.8905 s vs 98.5624 s），RTF 已按各自生成时长归一，但长度分布仍可能带来少量偏差；ABBA 只有一次完整重复，1.53% 的稳态差距不应外推为稳定收益。当前结论也没有人工听感或 ASR 内容回读验收。官方 Python 输出的乱码文本提示来自 Windows 控制台编码显示，`index.json` 本身按 UTF-8 写入。
+
+结果与复现：
+
+```powershell
+$env:PATH = 'D:\dev-tools\cudnn\v9.14-cuda13\bin;' + $env:PATH
+$env:INDEXTTS_PROFILE = '0'
+D:/workspace/index-tts/.venv/Scripts/python.exe tools/tts/indextts_corpus_py.py `
+  --checkpoints D:/workspace/index-tts/checkpoints `
+  --reference D:/workspace/index-tts/examples/voice_01.wav `
+  --corpus tools/tts/acceptance-corpus.txt `
+  --out-dir target/indextts-latest-official-comparison/python-a `
+  --rounds 2 --seed 7 --device cuda
+
+target/release/examples/corpus.exe `
+  --dir D:/workspace/index-tts/checkpoints-converted `
+  --reference D:/workspace/index-tts/examples/voice_01.wav `
+  --corpus tools/tts/acceptance-corpus.txt `
+  --out-dir target/indextts-latest-official-comparison/rust-b `
+  --rounds 2 --seed 7 --device cuda
+
+# 按 Python A → Rust B → Rust B2 → Python A2 继续替换输出目录完成 ABBA。
+```
+
+完整输出与机器可读汇总在 `target/indextts-latest-official-comparison/`（四个 `index.json` 与 `comparison.json`）。本轮只做性能重测与记录，没有改变行为代码。
