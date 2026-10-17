@@ -1,8 +1,8 @@
 # indextts — third-party sources
 
 Native Candle port of IndexTTS 2.5 inference. The Rust implementation in
-this crate is original work (Apache-2.0, same as the crate license); the
-*semantics* it reproduces and the model weights it consumes come from the
+this crate is Apache-2.0; the adapted Candle depthwise workaround is
+identified below. The *semantics* it reproduces and the model weights it consumes come from the
 sources below. Model weights are never committed or redistributed by this
 repository; converted safetensors produced by the development script stay
 under the upstream weight licenses.
@@ -11,7 +11,8 @@ under the upstream weight licenses.
 
 | Component | Source | Pinned revision | License |
 | --- | --- | --- | --- |
-| Inference semantics (GPT v2, codec, s2mel, BigVGAN wrapper, CAMPPlus wrapper, frontend, tokenizer) | https://github.com/index-tts/index-tts | commit `d9e41aac89fd00b3d71497fddb287b7f24613712` (2026-09-30, main) | code MIT-style per repo LICENSE; **weights: bilibili Model Use License Agreement (IndexTeam/IndexTTS-2.5)** — commercial use requires contacting Bilibili |
+| Codec CUDA depthwise workaround | https://github.com/huggingface/candle/pull/3531 | commit `70bf01e7a56c8cc8d42649e78564d83930ab2cf7` (adapted locally; runtime remains Candle 0.11.0) | Apache-2.0 (upstream MIT OR Apache-2.0; see `third-party/candle/LICENSE-APACHE`) |
+| Inference semantics (GPT v2, codec, s2mel, BigVGAN wrapper, CAMPPlus wrapper, frontend, tokenizer) | https://github.com/index-tts/index-tts | commit `d9e41aac89fd00b3d71497fddb287b7f24613712` (2026-09-30, main) | bilibili Model Use License Agreement in the pinned repo LICENSE (its definition of Model includes published code and weights); not MIT |
 | Wav2Vec2-BERT model semantics | HF transformers `src/transformers/models/wav2vec2_bert` | tag `v4.52.1` (matches upstream `transformers==4.52.1`) | Apache-2.0 |
 | Kaldi fbank semantics | torchaudio `compliance/kaldi.py` | tag `v2.5.1` | BSD-2-Clause |
 | w2v-bert-2.0 weights | https://huggingface.co/facebook/w2v-bert-2.0 | commit `da985ba0987f70aaeb84a80f2851cfac8c697a7b` | MIT |

@@ -13,8 +13,11 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use clap::Parser;
+
+#[path = "support/probe.rs"]
+mod probe;
 
 #[derive(Parser)]
 struct Args {
@@ -43,15 +46,16 @@ struct Args {
     emo_reference: Option<PathBuf>,
     #[arg(long, default_value = "cpu")]
     device: String,
+    #[arg(long)]
+    no_text_normalization: bool,
+    /// Experiment: decode semantic codes with a CPU codec copy.
+    #[arg(long)]
+    decode_on_cpu: bool,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let device = match args.device.as_str() {
-        "cpu" => candle_core::Device::Cpu,
-        "cuda" => candle_core::Device::cuda_if_available(0)?,
-        other => bail!("unsupported device {other}"),
-    };
+    let device = probe::device(&args.device)?;
 
     let t0 = Instant::now();
     let mut model = indextts::Model::load(&args.dir, &device)
@@ -71,6 +75,8 @@ fn main() -> Result<()> {
     let options = indextts::Options {
         seed: args.seed,
         duration_factor: args.duration_factor,
+        text_normalization: !args.no_text_normalization,
+        decode_on_cpu: args.decode_on_cpu,
         ..Default::default()
     };
     let t2 = Instant::now();
@@ -78,19 +84,7 @@ fn main() -> Result<()> {
     let gen_secs = t2.elapsed().as_secs_f64();
     let audio_secs = outcome.samples.len() as f64 / outcome.sample_rate as f64;
 
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate: outcome.sample_rate,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
-    let mut writer = hound::WavWriter::create(&args.out, spec)
-        .with_context(|| format!("create {}", args.out.display()))?;
-    for s in &outcome.samples {
-        let v = s.clamp(-32767.0, 32767.0).round() as i16;
-        writer.write_sample(v)?;
-    }
-    writer.finalize()?;
+    probe::write_wav(&args.out, &outcome.samples, outcome.sample_rate)?;
 
     let report = serde_json::json!({
         "load_secs": load_secs,
@@ -101,6 +95,9 @@ fn main() -> Result<()> {
         "segments": outcome.segments,
         "sample_rate": outcome.sample_rate,
         "seed": args.seed,
+        "device": args.device,
+        "text_normalization": !args.no_text_normalization,
+        "decode_on_cpu": args.decode_on_cpu,
     });
     let sidecar = args.out.with_extension("json");
     std::fs::write(&sidecar, serde_json::to_string_pretty(&report)?)?;

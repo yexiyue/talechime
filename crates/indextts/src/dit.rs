@@ -26,22 +26,41 @@ use crate::wavenet::{Wavenet, load_weight_norm_linear};
 use candle_core::{DType, Result, Tensor};
 use candle_nn::{Conv1d, Conv1dConfig, Linear, Module, VarBuilder, linear, linear_no_bias};
 
-/// `Linear::forward` on `(B, T, C)` inputs as an explicit contiguous 2-D
-/// matmul. Candle's CUDA matmul rejects the internally built strided views
-/// for some 3-D lhs layouts; flattening by hand keeps every operand dense
-/// (numerically identical, batch row-major).
-pub(crate) fn lin2d(l: &Linear, x: &Tensor) -> Result<Tensor> {
-    if x.dims().len() != 3 {
-        return l.forward(x);
+/// A `Linear` applied as an explicit contiguous 2-D matmul over `(B, T, C)`
+/// inputs, with the transposed weight materialized once at load time.
+/// Candle's CUDA matmul rejects the internally built strided views for some
+/// 3-D lhs layouts; flattening by hand keeps every operand dense. The DiT
+/// applies ~90 such projections per CFM step; doing `.t()?.contiguous()?`
+/// per call re-copied megabytes of weights and added a dispatch each time.
+/// The cached operand holds bit-identical
+/// values, so every matmul result is unchanged.
+pub(crate) struct LinT2d {
+    weight_t: Tensor,
+    bias: Option<Tensor>,
+    out_dim: usize,
+}
+
+impl LinT2d {
+    pub(crate) fn from_linear(l: Linear) -> Result<Self> {
+        let out_dim = l.weight().dim(0)?;
+        Ok(Self {
+            weight_t: l.weight().t()?.contiguous()?,
+            bias: l.bias().cloned(),
+            out_dim,
+        })
     }
-    let (b, t, f) = x.dims3()?;
-    let w = l.weight().t()?.contiguous()?;
-    let out = w.dim(1)?;
-    let mut y = x.contiguous()?.reshape((b * t, f))?.matmul(&w)?;
-    if let Some(bias) = l.bias() {
-        y = y.broadcast_add(bias)?;
+
+    pub(crate) fn forward(&self, x: &Tensor) -> Result<Tensor> {
+        let (b, t, f) = x.dims3()?;
+        let mut y = x
+            .contiguous()?
+            .reshape((b * t, f))?
+            .matmul(&self.weight_t)?;
+        if let Some(bias) = &self.bias {
+            y = y.broadcast_add(bias)?;
+        }
+        y.reshape((b, t, self.out_dim))
     }
-    y.reshape((b, t, out))
 }
 
 /// Shipped `args.style_encoder.dim` (CAMPPlus embedding size). `Dit::load`
@@ -89,21 +108,21 @@ impl TimestepEmbedder {
 /// `AdaptiveLayerNorm(x, c) = w ⊙ RMSNorm(x) + b` with `(w, b)` split from
 /// `project_layer(c)`; RMS eps is the gpt_fast `norm_eps` 1e-5.
 struct AdaptiveLayerNorm {
-    project: Linear,
+    project: LinT2d,
     norm_weight: Tensor,
 }
 
 impl AdaptiveLayerNorm {
     fn load(vb: &VarBuilder, dim: usize) -> Result<Self> {
         Ok(Self {
-            project: linear(dim, 2 * dim, vb.pp("project_layer"))?,
+            project: LinT2d::from_linear(linear(dim, 2 * dim, vb.pp("project_layer"))?)?,
             norm_weight: vb.get((dim,), "norm.weight")?,
         })
     }
 
     fn forward(&self, x: &Tensor, c: &Tensor) -> Result<Tensor> {
         let dim = self.norm_weight.dim(0)?;
-        let wb = lin2d(&self.project, c)?; // (B, 1, 2*dim)
+        let wb = self.project.forward(c)?; // (B, 1, 2*dim)
         let w = wb.narrow(2, 0, dim)?;
         let b = wb.narrow(2, dim, dim)?;
         let n = candle_nn::ops::rms_norm(&x.contiguous()?, &self.norm_weight, 1e-5)?;
@@ -113,13 +132,13 @@ impl AdaptiveLayerNorm {
 
 struct DiTBlock {
     attention_norm: AdaptiveLayerNorm,
-    wqkv: Linear,
-    wo: Linear,
+    wqkv: LinT2d,
+    wo: LinT2d,
     ffn_norm: AdaptiveLayerNorm,
-    w1: Linear,
-    w3: Linear,
-    w2: Linear,
-    skip_in_linear: Option<Linear>,
+    w1: LinT2d,
+    w3: LinT2d,
+    w2: LinT2d,
+    skip_in_linear: Option<LinT2d>,
 }
 
 pub struct Dit {
@@ -127,14 +146,14 @@ pub struct Dit {
     norm: AdaptiveLayerNorm,
     t_embedder: TimestepEmbedder,
     t_embedder2: TimestepEmbedder,
-    cond_projection: Linear,
-    cond_x_merge_linear: Linear,
-    skip_linear: Option<Linear>,
+    cond_projection: LinT2d,
+    cond_x_merge_linear: LinT2d,
+    skip_linear: Option<LinT2d>,
     conv1: Linear,
     conv2: Conv1d,
-    res_projection: Linear,
+    res_projection: LinT2d,
     wavenet: Wavenet,
-    final_linear: Linear,
+    final_linear: LinT2d,
     final_adaln: Linear,
     in_channels: usize,
     hidden: usize,
@@ -237,26 +256,54 @@ impl Dit {
         let t_vb = vb.pp("t_embedder");
         let t_embedder = TimestepEmbedder::load(&t_vb, hidden)?;
         let t_embedder2 = TimestepEmbedder::load(&vb.pp("t_embedder2"), wavenet_cfg.hidden_dim)?;
-        let cond_projection = linear(dit_cfg.content_dim, hidden, vb.pp("cond_projection"))?;
-        let cond_x_merge_linear = linear(
+        let cond_projection = LinT2d::from_linear(linear(
+            dit_cfg.content_dim,
+            hidden,
+            vb.pp("cond_projection"),
+        )?)?;
+        let cond_x_merge_linear = LinT2d::from_linear(linear(
             hidden + 2 * dit_cfg.in_channels + style_dim,
             hidden,
             vb.pp("cond_x_merge_linear"),
-        )?;
+        )?)?;
 
         let mut blocks = Vec::with_capacity(dit_cfg.depth);
         for i in 0..dit_cfg.depth {
             let lvb = vb.pp(format!("transformer.layers.{i}"));
             blocks.push(DiTBlock {
                 attention_norm: AdaptiveLayerNorm::load(&lvb.pp("attention_norm"), hidden)?,
-                wqkv: linear_no_bias(hidden, 3 * hidden, lvb.pp("attention").pp("wqkv"))?,
-                wo: linear_no_bias(hidden, hidden, lvb.pp("attention").pp("wo"))?,
+                wqkv: LinT2d::from_linear(linear_no_bias(
+                    hidden,
+                    3 * hidden,
+                    lvb.pp("attention").pp("wqkv"),
+                )?)?,
+                wo: LinT2d::from_linear(linear_no_bias(
+                    hidden,
+                    hidden,
+                    lvb.pp("attention").pp("wo"),
+                )?)?,
                 ffn_norm: AdaptiveLayerNorm::load(&lvb.pp("ffn_norm"), hidden)?,
-                w1: linear_no_bias(hidden, intermediate, lvb.pp("feed_forward").pp("w1"))?,
-                w3: linear_no_bias(hidden, intermediate, lvb.pp("feed_forward").pp("w3"))?,
-                w2: linear_no_bias(intermediate, hidden, lvb.pp("feed_forward").pp("w2"))?,
+                w1: LinT2d::from_linear(linear_no_bias(
+                    hidden,
+                    intermediate,
+                    lvb.pp("feed_forward").pp("w1"),
+                )?)?,
+                w3: LinT2d::from_linear(linear_no_bias(
+                    hidden,
+                    intermediate,
+                    lvb.pp("feed_forward").pp("w3"),
+                )?)?,
+                w2: LinT2d::from_linear(linear_no_bias(
+                    intermediate,
+                    hidden,
+                    lvb.pp("feed_forward").pp("w2"),
+                )?)?,
                 skip_in_linear: if dit_cfg.uvit_skip_connection {
-                    Some(linear(2 * hidden, hidden, lvb.pp("skip_in_linear"))?)
+                    Some(LinT2d::from_linear(linear(
+                        2 * hidden,
+                        hidden,
+                        lvb.pp("skip_in_linear"),
+                    )?)?)
                 } else {
                     None
                 },
@@ -265,11 +312,11 @@ impl Dit {
         let norm = AdaptiveLayerNorm::load(&vb.pp("transformer").pp("norm"), hidden)?;
 
         let skip_linear = if dit_cfg.long_skip_connection {
-            Some(linear(
+            Some(LinT2d::from_linear(linear(
                 hidden + dit_cfg.in_channels,
                 hidden,
                 vb.pp("skip_linear"),
-            )?)
+            )?)?)
         } else {
             None
         };
@@ -281,13 +328,17 @@ impl Dit {
             Conv1dConfig::default(),
             vb.pp("conv2"),
         )?;
-        let res_projection = linear(hidden, wavenet_cfg.hidden_dim, vb.pp("res_projection"))?;
+        let res_projection = LinT2d::from_linear(linear(
+            hidden,
+            wavenet_cfg.hidden_dim,
+            vb.pp("res_projection"),
+        )?)?;
         let wavenet = Wavenet::load(&vb.pp("wavenet"), wavenet_cfg)?;
-        let final_linear = load_weight_norm_linear(
+        let final_linear = LinT2d::from_linear(load_weight_norm_linear(
             &vb.pp("final_layer").pp("linear"),
             wavenet_cfg.hidden_dim,
             wavenet_cfg.hidden_dim,
-        )?;
+        )?)?;
         // FinalLayer.adaLN_modulation = Sequential(SiLU, Linear(h, 2h)).
         let final_adaln = linear(
             hidden,
@@ -333,6 +384,25 @@ impl Dit {
         style: &Tensor,
         drop_style: bool,
     ) -> Result<Tensor> {
+        let projected = self.project_condition(cond)?;
+        self.forward_projected(x, t, &projected, style, drop_style)
+    }
+
+    /// The continuous condition is fixed for all steps of a CFM solve.
+    pub(crate) fn project_condition(&self, cond: &Tensor) -> Result<Tensor> {
+        self.cond_projection.forward(cond)
+    }
+
+    /// Same estimator with the condition projection supplied by the caller.
+    /// The projected tensor belongs to one solve, never a cross-request cache.
+    pub(crate) fn forward_projected(
+        &self,
+        x: &Tensor,
+        t: &Tensor,
+        projected: &Tensor,
+        style: &Tensor,
+        drop_style: bool,
+    ) -> Result<Tensor> {
         let (b, channels, t_len) = x.dims3()?;
         if channels != 2 * self.in_channels {
             candle_core::bail!(
@@ -346,8 +416,13 @@ impl Dit {
             .transpose(1, 2)?;
 
         let t1 = self.t_embedder.forward(t)?; // (B, hidden)
-        let cond = lin2d(&self.cond_projection, cond)?; // (B, T, hidden)
-        let mut x_in = Tensor::cat(&[&noisy, &prompt, &cond], 2)?; // (B, T, C+2C_in+H)
+        if projected.dims() != [b, t_len, self.hidden] {
+            candle_core::bail!(
+                "projected condition must be ({b}, {t_len}, {})",
+                self.hidden
+            );
+        }
+        let mut x_in = Tensor::cat(&[&noisy, &prompt, projected], 2)?; // (B, T, C+2C_in+H)
         if self.style_condition {
             let style_tok = style.to_dtype(DType::F32)?.unsqueeze(1)?.broadcast_as((
                 b,
@@ -364,19 +439,10 @@ impl Dit {
                 .zeros_like()?;
             x_in = Tensor::cat(&[&head, &tail], 2)?;
         }
-        // Explicit contiguous 2-D matmul: candle's CUDA path for a 3-D lhs
-        // against a 2-D weight internally builds a strided view that its
-        // own matmul then rejects for this layout.
-        let (b0, t0, f0) = x_in.dims3()?;
-        let merge_w = self.cond_x_merge_linear.weight().t()?.contiguous()?;
-        let mut x = x_in
-            .contiguous()?
-            .reshape((b0 * t0, f0))?
-            .matmul(&merge_w)?;
-        if let Some(bias) = self.cond_x_merge_linear.bias() {
-            x = x.broadcast_add(bias)?;
-        }
-        let mut x = x.reshape((b0, t0, self.hidden))?;
+        // LinT2d keeps the explicit contiguous 2-D matmul: candle's CUDA
+        // path for a 3-D lhs against a 2-D weight internally builds a
+        // strided view that its own matmul then rejects for this layout.
+        let mut x = self.cond_x_merge_linear.forward(&x_in)?;
 
         // Transformer with UViT skip connections (non-causal, full attention).
         let (cos, sin) = rope_tables(t_len, self.head_dim, x.device())?;
@@ -389,7 +455,7 @@ impl Dit {
                     let skip = skip_stack.pop().ok_or_else(|| {
                         candle_core::Error::Msg("uvit skip stack underflow".into())
                     })?;
-                    lin2d(proj, &Tensor::cat(&[&x, &skip], 2)?)?
+                    proj.forward(&Tensor::cat(&[&x, &skip], 2)?)?
                 }
                 _ => x.clone(),
             };
@@ -403,12 +469,11 @@ impl Dit {
         // Long skip over the noisy mel.
         if self.long_skip_connection {
             let skip_in = Tensor::cat(&[&x_res, &noisy], 2)?;
-            x_res = lin2d(
-                self.skip_linear
-                    .as_ref()
-                    .expect("long_skip_connection implies skip_linear"),
-                &skip_in,
-            )?;
+            x_res = self
+                .skip_linear
+                .as_ref()
+                .expect("long_skip_connection implies skip_linear")
+                .forward(&skip_in)?;
         }
 
         // WaveNet final layer with its own timestep embedding.
@@ -417,7 +482,7 @@ impl Dit {
         let wn = self.wavenet.forward(&h, &t2.unsqueeze(2)?)?; // (B, wn_h, T)
         let mut x_final = wn
             .transpose(1, 2)?
-            .broadcast_add(&lin2d(&self.res_projection, &x_res)?)?;
+            .broadcast_add(&self.res_projection.forward(&x_res)?)?;
 
         // FinalLayer: affine-free LayerNorm (eps 1e-6) modulated by t1.
         let shift_scale = self.final_adaln.forward(&t1.silu()?)?; // (B, 2*hidden)
@@ -431,7 +496,7 @@ impl Dit {
         let modulated = normed
             .broadcast_mul(&scale.affine(1.0, 1.0)?)?
             .broadcast_add(&shift)?;
-        x_final = lin2d(&self.final_linear, &modulated)?;
+        x_final = self.final_linear.forward(&modulated)?;
 
         // conv2: Conv1d(wn_h -> in_channels, k1) over (B, wn_h, T).
         let out = self
@@ -453,7 +518,7 @@ impl Dit {
         let hidden = self.hidden;
         let (b, t_len, _) = x.dims3()?;
         let attn_in = block.attention_norm.forward(x, c)?; // (B, T, H)
-        let qkv = lin2d(&block.wqkv, &attn_in)?; // (B, T, 3H)
+        let qkv = block.wqkv.forward(&attn_in)?; // (B, T, 3H)
         let q = qkv.narrow(2, 0, hidden)?.contiguous()?.reshape((
             b,
             t_len,
@@ -487,12 +552,14 @@ impl Dit {
             .transpose(1, 2)?
             .contiguous()?
             .flatten(2, 3)?; // (B, T, H)
-        let h = x.broadcast_add(&lin2d(&block.wo, &y)?)?;
+        let h = x.broadcast_add(&block.wo.forward(&y)?)?;
         let ffn_in = block.ffn_norm.forward(&h, c)?;
-        let gated = lin2d(&block.w1, &ffn_in)?
+        let gated = block
+            .w1
+            .forward(&ffn_in)?
             .silu()?
-            .broadcast_mul(&lin2d(&block.w3, &ffn_in)?)?;
-        h.broadcast_add(&lin2d(&block.w2, &gated)?)
+            .broadcast_mul(&block.w3.forward(&ffn_in)?)?;
+        h.broadcast_add(&block.w2.forward(&gated)?)
     }
 }
 
@@ -628,6 +695,32 @@ mod tests {
         let cond = Tensor::zeros((1, 5, 16), DType::F32, &device).unwrap();
         let style = Tensor::zeros((1, STYLE_DIM), DType::F32, &device).unwrap();
         assert!(model.forward(&x, &t, &cond, &style, false).is_err());
+    }
+
+    #[test]
+    fn prepared_condition_matches_fresh_projection_across_lengths_and_steps() {
+        let device = Device::Cpu;
+        let varmap = VarMap::new();
+        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
+        let (dit_cfg, wn_cfg) = tiny_cfgs();
+        let model = Dit::load(&vb, &dit_cfg, &wn_cfg).unwrap();
+        for len in [5, 8, 5] {
+            let cond = Tensor::randn(0f32, 1f32, (2, len, 16), &device).unwrap();
+            let style = Tensor::randn(0f32, 1f32, (2, STYLE_DIM), &device).unwrap();
+            let projected = model.project_condition(&cond).unwrap();
+            for (time, drop_style) in [(0.0f32, false), (0.5, true)] {
+                let x = Tensor::randn(0f32, 1f32, (2, 8, len), &device).unwrap();
+                let t = Tensor::full(time, 2, &device).unwrap();
+                let expected = model.forward(&x, &t, &cond, &style, drop_style).unwrap();
+                let actual = model
+                    .forward_projected(&x, &t, &projected, &style, drop_style)
+                    .unwrap();
+                assert_eq!(
+                    actual.flatten_all().unwrap().to_vec1::<f32>().unwrap(),
+                    expected.flatten_all().unwrap().to_vec1::<f32>().unwrap()
+                );
+            }
+        }
     }
 
     #[test]

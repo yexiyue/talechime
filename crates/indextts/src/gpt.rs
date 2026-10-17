@@ -199,6 +199,13 @@ impl UnifiedVoice {
         (&base + diff)?.contiguous()
     }
 
+    /// `merge_emovec(x, x, _)` collapses to `get_emovec(x)` bit-exactly
+    /// (`emo - base == 0` exactly), so callers with a single reference clip
+    /// can run the emotion conformer once instead of twice.
+    pub fn emovec_from_reference(&self, cond: &Tensor) -> Result<Tensor> {
+        self.get_emovec(cond)
+    }
+
     /// One inference call for a text segment (num_return_sequences = 1,
     /// no `input_tokens`). `text_tokens`: `(1, L)` i64 already padded with
     /// the trailing pad token (id 1) as in `infer_generator`; `emo_vec`:
@@ -245,9 +252,6 @@ impl UnifiedVoice {
         }
     }
 
-    /// `[spk + emo_vec, 0, 0]` conditioning from a CAMPPlus style row and an
-    /// emotion vector (`(1, 192)` / `(1, model_dim)`). Pub(crate) for the
-    /// oracle validation harness.
     /// `[spk + emo_vec, 0, 0]` conditioning from a CAMPPlus style row and an
     /// emotion vector (`(1, 192)` / `(1, model_dim)`).
     pub(crate) fn campplus_conditioning(

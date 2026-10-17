@@ -46,6 +46,18 @@ pub struct Options {
     /// CFM solver steps and guidance rate.
     pub diffusion_steps: usize,
     pub inference_cfg_rate: f64,
+    /// EXPERIMENT (off by default): decode the semantic codes with a CPU
+    /// copy of the codec even when the model runs on CUDA. Measured on an
+    /// RTX 5070: the per-segment codec tensors are small enough that the
+    /// cuDNN convolutions run ~5x slower than the CPU ones (0.47-0.51 s vs
+    /// 0.094 s per segment), so routing this post-sampling stage through
+    /// the CPU shortens the critical path at the cost of two small device
+    /// copies and one extra CPU codec load. Frame counts — and therefore
+    /// audio durations — are device-independent, but the decoded features
+    /// and final waveform differ from the all-GPU path within float32
+    /// backend rounding. Not bit-identical to the default path; quality
+    /// verification is on the caller.
+    pub decode_on_cpu: bool,
 }
 
 impl Default for Options {
@@ -62,8 +74,33 @@ impl Default for Options {
             text_normalization: true,
             diffusion_steps: 25,
             inference_cfg_rate: 0.7,
+            decode_on_cpu: false,
         }
     }
+}
+
+/// Maximum reference audio duration in seconds (`_load_and_cut_audio(..., 15)`).
+pub const MAX_REFERENCE_SECS: usize = 15;
+
+/// Normalize an 8-dim emotion vector `[happy, angry, sad, afraid, disgusted,
+/// melancholic, surprised, calm]` with upstream `IndexTTS2.normalize_emo_vec`
+/// (`infer_v2_5.py`): optional per-emotion bias factors followed by scaling so
+/// the sum never exceeds `0.8`.
+pub fn normalize_emo_vec(mut emo_vector: [f32; 8], apply_bias: bool) -> [f32; 8] {
+    if apply_bias {
+        const EMO_BIAS: [f32; 8] = [0.9375, 0.875, 1.0, 1.0, 0.9375, 0.9375, 0.6875, 0.5625];
+        for (v, b) in emo_vector.iter_mut().zip(EMO_BIAS) {
+            *v *= b;
+        }
+    }
+    let sum: f32 = emo_vector.iter().sum();
+    if sum > 0.8 {
+        let scale = 0.8 / sum;
+        for v in &mut emo_vector {
+            *v *= scale;
+        }
+    }
+    emo_vector
 }
 
 /// A preloaded reference clip at the two rates the pipeline needs.
@@ -75,9 +112,12 @@ pub struct Reference {
 }
 
 impl Reference {
-    /// Build from arbitrary-rate mono PCM, resampling to both rates
-    /// (approximate sinc resampler — see [`dsp::resample`]).
+    /// Build from arbitrary-rate mono PCM, truncating to [`MAX_REFERENCE_SECS`]
+    /// (matching upstream `_load_and_cut_audio(..., 15)`) and resampling to
+    /// both pipeline rates (approximate sinc resampler — see [`dsp::resample`]).
     pub fn from_pcm(pcm: &[f32], sample_rate: u32) -> Result<Self> {
+        let max_samples = MAX_REFERENCE_SECS.saturating_mul(sample_rate as usize);
+        let pcm = &pcm[..pcm.len().min(max_samples)];
         let pcm_22k = dsp::resample(pcm, sample_rate, crate::SAMPLE_RATE)?;
         let pcm_16k = dsp::resample(pcm, sample_rate, 16_000)?;
         Ok(Self { pcm_22k, pcm_16k })
@@ -85,6 +125,7 @@ impl Reference {
 }
 
 /// Cached conditioning derived from a [`Reference`].
+#[derive(Clone)]
 pub struct ReferenceConditioning {
     /// w2v-bert hidden-17 features `(1, T, 1024)`.
     pub spk_cond_emb: Tensor,
@@ -123,7 +164,16 @@ pub struct Model {
     /// Same split of `spk_matrix`.
     spk_matrix: Vec<Tensor>,
     reference: Option<ReferenceConditioning>,
+    /// Derived only from `reference`; invalidated on successful replacement.
+    reference_emovec: Option<Tensor>,
     emo_reference: Option<Tensor>,
+    /// Derived only from `emo_reference`; invalidated on replacement/clear.
+    emo_reference_emovec: Option<Tensor>,
+    /// Converted checkpoint directory (for the lazy CPU codec load of
+    /// [`Options::decode_on_cpu`]).
+    source_dir: std::path::PathBuf,
+    /// Lazily loaded CPU copy of the codec (see [`Options::decode_on_cpu`]).
+    codec_cpu: Option<SemanticCodec>,
 }
 
 impl Model {
@@ -164,7 +214,11 @@ impl Model {
             emo_matrix: emo_groups,
             spk_matrix: spk_groups,
             reference: None,
+            reference_emovec: None,
             emo_reference: None,
+            emo_reference_emovec: None,
+            source_dir: dir.to_path_buf(),
+            codec_cpu: None,
         })
     }
 
@@ -183,21 +237,48 @@ impl Model {
             .to_dtype(DType::F32)
     }
 
+    /// [`Options::decode_on_cpu`] backend: decode the semantic codes with a
+    /// lazily loaded CPU copy of the codec and ship the features back to
+    /// the model device. The codes themselves are produced on the model
+    /// device, so this only adds one small download and one feature upload
+    /// per segment.
+    fn decode_codes_on_cpu(&mut self, codes: &Tensor) -> Result<Tensor> {
+        if self.codec_cpu.is_none() {
+            let path = self.source_dir.join("codec.safetensors");
+            if !path.is_file() {
+                candle_core::bail!(
+                    "missing converted codec weights {} (run tools/tts/indextts_export_safetensors.py)",
+                    path.display()
+                );
+            }
+            let vb = unsafe {
+                candle_nn::VarBuilder::from_mmaped_safetensors(&[path], DType::F32, &Device::Cpu)
+            }?;
+            self.codec_cpu = Some(SemanticCodec::load(&vb, &self.config.semantic_codec)?);
+        }
+        let codec = self.codec_cpu.as_ref().expect("just initialized");
+        let features = codec.decode(&codes.to_device(&Device::Cpu)?)?;
+        features.to_device(&self.device)
+    }
+
     /// Compute (and cache) the conditioning of a reference clip; required
     /// before [`Self::generate`]. Mirrors the cache-refresh block of
-    /// `infer_generator`.
+    /// `infer_generator` (truncating to [`MAX_REFERENCE_SECS`]).
     pub fn prepare_reference(&mut self, reference: &Reference) -> Result<()> {
-        let spk_cond_emb = self.w2v_features(&reference.pcm_16k)?;
+        let pcm_16k =
+            &reference.pcm_16k[..reference.pcm_16k.len().min(MAX_REFERENCE_SECS * 16_000)];
+        let pcm_22k = &reference.pcm_22k[..reference
+            .pcm_22k
+            .len()
+            .min(MAX_REFERENCE_SECS * crate::SAMPLE_RATE as usize)];
 
-        let wav = Tensor::from_vec(
-            reference.pcm_22k.clone(),
-            (1, reference.pcm_22k.len()),
-            &self.device,
-        )?;
+        let spk_cond_emb = self.w2v_features(pcm_16k)?;
+
+        let wav = Tensor::from_slice(pcm_22k, (1, pcm_22k.len()), &self.device)?;
         let preprocess = &self.config.s2mel.preprocess_params;
         let ref_mel = mel_spectrogram(&wav, &preprocess.spect_params, preprocess.sr, false)?;
 
-        let fbank = dsp::campplus_fbank_tensor(&reference.pcm_16k, &self.device)?;
+        let fbank = dsp::campplus_fbank_tensor(pcm_16k, &self.device)?;
         let style = self.campplus.forward(&fbank)?;
 
         let ref_frames = ref_mel.dim(2)?;
@@ -212,51 +293,87 @@ impl Model {
             style,
             prompt_condition,
         });
+        self.reference_emovec = None;
         Ok(())
     }
 
+    fn reference_emovec(&mut self) -> Result<Tensor> {
+        if let Some(value) = &self.reference_emovec {
+            return Ok(value.clone());
+        }
+        let reference = self.reference.as_ref().ok_or_else(|| {
+            candle_core::Error::Msg("prepare_reference must run before generate".into())
+        })?;
+        let value = self.gpt.emovec_from_reference(&reference.spk_cond_emb)?;
+        self.reference_emovec = Some(value.clone());
+        Ok(value)
+    }
+
+    fn emo_reference_emovec(&mut self) -> Result<Option<Tensor>> {
+        if let Some(value) = &self.emo_reference_emovec {
+            return Ok(Some(value.clone()));
+        }
+        let Some(emo_cond_emb) = &self.emo_reference else {
+            return Ok(None);
+        };
+        let value = self.gpt.emovec_from_reference(emo_cond_emb)?;
+        self.emo_reference_emovec = Some(value.clone());
+        Ok(Some(value))
+    }
+
     /// Optional separate emotion-reference conditioning; when never called
-    /// (or called with the speaker reference) the speaker conditioning
+    /// (or cleared with [`Self::clear_emo_reference`]) the speaker conditioning
     /// doubles as the emotion reference with `emo_alpha` forced to 1.0,
     /// matching upstream.
     pub fn prepare_emo_reference(&mut self, reference: &Reference) -> Result<()> {
-        self.emo_reference = Some(self.w2v_features(&reference.pcm_16k)?);
+        let pcm_16k =
+            &reference.pcm_16k[..reference.pcm_16k.len().min(MAX_REFERENCE_SECS * 16_000)];
+        self.emo_reference = Some(self.w2v_features(pcm_16k)?);
+        self.emo_reference_emovec = None;
         Ok(())
+    }
+
+    /// Clear any separate emotion reference set by [`Self::prepare_emo_reference`]
+    /// so subsequent calls revert to speaker-reference emotion conditioning.
+    pub fn clear_emo_reference(&mut self) {
+        self.emo_reference = None;
+        self.emo_reference_emovec = None;
     }
 
     /// Synthesize `text` (a whole paragraph; segmentation mirrors
     /// `split_text_by_tokens`) into PCM.
     pub fn generate(&mut self, text: &str, lang: &str, opts: &Options) -> Result<Outcome> {
-        let Some(reference) = self.reference.as_ref() else {
+        let _report = crate::profile::report();
+        // Cloned tensor handles: the owned copy releases the `&self`
+        // borrow so experiments like `decode_on_cpu` can take `&mut self`
+        // inside the segment loop.
+        let Some(reference) = self.reference.clone() else {
             candle_core::bail!("prepare_reference must run before generate");
         };
         let device = self.device.clone();
 
-        // Emotion vector path forces the speaker clip to be the emotion
-        // reference with alpha 1.0 (upstream lines 583-617).
+        // Emotion vector path scales weights by `emo_alpha` (upstream lines
+        // 602-610) and forces the speaker clip to be the emotion reference
+        // with alpha 1.0 (upstream lines 583-617).
         let mut rng = StdRng::seed_from_u64(opts.seed.unwrap_or_else(random_seed));
-        let (emo_cond_emb, emo_alpha, emovec_override) = match opts.emo_vector {
-            Some(vector) => {
+        let emovec_override = match opts.emo_vector {
+            Some(raw_vector) => {
+                let scale = opts.emo_alpha.clamp(0.0, 1.0);
+                let vector = if (scale - 1.0).abs() > f32::EPSILON {
+                    raw_vector.map(|x| ((x * scale * 10_000.0).trunc()) / 10_000.0)
+                } else {
+                    raw_vector
+                };
                 let emovec_mat = self.emotion_vector_matrix(
                     &vector,
                     &reference.style,
                     opts.emo_use_random,
                     &mut rng,
                 )?;
-                (reference.spk_cond_emb.clone(), 1.0f32, Some(emovec_mat))
+                let weight_sum: f64 = vector.iter().map(|&x| x as f64).sum();
+                Some((emovec_mat, weight_sum))
             }
-            None => (
-                self.emo_reference
-                    .as_ref()
-                    .unwrap_or(&reference.spk_cond_emb)
-                    .clone(),
-                if self.emo_reference.is_some() {
-                    opts.emo_alpha
-                } else {
-                    1.0
-                },
-                None,
-            ),
+            None => None,
         };
 
         // Text pipeline (upstream lines 695-727).
@@ -282,6 +399,32 @@ impl Model {
         let lang_id = tokenizer::lang_to_token(lang);
         let stop_text = self.config.gpt.stop_text_token;
 
+        // Emotion conditioning is constant across the call's segments. Both
+        // speaker and optional emotion-reference vectors are cached across
+        // calls until replaced.
+        let emovec = {
+            let _g = crate::profile::scope(Some(&self.device), "emovec");
+            let spk_emovec = self.reference_emovec()?;
+            let base = if emovec_override.is_none() {
+                if let Some(emo_emovec) = self.emo_reference_emovec()? {
+                    let diff = (&emo_emovec - &spk_emovec)? * (opts.emo_alpha as f64);
+                    (&spk_emovec + diff)?.contiguous()?
+                } else {
+                    spk_emovec
+                }
+            } else {
+                spk_emovec
+            };
+            match &emovec_override {
+                Some((mat, weight_sum)) => {
+                    let scale = Tensor::new(((1.0 - weight_sum) as f32) as f64, base.device())?
+                        .to_dtype(base.dtype())?;
+                    (mat + &(&scale * &base)?)?
+                }
+                None => base,
+            }
+        };
+
         let mut wav_parts: Vec<Vec<f32>> = Vec::new();
 
         for seg_text in &segments {
@@ -290,73 +433,62 @@ impl Model {
             let id_len = ids.len();
             let text_tokens = Tensor::from_vec(ids, (1, id_len), &device)?.to_dtype(DType::I64)?;
 
-            let emovec =
-                self.gpt
-                    .merge_emovec(&reference.spk_cond_emb, &emo_cond_emb, emo_alpha as f64)?;
-            let emovec = match &emovec_override {
-                Some(mat) => {
-                    let weight_sum: f64 = opts
-                        .emo_vector
-                        .map(|v| v.iter().map(|x| *x as f64).sum())
-                        .unwrap_or(0.0);
-                    let scale = Tensor::new(((1.0 - weight_sum) as f32) as f64, emovec.device())?
-                        .to_dtype(emovec.dtype())?;
-                    (mat + &(&scale * &emovec)?)?
-                }
-                None => emovec,
-            };
-
-            // Sampling can emit the stop token immediately (upstream hits
-            // this too on unlucky draws); empty codes would drive kernels
-            // with zero-length tensors, so redraw with a fresh RNG.
-            let mut codes = None;
-            for attempt in 0..3 {
-                let raw = self.gpt.inference_speech(
+            let codes = {
+                let _g = crate::profile::scope(Some(&self.device), "gpt");
+                self.gpt.inference_speech(
                     &text_tokens,
                     lang_id,
                     &emovec,
                     &reference.style,
                     &opts.generate,
                     &mut rng,
-                )?;
-                let raw = truncate_at_stop(&raw, self.config.gpt.stop_mel_token)?;
-                if raw.dim(1)? >= 8 || attempt == 2 {
-                    codes = Some(raw);
-                    break;
-                }
-                eprintln!(
-                    "indextts: segment sampled the stop token first; retrying (attempt {})",
-                    attempt + 1
-                );
-                rng = StdRng::seed_from_u64(random_seed());
+                )?
+            };
+            let codes = truncate_at_stop(&codes, self.config.gpt.stop_mel_token)?;
+            if codes.dim(1)? == 0 {
+                candle_core::bail!("generation stopped without producing semantic tokens");
             }
-            let codes = codes.expect("at least one attempt");
 
-            let s_infer = self.codec.decode(&codes)?;
-            let target_len = (s_infer.dim(1)? as f32 * 1.72 * opts.duration_factor)
-                .round()
-                .max(1.0) as usize;
-            let cond = self
-                .s2mel
-                .length_regulator
-                .forward(&s_infer, &[target_len])?;
+            let s_infer = {
+                let _g = crate::profile::scope(Some(&self.device), "codec");
+                if opts.decode_on_cpu && !self.device.is_cpu() {
+                    self.decode_codes_on_cpu(&codes)?
+                } else {
+                    self.codec.decode(&codes)?
+                }
+            };
+            // Upstream uses int(...), which truncates positive frame counts.
+            let target_len =
+                (s_infer.dim(1)? as f32 * 1.72 * opts.duration_factor).max(1.0) as usize;
+            let cond = {
+                let _g = crate::profile::scope(Some(&self.device), "regulator");
+                self.s2mel
+                    .length_regulator
+                    .forward(&s_infer, &[target_len])?
+            };
 
             let cat_condition = Tensor::cat(&[&reference.prompt_condition, &cond], 1)?;
-            let vc_target = self.s2mel.cfm.inference(
-                &cat_condition,
-                &[cat_condition.dim(1)?],
-                &reference.ref_mel,
-                &reference.style,
-                opts.diffusion_steps,
-                opts.inference_cfg_rate,
-            )?;
+            let vc_target = {
+                let _g = crate::profile::scope(Some(&self.device), "cfm");
+                self.s2mel.cfm.inference(
+                    &cat_condition,
+                    &[cat_condition.dim(1)?],
+                    &reference.ref_mel,
+                    &reference.style,
+                    opts.diffusion_steps,
+                    opts.inference_cfg_rate,
+                )?
+            };
             let ref_frames = reference.ref_mel.dim(2)?;
             let vc_target = vc_target.narrow(2, ref_frames, vc_target.dim(2)? - ref_frames)?;
 
-            let wav = self.bigvgan.forward(&vc_target.to_dtype(DType::F32)?)?;
-            let wav = wav.squeeze(1)?.squeeze(0)?.to_dtype(DType::F32)?;
-            let samples = wav.to_vec1::<f32>()?;
-            let scaled: Vec<f32> = samples
+            let wav = {
+                let _g = crate::profile::scope(Some(&self.device), "bigvgan");
+                let wav = self.bigvgan.forward(&vc_target.to_dtype(DType::F32)?)?;
+                let wav = wav.squeeze(1)?.squeeze(0)?.to_dtype(DType::F32)?;
+                wav.to_vec1::<f32>()?
+            };
+            let scaled: Vec<f32> = wav
                 .iter()
                 .map(|v| (v * crate::PCM16_MAX).clamp(-crate::PCM16_MAX, crate::PCM16_MAX))
                 .collect();
@@ -401,7 +533,12 @@ impl Model {
             );
         }
         let device = self.device.clone();
-        let style = style.to_dtype(DType::F32)?.squeeze(0)?;
+        let style_row = style.to_dtype(DType::F32)?;
+        let style_norm = if use_random {
+            1.0
+        } else {
+            style_row.sqr()?.sum_all()?.sqrt()?.to_scalar::<f32>()? as f64
+        };
         let mut rows = Vec::with_capacity(vector.len());
         let rng = &mut *rng;
         for (group_idx, group) in self.emo_matrix.iter().enumerate() {
@@ -410,23 +547,13 @@ impl Model {
                 let n = group.dim(0)?;
                 group.get(rng.random_range(0..n))?
             } else {
-                // Cosine similarity of the CAMPPlus style against each
-                // speaker-anchor row picks the anchor index; the emotion
-                // row at the same index enters the blend.
-                let mut best = (f64::NEG_INFINITY, 0usize);
-                let group_rows = group.dim(0)?;
-                for r in 0..group_rows {
-                    let a = self.spk_matrix[group_idx].get(r)?.to_dtype(DType::F32)?;
-                    let dot = (&a * &style)?.sum_all()?.to_scalar::<f32>()? as f64;
-                    let na = a.sqr()?.sum_all()?.sqrt()?.to_scalar::<f32>()? as f64;
-                    let ns = style.sqr()?.sum_all()?.sqrt()?.to_scalar::<f32>()? as f64;
-                    let sim = dot / (na * ns).max(1e-12);
-                    if sim > best.0 {
-                        best.0 = sim;
-                        best.1 = r;
-                    }
-                }
-                group.get(best.1)?
+                // Vectorized cosine similarity against speaker-anchor rows.
+                let spk_group = self.spk_matrix[group_idx].to_dtype(DType::F32)?;
+                let dot = spk_group.broadcast_mul(&style_row)?.sum(1)?;
+                let denom =
+                    (spk_group.sqr()?.sum(1)?.sqrt()? * style_norm)?.clamp(1e-12f32, f32::MAX)?;
+                let best_idx = (dot / denom)?.argmax(0)?.to_scalar::<u32>()? as usize;
+                group.get(best_idx)?
             };
             rows.push(row);
         }
@@ -434,8 +561,7 @@ impl Model {
         let weights =
             Tensor::from_vec(vector.to_vec(), (vector.len(), 1), &device)?.to_dtype(DType::F32)?;
         // sum_i w_i * row_i -> (1, dim)
-        let blended = weights.broadcast_mul(&matrix)?.sum(0)?.unsqueeze(0)?;
-        Ok(blended)
+        weights.broadcast_mul(&matrix)?.sum(0)?.unsqueeze(0)
     }
 
     /// `split_text_by_tokens`: split at punctuation into chunks whose
@@ -535,8 +661,10 @@ fn random_seed() -> u64 {
 
 /// Byte ranges of `<|SPECIAL_TOKEN_\d+|>…<|SPECIAL_TOKEN_\d+|>` spans.
 fn protected_spans(text: &str) -> Vec<(usize, usize)> {
-    let re = regex::Regex::new(r"<\|SPECIAL_TOKEN_\d+\|>.*?<\|SPECIAL_TOKEN_\d+\|>")
-        .expect("static regex");
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"<\|SPECIAL_TOKEN_\d+\|>.*?<\|SPECIAL_TOKEN_\d+\|>").expect("static")
+    });
     re.find_iter(text).map(|m| (m.start(), m.end())).collect()
 }
 
@@ -587,6 +715,47 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "requires converted weights and INDEXTTS_ORACLE_JSON"]
+    fn reference_emovec_cache_is_reused_and_invalidated() {
+        let dir = std::env::var_os("INDEXTTS_CONVERTED_DIR").expect("INDEXTTS_CONVERTED_DIR");
+        let oracle = std::fs::read_to_string(
+            std::env::var_os("INDEXTTS_ORACLE_JSON").expect("INDEXTTS_ORACLE_JSON"),
+        )
+        .unwrap();
+        let oracle: serde_json::Value = serde_json::from_str(&oracle).unwrap();
+        let pcm = |name: &str| {
+            oracle["reference"][name]["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_f64().unwrap() as f32)
+                .collect::<Vec<_>>()
+        };
+        let mut reference = Reference {
+            pcm_16k: pcm("pcm_16k"),
+            pcm_22k: pcm("pcm_22k"),
+        };
+        let mut model = Model::load(Path::new(&dir), &Device::Cpu).unwrap();
+        model.prepare_reference(&reference).unwrap();
+        let first = model.reference_emovec().unwrap();
+        assert_eq!(first.id(), model.reference_emovec().unwrap().id());
+        reference.pcm_16k.reverse();
+        reference.pcm_22k.reverse();
+        model.prepare_reference(&reference).unwrap();
+        assert!(model.reference_emovec.is_none());
+        let replaced = model.reference_emovec().unwrap();
+        assert_ne!(first.id(), replaced.id());
+        let expected = model
+            .gpt
+            .emovec_from_reference(&model.reference.as_ref().unwrap().spk_cond_emb)
+            .unwrap();
+        assert_eq!(
+            replaced.flatten_all().unwrap().to_vec1::<f32>().unwrap(),
+            expected.flatten_all().unwrap().to_vec1::<f32>().unwrap()
+        );
+    }
+
+    #[test]
     fn punctuation_split_keeps_delimiters() {
         let parts = split_punctuation("你好。世界！继续");
         assert_eq!(parts, vec!["你好。", "世界！", "继续"]);
@@ -614,5 +783,23 @@ mod tests {
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].dim(0).unwrap(), 3);
         assert_eq!(groups[1].dim(0).unwrap(), 7);
+    }
+
+    #[test]
+    fn reference_from_pcm_truncates_to_15_seconds() {
+        let pcm = vec![0.1f32; 20 * 16_000];
+        let reference = Reference::from_pcm(&pcm, 16_000).unwrap();
+        assert_eq!(reference.pcm_16k.len(), 15 * 16_000);
+        assert_eq!(reference.pcm_22k.len(), 15 * crate::SAMPLE_RATE as usize);
+    }
+
+    #[test]
+    fn normalize_emo_vec_applies_bias_and_caps_sum() {
+        let raw = [0.5f32, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5];
+        let norm = normalize_emo_vec(raw, true);
+        let sum: f32 = norm.iter().sum();
+        assert!((sum - 0.8).abs() < 1e-6, "sum={sum}");
+        let unscaled = normalize_emo_vec([0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], false);
+        assert!((unscaled[0] - 0.2).abs() < 1e-6);
     }
 }

@@ -97,6 +97,22 @@ impl Cfm {
         let mut x = Tensor::randn(0f32, 1f32, (b, self.in_channels, l), device)?;
         x = zero_prompt_region(&x, t_ref)?;
 
+        // These inputs do not change during integration. Keep them local to
+        // this solve so different references and sequence lengths cannot leak.
+        let (estimator_prompt, projected, estimator_style) = {
+            let _g = crate::profile::scope(Some(device), "cfm.prepare");
+            let (prompt, mu, style) = if cfg_rate > 0.0 {
+                (
+                    Tensor::cat(&[&prompt_x, &prompt_x.zeros_like()?], 0)?,
+                    Tensor::cat(&[condition, &condition.zeros_like()?], 0)?,
+                    Tensor::cat(&[style, &style.zeros_like()?], 0)?,
+                )
+            } else {
+                (prompt_x, condition.clone(), style.clone())
+            };
+            (prompt, self.estimator.project_condition(&mu)?, style)
+        };
+
         // t_span = linspace(0, 1, n + 1); dt per step from consecutive span
         // entries, t advanced by accumulation exactly like the solver loop.
         let t_span: Vec<f64> = (0..=n_timesteps)
@@ -111,29 +127,43 @@ impl Cfm {
                 // prompt_x, style AND mu (upstream `torch.cat` with zeros),
                 // which is *not* the same as the class-dropout branch — the
                 // estimator still applies cond_projection to the zero mu.
+                let _g = crate::profile::scope(Some(device), "cfm.pack");
                 let stacked_x = Tensor::cat(&[&x, &x], 0)?;
-                let stacked_prompt = Tensor::cat(&[&prompt_x, &prompt_x.zeros_like()?], 0)?;
-                let stacked_mu = Tensor::cat(&[condition, &condition.zeros_like()?], 0)?;
-                let stacked_style = Tensor::cat(&[style, &style.zeros_like()?], 0)?;
                 let stacked_t = Tensor::cat(&[&t_vec, &t_vec], 0)?;
-                let packed = Tensor::cat(&[&stacked_x, &stacked_prompt], 1)?;
-                let field = self.estimator.forward(
+                let packed = Tensor::cat(&[&stacked_x, &estimator_prompt], 1)?;
+                drop(_g);
+                let _g = crate::profile::scope(Some(device), "cfm.estimator");
+                let field = self.estimator.forward_projected(
                     &packed,
                     &stacked_t,
-                    &stacked_mu,
-                    &stacked_style,
+                    &projected,
+                    &estimator_style,
                     false,
                 )?;
+                drop(_g);
+                let _g = crate::profile::scope(Some(device), "cfm.combine");
                 let chunks = field.chunk(2, 0)?;
                 cfg_combine(&chunks[0], &chunks[1], cfg_rate)?
             } else {
-                let packed = Tensor::cat(&[&x, &prompt_x], 1)?;
-                self.estimator
-                    .forward(&packed, &t_vec, condition, style, false)?
+                let packed = Tensor::cat(&[&x, &estimator_prompt], 1)?;
+                let _g = crate::profile::scope(Some(device), "cfm.estimator");
+                let field = self.estimator.forward_projected(
+                    &packed,
+                    &t_vec,
+                    &projected,
+                    &estimator_style,
+                    false,
+                )?;
+                drop(_g);
+                let _g = crate::profile::scope(Some(device), "cfm.combine");
+                field
             };
-            x = x.broadcast_add(&dphi.affine(dt, 0.0)?)?;
-            t += dt;
-            x = zero_prompt_region(&x, t_ref)?;
+            x = {
+                let _g = crate::profile::scope(Some(device), "cfm.integrate");
+                let x = x.broadcast_add(&dphi.affine(dt, 0.0)?)?;
+                t += dt;
+                zero_prompt_region(&x, t_ref)?
+            };
         }
         Ok(x)
     }

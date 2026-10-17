@@ -10,6 +10,7 @@
 //! the voxcpm acceptance record: failures are recorded, never loosened.
 
 use candle_core::{DType, Device, Result, Tensor};
+use candle_nn::Module;
 use serde_json::Value;
 
 use crate::campplus::CampPlus;
@@ -244,6 +245,37 @@ fn w2v_campplus_mel_codec_regulator_match_python() {
     );
 }
 
+#[cfg(feature = "cuda")]
+#[test]
+#[ignore = "requires CUDA + oracle/checkpoints + NVIDIA_TF32_OVERRIDE=0"]
+fn codec_decode_matches_python_cuda_f32() {
+    // The oracle is CPU F32. Set this before starting the process so
+    // cuDNN/cuBLAS use full F32 throughout, not only in the depthwise op.
+    assert_eq!(std::env::var("NVIDIA_TF32_OVERRIDE").as_deref(), Ok("0"));
+    let oracle = require_oracle();
+    let dir = converted_dir();
+    let device = Device::new_cuda(0).unwrap();
+    let weights = crate::weights::Weights::load_dir(&dir, &device).unwrap();
+    let config = Config::load(&dir.join("config.json")).unwrap();
+    let codec = SemanticCodec::load(&weights.codec, &config.semantic_codec).unwrap();
+    // Use Python's codes directly to isolate decoding from quantization.
+    let codes = Tensor::from_vec(
+        oracle.ids(&["codec", "codes"]),
+        oracle.shape(&["codec", "codes"]),
+        &device,
+    )
+    .unwrap();
+    let decoded = codec.decode(&codes).unwrap();
+    assert_eq!(decoded.dims(), oracle.shape(&["codec", "decoded"]));
+    assert_close(
+        "codec.decoded.cuda",
+        &decoded,
+        &oracle.data(&["codec", "decoded"]),
+        5e-4,
+        5e-3,
+    );
+}
+
 #[test]
 #[ignore = "requires oracle JSON + converted checkpoints"]
 fn gpt_conditioning_and_first_step_logits_match_python() {
@@ -278,5 +310,44 @@ fn gpt_conditioning_and_first_step_logits_match_python() {
         5e-4,
         5e-3,
     );
-    let _ = (fake_ids, attn_mask);
+    let parts = gpt.inference_parts();
+    let start = fake_ids
+        .narrow(1, embeds.dim(1).unwrap(), 1)
+        .unwrap()
+        .to_dtype(DType::U32)
+        .unwrap();
+    let start_embed = parts
+        .embeddings
+        .forward(&start)
+        .unwrap()
+        .broadcast_add(
+            &parts
+                .mel_pos_embedding
+                .embeddings()
+                .narrow(0, 0, 1)
+                .unwrap()
+                .unsqueeze(0)
+                .unwrap(),
+        )
+        .unwrap();
+    let input = Tensor::cat(&[&embeds, &start_embed], 1).unwrap();
+    let mut cache = crate::gpt2::Gpt2Cache::new(parts.gpt.layer_count());
+    let hidden = parts
+        .gpt
+        .forward(&input, Some(&attn_mask), &mut cache)
+        .unwrap();
+    let last = hidden.narrow(1, hidden.dim(1).unwrap() - 1, 1).unwrap();
+    let logits = parts
+        .mel_head
+        .forward(&parts.final_norm.forward(&last).unwrap())
+        .unwrap()
+        .flatten_all()
+        .unwrap();
+    assert_close(
+        "gpt.first_step_logits",
+        &logits,
+        &oracle.data(&["gpt", "first_step_logits"]),
+        5e-4,
+        5e-3,
+    );
 }

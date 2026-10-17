@@ -45,6 +45,8 @@ impl Gpt2Config {
 
 /// Per-layer key/value cache with a running sequence offset.
 pub struct Gpt2Cache {
+    /// Keys `(B, H, D, T)` are already transposed for attention;
+    /// values remain `(B, H, T, D)`. Only new keys need a transpose.
     kvs: Vec<Option<(Tensor, Tensor)>>,
     len: usize,
 }
@@ -109,7 +111,8 @@ fn causal_additive(offset: usize, q_len: usize, total: usize, device: &Device) -
 }
 
 /// Additive padding mask `(b, 1, 1, total)` built from a 1/0 caller mask:
-/// `(1.0 - m) * torch.finfo(f32).min`.
+/// `(1.0 - m) * torch.finfo(f32).min`, i.e. `m * (-min) + min` in one
+/// affine kernel (ones stay exactly 0, zeros exactly `f32::MIN`).
 fn padding_additive(mask: &Tensor, b: usize, total: usize) -> Result<Tensor> {
     let m = mask.to_dtype(DType::F32)?;
     if m.dims() != [b, total] {
@@ -118,9 +121,8 @@ fn padding_additive(mask: &Tensor, b: usize, total: usize) -> Result<Tensor> {
             m.dims()
         );
     }
-    let keep = (Tensor::ones_like(&m)? - &m)?;
-    let add = keep.affine(f32::MIN as f64, 0.0)?;
-    add.reshape((b, 1, 1, total))
+    m.affine(-(f32::MIN as f64), f32::MIN as f64)?
+        .reshape((b, 1, 1, total))
 }
 
 struct Block {
@@ -222,51 +224,51 @@ impl Gpt2Model {
                 self.blocks.len()
             );
         }
-        let causal = causal_additive(offset, s, total, device)?;
-        let padding = match attention_mask {
-            Some(m) => Some(padding_additive(m, b, total)?),
+        // Combined additive attention bias. With a warm cache (`s == 1`)
+        // every causal position is already visible (`j <= offset` for all
+        // `j < offset + 1`), so the causal half is all zeros and only the
+        // caller padding contributes — the previous per-layer
+        // `(scores + causal) + padding` composition adds those zeros and
+        // `f32::MIN` exactly as `scores + padding` does (a position masked
+        // by both overflows to `-inf` on either formulation, and softmax
+        // treats a lone `f32::MIN` identically).
+        let additive = match attention_mask {
+            Some(m) => {
+                let padding = padding_additive(m, b, total)?;
+                if s > 1 {
+                    Some(causal_additive(offset, s, total, device)?.broadcast_add(&padding)?)
+                } else {
+                    Some(padding)
+                }
+            }
+            None if s > 1 => Some(causal_additive(offset, s, total, device)?),
             None => None,
         };
         let scale = 1.0 / (self.head_dim as f64).sqrt();
         let mut x = inputs_embeds.clone();
         for (index, blk) in self.blocks.iter().enumerate() {
             // Self-attention.
+            let _g = crate::profile::scope(None, "g2.ln_qkv");
             let h = blk.ln_1.forward(&x)?;
             let qkv = conv1d(&h, &blk.c_attn_w, &blk.c_attn_b)?;
-            let q = split_heads(
-                &qkv.narrow(2, 0, self.n_embd)?,
-                b,
-                s,
-                self.n_head,
-                self.head_dim,
-            )?;
-            let k = split_heads(
-                &qkv.narrow(2, self.n_embd, self.n_embd)?,
-                b,
-                s,
-                self.n_head,
-                self.head_dim,
-            )?;
-            let v = split_heads(
-                &qkv.narrow(2, 2 * self.n_embd, self.n_embd)?,
-                b,
-                s,
-                self.n_head,
-                self.head_dim,
-            )?;
+            drop(_g);
+            let _g = crate::profile::scope(None, "g2.split");
+            let (q, k, v) = split_qkv_heads(&qkv, b, s, self.n_head, self.head_dim)?;
+            drop(_g);
+            let _g = crate::profile::scope(None, "g2.kvcache");
+            let k = k.transpose(2, 3)?.contiguous()?;
             let (k, v) = match &cache.kvs[index] {
                 Some((old_k, old_v)) => {
-                    (Tensor::cat(&[old_k, &k], 2)?, Tensor::cat(&[old_v, &v], 2)?)
+                    (Tensor::cat(&[old_k, &k], 3)?, Tensor::cat(&[old_v, &v], 2)?)
                 }
                 None => (k, v),
             };
             cache.kvs[index] = Some((k.clone(), v.clone()));
-            let scores = q
-                .matmul(&k.transpose(2, 3)?.contiguous()?)?
-                .affine(scale, 0.0)?
-                .broadcast_add(&causal)?;
-            let scores = match &padding {
-                Some(p) => scores.broadcast_add(p)?,
+            drop(_g);
+            let _g = crate::profile::scope(None, "g2.attn");
+            let scores = q.matmul(&k)?.affine(scale, 0.0)?;
+            let scores = match &additive {
+                Some(a) => scores.broadcast_add(a)?,
                 None => scores,
             };
             let attn = candle_nn::ops::softmax_last_dim(&scores)?.matmul(&v.contiguous()?)?;
@@ -274,6 +276,8 @@ impl Gpt2Model {
                 .transpose(1, 2)?
                 .contiguous()?
                 .reshape((b, s, self.n_embd))?;
+            drop(_g);
+            let _g = crate::profile::scope(None, "g2.proj_mlp");
             x = (&x + conv1d(&attn, &blk.attn_c_proj_w, &blk.attn_c_proj_b)?)?;
             // MLP (`gelu_new` == candle's tanh-approximation `gelu`).
             let h = blk.ln_2.forward(&x)?;
@@ -285,12 +289,26 @@ impl Gpt2Model {
     }
 }
 
-/// `(b, s, dim)` -> `(b, head, s, head_dim)`.
-fn split_heads(t: &Tensor, b: usize, s: usize, heads: usize, head_dim: usize) -> Result<Tensor> {
-    t.contiguous()?
-        .reshape((b, s, heads, head_dim))?
-        .transpose(1, 2)?
-        .contiguous()
+/// `(b, s, 3*dim)` fused qkv -> per-head `(b, head, s, head_dim)` q/k/v.
+/// The 5-D reshape is a view on the contiguous projection output, so each
+/// head split materializes in a single gather copy (the previous
+/// narrow-then-contiguous-then-reshape-then-contiguous path copied twice).
+fn split_qkv_heads(
+    qkv: &Tensor,
+    b: usize,
+    s: usize,
+    heads: usize,
+    head_dim: usize,
+) -> Result<(Tensor, Tensor, Tensor)> {
+    let fused = qkv.reshape((b, s, 3, heads, head_dim))?;
+    let part = |i: usize| -> Result<Tensor> {
+        fused
+            .narrow(2, i, 1)?
+            .squeeze(2)?
+            .transpose(1, 2)?
+            .contiguous()
+    };
+    Ok((part(0)?, part(1)?, part(2)?))
 }
 
 #[cfg(test)]
@@ -528,5 +546,37 @@ mod tests {
         assert_eq!(k.to_vec2::<f32>().unwrap()[0], vec![4.0, 5.0]);
         assert_eq!(k.to_vec2::<f32>().unwrap()[2], vec![4.0, 5.0]);
         assert_eq!(v.to_vec2::<f32>().unwrap()[1], vec![6.0, 7.0]);
+    }
+
+    #[test]
+    fn transposed_key_cache_matches_full_attention_after_beam_reorder() {
+        let device = dev();
+        let model = tiny_model(2, 8, 2, 32);
+        let prompt = Tensor::randn(0f32, 1f32, (2, 3, 8), &device).unwrap();
+        let mut cache = Gpt2Cache::new(model.layer_count());
+        model.forward(&prompt, None, &mut cache).unwrap();
+        let (k, v) = cache.kvs[0].as_ref().unwrap();
+        assert_eq!(k.dims(), [2, 2, 4, 3]);
+        assert_eq!(v.dims(), [2, 2, 3, 4]);
+        let beams = Tensor::new(&[1u32, 0, 1], &device).unwrap();
+        cache.reorder_beams(&beams).unwrap();
+        let next = Tensor::randn(0f32, 1f32, (3, 1, 8), &device).unwrap();
+        let actual = model.forward(&next, None, &mut cache).unwrap();
+        let full = Tensor::cat(&[&prompt.index_select(&beams, 0).unwrap(), &next], 1).unwrap();
+        let expected = model
+            .forward(&full, None, &mut Gpt2Cache::new(model.layer_count()))
+            .unwrap()
+            .narrow(1, 3, 1)
+            .unwrap();
+        for (got, want) in actual
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap()
+            .iter()
+            .zip(expected.flatten_all().unwrap().to_vec1::<f32>().unwrap())
+        {
+            assert!((got - want).abs() < 1e-3, "{got} vs {want}");
+        }
     }
 }

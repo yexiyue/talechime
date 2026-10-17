@@ -16,8 +16,9 @@ pub struct InterpolateRegulator {
     content_in_proj: Linear,
     /// `(conv, group_norm)` per sampling ratio (shipped: 4 entries).
     blocks: Vec<(Conv1d, GroupNorm)>,
-    /// Final `Conv1d(C, out_channels=C, 1)`.
-    out_proj_w: Tensor,
+    /// Final `Conv1d(C, out_channels=C, 1)` as a pre-transposed matmul
+    /// operand `(C, C)` plus bias.
+    out_proj_w_t: Tensor,
     out_proj_b: Tensor,
 }
 
@@ -67,17 +68,22 @@ impl InterpolateRegulator {
         }
         // The final k=1 "conv" is applied as an explicit contiguous matmul:
         // candle's CUDA conv1d special-cases kernel size 1 into a matmul
-        // that rejects the strided views produced upstream.
+        // that rejects the strided views produced upstream. The weight is
+        // transposed once here instead of on every call.
         let proj_idx = 3 * cfg.sampling_ratios.len();
-        let out_proj_w = vb.get(
-            (cfg.channels, cfg.channels, 1),
-            &format!("model.{proj_idx}.weight"),
-        )?;
+        let out_proj_w_t = vb
+            .get(
+                (cfg.channels, cfg.channels, 1),
+                &format!("model.{proj_idx}.weight"),
+            )?
+            .squeeze(2)?
+            .t()?
+            .contiguous()?;
         let out_proj_b = vb.get((cfg.channels,), &format!("model.{proj_idx}.bias"))?;
         Ok(Self {
             content_in_proj,
             blocks,
-            out_proj_w,
+            out_proj_w_t,
             out_proj_b,
         })
     }
@@ -85,11 +91,10 @@ impl InterpolateRegulator {
     fn out_proj_forward(&self, h: &Tensor) -> Result<Tensor> {
         // y[b,o,t] = sum_i w[o,i,0] * x[b,i,t] + b[o]  (k=1 conv == matmul)
         let (b, c, t) = h.dims3()?;
-        let w = self.out_proj_w.squeeze(2)?.t()?.contiguous()?;
         h.transpose(1, 2)?
             .contiguous()?
             .reshape((b * t, c))?
-            .matmul(&w)?
+            .matmul(&self.out_proj_w_t)?
             .broadcast_add(&self.out_proj_b)?
             .reshape((b, t, c))?
             .transpose(1, 2)
@@ -332,7 +337,7 @@ mod tests {
             let max_abs = got
                 .iter()
                 .zip(&want)
-                .map(|(g, w)| (*g - *w) as f64)
+                .map(|(g, w)| (*g - *w).abs() as f64)
                 .fold(0f64, f64::max);
             println!("{name}: max_abs {max_abs:.3e} over {} values", want.len());
             diffs.push((name.to_string(), max_abs));
@@ -356,7 +361,7 @@ mod tests {
             h = candle_nn::ops::mish(&y).unwrap();
             check(&format!("model.{}", 3 * i + 2), &h);
         }
-        let h = model.out_proj_forward(&h).unwrap().transpose(1, 2).unwrap();
+        let h = model.out_proj_forward(&h).unwrap();
         check("model.12", &h);
         let h = h.transpose(1, 2).unwrap();
         let mask = crate::s2mel::sequence_mask_on(&device, &ylens, t_out).unwrap();

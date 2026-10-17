@@ -41,7 +41,6 @@ pub struct Weights {
     pub s2mel: VarBuilder<'static>,
     pub campplus: VarBuilder<'static>,
     pub bigvgan: VarBuilder<'static>,
-    pub w2v_bert: VarBuilder<'static>,
     pub bigvgan_config_json: String,
     pub feats: FeatTensors,
 }
@@ -59,9 +58,8 @@ fn mmap(dir: &std::path::Path, name: &str, device: &Device) -> Result<VarBuilder
     unsafe { VarBuilder::from_mmaped_safetensors(&[path], DType::F32, device) }
 }
 
-fn feat(dir: &std::path::Path, name: &str, device: &Device) -> Result<Tensor> {
-    let all = candle_core::safetensors::load(dir.join("feats.safetensors"), device)?;
-    all.get(name).cloned().ok_or_else(|| {
+fn take_feat(all: &mut std::collections::HashMap<String, Tensor>, name: &str) -> Result<Tensor> {
+    all.remove(name).ok_or_else(|| {
         candle_core::Error::Msg(format!("feats.safetensors is missing tensor {name}"))
     })
 }
@@ -74,11 +72,12 @@ impl Weights {
         }
         let bigvgan_config_json = std::fs::read_to_string(&bigvgan_config_path)
             .map_err(|e| candle_core::Error::Msg(format!("read bigvgan config: {e}")))?;
+        let mut all_feats = candle_core::safetensors::load(dir.join("feats.safetensors"), device)?;
         let feats = FeatTensors {
-            spk_matrix: feat(dir, "spk_matrix", device)?,
-            emo_matrix: feat(dir, "emo_matrix", device)?,
-            w2v_mean: feat(dir, "w2v_mean", device)?,
-            w2v_std: feat(dir, "w2v_std", device)?,
+            spk_matrix: take_feat(&mut all_feats, "spk_matrix")?,
+            emo_matrix: take_feat(&mut all_feats, "emo_matrix")?,
+            w2v_mean: take_feat(&mut all_feats, "w2v_mean")?,
+            w2v_std: take_feat(&mut all_feats, "w2v_std")?,
         };
         Ok(Self {
             gpt: mmap(dir, "gpt.safetensors", device)?,
@@ -86,7 +85,6 @@ impl Weights {
             s2mel: mmap(dir, "s2mel.safetensors", device)?,
             campplus: mmap(dir, "campplus.safetensors", device)?,
             bigvgan: mmap(dir, "bigvgan.safetensors", device)?,
-            w2v_bert: mmap(&dir.join("w2v-bert-2.0"), "model.safetensors", device)?,
             bigvgan_config_json,
             feats,
         })

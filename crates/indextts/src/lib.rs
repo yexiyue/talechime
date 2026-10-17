@@ -26,6 +26,7 @@ pub mod length_regulator;
 pub mod mel;
 pub mod model;
 pub mod perceiver;
+pub(crate) mod profile;
 pub mod s2mel;
 pub mod tokenizer;
 pub mod validation;
@@ -41,4 +42,4 @@ pub const SAMPLE_RATE: u32 = 22_050;
 pub const PCM16_MAX: f32 = 32_767.0;
 
 pub use config::Config;
-pub use model::{Model, Options, Outcome, Reference};
+pub use model::{MAX_REFERENCE_SECS, Model, Options, Outcome, Reference, normalize_emo_vec};

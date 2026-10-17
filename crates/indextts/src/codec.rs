@@ -26,6 +26,70 @@ const VOCOS_LN_EPS: f64 = 1e-6;
 /// `F.normalize` clamp floor used by the factorized codebook lookup.
 const F_NORMALIZE_EPS: f64 = 1e-12;
 
+/// CUDA workaround for Candle #3389, following PR #3531 at
+/// `70bf01e7a56c8cc8d42649e78564d83930ab2cf7`. Keep the stock path on
+/// CPU/Metal and outside the upstream launch/work thresholds.
+struct DepthwiseConv1d {
+    stock: Conv1d,
+    /// Broadcast-ready `(1, C, K)` taps for eligible depthwise layers.
+    taps: Option<Tensor>,
+}
+
+impl DepthwiseConv1d {
+    fn new(stock: Conv1d) -> Result<Self> {
+        let cfg = stock.config();
+        let (channels, inputs_per_group, kernel) = stock.weight().dims3()?;
+        let eligible = inputs_per_group == 1
+            && cfg.groups == channels
+            && cfg.stride == 1
+            && cfg.dilation == 1
+            && kernel > 0
+            && 3 * cfg.groups * 2 >= (2 * kernel - 1) * 3;
+        let taps = eligible
+            .then(|| stock.weight().reshape((1, channels, kernel)))
+            .transpose()?;
+        Ok(Self { stock, taps })
+    }
+
+    fn forward(&self, x: &Tensor) -> Result<Tensor> {
+        let (batch, channels, length) = x.dims3()?;
+        if let Some(taps) = &self.taps {
+            let kernel = taps.dim(2)?;
+            let padded_length = length + 2 * self.stock.config().padding;
+            if let Some(output_length) = padded_length.checked_sub(kernel).map(|n| n + 1)
+                && x.device().is_cuda()
+                && channels == self.stock.config().groups
+                && batch.saturating_mul(output_length).saturating_mul(kernel) <= 1 << 20
+            {
+                return self.forward_fast(x, taps, output_length);
+            }
+        }
+        self.stock.forward(x)
+    }
+
+    fn forward_fast(&self, x: &Tensor, taps: &Tensor, output_length: usize) -> Result<Tensor> {
+        let padding = self.stock.config().padding;
+        let padded = if padding == 0 {
+            x.clone()
+        } else {
+            x.pad_with_zeros(2, padding, padding)?
+        };
+        let mut out = padded
+            .narrow(2, 0, output_length)?
+            .broadcast_mul(&taps.narrow(2, 0, 1)?)?;
+        for tap in 1..taps.dim(2)? {
+            out = (out
+                + padded
+                    .narrow(2, tap, output_length)?
+                    .broadcast_mul(&taps.narrow(2, tap, 1)?)?)?;
+        }
+        match self.stock.bias() {
+            Some(bias) => out.broadcast_add(&bias.reshape((1, bias.dim(0)?, 1))?),
+            None => Ok(out),
+        }
+    }
+}
+
 /// Geometry of the codec, taken from [`SemanticCodecConfig`].
 struct Dims {
     codebook_size: usize,
@@ -124,7 +188,7 @@ fn upsample_nearest_2x(x: &Tensor) -> Result<Tensor> {
 /// ConvNeXt block (`vocos.py::ConvNeXtBlock`, non-conditional, with layer
 /// scale). Input and output are `(B, C, T)`.
 struct ConvNeXtBlock {
-    dwconv: Conv1d,
+    dwconv: DepthwiseConv1d,
     norm: LayerNorm,
     pwconv1: Linear,
     pwconv2: Linear,
@@ -133,17 +197,12 @@ struct ConvNeXtBlock {
 
 impl ConvNeXtBlock {
     fn load(vb: VarBuilder, dim: usize, intermediate_dim: usize) -> Result<Self> {
-        let dwconv = conv1d(
-            dim,
-            dim,
-            7,
-            Conv1dConfig {
-                padding: 3,
-                groups: dim,
-                ..Default::default()
-            },
-            vb.pp("dwconv"),
-        )?;
+        let cfg = Conv1dConfig {
+            padding: 3,
+            groups: dim,
+            ..Default::default()
+        };
+        let dwconv = DepthwiseConv1d::new(conv1d(dim, dim, 7, cfg, vb.pp("dwconv"))?)?;
         let norm = layer_norm(dim, VOCOS_LN_EPS, vb.pp("norm"))?;
         let pwconv1 = linear(dim, intermediate_dim, vb.pp("pwconv1"))?;
         let pwconv2 = linear(intermediate_dim, dim, vb.pp("pwconv2"))?;
@@ -483,6 +542,130 @@ mod tests {
     use super::*;
     use candle_core::{DType, Device, Var};
     use candle_nn::VarMap;
+
+    /// Deterministic pseudo-random f32 in [-1, 1) from an LCG, so the
+    /// fixed-input comparisons below are stable across runs and machines.
+    fn lcg_fill(seed: u32, n: usize) -> Vec<f32> {
+        let mut state = seed;
+        (0..n)
+            .map(|_| {
+                state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                ((state >> 8) & 0xffff) as f32 / 32768.0 - 1.0
+            })
+            .collect()
+    }
+
+    /// Fixed-input cross-check of the depthwise fast path against the
+    /// stock grouped `Conv1d`: shapes (incl. the shipped codec geometry),
+    /// max abs/rel deviation, NaN/Inf absence and output lengths.
+    #[test]
+    fn depthwise_fast_path_matches_stock_conv() {
+        check_depthwise_fast_path(&Device::Cpu);
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    #[ignore = "requires a CUDA device; no models"]
+    fn depthwise_fast_path_matches_stock_conv_cuda() {
+        check_depthwise_fast_path(&Device::new_cuda(0).unwrap());
+    }
+
+    fn check_depthwise_fast_path(device: &Device) {
+        // (batch, channels, length, kernel, padding, with bias)
+        let cases: &[(usize, usize, usize, usize, usize, bool)] = &[
+            (1, 384, 688, 7, 3, true),  // shipped decode geometry
+            (1, 384, 1551, 7, 3, true), // long decode geometry
+            (2, 16, 55, 7, 3, true),
+            (1, 16, 3, 7, 3, true),   // boundary: l_out == l
+            (1, 16, 6, 7, 3, true),   // boundary: l_out == l (even)
+            (3, 24, 31, 5, 0, true),  // no padding
+            (1, 24, 31, 5, 2, false), // no bias
+        ];
+        for &(b, c, l, k, padding, with_bias) in cases {
+            let x =
+                Tensor::from_vec(lcg_fill(0xA7 ^ c as u32, b * c * l), (b, c, l), device).unwrap();
+            let flat_w = lcg_fill(0x5EED ^ k as u32, c * k);
+            let weight = Tensor::from_vec(flat_w, (c, 1, k), device).unwrap();
+            let bias = if with_bias {
+                Some(Tensor::from_vec(lcg_fill(0xB1A5, c), (c,), device).unwrap())
+            } else {
+                None
+            };
+            let cfg = Conv1dConfig {
+                padding,
+                groups: c,
+                ..Default::default()
+            };
+            let stock = Conv1d::new(weight.clone(), bias.clone(), cfg);
+            let fast = DepthwiseConv1d::new(stock.clone()).unwrap();
+            let want = stock.forward(&x).unwrap();
+            let l_out = l + 2 * padding - (k - 1);
+            let got = fast
+                .forward_fast(&x, fast.taps.as_ref().expect("eligible"), l_out)
+                .unwrap();
+            let dispatched = fast.forward(&x).unwrap();
+            let dispatched_values = dispatched.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+            let selected = if device.is_cuda() { &got } else { &want };
+            assert_eq!(
+                dispatched_values,
+                selected.flatten_all().unwrap().to_vec1::<f32>().unwrap()
+            );
+            assert_eq!(got.dims(), vec![b, c, l_out], "shape for case {cases:?}");
+            let w = want.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+            let g = got.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+            let mut max_abs = 0f64;
+            let mut max_rel = 0f64;
+            for (gv, wv) in g.iter().zip(&w) {
+                assert!(gv.is_finite(), "NaN/Inf in fast path output");
+                let a = (gv - wv).abs() as f64;
+                max_abs = max_abs.max(a);
+                max_rel = max_rel.max(a / wv.abs().max(1e-6) as f64);
+            }
+            // Summation-order deviation only (same class as candle's own
+            // CPU-vs-CUDA conv difference). The absolute bound is the
+            // meaningful criterion for O(1) inputs; the relative figure is
+            // reported but not asserted because near-zero reference values
+            // inflate it without indicating error.
+            assert!(
+                max_abs <= 1e-5,
+                "case {cases:?}: max_abs {max_abs:.3e}, max_rel {max_rel:.3e}"
+            );
+            println!(
+                "depthwise case (b={b},c={c},l={l},k={k},p={padding},bias={with_bias}): \
+                 max_abs {max_abs:.3e}, max_rel {max_rel:.3e} over {} values",
+                g.len()
+            );
+        }
+    }
+
+    /// Non-eligible configs (channel multiplier, stride, tiny groups) keep
+    /// the stock path.
+    #[test]
+    fn depthwise_fast_path_rejects_ineligible_configs() {
+        let device = Device::Cpu;
+        let c = 8;
+        let weight = Tensor::from_vec(lcg_fill(3, c * 7), (c, 1, 7), &device).unwrap();
+        let grouped_cfg = Conv1dConfig {
+            padding: 3,
+            groups: 4,
+            ..Default::default()
+        };
+        let grouped_not_depthwise = Conv1d::new(weight.clone(), None, grouped_cfg);
+        assert!(
+            DepthwiseConv1d::new(grouped_not_depthwise)
+                .unwrap()
+                .taps
+                .is_none()
+        );
+        let strided_cfg = Conv1dConfig {
+            padding: 3,
+            groups: c,
+            stride: 2,
+            ..Default::default()
+        };
+        let strided = Conv1d::new(weight, None, strided_cfg);
+        assert!(DepthwiseConv1d::new(strided).unwrap().taps.is_none());
+    }
 
     fn tiny_dims() -> Dims {
         Dims {

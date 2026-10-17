@@ -19,11 +19,10 @@
 //! checkpoint names; the state dict lives under a `generator.` prefix which
 //! is stripped transparently when present.
 
-use candle_core::{Result, Tensor};
+use candle_core::{Device, Result, Tensor, conv::CudnnFwdAlgo};
 use candle_nn::{Conv1d, Conv1dConfig, ConvTranspose1d, ConvTranspose1dConfig, Module, VarBuilder};
 use serde::Deserialize;
 use std::f64::consts::PI;
-use std::sync::Arc;
 
 /// Anti-aliased `Activation1d` defaults (ratio 2, kernel 12).
 const AA_RATIO: usize = 2;
@@ -110,35 +109,65 @@ fn kaiser_sinc_filter1d(cutoff: f64, half_width: f64, kernel_size: usize) -> Vec
     filter.iter().map(|v| (v / sum) as f32).collect()
 }
 
+/// Shared-channel FIR kernels, applied as ungrouped convolutions over
+/// `(B*C, 1, L)` to avoid per-channel launches and per-tap tensor sweeps.
+struct FirFilter {
+    conv_direct: Tensor,
+    /// Reversed odd/even taps for the two upsampling phases.
+    conv_odd_rev: Tensor,
+    conv_even_rev: Tensor,
+}
+
+impl FirFilter {
+    fn new(taps: &[f32], device: &Device, dtype: candle_core::DType) -> Result<Self> {
+        let kernel = |subset: &[f32], rev: bool| -> Result<Tensor> {
+            let mut v: Vec<f32> = subset.to_vec();
+            if rev {
+                v.reverse();
+            }
+            Tensor::from_vec(v, (1, 1, subset.len()), device)?.to_dtype(dtype)
+        };
+        let even: Vec<f32> = (0..taps.len()).step_by(2).map(|i| taps[i]).collect();
+        let odd: Vec<f32> = (1..taps.len()).step_by(2).map(|i| taps[i]).collect();
+        Ok(Self {
+            conv_direct: kernel(taps, false)?,
+            conv_odd_rev: kernel(&odd, true)?,
+            conv_even_rev: kernel(&even, true)?,
+        })
+    }
+}
+
 /// out[m] = Σ_i kernel[i] · x[start + m - i] for m in 0..len: one slice of a
 /// full convolution, matching `np.convolve(x, kernel)[start .. start + len]`
 /// (callers guarantee `start ≥ kernel.len() - 1` so no zero padding is
-/// needed).
-fn fir_conv_sum(x: &Tensor, kernel: &[f32], start: usize, len: usize) -> Result<Tensor> {
-    if start + 1 < kernel.len() {
-        candle_core::bail!(
-            "fir slice start {start} too small for kernel {}",
-            kernel.len()
-        );
+/// needed). `w` is the `(1, 1, K)` correlation kernel of the *reversed*
+/// taps; the convolution is the batched `conv1d` over `(B*C, 1, L)`.
+fn fir_conv_sum(x: &Tensor, w: &Tensor, start: usize, len: usize) -> Result<Tensor> {
+    let k = w.dim(2)?;
+    if start + 1 < k {
+        candle_core::bail!("fir slice start {start} too small for kernel {k}");
     }
-    let mut acc: Option<Tensor> = None;
-    for (i, &w) in kernel.iter().enumerate() {
-        let term = x.narrow(2, start - i, len)?.affine(w as f64, 0.0)?;
-        acc = Some(match acc {
-            Some(a) => (a + term)?,
-            None => term,
-        });
-    }
-    Ok(acc.expect("non-empty kernel"))
+    let (b, c, l) = x.dims3()?;
+    // Auto selection exceeded the per-tap tolerance at long CUDA shapes.
+    // Keep the FIR within the per-tap reference tolerance (see CUDA test).
+    let conv = x.reshape((b * c, 1, l))?.conv1d_with_algo(
+        w,
+        0,
+        1,
+        1,
+        1,
+        Some(CudnnFwdAlgo::ImplicitGemm),
+    )?;
+    conv.narrow(2, start + 1 - k, len)?.reshape((b, c, len))
 }
 
 /// Strided (stride 2) depth-wise FIR over the last axis, matching
 /// `LowPassFilter1d`: replicate padding `(k/2 - 1, k/2)` for the even
 /// kernels used here, then `F.conv1d(x, filter, stride=2, groups=C)`:
-/// out[m] = Σ_k kernel[k] · x_pad[2m + k].
-fn fir_downsample(x: &Tensor, kernel: &[f32]) -> Result<Tensor> {
+/// out[m] = Σ_k kernel[k] · x_pad[2m + k] — one batched stride-2 `conv1d`.
+fn fir_downsample(x: &Tensor, filter: &FirFilter) -> Result<Tensor> {
     let (b, c, l) = x.dims3()?;
-    let k = kernel.len();
+    let k = filter.conv_direct.dim(2)?;
     let pad_left = k / 2 - usize::from(k.is_multiple_of(2));
     let pad_right = k / 2;
     let x = x.pad_with_same(2, pad_left, pad_right)?;
@@ -147,23 +176,16 @@ fn fir_downsample(x: &Tensor, kernel: &[f32]) -> Result<Tensor> {
         candle_core::bail!("fir input length {l} shorter than kernel {k}");
     }
     let out_len = (l - k) / 2 + 1;
-    // Pair the samples so channel 0 holds even indices and channel 1 odd.
-    let l2 = l - (l % 2);
-    let pairs = x.narrow(2, 0, l2)?.reshape((b, c, l2 / 2, 2))?;
-    let mut acc: Option<Tensor> = None;
-    for (k_idx, &w) in kernel.iter().enumerate() {
-        // x[k + 2m] lives in pair (k/2 + m), slot k % 2.
-        let part = pairs
-            .narrow(2, k_idx / 2, out_len)?
-            .narrow(3, k_idx % 2, 1)?
-            .squeeze(3)?;
-        let term = part.affine(w as f64, 0.0)?;
-        acc = Some(match acc {
-            Some(a) => (a + term)?,
-            None => term,
-        });
-    }
-    Ok(acc.expect("non-empty kernel"))
+    let conv = x.reshape((b * c, 1, l))?.conv1d_with_algo(
+        &filter.conv_direct,
+        0,
+        2,
+        1,
+        1,
+        Some(CudnnFwdAlgo::ImplicitGemm),
+    )?;
+    debug_assert_eq!(conv.dims(), vec![b * c, 1, out_len]);
+    conv.reshape((b, c, out_len))
 }
 
 /// Stride-2 up-FIR matching `ratio * F.conv_transpose1d(x, filter, stride=2,
@@ -176,7 +198,7 @@ fn fir_downsample(x: &Tensor, kernel: &[f32]) -> Result<Tensor> {
 /// even taps. The crop window starts at `pad_left` (odd, 15), so global even
 /// outputs begin at phase index 7 and odd outputs at 8. Validated against
 /// the torch `UpSample1d` module on multiple lengths.
-fn fir_upsample(x: &Tensor, kernel: &[f32]) -> Result<Tensor> {
+fn fir_upsample(x: &Tensor, filter: &FirFilter) -> Result<Tensor> {
     let (b, c, t) = x.dims3()?;
     let pad = AA_KERNEL / AA_RATIO - 1; // 5
     let crop_left = pad * AA_RATIO + (AA_KERNEL - AA_RATIO) / 2; // 15
@@ -185,10 +207,8 @@ fn fir_upsample(x: &Tensor, kernel: &[f32]) -> Result<Tensor> {
     let l_out = (t + 2 * pad - 1) * AA_RATIO + AA_KERNEL;
     debug_assert_eq!(l_out - crop_left - crop_right, AA_RATIO * t);
     let xp = x.pad_with_same(2, pad, pad)?;
-    let even_taps: Vec<f32> = (0..AA_KERNEL).step_by(2).map(|i| kernel[i]).collect();
-    let odd_taps: Vec<f32> = (1..AA_KERNEL).step_by(2).map(|i| kernel[i]).collect();
-    let odd_phase = fir_conv_sum(&xp, &odd_taps, crop_left / 2, t)?;
-    let even_phase = fir_conv_sum(&xp, &even_taps, crop_left.div_ceil(2), t)?;
+    let odd_phase = fir_conv_sum(&xp, &filter.conv_odd_rev, crop_left / 2, t)?;
+    let even_phase = fir_conv_sum(&xp, &filter.conv_even_rev, crop_left.div_ceil(2), t)?;
     let y = Tensor::stack(&[odd_phase, even_phase], 3)?.reshape((b, c, AA_RATIO * t))?;
     y.affine(AA_RATIO as f64, 0.0)
 }
@@ -243,9 +263,16 @@ impl Activation1d {
     }
 
     /// up-FIR -> snake -> down-FIR (`alias_free_activation/torch/act.py`).
-    fn forward(&self, x: &Tensor, filter: &[f32]) -> Result<Tensor> {
-        let up = fir_upsample(x, filter)?;
-        let up = self.apply_activation(&up)?;
+    fn forward(&self, x: &Tensor, filter: &FirFilter) -> Result<Tensor> {
+        let up = {
+            let _g = crate::profile::scope(Some(x.device()), "bv.fir_up");
+            fir_upsample(x, filter)?
+        };
+        let up = {
+            let _g = crate::profile::scope(Some(x.device()), "bv.snake");
+            self.apply_activation(&up)?
+        };
+        let _g = crate::profile::scope(Some(x.device()), "bv.fir_down");
         fir_downsample(&up, filter)
     }
 }
@@ -259,12 +286,16 @@ struct AmpBlock {
 }
 
 impl AmpBlock {
-    fn forward(&self, x: &Tensor, filter: &[f32]) -> Result<Tensor> {
+    fn forward(&self, x: &Tensor, filter: &FirFilter) -> Result<Tensor> {
         let mut x = x.clone();
+        let conv = |xt: &Tensor, conv: &Conv1d| -> Result<Tensor> {
+            let _g = crate::profile::scope(Some(xt.device()), "bv.res_conv");
+            conv.forward(xt)
+        };
         if self.variant2 {
-            for (conv, act) in self.convs1.iter().zip(&self.activations) {
+            for (c, act) in self.convs1.iter().zip(&self.activations) {
                 let xt = act.forward(&x, filter)?;
-                let xt = conv.forward(&xt)?;
+                let xt = conv(&xt, c)?;
                 x = (xt + x)?;
             }
         } else {
@@ -276,9 +307,9 @@ impl AmpBlock {
                 let c1 = &self.convs1[i / 2];
                 let c2 = &self.convs2[i / 2];
                 let xt = a1.forward(&x, filter)?;
-                let xt = c1.forward(&xt)?;
+                let xt = conv(&xt, c1)?;
                 let xt = a2.forward(&xt, filter)?;
-                let xt = c2.forward(&xt)?;
+                let xt = conv(&xt, c2)?;
                 x = (xt + x)?;
                 i += 2;
             }
@@ -368,7 +399,7 @@ pub struct BigVgan {
     use_tanh_at_final: bool,
     /// Shared kaiser-sinc taps; the up- and down-sampling filters are
     /// identical for the (ratio 2, kernel 12) hyperparameters.
-    filter: Arc<Vec<f32>>,
+    filter: FirFilter,
 }
 
 impl BigVgan {
@@ -487,6 +518,11 @@ impl BigVgan {
             1,
             cfg.use_bias_at_final,
         )?;
+        let fir_filter = FirFilter::new(
+            &kaiser_sinc_filter1d(0.5 / AA_RATIO as f64, 0.6 / AA_RATIO as f64, AA_KERNEL),
+            conv_pre.weight().device(),
+            conv_pre.weight().dtype(),
+        )?;
 
         Ok(Self {
             conv_pre,
@@ -496,11 +532,7 @@ impl BigVgan {
             conv_post,
             num_kernels,
             use_tanh_at_final: cfg.use_tanh_at_final,
-            filter: Arc::new(kaiser_sinc_filter1d(
-                0.5 / AA_RATIO as f64,
-                0.6 / AA_RATIO as f64,
-                AA_KERNEL,
-            )),
+            filter: fir_filter,
         })
     }
 
@@ -509,9 +541,15 @@ impl BigVgan {
         if mel.dim(2)? == 0 {
             candle_core::bail!("empty mel input");
         }
-        let mut x = self.conv_pre.forward(mel)?;
+        let mut x = {
+            let _g = crate::profile::scope(Some(mel.device()), "bv.pre");
+            self.conv_pre.forward(mel)?
+        };
         for (i, up) in self.ups.iter().enumerate() {
-            x = up.forward(&x)?;
+            x = {
+                let _g = crate::profile::scope(Some(mel.device()), "bv.up_conv");
+                up.forward(&x)?
+            };
             let mut sum: Option<Tensor> = None;
             for j in 0..self.num_kernels {
                 let y = self.resblocks[i * self.num_kernels + j].forward(&x, &self.filter)?;
@@ -525,13 +563,17 @@ impl BigVgan {
                 .affine(1.0 / self.num_kernels as f64, 0.0)?;
         }
         x = self.activation_post.forward(&x, &self.filter)?;
-        x = self.conv_post.forward(&x)?;
-        if self.use_tanh_at_final {
-            x.tanh()
-        } else {
-            // use_tanh_at_final=false in the shipped config: clamp to [-1, 1].
-            x.clamp(-1.0, 1.0)
-        }
+        x = {
+            let _g = crate::profile::scope(Some(mel.device()), "bv.post");
+            let x = self.conv_post.forward(&x)?;
+            if self.use_tanh_at_final {
+                x.tanh()?
+            } else {
+                // use_tanh_at_final=false in the shipped config: clamp to [-1, 1].
+                x.clamp(-1.0, 1.0)?
+            }
+        };
+        Ok(x)
     }
 }
 
@@ -567,6 +609,135 @@ mod tests {
         assert!(close(f.iter().sum::<f32>(), 1.0, 1e-6));
     }
 
+    /// Per-tap reference implementations (the elementwise FIR before the
+    /// batched-conv rewrite), kept for fixed-input cross-checking.
+    fn fir_conv_sum_reference(
+        x: &Tensor,
+        kernel: &[f32],
+        start: usize,
+        len: usize,
+    ) -> Result<Tensor> {
+        let mut acc: Option<Tensor> = None;
+        for (i, &w) in kernel.iter().enumerate() {
+            let term = x.narrow(2, start - i, len)?.affine(w as f64, 0.0)?;
+            acc = Some(match acc {
+                Some(a) => (a + term)?,
+                None => term,
+            });
+        }
+        Ok(acc.expect("non-empty kernel"))
+    }
+
+    fn fir_downsample_reference(x: &Tensor, kernel: &[f32]) -> Result<Tensor> {
+        let (b, c, l) = x.dims3()?;
+        let k = kernel.len();
+        let pad_left = k / 2 - usize::from(k.is_multiple_of(2));
+        let pad_right = k / 2;
+        let x = x.pad_with_same(2, pad_left, pad_right)?;
+        let l = l + pad_left + pad_right;
+        let out_len = (l - k) / 2 + 1;
+        let l2 = l - (l % 2);
+        let pairs = x.narrow(2, 0, l2)?.reshape((b, c, l2 / 2, 2))?;
+        let mut acc: Option<Tensor> = None;
+        for (k_idx, &w) in kernel.iter().enumerate() {
+            let part = pairs
+                .narrow(2, k_idx / 2, out_len)?
+                .narrow(3, k_idx % 2, 1)?
+                .squeeze(3)?;
+            let term = part.affine(w as f64, 0.0)?;
+            acc = Some(match acc {
+                Some(a) => (a + term)?,
+                None => term,
+            });
+        }
+        Ok(acc.expect("non-empty kernel"))
+    }
+
+    fn fir_upsample_reference(x: &Tensor, kernel: &[f32]) -> Result<Tensor> {
+        let (b, c, t) = x.dims3()?;
+        let pad = AA_KERNEL / AA_RATIO - 1;
+        let crop_left = pad * AA_RATIO + (AA_KERNEL - AA_RATIO) / 2;
+        let even_taps: Vec<f32> = (0..AA_KERNEL).step_by(2).map(|i| kernel[i]).collect();
+        let odd_taps: Vec<f32> = (1..AA_KERNEL).step_by(2).map(|i| kernel[i]).collect();
+        let xp = x.pad_with_same(2, pad, pad)?;
+        let odd_phase = fir_conv_sum_reference(&xp, &odd_taps, crop_left / 2, t)?;
+        let even_phase = fir_conv_sum_reference(&xp, &even_taps, crop_left.div_ceil(2), t)?;
+        let y = Tensor::stack(&[odd_phase, even_phase], 3)?.reshape((b, c, AA_RATIO * t))?;
+        y.affine(AA_RATIO as f64, 0.0)
+    }
+
+    /// Fixed-input cross-check of the batched-conv FIR against the per-tap
+    /// reference: shapes/lengths, NaN/Inf absence and the summation-order
+    /// deviation, over generic, boundary-short and near-model shapes.
+    #[test]
+    fn fir_conv_batched_matches_per_tap_reference() {
+        check_fir_conv(&Device::Cpu);
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    #[ignore = "requires a CUDA device; no models"]
+    fn fir_conv_batched_matches_per_tap_reference_cuda() {
+        check_fir_conv(&Device::new_cuda(0).unwrap());
+    }
+
+    fn check_fir_conv(device: &Device) {
+        let taps = kaiser_sinc_filter1d(0.25, 0.3, AA_KERNEL);
+        let filter = FirFilter::new(&taps, device, candle_core::DType::F32).unwrap();
+        let mut state = 0x00C0_FFEE_u32;
+        let mut next = move || {
+            state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            ((state >> 16) as f32 / 32768.0 - 1.0) * 2.0
+        };
+        for (b, c, t) in [
+            (1, 1, 1),
+            (1, 4, 2),
+            (2, 9, 111),
+            (1, 1, 6),
+            (1, 4, 7),
+            (2, 128, 641),
+            (1, 32, 22048),
+        ] {
+            let values: Vec<f32> = (0..b * c * t).map(|_| next()).collect();
+            let x = Tensor::from_vec(values, (b, c, t), device).unwrap();
+            for (name, got, want) in [
+                (
+                    "upsample",
+                    fir_upsample(&x, &filter).unwrap(),
+                    fir_upsample_reference(&x, &taps).unwrap(),
+                ),
+                (
+                    "downsample",
+                    fir_downsample(&x, &filter).unwrap(),
+                    fir_downsample_reference(&x, &taps).unwrap(),
+                ),
+                (
+                    "roundtrip",
+                    fir_downsample(&fir_upsample(&x, &filter).unwrap(), &filter).unwrap(),
+                    fir_downsample_reference(&fir_upsample_reference(&x, &taps).unwrap(), &taps)
+                        .unwrap(),
+                ),
+            ] {
+                assert_eq!(got.dims(), want.dims(), "{name} shape for ({b},{c},{t})");
+                let g = got.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+                let w = want.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+                let mut max_abs = 0f64;
+                for (gv, wv) in g.iter().zip(&w) {
+                    assert!(gv.is_finite(), "{name}: NaN/Inf at ({b},{c},{t})");
+                    max_abs = max_abs.max((gv - wv).abs() as f64);
+                }
+                assert!(
+                    max_abs <= 1e-5,
+                    "{name} ({b},{c},{t}): max_abs {max_abs:.3e}"
+                );
+                println!(
+                    "fir {name} ({b},{c},{t}): max_abs {max_abs:.3e} over {} values",
+                    g.len()
+                );
+            }
+        }
+    }
+
     #[test]
     fn fir_upsample_downsample_match_torch_modules() {
         // Oracle from UpSample1d(2,12) / DownSample1d(2,12) on
@@ -596,7 +767,12 @@ mod tests {
             0.7540967,
             0.8705455,
         ];
-        let filter = kaiser_sinc_filter1d(0.25, 0.3, 12);
+        let filter = FirFilter::new(
+            &kaiser_sinc_filter1d(0.25, 0.3, 12),
+            &Device::Cpu,
+            candle_core::DType::F32,
+        )
+        .unwrap();
         let x = Tensor::new(
             &[[[0.125f32, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875]]],
             &Device::Cpu,

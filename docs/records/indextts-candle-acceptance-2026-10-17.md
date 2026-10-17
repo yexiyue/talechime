@@ -1,6 +1,8 @@
 # IndexTTS 2.5 Candle 移植验收记录与问题台账
 
-日期：2026-10-17（两轮）。关联：[移植过程记录](indextts-candle-port.md)、[独立生成计划](../independent-tts-candle-plan.md)、`crates/indextts/SOURCE.md`（固定来源）。状态：**数值验收通过（16/16 oracle 全绿）、CUDA 实时达成（RTF 0.71）、语料 20/22 段时长对齐；1 个开放生成缺陷（seg2 早停）；用户试听门槛未执行**。
+日期：2026-10-17（前两轮历史记录）。关联：[移植过程记录](indextts-candle-port.md)、[独立生成计划](../independent-tts-candle-plan.md)、`crates/indextts/SOURCE.md`（固定来源）。
+
+> 同日后续更正：历史语料实际为 6 段 × 2 轮，10/12 成功，原文的 20/22 统计错误；seg2 早停已定位到采样候选丢失及 scorer 误判完成并修复。首步 logits 测试此前未比较输出，本轮已补足。后续实机结果、与官方及社区比较见[对照复核记录](indextts-official-community-review-2026-10-17.md)。以下保留历史台账，不能把历史猜测当作当前结论。用户试听仍未执行。
 
 ## 1. 验收环境
 

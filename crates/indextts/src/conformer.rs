@@ -15,7 +15,7 @@
 //!   the checkpoint's `embed.pos_enc.pe` buffer (`RelPositionalEncoding`
 //!   `register_buffer`s it, so `load_state_dict` overwrites the analytic
 //!   formula; the shipped 2.5 table is stored at low precision and must
-//!   not be recomputed) — see [`ConformerEncoder::pos_encoding`].
+//!   not be recomputed) — see `ConformerEncoder::pos_encoding`.
 //! - `Conv2dSubsampling2` slices the mask with `[:, :, 2::2]`, i.e.
 //!   subsampled position `i` is valid when input frame `2i + 2` is valid;
 //!   the subsampled length is `(T - 3) // 2 + 1 == (T - 1) / 2`.

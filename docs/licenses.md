@@ -12,6 +12,7 @@ Talechime 原创项目代码沿用仓库根目录 MIT 许可证。第三方代�
 | VoxCPM Candle 计算库 | `crates/voxcpm/SOURCE.md` 与许可证 |
 | VoxCPM 原生开发对照 | `crates/voxcpm-sys/native/SOURCE.md` 与 vendored 许可证 |
 | OmniVoice | `crates/omnivoice/SOURCE.md` 与许可证；tokenizer 的 BOSON/Higgs/Llama 授权单独保留 |
+| IndexTTS 2.5 Candle 计算库 | `crates/indextts/SOURCE.md`、`LICENSE.IndexTTS` 与 `third-party/candle/LICENSE-APACHE`；权重与子模型许可单独遵循上游声明 |
 | 已移除的 Qwen 对齐（历史归档） | [许可](legal/retired-qwen-alignment/LICENSE)、[固定资源清单](legal/retired-qwen-alignment/SOURCE.md) |
 | ONNX Runtime 1.28 | [许可证](legal/onnxruntime/LICENSE)、[第三方声明](legal/onnxruntime/ThirdPartyNotices.txt)、[固定来源](legal/onnxruntime/SOURCE.md) |
 

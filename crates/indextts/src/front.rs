@@ -14,6 +14,7 @@
 //! Python-oracle comparisons must exclude it.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use regex::Regex;
 
@@ -63,7 +64,7 @@ const ZH_EXTRA_MAP: [(&str, &str); 1] = [("$", ".")];
 const CHAR_REP_MAP_TAIL: [(&str, &str); 4] = [("~", "-"), ("「", "'"), ("」", "'"), (":", ",")];
 
 pub struct TextFrontend {
-    glossary: Vec<(String, String)>,
+    glossary: Vec<(Regex, String)>,
     zh_map: Vec<(&'static str, &'static str)>,
     base_map: Vec<(&'static str, &'static str)>,
     contraction_re: Regex,
@@ -115,8 +116,15 @@ impl TextFrontend {
     /// longest term first, case-insensitive (`apply_glossary_terms`).
     pub fn set_glossary(&mut self, glossary: HashMap<String, String>) {
         let mut entries: Vec<(String, String)> = glossary.into_iter().collect();
-        entries.sort_by_key(|(term, _)| std::cmp::Reverse(term.len()));
-        self.glossary = entries;
+        entries.sort_by(|(a, _), (b, _)| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+        self.glossary = entries
+            .into_iter()
+            .map(|(term, reading)| {
+                let re =
+                    Regex::new(&format!("(?i){}", regex::escape(&term))).expect("escaped glossary");
+                (re, reading)
+            })
+            .collect();
     }
 
     /// The `clean_pattern` substitution applied by `infer_generator`
@@ -154,13 +162,9 @@ impl TextFrontend {
     }
 
     fn has_pinyin_tone(&self, s: &str) -> bool {
-        for m in self.pinyin_re.find_iter(s) {
-            let byte_start = m.start();
-            if !self.prev_is_ascii_letter(s, byte_start) {
-                return true;
-            }
-        }
-        false
+        self.pinyin_re
+            .find_iter(s)
+            .any(|m| !self.prev_is_ascii_letter(s, m.start()))
     }
 
     fn prev_is_ascii_letter(&self, s: &str, byte_start: usize) -> bool {
@@ -186,19 +190,13 @@ impl TextFrontend {
             })
             .to_string();
 
-        let contraction_ok = self
+        protected = self
             .contraction_re
             .replace_all(&protected, "${1} is")
             .to_string();
-        protected = contraction_ok;
 
-        if !self.glossary.is_empty() {
-            let mut t = protected;
-            for (term, reading) in &self.glossary {
-                let re = Regex::new(&regex::escape(term)).expect("escaped glossary term");
-                t = re.replace_all(&t, reading.as_str()).to_string();
-            }
-            protected = t;
+        for (re, reading) in &self.glossary {
+            protected = re.replace_all(&protected, reading.as_str()).to_string();
         }
 
         let result = if zh {
@@ -234,9 +232,7 @@ impl TextFrontend {
             .find_iter(text)
             .map(|m| m.as_str().to_string())
             .collect();
-        terms.sort();
-        terms.dedup();
-        terms.sort_by_key(|t| std::cmp::Reverse(t.len()));
+        dedup_longest_first(&mut terms);
         let mut out = text.to_string();
         for term in &terms {
             let protected = term.replace('-', "<H>");
@@ -275,18 +271,16 @@ impl TextFrontend {
     }
 
     fn save_pinyin_tones(&self, text: &str) -> (String, Option<Vec<String>>) {
-        let mut found: Vec<String> = Vec::new();
-        for m in self.pinyin_re.find_iter(text) {
-            if self.prev_is_ascii_letter(text, m.start()) {
-                continue;
-            }
-            found.push(m.as_str().to_string());
-        }
+        let mut found: Vec<String> = self
+            .pinyin_re
+            .find_iter(text)
+            .filter(|m| !self.prev_is_ascii_letter(text, m.start()))
+            .map(|m| m.as_str().to_string())
+            .collect();
         if found.is_empty() {
             return (text.to_string(), None);
         }
-        found.sort();
-        found.dedup();
+        dedup_longest_first(&mut found);
         let mut out = text.to_string();
         for (i, pinyin) in found.iter().enumerate() {
             let letter = alpha_index(i);
@@ -313,8 +307,7 @@ impl TextFrontend {
         if names.is_empty() {
             return (text.to_string(), None);
         }
-        names.sort();
-        names.dedup();
+        dedup_longest_first(&mut names);
         let mut out = text.to_string();
         for (i, name) in names.iter().enumerate() {
             let letter = alpha_index(i);
@@ -328,6 +321,14 @@ impl Default for TextFrontend {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Deduplicate and order by descending byte length so substring replacements
+/// never corrupt longer matches containing shorter ones.
+fn dedup_longest_first(items: &mut Vec<String>) {
+    items.sort();
+    items.dedup();
+    items.sort_by_key(|s| std::cmp::Reverse(s.len()));
 }
 
 /// `_idx_to_alpha`: 0→a, 25→z, 26→aa, ... (upstream only ever needs a few).
@@ -354,21 +355,26 @@ fn restore_placeholders_generic(text: &str, items: &[String], prefix: &str) -> S
 
 /// `correct_pinyin`: jqx + u/ü rhyme → v, then uppercase.
 fn correct_pinyin(pinyin: &str) -> String {
+    static JQX_RE: OnceLock<Regex> = OnceLock::new();
     let first = pinyin.chars().next().unwrap_or(' ');
     if !"jqxJQX".contains(first) {
         return pinyin.to_string();
     }
-    let re = Regex::new(r"(?i)([jqx])[uü](n|e|an)*(\d)").expect("static regex");
+    let re = JQX_RE.get_or_init(|| Regex::new(r"(?i)([jqx])[uü](n|e|an)*(\d)").expect("static"));
     re.replace(pinyin, "${1}v${2}${3}").to_uppercase()
 }
 
 /// `<文字|发音>` → `<|SPECIAL_TOKEN_1|>/<|SPECIAL_TOKEN_2|>` wrapping with
 /// kana passthrough (`apply_pronunciation_annotations` in `infer_v2_5.py`).
 pub fn apply_pronunciation_annotations(text: &str) -> String {
-    let pron_re = Regex::new(r"<([^|>\n]+)\|([^>\n]+)>").expect("static regex");
-    let hira = Regex::new(r"^[\x{3040}-\x{309F}]+$").expect("static regex");
-    let kata = Regex::new(r"^[\x{30A0}-\x{30FF}]+$").expect("static regex");
-    let chinese = Regex::new(r"[\x{4e00}-\x{9fff}]").expect("static regex");
+    static PRON_RE: OnceLock<Regex> = OnceLock::new();
+    static HIRA_RE: OnceLock<Regex> = OnceLock::new();
+    static KATA_RE: OnceLock<Regex> = OnceLock::new();
+    static ZH_RE: OnceLock<Regex> = OnceLock::new();
+    let pron_re = PRON_RE.get_or_init(|| Regex::new(r"<([^|>\n]+)\|([^>\n]+)>").expect("static"));
+    let hira = HIRA_RE.get_or_init(|| Regex::new(r"^[\x{3040}-\x{309F}]+$").expect("static"));
+    let kata = KATA_RE.get_or_init(|| Regex::new(r"^[\x{30A0}-\x{30FF}]+$").expect("static"));
+    let chinese = ZH_RE.get_or_init(|| Regex::new(r"[\x{4e00}-\x{9fff}]").expect("static"));
     pron_re
         .replace_all(text, |caps: &regex::Captures| {
             let word = caps.get(1).expect("group 1").as_str();
@@ -617,7 +623,8 @@ fn english_cardinal(n: u64) -> String {
 }
 
 fn en_number_normalize(text: &str) -> String {
-    let re = Regex::new(r"[0-9]+(\.[0-9]+)?").expect("static regex");
+    static NUM_RE: OnceLock<Regex> = OnceLock::new();
+    let re = NUM_RE.get_or_init(|| Regex::new(r"[0-9]+(\.[0-9]+)?").expect("static regex"));
     re.replace_all(text, |caps: &regex::Captures| {
         let whole = caps.get(0).expect("whole match").as_str();
         let (int_part, frac_part) = match whole.split_once('.') {
@@ -733,5 +740,20 @@ mod tests {
         let f = TextFrontend::new();
         // GPT-5 keeps its hyphen and the digit is still normalized.
         assert_eq!(f.normalize("GPT-5 发布", true), "GPT-五 发布");
+    }
+
+    #[test]
+    fn overlapping_pinyin_and_names_preserve_longest_matches() {
+        let f = TextFrontend::new();
+        // Shorter "an1" must not corrupt "gan1" or "juan1" during placeholder substitution.
+        assert_eq!(
+            f.normalize("读作gan1和an1以及juan1", true),
+            "读作gan1和an1以及JVAN1"
+        );
+        // Shorter "约瑟夫·高登" must not split "约瑟夫·高登-莱维特" before normalizer runs.
+        assert_eq!(
+            f.normalize("约瑟夫·高登-莱维特与约瑟夫·高登2人", true),
+            "约瑟夫-高登-莱维特与约瑟夫-高登二人"
+        );
     }
 }

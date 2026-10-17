@@ -143,14 +143,15 @@ fn apply_temperature(scores: &mut [f32], temperature: f64) {
 
 /// `TopKLogitsWarper` (4.52.1): `self.top_k = max(top_k, min_tokens_to_keep)`,
 /// then drop (to `-inf`) every score strictly below the k-th largest;
-/// ties at the k-th value survive.
+/// ties at the k-th value survive. The k-th largest value is selected with
+/// a linear-time partition instead of a full sort (same order statistic).
 fn apply_top_k(scores: &mut [f32], top_k: usize, min_tokens_to_keep: usize) {
     let k = top_k.max(min_tokens_to_keep).min(scores.len());
     if k == 0 || k >= scores.len() {
         return;
     }
     let mut sorted = scores.to_vec();
-    sorted.sort_by(|a, b| b.total_cmp(a));
+    sorted.select_nth_unstable_by(k - 1, |a, b| b.total_cmp(a));
     let kth = sorted[k - 1];
     for s in scores.iter_mut() {
         if *s < kth {
@@ -161,10 +162,18 @@ fn apply_top_k(scores: &mut [f32], top_k: usize, min_tokens_to_keep: usize) {
 
 /// `TopPLogitsWarper` (4.52.1): sort ascending, drop tokens whose
 /// cumulative probability (of the current softmax) is `<= 1 - top_p`,
-/// always keeping the `min_tokens_to_keep` largest scores.
+/// always keeping the `min_tokens_to_keep` largest scores. `-inf` entries
+/// have exactly zero probability and already sit at `-inf`, so every pass
+/// runs over the finite survivors only (their softmax weights, cumulative
+/// sums and kept set are bit-for-bit those of the full-row scan).
 fn apply_top_p(scores: &mut [f32], top_p: f64, min_tokens_to_keep: usize) {
     let probs = softmax_f64(&scores.iter().map(|v| *v as f64).collect::<Vec<_>>());
-    let mut order: Vec<usize> = (0..scores.len()).collect();
+    let mut order: Vec<usize> = (0..scores.len())
+        .filter(|&i| scores[i] != f32::NEG_INFINITY)
+        .collect();
+    if order.is_empty() {
+        return;
+    }
     order.sort_by(|&a, &b| scores[a].total_cmp(&scores[b]));
     let mut remove = vec![false; scores.len()];
     let mut cum = 0.0;
@@ -255,25 +264,42 @@ fn inverse_cdf(weights: &[f64], u: f64) -> usize {
     last_positive
 }
 
-/// `torch.multinomial(probs, num_samples=n)` without replacement: draw a
-/// uniform, pick via the inverse CDF of the remaining weights, then zero
-/// the drawn entry and renormalize. (Exact torch RNG parity is impossible;
-/// the caller owns the `StdRng` seed.)
-fn sample_without_replacement(weights: &[f64], n: usize, rng: &mut StdRng) -> Vec<usize> {
-    let mut remaining = weights.to_vec();
-    let mut total: f64 = remaining.iter().sum();
+/// Weighted sampling without replacement from log scores. Renormalize after
+/// each draw: subtracting probabilities from a running total loses tiny
+/// remaining masses and can return fewer candidates than the beam scorer needs.
+/// Log space also keeps inactive beams (initial score -1e9) available after
+/// the active beam's candidates are exhausted. Torch's RNG is different.
+///
+/// All passes run over the finite entries only: `(-inf - max).exp()` is
+/// exactly zero, so dropped entries contribute exactly `0.0` to the softmax
+/// denominator, the quotient sum (`total`) and the running CDF — the draws
+/// and the `last_positive` fallback match the previous full-row scan
+/// bit-for-bit while the per-draw work drops from `2 * num_beams * vocab`
+/// transcendental evaluations to the surviving candidate count (a handful
+/// after top-k/top-p).
+fn sample_without_replacement(scores: &[f64], n: usize, rng: &mut StdRng) -> Result<Vec<usize>> {
+    let mut live: Vec<usize> = (0..scores.len())
+        .filter(|&i| scores[i].is_finite())
+        .collect();
+    if live.len() < n {
+        candle_core::bail!("sampling needs {n} finite candidates");
+    }
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
-        if total <= 0.0 {
-            break;
-        }
+        let max = live
+            .iter()
+            .map(|&i| scores[i])
+            .fold(f64::NEG_INFINITY, f64::max);
+        let exps: Vec<f64> = live.iter().map(|&i| (scores[i] - max).exp()).collect();
+        let sum: f64 = exps.iter().sum();
+        let weights: Vec<f64> = exps.iter().map(|e| e / sum).collect();
+        let total: f64 = weights.iter().sum();
         let u = rng.random::<f64>() * total;
-        let idx = inverse_cdf(&remaining, u);
-        out.push(idx);
-        total -= remaining[idx];
-        remaining[idx] = 0.0;
+        let pick = inverse_cdf(&weights, u);
+        out.push(live[pick]);
+        live.remove(pick);
     }
-    out
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -405,17 +431,7 @@ impl BeamSearchScorer {
             }
         }
         if beam_idx < nb {
-            // More than `num_beams` sampled candidates hit EOS: like HF's
-            // BeamSearchScorer (which returns padded beams once
-            // `beam_hyp.is_done()`), mark the batch done and pad the
-            // remaining beams — the caller stops before consuming them.
-            for slot in beam_idx..nb {
-                next_scores[slot] = 0.0;
-                next_tokens[slot] = pad_token;
-                next_rows[slot] = 0;
-            }
-            self.done[batch_idx] = true;
-            return Ok((next_scores, next_tokens, next_rows));
+            candle_core::bail!("beam search needs {nb} non-EOS candidates, got {beam_idx}");
         }
         self.done[batch_idx] =
             self.done[batch_idx] || self.hyps[batch_idx].is_done(best, generated_len);
@@ -538,10 +554,12 @@ pub fn generate_mel_tokens(
     }
     let start_emb = token_embed(parts, &start_ids, 0, rows, dim)?;
     let emb = Tensor::cat(&[&prompt_exp, &start_emb], 1)?;
-    let mut hidden =
+    let mut hidden = {
+        let _g = crate::profile::scope(Some(device), "gen.prompt_forward");
         parts
             .gpt
-            .forward(&emb, Some(&mask_tensor(&mask_rows, device)?), &mut cache)?;
+            .forward(&emb, Some(&mask_tensor(&mask_rows, device)?), &mut cache)?
+    };
 
     // ---- Beam-sample loop (`_beam_search` with do_sample=True).
     let mut scorer = BeamSearchScorer::new(b, num_beams, cfg.length_penalty);
@@ -551,70 +569,78 @@ pub fn generate_mel_tokens(
     while steps < cfg.max_new_tokens {
         let seq = hidden.dims()[1];
         let h_last = hidden.narrow(1, seq - 1, 1)?;
-        let logits = parts
-            .mel_head
-            .forward(&parts.final_norm.forward(&h_last)?)?
-            .squeeze(1)?
-            .to_vec2::<f32>()?;
+        let logits = {
+            let _g = crate::profile::scope(Some(device), "gen.head");
+            parts
+                .mel_head
+                .forward(&parts.final_norm.forward(&h_last)?)?
+                .squeeze(1)?
+                .to_vec2::<f32>()?
+        };
 
         // Processors then warpers, in `_get_logits_processor` order, applied
         // to log-softmaxed scores; running beam scores are added afterwards.
         let mut joint: Vec<Vec<f64>> = vec![Vec::with_capacity(num_beams * vocab); b];
-        for (r, row_logits) in logits.iter().enumerate() {
-            let mut scores = row_logits.clone();
-            log_softmax(&mut scores);
-            if cfg.repetition_penalty != 1.0 {
-                apply_repetition_penalty(&mut scores, &input_ids[r], cfg.repetition_penalty);
-            }
-            if cfg.typical_sampling {
-                apply_typical(&mut scores, cfg.typical_mass, 2);
-            }
-            if cfg.do_sample {
-                if cfg.temperature != 1.0 {
-                    apply_temperature(&mut scores, cfg.temperature);
+        {
+            let _g = crate::profile::scope(None, "gen.warpers");
+            for (r, row_logits) in logits.iter().enumerate() {
+                let mut scores = row_logits.clone();
+                log_softmax(&mut scores);
+                if cfg.repetition_penalty != 1.0 {
+                    apply_repetition_penalty(&mut scores, &input_ids[r], cfg.repetition_penalty);
                 }
-                if cfg.top_k != 0 {
-                    apply_top_k(&mut scores, cfg.top_k, 2);
+                if cfg.typical_sampling {
+                    apply_typical(&mut scores, cfg.typical_mass, 2);
                 }
-                if cfg.top_p < 1.0 {
-                    apply_top_p(&mut scores, cfg.top_p, 2);
+                if cfg.do_sample {
+                    if cfg.temperature != 1.0 {
+                        apply_temperature(&mut scores, cfg.temperature);
+                    }
+                    if cfg.top_k != 0 {
+                        apply_top_k(&mut scores, cfg.top_k, 2);
+                    }
+                    if cfg.top_p < 1.0 {
+                        apply_top_p(&mut scores, cfg.top_p, 2);
+                    }
                 }
+                let bonus = beam_scores[r];
+                joint[r / num_beams].extend(scores.iter().map(|v| *v as f64 + bonus));
             }
-            let bonus = beam_scores[r];
-            joint[r / num_beams].extend(scores.iter().map(|v| *v as f64 + bonus));
         }
 
         // Candidate selection per batch row, then `BeamSearchScorer.process`.
         let mut next_scores = vec![0.0f64; rows];
         let mut next_tokens = vec![0u32; rows];
         let mut next_rows = vec![0usize; rows];
-        for bi in 0..b {
-            let weights = softmax_f64(&joint[bi]);
-            let mut candidates: Vec<(f64, usize)> = if cfg.do_sample {
-                sample_without_replacement(&weights, n_keep, rng)
-            } else {
-                let mut order: Vec<usize> = (0..joint[bi].len()).collect();
-                order.sort_by(|&a, &x| joint[bi][x].total_cmp(&joint[bi][a]));
-                order.truncate(n_keep);
-                order
+        {
+            let _g = crate::profile::scope(None, "gen.sampling");
+            for bi in 0..b {
+                let mut candidates: Vec<(f64, usize)> = if cfg.do_sample {
+                    sample_without_replacement(&joint[bi], n_keep, rng)?
+                } else {
+                    let mut order: Vec<usize> = (0..joint[bi].len()).collect();
+                    order.sort_by(|&a, &x| joint[bi][x].total_cmp(&joint[bi][a]));
+                    order.truncate(n_keep);
+                    order
+                }
+                .into_iter()
+                .map(|flat| (joint[bi][flat], flat))
+                .collect();
+                candidates.sort_by(|a, x| x.0.total_cmp(&a.0));
+                let (ns, nt, nr) = scorer.process(
+                    bi,
+                    &candidates,
+                    &input_ids,
+                    prompt_len,
+                    vocab,
+                    eos_token,
+                    eos_token,
+                    steps + 1,
+                )?;
+                next_scores[bi * num_beams..(bi + 1) * num_beams].copy_from_slice(&ns);
+                next_tokens[bi * num_beams..(bi + 1) * num_beams].copy_from_slice(&nt);
+                next_rows[bi * num_beams..(bi + 1) * num_beams].copy_from_slice(&nr);
             }
-            .into_iter()
-            .map(|flat| (joint[bi][flat], flat))
-            .collect();
-            candidates.sort_by(|a, x| x.0.total_cmp(&a.0));
-            let (ns, nt, nr) = scorer.process(
-                bi,
-                &candidates,
-                &input_ids,
-                prompt_len,
-                vocab,
-                eos_token,
-                eos_token,
-                steps + 1,
-            )?;
-            next_scores[bi * num_beams..(bi + 1) * num_beams].copy_from_slice(&ns);
-            next_tokens[bi * num_beams..(bi + 1) * num_beams].copy_from_slice(&nt);
-            next_rows[bi * num_beams..(bi + 1) * num_beams].copy_from_slice(&nr);
         }
 
         // Append tokens, reorder the KV cache and the mask rows.
@@ -623,12 +649,19 @@ pub fn generate_mel_tokens(
             new_ids[r] = input_ids[next_rows[r]].clone();
             new_ids[r].push(next_tokens[r]);
         }
-        let beam_idx = Tensor::from_vec(
-            next_rows.iter().map(|r| *r as u32).collect::<Vec<_>>(),
-            rows,
-            device,
-        )?;
-        cache.reorder_beams(&beam_idx)?;
+        // `index_select` with an identity permutation is a pure copy, so it
+        // is skipped when the beam order did not change.
+        if next_rows.iter().enumerate().any(|(r, &src)| src != r) {
+            let beam_idx = Tensor::from_vec(
+                next_rows.iter().map(|r| *r as u32).collect::<Vec<_>>(),
+                rows,
+                device,
+            )?;
+            {
+                let _g = crate::profile::scope(Some(device), "gen.reorder");
+                cache.reorder_beams(&beam_idx)?;
+            }
+        }
         input_ids = new_ids;
         beam_scores = next_scores;
         for row in &mut mask_rows {
@@ -655,9 +688,12 @@ pub fn generate_mel_tokens(
         // the start token took position 0 in the prompt step).
         let last_ids: Vec<u32> = input_ids.iter().map(|r| r[r.len() - 1]).collect();
         let emb = token_embed(parts, &last_ids, steps + 1, rows, dim)?;
-        hidden = parts
-            .gpt
-            .forward(&emb, Some(&mask_tensor(&mask_rows, device)?), &mut cache)?;
+        hidden = {
+            let _g = crate::profile::scope(Some(device), "gen.forward");
+            parts
+                .gpt
+                .forward(&emb, Some(&mask_tensor(&mask_rows, device)?), &mut cache)?
+        };
     }
 
     // ---- `BeamSearchScorer.finalize` (num_beam_hyps_to_keep = 1).
@@ -799,9 +835,11 @@ mod tests {
     #[test]
     fn sampling_is_deterministic_and_mass_aware() {
         // Same seed -> same draws; without-replacement never repeats.
-        let weights: Vec<f64> = [0.05, 0.05, 0.8, 0.05, 0.05].to_vec();
-        let a = sample_without_replacement(&weights, 3, &mut StdRng::seed_from_u64(294_738));
-        let b = sample_without_replacement(&weights, 3, &mut StdRng::seed_from_u64(294_738));
+        let scores = [0.05f64, 0.05, 0.8, 0.05, 0.05].map(f64::ln);
+        let a =
+            sample_without_replacement(&scores, 3, &mut StdRng::seed_from_u64(294_738)).unwrap();
+        let b =
+            sample_without_replacement(&scores, 3, &mut StdRng::seed_from_u64(294_738)).unwrap();
         assert_eq!(a, b);
         let unique: std::collections::HashSet<_> = a.iter().collect();
         assert_eq!(unique.len(), a.len());
@@ -809,9 +847,40 @@ mod tests {
         let mut firsts = [0usize; 5];
         let mut rng = StdRng::seed_from_u64(7);
         for _ in 0..400 {
-            firsts[sample_without_replacement(&weights, 1, &mut rng)[0]] += 1;
+            firsts[sample_without_replacement(&scores, 1, &mut rng).unwrap()[0]] += 1;
         }
         assert!(firsts[2] > 300, "first draws {firsts:?}");
+    }
+
+    #[test]
+    fn concentrated_sampling_still_refills_all_beams() {
+        // Two active candidates, four from initially inactive beams. A
+        // probability-space running total prematurely exhausts this row.
+        let scores = [0.0, -40.0, -1e9, -1e9 - 40.0, -1e9, -1e9 - 40.0];
+        let picks = sample_without_replacement(&scores, 6, &mut StdRng::seed_from_u64(9)).unwrap();
+        assert_eq!(picks[0..2], [0, 1]);
+        assert_eq!(
+            picks.iter().collect::<std::collections::HashSet<_>>().len(),
+            6
+        );
+        let candidates: Vec<_> = picks.iter().map(|&i| (scores[i], i)).collect();
+        let mut scorer = BeamSearchScorer::new(1, 3, 0.0);
+        let (_, tokens, _) = scorer
+            .process(0, &candidates, &vec![vec![7]; 3], 1, 2, 1, 1, 1)
+            .unwrap();
+        assert_eq!(tokens, [0, 0, 0]);
+        assert!(!scorer.is_done());
+    }
+
+    #[test]
+    fn undersized_candidates_do_not_signal_completion() {
+        let mut scorer = BeamSearchScorer::new(1, 3, 0.0);
+        assert!(
+            scorer
+                .process(0, &[(0.0, 1)], &vec![vec![7]; 3], 1, 2, 1, 1, 1)
+                .is_err()
+        );
+        assert!(!scorer.is_done());
     }
 
     #[test]
