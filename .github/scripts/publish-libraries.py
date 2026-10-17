@@ -19,6 +19,7 @@ PACKAGES = (
     "qwen3-asr",
     "voxcpm",
     "omnivoice",
+    "cosyvoice3",
     "talechime-core",
     "talechime-backends",
     "talechime",

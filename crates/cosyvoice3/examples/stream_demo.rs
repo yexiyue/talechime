@@ -2,7 +2,7 @@
 //! request isolation, and cancellation/lifecycle behavior on a Tokio
 //! LocalSet with a bounded channel.
 //!
-//! Usage: stream_demo <model-dir> <fixture-dir> [metal] [scenario]
+//! Usage: `stream_demo <model-dir> <fixture-dir> [metal] [scenario]`
 //!   scenario: full (default) | lifecycle
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Tensor};
@@ -57,7 +57,12 @@ fn load_parts(model: &Path, dir: &Path, dev: &Device) -> Result<Parts> {
     })
 }
 
-fn build_session(model: &Path, p: &Parts, dev: &Device, seed: u64) -> Result<StreamingTts> {
+fn build_session(
+    model: &Path,
+    p: &Parts,
+    dev: &Device,
+    seed: u64,
+) -> Result<StreamingTts<'static>> {
     let llm = CosyVoice3Lm::new(
         &p.cfg.llm,
         load_weights(&model.join("llm.safetensors"), dev)?,

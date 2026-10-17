@@ -1,6 +1,6 @@
 //! Stage-level HiFT parity probe against official_stages.safetensors.
 //!
-//! Usage: hift_probe <model-dir> <fixture-dir> [metal]
+//! Usage: `hift_probe <model-dir> <fixture-dir> [metal]`
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;

@@ -4030,6 +4030,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "candle-core",
+ "cosyvoice3",
  "dirs",
  "hound",
  "kaldi-fbank",

@@ -231,6 +231,7 @@ async fn main() -> anyhow::Result<()> {
             feature = "moss",
             feature = "qwen",
             feature = "voxcpm",
+            feature = "cosyvoice3",
             feature = "omnivoice",
         ))]
         if tts_device.is_some() || model_changed {

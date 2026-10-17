@@ -8,6 +8,9 @@ description = "Native model adapters for Talechime"
 repository = "https://github.com/yexiyue/talechime"
 
 [features]
+cosyvoice3 = ["dep:cosyvoice3", "cosyvoice3/ort", "dep:candle-core", "dep:hound", "dep:rubato"]
+cosyvoice3-metal = ["cosyvoice3", "cosyvoice3/metal", "tts-candle-platform/metal"]
+cosyvoice3-cuda = ["cosyvoice3", "cosyvoice3/cuda"]
 default = ["moss-nano-candle"]
 asr = ["dep:qwen3-asr", "dep:candle-core", "dep:ort", "dep:kaldi-fbank", "dep:rubato", "dep:hound"]
 moss = ["dep:ort", "dep:sentencepiece-rs", "dep:rand", "dep:hound", "dep:rubato"]
@@ -31,6 +34,7 @@ ort-cuda = ["dep:ort", "ort/cuda"]
 directml-probe = ["moss", "ort/directml", "dep:windows"]
 
 [dependencies]
+cosyvoice3 = { workspace = true, optional = true }
 tts-candle-platform.workspace = true
 moss-tts = { workspace = true, optional = true }
 candle-core = { workspace = true, optional = true }

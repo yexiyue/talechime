@@ -105,6 +105,50 @@ impl CosyVoice3 {
         &self.config
     }
 
+    /// Borrow the loaded components for one zero-shot streaming request.
+    /// Dropping the stream releases all per-request buffers; a new request
+    /// resets the LLM cache and can reuse the same model weights.
+    pub fn start_stream(
+        &mut self,
+        text: &str,
+        prompt: &PromptFeatures,
+        sampling: &SamplingConfig,
+    ) -> Result<crate::StreamingTts<'_>> {
+        if text.trim().is_empty() || !prompt.text.contains("<|endofprompt|>") {
+            candle_core::bail!("nonempty text and an end-of-prompt marker are required");
+        }
+        if prompt.speech_tokens.is_empty()
+            || prompt.mel_frames != prompt.speech_tokens.len() * 2
+            || prompt.mel.len() != prompt.mel_frames * 80
+            || prompt.embedding.len() != 192
+            || prompt
+                .mel
+                .iter()
+                .chain(&prompt.embedding)
+                .any(|v| !v.is_finite())
+        {
+            candle_core::bail!("invalid zero-shot prompt features");
+        }
+        let text = u32_tensor(&self.encode(text)?, &self.device)?;
+        let prompt_text = u32_tensor(&self.encode(&prompt.text)?, &self.device)?;
+        let tokens = u32_tensor(&prompt.speech_tokens, &self.device)?;
+        let mel = Tensor::from_slice(&prompt.mel, (1, prompt.mel_frames, 80), &self.device)?
+            .to_dtype(self.dtype)?;
+        let embedding =
+            Tensor::from_slice(&prompt.embedding, (1, 192), &self.device)?.to_dtype(self.dtype)?;
+        crate::StreamingTts::borrowed(
+            &mut self.llm,
+            &mut self.flow,
+            &mut self.hift,
+            &text,
+            &prompt_text,
+            &tokens,
+            &mel,
+            &embedding,
+            sampling,
+        )
+    }
+
     /// Full synthesis. Returns 24 kHz PCM f32.
     pub fn synthesize(
         &mut self,

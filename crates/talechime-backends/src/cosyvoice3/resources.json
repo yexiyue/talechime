@@ -1,0 +1,37 @@
+[
+  {
+    "path": "config.json",
+    "sha256": "455c574d7ccefeed2419d3ad67c87d17545eed2644f65ca46733d126d5790b26",
+    "size": 2074
+  },
+  {
+    "path": "llm.safetensors",
+    "sha256": "06661f03d1ae2adf67abd03efb758cdd59df5495617b0066ead5ae8d17f80983",
+    "size": 2569164632
+  },
+  {
+    "path": "flow.safetensors",
+    "sha256": "fa408e2c1476a298271f7610578228819a97d30ade959d228a9459a0a135d95b",
+    "size": 1329066360
+  },
+  {
+    "path": "hift.safetensors",
+    "sha256": "475ac02be5d85f5b13da1e075a217ddb71e14f109f327919609004858c75bd2b",
+    "size": 96324868
+  },
+  {
+    "path": "tokenizer/tokenizer.json",
+    "sha256": "caa0dadcb8c40c79a3244aaf290492e298a49c5c25e0db16cad12f2f8ff639c5",
+    "size": 10573953
+  },
+  {
+    "path": "campplus.onnx",
+    "sha256": "a6ac6a63997761ae2997373e2ee1c47040854b4b759ea41ec48e4e42df0f4d73",
+    "size": 28303423
+  },
+  {
+    "path": "speech_tokenizer_v3.onnx",
+    "sha256": "23236a74175dbdda47afc66dbadd5bcb41303c467a57c261cb8539ad9db9208d",
+    "size": 969451503
+  }
+]

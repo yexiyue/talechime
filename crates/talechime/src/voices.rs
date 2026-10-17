@@ -50,7 +50,12 @@ pub async fn run(
         }
         return Ok(());
     }
-    #[cfg(any(feature = "voxcpm", feature = "omnivoice", feature = "moss-candle"))]
+    #[cfg(any(
+        feature = "cosyvoice3",
+        feature = "voxcpm",
+        feature = "omnivoice",
+        feature = "moss-candle"
+    ))]
     if let Some((store, rate)) = shared_store(&resources, config)? {
         match command {
             VoiceCommand::List => unreachable!(),
@@ -342,12 +347,24 @@ pub async fn run(
         anyhow::bail!("voice import requires the moss Cargo feature")
     }
 }
-#[cfg(any(feature = "voxcpm", feature = "omnivoice", feature = "moss-candle"))]
+#[cfg(any(
+    feature = "cosyvoice3",
+    feature = "voxcpm",
+    feature = "omnivoice",
+    feature = "moss-candle"
+))]
 fn shared_store(
     resources: &Resources,
     config: &tts_protocol::Config,
 ) -> anyhow::Result<Option<(tts_core::voices::VoiceStore, u32)>> {
     Ok(match config.backend.as_str() {
+        #[cfg(feature = "cosyvoice3")]
+        "cosyvoice3" => Some((
+            tts_backends::cosyvoice3::voice_store(&tts_backends::cosyvoice3::directory(
+                resources.root(),
+            ))?,
+            24000,
+        )),
         #[cfg(feature = "moss-candle")]
         "moss"
             if config

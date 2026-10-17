@@ -1,5 +1,5 @@
 //! Compare the actual SineGen2 implementation with official source fixtures.
-//! Usage: sine_probe <model-dir> <fixture-dir>
+//! Usage: `sine_probe <model-dir> <fixture-dir>`
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Tensor};
 use candle_nn::{Module, VarBuilder};

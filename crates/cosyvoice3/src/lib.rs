@@ -10,7 +10,7 @@
 //! waveform gates (kept failing with f64-anchor root-cause evidence), and
 //! the streaming implementation are recorded in
 //! `docs/records/cosyvoice3-local-parity-2026-10-17.md`. Talechime backend
-//! registration remains pending.
+//! registration is available through the opt-in `cosyvoice3` adapter feature.
 //!
 //! Weights come from the conversion script
 //! `tools/tts/cosyvoice3_convert_weights.py`: fp32 safetensors with

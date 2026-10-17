@@ -1,0 +1,175 @@
+use ::cosyvoice3::{
+    DEFAULT_PROMPT_PREFIX, SamplingConfig,
+    frontend::ort_models::FrontendOnnx,
+    pipeline::{CosyVoice3, extract_prompt_features},
+};
+use std::path::PathBuf;
+use tokio::sync::{mpsc, oneshot};
+use tts_core::backend::{AudioChunk, BackendError, Pcm};
+use tts_protocol::Device;
+
+pub(super) struct Request {
+    pub text: String,
+    pub voice: String,
+    pub seed: u64,
+    pub audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
+}
+pub(super) fn candle_device(device: Device) -> candle_core::Result<candle_core::Device> {
+    match device {
+        Device::Cpu => Ok(candle_core::Device::Cpu),
+        #[cfg(all(feature = "cosyvoice3-metal", target_os = "macos"))]
+        Device::Metal => candle_core::Device::new_metal(0),
+        #[cfg(all(
+            feature = "cosyvoice3-cuda",
+            any(target_os = "linux", target_os = "windows")
+        ))]
+        Device::Cuda => candle_core::Device::new_cuda(0),
+        _ => candle_core::bail!("unsupported CosyVoice3 device {device:?}"),
+    }
+}
+pub(super) fn run(
+    directory: PathBuf,
+    device: Device,
+    mut jobs: mpsc::Receiver<Request>,
+    ready: oneshot::Sender<Result<(), BackendError>>,
+) {
+    let loaded = (|| -> anyhow::Result<_> {
+        let device = candle_device(device)?;
+        let pipeline = CosyVoice3::load(&directory, &device, candle_core::DType::F32, 0)?;
+        let frontend = FrontendOnnx::load(&directory, 1)?;
+        let runtime = tokio::runtime::Builder::new_current_thread().build()?;
+        Ok((pipeline, frontend, runtime))
+    })();
+    let (mut pipeline, mut frontend, runtime) = match loaded {
+        Ok(parts) => parts,
+        Err(error) => {
+            let _ = ready.send(Err(BackendError::Initialize(error.to_string())));
+            return;
+        }
+    };
+    if ready.send(Ok(())).is_err() {
+        return;
+    }
+    while let Some(request) = jobs.blocking_recv() {
+        if request.audio.is_closed() {
+            continue;
+        }
+        let result = (|| -> anyhow::Result<()> {
+            let store = super::voice_store(&directory)?;
+            let voice = store.load(&request.voice)?;
+            let samples =
+                crate::reference::load(&store.path(&request.voice)?.join("reference.wav"), 24000)?;
+            let prompt_text = format!("{DEFAULT_PROMPT_PREFIX}{}", voice.transcript);
+            let prompt = extract_prompt_features(&mut frontend, &samples, 24000, &prompt_text)?;
+            if request.audio.is_closed() {
+                return Ok(());
+            }
+            let sampling = SamplingConfig {
+                seed: Some(request.seed),
+                ..Default::default()
+            };
+            let mut session = pipeline.start_stream(&request.text, &prompt, &sampling)?;
+            runtime.block_on(deliver(&request.audio, || Ok(session.next_pcm()?)))
+        })();
+        if let Err(error) = result {
+            let _ = request
+                .audio
+                .blocking_send(Err(BackendError::Synthesis(error.to_string())));
+        }
+    }
+}
+
+/// Reserve a slot before inference. A dropped consumer cancels between blocks;
+/// exhaustion or a token budget limit never publishes successful End.
+async fn deliver(
+    audio: &mpsc::Sender<Result<AudioChunk, BackendError>>,
+    mut next: impl FnMut() -> anyhow::Result<Option<::cosyvoice3::StreamChunk>>,
+) -> anyhow::Result<()> {
+    loop {
+        let permit = match audio.reserve().await {
+            Ok(permit) => permit,
+            Err(_) => return Ok(()),
+        };
+        let chunk = next()?
+            .ok_or_else(|| anyhow::anyhow!("CosyVoice3 stream ended without a final block"))?;
+        anyhow::ensure!(
+            !chunk.hit_token_limit,
+            "CosyVoice3 exhausted its speech token budget"
+        );
+        let pcm = Pcm {
+            samples: chunk.samples,
+            sample_rate: 24000,
+            channels: 1,
+        };
+        pcm.duration_ms()?;
+        permit.send(Ok(AudioChunk::Pcm(pcm)));
+        if chunk.final_chunk {
+            let _ = audio.send(Ok(AudioChunk::End)).await;
+            return Ok(());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ::cosyvoice3::StreamChunk;
+    fn chunk(final_chunk: bool) -> StreamChunk {
+        StreamChunk {
+            samples: vec![0.1; 240],
+            final_chunk,
+            hit_token_limit: false,
+            tokens_generated: 1,
+        }
+    }
+    #[tokio::test]
+    async fn dropped_consumer_prevents_any_inference() {
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        deliver(&tx, || panic!("consumer already closed"))
+            .await
+            .unwrap();
+    }
+    #[tokio::test]
+    async fn full_queue_blocks_inference_and_only_final_chunk_emits_end() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let calls = std::cell::Cell::new(0);
+        let producer = deliver(&tx, || {
+            calls.set(calls.get() + 1);
+            Ok(Some(chunk(calls.get() == 2)))
+        });
+        tokio::pin!(producer);
+        tokio::select! {
+            result = &mut producer => panic!("completed before consuming audio: {result:?}"),
+            _ = tokio::task::yield_now() => {}
+        }
+        assert_eq!(calls.get(), 1);
+        assert!(matches!(rx.recv().await, Some(Ok(AudioChunk::Pcm(_)))));
+        tokio::select! {
+            result = &mut producer => panic!("completed before consuming final audio: {result:?}"),
+            _ = tokio::task::yield_now() => {}
+        }
+        assert_eq!(calls.get(), 2);
+        assert!(matches!(rx.recv().await, Some(Ok(AudioChunk::Pcm(_)))));
+        producer.await.unwrap();
+        assert!(matches!(rx.recv().await, Some(Ok(AudioChunk::End))));
+    }
+    #[tokio::test]
+    async fn limits_disconnects_and_inference_errors_never_emit_success() {
+        for mode in 0..3 {
+            let (tx, mut rx) = mpsc::channel(2);
+            let result = deliver(&tx, || match mode {
+                0 => {
+                    let mut c = chunk(true);
+                    c.hit_token_limit = true;
+                    Ok(Some(c))
+                }
+                1 => Ok(None),
+                _ => anyhow::bail!("injected failure"),
+            })
+            .await;
+            assert!(result.is_err());
+            assert!(rx.try_recv().is_err());
+        }
+    }
+}

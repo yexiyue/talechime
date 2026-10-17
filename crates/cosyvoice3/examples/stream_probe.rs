@@ -2,7 +2,7 @@
 //! flow/HiFT, compared chunk-by-chunk against the official stream mode
 //! (cosyvoice3_stream_reference.py exports).
 //!
-//! Usage: stream_probe <model-dir> <fixture-dir> [metal]
+//! Usage: `stream_probe <model-dir> <fixture-dir> [metal]`
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;

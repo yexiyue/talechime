@@ -246,6 +246,8 @@ fn backend_directory_and_switch_are_lightweight() {
             "voxcpm",
             #[cfg(feature = "omnivoice")]
             "omnivoice",
+            #[cfg(feature = "cosyvoice3")]
+            "cosyvoice3",
             #[cfg(feature = "qwen")]
             "qwen"
         ]
@@ -254,7 +256,7 @@ fn backend_directory_and_switch_are_lightweight() {
     for caps in &catalog {
         let supported = match (caps.backend.as_str(), caps.model.as_deref()) {
             ("qwen", Some("0.6b-base" | "1.7b-base")) => true,
-            ("qwen", _) => false,
+            ("qwen" | "cosyvoice3", _) => false,
             ("moss" | "voxcpm" | "omnivoice", _) => true,
             _ => panic!("unexpected model in catalog"),
         };

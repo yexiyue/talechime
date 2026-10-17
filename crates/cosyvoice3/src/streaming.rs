@@ -170,12 +170,36 @@ impl ChunkSchedule {
     }
 }
 
+// Owned sessions remain available to probes; backend sessions borrow the
+// already-loaded components so weights and KV state never need copying.
+enum ModelOwner<'a, T> {
+    Owned(Box<T>),
+    Borrowed(&'a mut T),
+}
+impl<T> std::ops::Deref for ModelOwner<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        match self {
+            Self::Owned(value) => value,
+            Self::Borrowed(value) => value,
+        }
+    }
+}
+impl<T> std::ops::DerefMut for ModelOwner<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        match self {
+            Self::Owned(value) => value,
+            Self::Borrowed(value) => value,
+        }
+    }
+}
+
 /// Flow + HiFT side of the official streaming schedule. Output is pulled
 /// one block at a time; cumulative tokens/mel remain bounded by the fixed
 /// 300-second flow noise table, not by the PCM consumer's queue size.
-pub struct TokenStreamDecoder {
-    flow: CausalMaskedDiffWithDiT,
-    hift: CausalHiFtGenerator,
+pub struct TokenStreamDecoder<'a> {
+    flow: ModelOwner<'a, CausalMaskedDiffWithDiT>,
+    hift: ModelOwner<'a, CausalHiFtGenerator>,
     flow_prompt_token: Tensor,
     prompt_feat: Tensor,
     embedding: Tensor,
@@ -186,10 +210,26 @@ pub struct TokenStreamDecoder {
     device: candle_core::Device,
 }
 
-impl TokenStreamDecoder {
+impl<'a> TokenStreamDecoder<'a> {
     pub fn new(
         flow: CausalMaskedDiffWithDiT,
         hift: CausalHiFtGenerator,
+        flow_prompt_token: &Tensor,
+        prompt_feat: &Tensor,
+        embedding: &Tensor,
+    ) -> Result<Self> {
+        Self::from_models(
+            ModelOwner::Owned(Box::new(flow)),
+            ModelOwner::Owned(Box::new(hift)),
+            flow_prompt_token,
+            prompt_feat,
+            embedding,
+        )
+    }
+
+    fn from_models(
+        flow: ModelOwner<'a, CausalMaskedDiffWithDiT>,
+        hift: ModelOwner<'a, CausalHiFtGenerator>,
         flow_prompt_token: &Tensor,
         prompt_feat: &Tensor,
         embedding: &Tensor,
@@ -299,23 +339,23 @@ impl TokenStreamDecoder {
 }
 
 /// Full streaming session: LLM token generation + [`TokenStreamDecoder`].
-pub struct StreamingTts {
-    llm: CosyVoice3Lm,
+pub struct StreamingTts<'a> {
+    llm: ModelOwner<'a, CosyVoice3Lm>,
     llm_state: IncrementalState,
-    decoder: TokenStreamDecoder,
+    decoder: TokenStreamDecoder<'a>,
     silent_run: u32,
     llm_done: bool,
     hit_token_limit: bool,
     failed: bool,
 }
 
-impl StreamingTts {
+impl<'a> StreamingTts<'a> {
     /// Start a streaming request from pre-encoded inputs. The prompt-side
     /// tensors must come from the same preparation as non-streaming
     /// synthesis (`pipeline::extract_prompt_features` + text tokenizer).
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        mut llm: CosyVoice3Lm,
+        llm: CosyVoice3Lm,
         flow: CausalMaskedDiffWithDiT,
         hift: CausalHiFtGenerator,
         text_token: &Tensor,
@@ -326,9 +366,62 @@ impl StreamingTts {
         embedding: &Tensor,
         sampling: &SamplingConfig,
     ) -> Result<Self> {
+        Self::from_models(
+            ModelOwner::Owned(Box::new(llm)),
+            ModelOwner::Owned(Box::new(flow)),
+            ModelOwner::Owned(Box::new(hift)),
+            text_token,
+            prompt_text_token,
+            llm_prompt_speech_token,
+            flow_prompt_token,
+            prompt_feat,
+            embedding,
+            sampling,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn borrowed(
+        llm: &'a mut CosyVoice3Lm,
+        flow: &'a mut CausalMaskedDiffWithDiT,
+        hift: &'a mut CausalHiFtGenerator,
+        text_token: &Tensor,
+        prompt_text_token: &Tensor,
+        prompt_speech_token: &Tensor,
+        prompt_feat: &Tensor,
+        embedding: &Tensor,
+        sampling: &SamplingConfig,
+    ) -> Result<Self> {
+        Self::from_models(
+            ModelOwner::Borrowed(llm),
+            ModelOwner::Borrowed(flow),
+            ModelOwner::Borrowed(hift),
+            text_token,
+            prompt_text_token,
+            prompt_speech_token,
+            prompt_speech_token,
+            prompt_feat,
+            embedding,
+            sampling,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn from_models(
+        mut llm: ModelOwner<'a, CosyVoice3Lm>,
+        flow: ModelOwner<'a, CausalMaskedDiffWithDiT>,
+        hift: ModelOwner<'a, CausalHiFtGenerator>,
+        text_token: &Tensor,
+        prompt_text_token: &Tensor,
+        llm_prompt_speech_token: &Tensor,
+        flow_prompt_token: &Tensor,
+        prompt_feat: &Tensor,
+        embedding: &Tensor,
+        sampling: &SamplingConfig,
+    ) -> Result<Self> {
         let device = flow.device().clone();
         let decoder =
-            TokenStreamDecoder::new(flow, hift, flow_prompt_token, prompt_feat, embedding)?;
+            TokenStreamDecoder::from_models(flow, hift, flow_prompt_token, prompt_feat, embedding)?;
         let llm_state = llm.start_incremental(
             &text_token.to_device(&device)?,
             &prompt_text_token.to_device(&device)?,
@@ -409,6 +502,12 @@ impl StreamingTts {
     /// Tokens accepted so far (after the silent-token cap).
     pub fn token_count(&self) -> usize {
         self.decoder.token_count()
+    }
+}
+
+impl Drop for StreamingTts<'_> {
+    fn drop(&mut self) {
+        self.llm.clear_cache();
     }
 }
 

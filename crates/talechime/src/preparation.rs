@@ -8,6 +8,7 @@ use tts_protocol::{Config, Event};
     feature = "moss",
     feature = "qwen",
     feature = "voxcpm",
+    feature = "cosyvoice3",
     feature = "omnivoice",
 ))]
 mod synthesis;
@@ -16,6 +17,7 @@ mod synthesis;
     feature = "moss",
     feature = "qwen",
     feature = "voxcpm",
+    feature = "cosyvoice3",
     feature = "omnivoice",
 ))]
 pub fn validate_device(
@@ -46,6 +48,7 @@ pub async fn prepare(
         feature = "moss",
         feature = "qwen",
         feature = "voxcpm",
+        feature = "cosyvoice3",
         feature = "omnivoice",
     )))]
     {
@@ -56,6 +59,7 @@ pub async fn prepare(
         feature = "moss",
         feature = "qwen",
         feature = "voxcpm",
+        feature = "cosyvoice3",
         feature = "omnivoice",
     ))]
     {

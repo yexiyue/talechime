@@ -1,6 +1,6 @@
 //! F0 predictor parity + sensitivity probe.
 //!
-//! Usage: f0_probe <model-dir> <fixture-dir-with-official_stages>
+//! Usage: `f0_probe <model-dir> <fixture-dir-with-official_stages>`
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Tensor};
 use cosyvoice3::CosyVoice3Config;

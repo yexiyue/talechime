@@ -12,6 +12,7 @@ mod cache_identity;
     feature = "moss",
     feature = "qwen",
     feature = "voxcpm",
+    feature = "cosyvoice3",
     feature = "omnivoice",
 ))]
 pub mod devices;
@@ -24,6 +25,7 @@ pub mod qwen;
 #[cfg(any(
     feature = "qwen",
     feature = "voxcpm",
+    feature = "cosyvoice3",
     feature = "omnivoice",
     feature = "moss-candle"
 ))]
@@ -32,12 +34,16 @@ pub mod reference;
     feature = "moss",
     feature = "qwen",
     feature = "voxcpm",
+    feature = "cosyvoice3",
     feature = "omnivoice",
     feature = "asr",
 ))]
 mod resources;
 #[cfg(feature = "voxcpm")]
 pub mod voxcpm;
+
+#[cfg(feature = "cosyvoice3")]
+pub mod cosyvoice3;
 
 use std::{
     path::{Path, PathBuf},
@@ -63,11 +69,20 @@ impl Registry {
         feature = "moss",
         feature = "qwen",
         feature = "voxcpm",
+        feature = "cosyvoice3",
         feature = "omnivoice",
     ))]
     fn devices_for(&self, backend: &str, available: bool) -> Vec<tts_protocol::Device> {
         let _ = available;
         match backend {
+            #[cfg(feature = "cosyvoice3")]
+            "cosyvoice3" => {
+                if available {
+                    cosyvoice3::available_devices()
+                } else {
+                    cosyvoice3::compiled_devices()
+                }
+            }
             #[cfg(feature = "voxcpm")]
             "voxcpm" => {
                 if available {
@@ -115,6 +130,7 @@ impl Registry {
         feature = "moss",
         feature = "qwen",
         feature = "voxcpm",
+        feature = "cosyvoice3",
         feature = "omnivoice",
     ))]
     pub fn compiled_devices(&self, backend: &str) -> Vec<tts_protocol::Device> {
@@ -124,6 +140,7 @@ impl Registry {
         feature = "moss",
         feature = "qwen",
         feature = "voxcpm",
+        feature = "cosyvoice3",
         feature = "omnivoice",
     ))]
     pub fn available_devices(&self, backend: &str) -> Vec<tts_protocol::Device> {
@@ -133,6 +150,7 @@ impl Registry {
         feature = "moss",
         feature = "qwen",
         feature = "voxcpm",
+        feature = "cosyvoice3",
         feature = "omnivoice",
     ))]
     pub fn device_status(
@@ -153,6 +171,7 @@ impl Registry {
         feature = "moss",
         feature = "qwen",
         feature = "voxcpm",
+        feature = "cosyvoice3",
         feature = "omnivoice",
     ))]
     pub fn compiled_devices_for(
@@ -184,6 +203,7 @@ impl Registry {
         feature = "moss",
         feature = "qwen",
         feature = "voxcpm",
+        feature = "cosyvoice3",
         feature = "omnivoice",
     ))]
     pub fn available_devices_for(
@@ -218,6 +238,7 @@ impl Registry {
         feature = "moss",
         feature = "qwen",
         feature = "voxcpm",
+        feature = "cosyvoice3",
         feature = "omnivoice",
     ))]
     pub fn device_status_for(
@@ -249,6 +270,8 @@ impl Registry {
             voxcpm::capabilities(&voxcpm::directory(&self.root))?,
             #[cfg(feature = "omnivoice")]
             omnivoice::capabilities(&omnivoice::directory(&self.root))?,
+            #[cfg(feature = "cosyvoice3")]
+            cosyvoice3::capabilities(&cosyvoice3::directory(&self.root))?,
         ];
         #[cfg(feature = "voxcpm")]
         let entries = {
@@ -273,6 +296,7 @@ impl Registry {
             feature = "moss",
             feature = "qwen",
             feature = "voxcpm",
+            feature = "cosyvoice3",
             feature = "omnivoice",
         ))]
         for caps in &mut entries {
@@ -356,6 +380,7 @@ impl Registry {
             feature = "moss",
             feature = "qwen",
             feature = "voxcpm",
+            feature = "cosyvoice3",
             feature = "omnivoice",
         ))]
         anyhow::ensure!(
@@ -363,6 +388,14 @@ impl Registry {
             "device {device:?} is unavailable for {id}"
         );
         match id {
+            #[cfg(feature = "cosyvoice3")]
+            "cosyvoice3" => {
+                let directory = cosyvoice3::directory(&self.root);
+                cosyvoice3::resources::prepare(&directory, progress).await?;
+                Ok(Rc::new(
+                    cosyvoice3::CosyBackend::load_on(directory, device).await?,
+                ))
+            }
             #[cfg(feature = "voxcpm")]
             "voxcpm" => {
                 let model = voxcpm::models::Model::parse(model)?;

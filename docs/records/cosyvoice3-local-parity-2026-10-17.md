@@ -174,7 +174,7 @@ runs/cv3-venv/bin/python tools/tts/cosyvoice3_convert_weights.py --input runs/cv
 PYTHONPATH=runs/reference/CosyVoice:runs/reference/matcha runs/cv3-venv/bin/python tools/tts/cosyvoice3_reference.py --model_dir runs/cv3-model --prompt_wav runs/reference/CosyVoice/asset/zero_shot_prompt.wav --prompt_text 'You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。' --text '你好，欢迎使用叙铃。' --out runs/cv3-real-ort124
 cargo run --release --locked -p cosyvoice3 --features ort,metal --example compare_frontend -- runs/cv3-converted runs/cv3-real-ort124 runs/reference/CosyVoice/asset/zero_shot_prompt.wav
 cargo run --release --locked -p cosyvoice3 --features ort,metal --example compare_model -- runs/cv3-converted runs/cv3-real-ort124 metal
-cargo run --release --locked -p cosyvoice3 --features ort,metal --example synthesize -- runs/cv3-converted runs/cv3-real-ort124 metal
+cargo run --release --locked -p cosyvoice3 --features ort,metal --example cosyvoice3_synthesize -- runs/cv3-converted runs/cv3-real-ort124 metal
 ```
 
 额外样例与诊断探针（本轮新增）：

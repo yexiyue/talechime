@@ -25,10 +25,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libssl-dev pkg-config cmake ninja-build
       - run: cargo fmt --all --check
       - run: python3 .github/scripts/test_publish_libraries.py
-      - run: cargo test --locked --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/moss-candle,talechime/asr --lib --tests --examples
-      - run: cargo clippy --locked --workspace --all-targets --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/moss-candle,talechime/asr -- -D warnings
+      - run: cargo test --locked --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/cosyvoice3,talechime/moss-candle,talechime/asr --lib --tests --examples
+      - run: cargo clippy --locked --workspace --all-targets --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/cosyvoice3,talechime/moss-candle,talechime/asr -- -D warnings
       - run: cargo test --locked -p talechime --no-default-features
-      - run: cargo doc --locked --no-deps --document-private-items --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/moss-candle,talechime/asr --examples
+      - run: cargo doc --locked --no-deps --document-private-items --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/cosyvoice3,talechime/moss-candle,talechime/asr --examples
         env:
           RUSTDOCFLAGS: -D warnings
       - name: Publish dependency graph

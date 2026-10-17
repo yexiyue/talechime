@@ -15,6 +15,9 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [features]
+cosyvoice3 = ["tts-backends/cosyvoice3"]
+cosyvoice3-metal = ["cosyvoice3", "tts-backends/cosyvoice3-metal"]
+cosyvoice3-cuda = ["cosyvoice3", "tts-backends/cosyvoice3-cuda"]
 default = ["cli", "moss-nano-candle"]
 asr = ["tts-backends/asr", "dep:hound"]
 cli = ["dep:clap", "dep:crossterm", "dep:futures", "dep:serde_json", "dep:tempfile"]
@@ -63,3 +66,7 @@ required-features = ["asr"]
 [[example]]
 name = "readback_corpus"
 required-features = ["asr", "cli"]
+
+[[example]]
+name = "cosyvoice3_backend"
+required-features = ["cosyvoice3"]

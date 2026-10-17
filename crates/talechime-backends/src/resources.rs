@@ -2,12 +2,20 @@
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{io::Read, path::Path};
+#[cfg(any(
+    feature = "moss",
+    feature = "qwen",
+    feature = "voxcpm",
+    feature = "omnivoice",
+    feature = "asr"
+))]
 use tts_protocol::Event;
 
 #[derive(Deserialize)]
 pub(crate) struct Resource {
     pub path: String,
     #[serde(default)]
+    #[allow(dead_code)] // Local-only model manifests do not download files.
     pub url: String,
     pub sha256: String,
     pub size: u64,
@@ -37,6 +45,13 @@ pub(crate) fn verify(path: &Path, resource: &Resource) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(any(
+    feature = "moss",
+    feature = "qwen",
+    feature = "voxcpm",
+    feature = "omnivoice",
+    feature = "asr"
+))]
 pub(crate) async fn prepare(
     directory: &Path,
     namespace: &str,

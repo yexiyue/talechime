@@ -237,3 +237,5 @@ target/release/talechime --backend moss --model nano-candle --tts-device metal -
 
 权重使用独立固定 manifest 和 `resources/moss/models/nano-candle/REVISION/` 目录；没有旧目录自动回退。
 已有资源需显式指定 `--model-dir` 或手工搬迁，音色导入目前仍复用 Nano ONNX encoder。
+
+实验性 [CosyVoice3 后端](docs/cosyvoice3.md) 已接入；需启用 `cosyvoice3` / `cosyvoice3-metal` / `cosyvoice3-cuda`，准备本地转换文件并导入参考音色。

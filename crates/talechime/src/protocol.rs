@@ -223,7 +223,7 @@ async fn serve_worker(
                         Command::Hello => {
                             handshake = true;
                             output.send(Some(&request), None, Event::Ready(worker.catalog()?)).await?;
-                            #[cfg(any(feature="moss",feature="qwen",feature="voxcpm",feature="omnivoice"))]
+                            #[cfg(any(feature="moss",feature="qwen",feature="voxcpm",feature="cosyvoice3",feature="omnivoice"))]
                             output.send(None,None,worker.unprepared_device_status()?).await?;
                         }
                         Command::Shutdown => {
@@ -241,11 +241,11 @@ async fn serve_worker(
                             let config_changed = matches!(&response.event, Event::ConfigChanged(_))
                                 && preparation_changed;
                             output.send(Some(&request), response.session, response.event).await?;
-                            #[cfg(any(feature="moss",feature="qwen",feature="voxcpm",feature="omnivoice"))]
+                            #[cfg(any(feature="moss",feature="qwen",feature="voxcpm",feature="cosyvoice3",feature="omnivoice"))]
                             if config_changed && !worker.is_preparing() && !worker.has_prepared_model() {
                                 output.send(None,None,worker.unprepared_device_status()?).await?;
                             }
-                            #[cfg(not(any(feature="moss",feature="qwen",feature="voxcpm",feature="omnivoice")))]
+                            #[cfg(not(any(feature="moss",feature="qwen",feature="voxcpm",feature="cosyvoice3",feature="omnivoice")))]
                             let _ = config_changed;
                         }
                     }

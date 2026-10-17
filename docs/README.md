@@ -21,11 +21,14 @@
 - [工具链与平台](knowledge/toolchain.md)：原生依赖、设备探测、构建、平台限制和实验记录。
 - [会话与宿主集成](knowledge/booksource.md)：从 TRNovel 提取的听书知识；原阅读器专属条目为历史背景。
 
+- [CosyVoice3 后端](cosyvoice3.md)：实验性零样本克隆、原生流式、固定本地转换文件与音色导入。
+
 ## 实施路线
 
 - [独立生成与长文本表达：Candle 实施计划](independent-tts-candle-plan.md)：候选模型可行性、试听筛选、分阶段移植、逐段表演计划与验收条件；尚未实现的规划。
 - [Fun-CosyVoice 3.0 Rust 复刻调研与社区审计](records/cosyvoice3-candle-audit-2026-10-17.md)：官方推理链路、ONNX 边界、社区 cosyvoice3.rs 偏差清单与 `crates/cosyvoice3` 移植决定；本机验证结果见下一项。
 - [CosyVoice3 本机对照与修复](records/cosyvoice3-local-parity-2026-10-17.md)：官方/社区实跑、数值误差、音频与复现步骤。
+- [CosyVoice3 后端接入验收](records/cosyvoice3-backend-2026-10-17.md)：Engine 真模型合成、重用、取消与验证范围。
 - [CosyVoice3 后续实现审查](records/cosyvoice3-review-2026-10-17.md)：终态与 KV 所有权、对照工具、声源除法修复及复验。
 
 ## 模型与平台验收

@@ -1,6 +1,6 @@
 //! Layer-level DiT parity probe against cosyvoice3_dit_probe.py exports.
 //!
-//! Usage: dit_probe <model-dir> <fixture-dir> <probe-dir> [metal] [f64]
+//! Usage: `dit_probe <model-dir> <fixture-dir> <probe-dir> [metal] [f64]`
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;

@@ -1,5 +1,5 @@
 //! Full Rust generation with official prompt fixtures, no Python inference.
-//! Usage: synthesize <converted-model> <reference-fixtures> [metal]
+//! Usage: `cosyvoice3_synthesize <converted-model> <reference-fixtures> [metal]`
 use anyhow::{Context, Result};
 use candle_core::{DType, Device};
 use cosyvoice3::{Mode, PromptFeatures, SamplingConfig, pipeline::CosyVoice3};
