@@ -44,6 +44,12 @@ pub struct Reference {
     pub features: Tensor,
     pub transcript: Option<String>,
 }
+/// Experimental isolated identity prefix plus an optional spoken continuation.
+#[cfg(feature = "experimental-dual-reference")]
+pub struct DualReference<'a> {
+    pub identity: &'a Reference,
+    pub continuation: Option<&'a Reference>,
+}
 /// All weights use one Candle device. No runtime subprocess or native TTS engine.
 pub struct Model {
     pub tokenizer: Tokenizer,
@@ -278,6 +284,46 @@ impl Model {
         cancel: &impl Fn() -> bool,
         mut pcm: impl FnMut(&[f32]) -> Result<()>,
     ) -> Result<Outcome> {
+        self.generate_conditioned(text, reference, None, options, cancel, &mut pcm)
+    }
+    /// Experimental upstream ref_continuation mode; identity has right padding,
+    /// continuation has left padding and a matching spoken transcript.
+    #[cfg(feature = "experimental-dual-reference")]
+    pub fn generate_dual(
+        &mut self,
+        text: &str,
+        references: DualReference<'_>,
+        options: &Options,
+        cancel: &impl Fn() -> bool,
+        mut pcm: impl FnMut(&[f32]) -> Result<()>,
+    ) -> Result<Outcome> {
+        if references.identity.transcript.is_some()
+            || references
+                .continuation
+                .is_some_and(|r| r.transcript.is_none())
+        {
+            candle_core::bail!(
+                "dual reference requires isolated identity and transcribed continuation"
+            );
+        }
+        self.generate_conditioned(
+            text,
+            references.continuation,
+            Some(references.identity),
+            options,
+            cancel,
+            &mut pcm,
+        )
+    }
+    fn generate_conditioned(
+        &mut self,
+        text: &str,
+        reference: Option<&Reference>,
+        identity: Option<&Reference>,
+        options: &Options,
+        cancel: &impl Fn() -> bool,
+        pcm: &mut impl FnMut(&[f32]) -> Result<()>,
+    ) -> Result<Outcome> {
         self.timings = Timings::default();
         if options.steps < 2
             || options.steps > 128
@@ -293,7 +339,7 @@ impl Model {
         if cancel() {
             return Ok(Outcome::Cancelled);
         }
-        let result = self.generate_inner(text, reference, options, cancel, &mut pcm);
+        let result = self.generate_inner(text, reference, identity, options, cancel, pcm);
         self.codec.reset();
         if cancel() {
             Ok(Outcome::Cancelled)
@@ -305,6 +351,7 @@ impl Model {
         &mut self,
         text: &str,
         reference: Option<&Reference>,
+        identity: Option<&Reference>,
         o: &Options,
         cancel: &impl Fn() -> bool,
         pcm: &mut impl FnMut(&[f32]) -> Result<()>,
@@ -379,6 +426,48 @@ impl Model {
                 audio_range = Some((1, n));
             }
         }
+        let mut audio_ranges: Vec<_> = audio_range.into_iter().collect();
+        if let Some(identity) = identity {
+            let (n, patch, width) = identity.features.dims3()?;
+            if n == 0
+                || patch != 4
+                || width != 64
+                || !identity.features.device().same_device(&self.device)
+                || identity.features.dtype() != self.dtype
+            {
+                candle_core::bail!("identity features do not match this model/device");
+            }
+            let encoded = self
+                .acoustic
+                .encode(&identity.features, cancel)?
+                .unsqueeze(0)?;
+            let marks = self
+                .embedding
+                .index_select(&Tensor::new(&[103u32, 104], &self.device)?, 0)?
+                .unsqueeze(0)?;
+            input = Tensor::cat(
+                &[
+                    marks.narrow(1, 0, 1)?,
+                    encoded.to_dtype(self.backbone_dtype)?,
+                    marks.narrow(1, 1, 1)?,
+                    input,
+                ],
+                1,
+            )?;
+            audio_embedding = Tensor::cat(
+                &[
+                    Tensor::zeros((1, 1, 2048), self.dtype, &self.device)?,
+                    encoded,
+                    Tensor::zeros((1, 1, 2048), self.dtype, &self.device)?,
+                    audio_embedding,
+                ],
+                1,
+            )?;
+            for (start, _) in &mut audio_ranges {
+                *start += n + 2;
+            }
+            audio_ranges.insert(0, (1, n));
+        }
         let context = input.dim(1)?;
         if context + o.max_frames > 4096 {
             candle_core::bail!("reference/text exceeds bounded context");
@@ -389,20 +478,7 @@ impl Model {
             .base
             .forward(&input, Some(&mut base_cache), cancel)?
             .to_dtype(self.dtype)?;
-        let full = if let Some((start, n)) = audio_range {
-            let quant = self.acoustic.fsq(&full.narrow(1, start, n)?)?;
-            let mut parts = vec![];
-            if start > 0 {
-                parts.push(full.narrow(1, 0, start)?);
-            }
-            parts.push(quant);
-            if start + n < context {
-                parts.push(full.narrow(1, start + n, context - start - n)?);
-            }
-            Tensor::cat(&parts, 1)?
-        } else {
-            full
-        };
+        let full = quantize_audio_ranges(&full, &audio_ranges, |audio| self.acoustic.fsq(audio))?;
         let residual_input = self
             .acoustic
             .fusion
@@ -494,6 +570,70 @@ impl Model {
         Ok(Outcome::Truncated)
     }
 }
+fn quantize_audio_ranges(
+    full: &Tensor,
+    ranges: &[(usize, usize)],
+    mut quantize: impl FnMut(&Tensor) -> Result<Tensor>,
+) -> Result<Tensor> {
+    if ranges.is_empty() {
+        return Ok(full.clone());
+    }
+    let length = full.dim(1)?;
+    let mut cursor = 0;
+    let mut parts = Vec::new();
+    for &(start, count) in ranges {
+        let end = start
+            .checked_add(count)
+            .filter(|&end| end <= length)
+            .ok_or_else(|| candle_core::Error::Msg("invalid audio conditioning range".into()))?;
+        if start < cursor || count == 0 {
+            candle_core::bail!("overlapping or empty audio conditioning range");
+        }
+        if start > cursor {
+            parts.push(full.narrow(1, cursor, start - cursor)?);
+        }
+        parts.push(quantize(&full.narrow(1, start, count)?)?);
+        cursor = end;
+    }
+    if cursor < length {
+        parts.push(full.narrow(1, cursor, length - cursor)?);
+    }
+    Tensor::cat(&parts, 1)
+}
+
+#[cfg(test)]
+mod conditioning_tests {
+    use super::*;
+    #[test]
+    fn disjoint_identity_and_continuation_masks_preserve_text_and_markers() -> Result<()> {
+        let full = Tensor::from_vec((0..8).map(|i| i as f32).collect(), (1, 8, 1), &Device::Cpu)?;
+        let result = quantize_audio_ranges(&full, &[(1, 2), (5, 2)], |x| x.affine(1.0, 100.0))?;
+        assert_eq!(
+            result.flatten_all()?.to_vec1::<f32>()?,
+            vec![0.0, 101.0, 102.0, 3.0, 4.0, 105.0, 106.0, 7.0]
+        );
+        assert!(quantize_audio_ranges(&full, &[(1, 3), (2, 2)], |x| Ok(x.clone())).is_err());
+        assert!(quantize_audio_ranges(&full, &[(7, 2)], |x| Ok(x.clone())).is_err());
+        Ok(())
+    }
+    #[test]
+    fn single_reference_and_no_reference_keep_existing_masks() -> Result<()> {
+        let full = Tensor::from_vec(vec![0f32, 1.0, 2.0, 3.0], (1, 4, 1), &Device::Cpu)?;
+        let result = quantize_audio_ranges(&full, &[(2, 2)], |x| x.affine(1.0, 10.0))?;
+        assert_eq!(
+            result.flatten_all()?.to_vec1::<f32>()?,
+            vec![0.0, 1.0, 12.0, 13.0]
+        );
+        assert_eq!(
+            quantize_audio_ranges(&full, &[], |_| panic!("no audio"))?
+                .flatten_all()?
+                .to_vec1::<f32>()?,
+            vec![0.0, 1.0, 2.0, 3.0]
+        );
+        Ok(())
+    }
+}
+
 fn validate_original_config(config: &serde_json::Value) -> Result<()> {
     if config["architecture"] != "voxcpm2"
         || config["lm_config"]["use_mup"] != false

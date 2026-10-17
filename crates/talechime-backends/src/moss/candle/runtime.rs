@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use tokio::sync::{mpsc, oneshot};
 use tts_core::backend::{AudioChunk, BackendError, Pcm};
 pub(super) struct Request {
+    #[cfg(feature = "experimental-moss-reference-anchor")]
+    pub reference_anchor: bool,
     pub context: Option<tts_core::SpeechContext>,
     pub text: String,
     pub voice: String,
@@ -94,17 +96,22 @@ fn generate(
             codec.encode(&samples, mode.codebooks(), &|| request.audio.is_closed())
         })
         .transpose()?;
-    let reference = if continuation.is_none() && request.voice.starts_with("custom:") {
-        Some(prompt(
-            codec,
-            &mode.directory(root),
-            mode,
-            &request.voice,
-            &|| request.audio.is_closed(),
-        )?)
-    } else {
-        None
-    };
+    #[cfg(feature = "experimental-moss-reference-anchor")]
+    let reference_anchor = request.reference_anchor;
+    #[cfg(not(feature = "experimental-moss-reference-anchor"))]
+    let reference_anchor = false;
+    let reference =
+        if (continuation.is_none() || reference_anchor) && request.voice.starts_with("custom:") {
+            Some(prompt(
+                codec,
+                &mode.directory(root),
+                mode,
+                &request.voice,
+                &|| request.audio.is_closed(),
+            )?)
+        } else {
+            None
+        };
     codec.reset_decoder();
     let mut generation = Generation::new(&request.text);
     generation.seed = request.seed;

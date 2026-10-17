@@ -85,6 +85,9 @@ impl Backend for SeededMoss {
 struct Observed {
     inner: Rc<dyn Backend>,
     metrics: Rc<RefCell<Vec<Metric>>>,
+    fixed_anchor: bool,
+    anchor: Rc<RefCell<Option<tts_core::SpeechContext>>>,
+    line_segments: bool,
 }
 impl Backend for Observed {
     fn capabilities(&self) -> Capabilities {
@@ -92,15 +95,32 @@ impl Backend for Observed {
     }
     fn stream<'a>(&'a self, request: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
+            let anchor = self.anchor.borrow().clone();
+            let request = tts_core::backend::SegmentRequest {
+                text: request.text,
+                voice: request.voice,
+                style: request.style,
+                seed: request.seed,
+                params: request.params,
+                context: if self.fixed_anchor {
+                    anchor.as_ref()
+                } else {
+                    request.context
+                },
+            };
             let started = Instant::now();
             let text = request.text.to_owned();
             let continued = request.context.is_some();
             let mut incoming = self.inner.stream(request).await?;
             let metrics = self.metrics.clone();
+            let anchor_store = self.anchor.clone();
+            let capture_anchor = self.fixed_anchor && anchor.is_none();
             let (tx, rx) = tokio::sync::mpsc::channel(1);
             tokio::task::spawn_local(async move {
                 let mut first = None;
                 let mut seconds = 0.0;
+                let mut reference: Option<Pcm> = None;
+                let mut oversized = false;
                 loop {
                     let chunk = tokio::select! {_=tx.closed()=>break,chunk=incoming.recv()=>chunk};
                     let Some(chunk) = chunk else {
@@ -111,8 +131,31 @@ impl Backend for Observed {
                         first.get_or_insert_with(|| started.elapsed().as_millis());
                         seconds +=
                             pcm.samples.len() as f64 / pcm.sample_rate as f64 / pcm.channels as f64;
+                        if capture_anchor && !oversized {
+                            if seconds > 20.0 {
+                                oversized = true;
+                                reference = None;
+                            } else {
+                                let collected = reference.get_or_insert_with(|| Pcm {
+                                    samples: vec![],
+                                    sample_rate: pcm.sample_rate,
+                                    channels: pcm.channels,
+                                });
+                                collected.samples.extend_from_slice(&pcm.samples);
+                            }
+                        }
                     }
                     if ended {
+                        if let Some(pcm) = reference.take() {
+                            match tts_core::SpeechContext::new(text.clone(), pcm) {
+                                Ok(context) => *anchor_store.borrow_mut() = Some(context),
+                                Err(error) => eprintln!("fixed anchor rejected: {error}"),
+                            }
+                        }
+                        eprintln!(
+                            "segment {} completed: {seconds:.2}s",
+                            metrics.borrow().len() + 1
+                        );
                         metrics.borrow_mut().push(Metric {
                             text: text.clone(),
                             continued,
@@ -142,7 +185,23 @@ impl Backend for Observed {
                 > + 'a,
         >,
     > {
-        self.inner.next_segment(text)
+        if self.line_segments {
+            Box::pin(async move {
+                let start = text.len() - text.trim_start().len();
+                if start == text.len() {
+                    return Ok(None);
+                }
+                let line_end = text[start..].find('\n').map_or(text.len(), |n| start + n);
+                let end = text[..line_end].trim_end().len();
+                Ok(Some(tts_core::text::TextSegment {
+                    text: text[start..end].to_owned(),
+                    start,
+                    end,
+                }))
+            })
+        } else {
+            self.inner.next_segment(text)
+        }
     }
     fn segments<'a>(&'a self, text: &'a str) -> Segmentation<'a> {
         self.inner.segments(text)
@@ -200,11 +259,37 @@ async fn run() -> anyhow::Result<()> {
         "backend model-dir output-dir cpu|metal|cuda voice on|off corpus.txt [--seed n] [--param name=value]..."
     );
     let mut seed: u64 = 42;
+    let mut fixed_anchor = false;
+    let mut dual_reference = false;
+    let mut moss_reference_anchor = false;
+    let mut line_segments = false;
+    let mut continuation_span = None;
+    let mut continuation_boundary = tts_protocol::ContinuationBoundary::Paragraph;
     let mut style: Option<String> = None;
     let mut params = tts_core::params::GenerationParams::new();
     let mut extra = args[8..].iter();
     while let Some(flag) = extra.next() {
         match flag.as_str() {
+            "--dual-reference" => dual_reference = true,
+            "--moss-reference-anchor" => moss_reference_anchor = true,
+            "--fixed-anchor" => fixed_anchor = true,
+            "--line-segments" => line_segments = true,
+            "--span" => {
+                continuation_span = Some(
+                    extra
+                        .next()
+                        .and_then(|value| value.parse().ok())
+                        .ok_or_else(|| anyhow::anyhow!("--span requires seconds"))?,
+                )
+            }
+            "--boundary" => {
+                continuation_boundary = serde_json::from_value(serde_json::Value::String(
+                    extra
+                        .next()
+                        .ok_or_else(|| anyhow::anyhow!("--boundary requires paragraph|scene|none"))?
+                        .clone(),
+                ))?
+            }
             "--seed" => {
                 seed = extra
                     .next()
@@ -250,6 +335,26 @@ async fn run() -> anyhow::Result<()> {
         "off" => false,
         _ => anyhow::bail!("on or off required"),
     };
+    anyhow::ensure!(
+        !fixed_anchor || continuation,
+        "fixed anchor requires continuation on"
+    );
+    anyhow::ensure!(
+        !dual_reference || (args[1] == "voxcpm" && continuation && !fixed_anchor),
+        "dual reference requires voxcpm, continuation on and rolling context"
+    );
+    anyhow::ensure!(
+        !dual_reference || cfg!(feature = "experimental-dual-reference"),
+        "dual reference experiment feature is not compiled"
+    );
+    anyhow::ensure!(
+        !moss_reference_anchor || (args[1] == "moss-realtime" && continuation && !fixed_anchor),
+        "MOSS reference anchor requires realtime, continuation on and rolling context"
+    );
+    anyhow::ensure!(
+        !moss_reference_anchor || cfg!(feature = "experimental-moss-reference-anchor"),
+        "MOSS reference anchor experiment feature is not compiled"
+    );
     let text = std::fs::read_to_string(&args[7])?;
     let (progress, mut events) = tokio::sync::mpsc::channel(16);
     let preparation = tokio::task::spawn_local(async move {
@@ -297,10 +402,16 @@ async fn run() -> anyhow::Result<()> {
                 progress.clone(),
             )
             .await?;
-            Rc::new(
+            let backend =
                 talechime_backends::voxcpm::VoxBackend::load_model_on(directory, model, device)
-                    .await?,
-            )
+                    .await?;
+            #[cfg(feature = "experimental-dual-reference")]
+            let backend = if dual_reference {
+                backend.with_dual_reference()
+            } else {
+                backend
+            };
+            Rc::new(backend)
         }
         #[cfg(feature = "moss-candle")]
         "moss-local" | "moss-realtime" => {
@@ -315,10 +426,16 @@ async fn run() -> anyhow::Result<()> {
                 progress.clone(),
             )
             .await?;
-            Rc::new(
+            let backend =
                 talechime_backends::moss::candle::CandleBackend::load_on(directory, mode, device)
-                    .await?,
-            )
+                    .await?;
+            #[cfg(feature = "experimental-moss-reference-anchor")]
+            let backend = if moss_reference_anchor {
+                backend.with_reference_anchor()?
+            } else {
+                backend
+            };
+            Rc::new(backend)
         }
         #[cfg(feature = "omnivoice")]
         "omnivoice" => {
@@ -335,9 +452,13 @@ async fn run() -> anyhow::Result<()> {
         anyhow::bail!("{error}");
     }
     let metrics = Rc::new(RefCell::new(vec![]));
+    let anchor = Rc::new(RefCell::new(None));
     let observed = Rc::new(Observed {
         inner: backend,
         metrics: metrics.clone(),
+        fixed_anchor,
+        anchor: anchor.clone(),
+        line_segments,
     });
     let started = Instant::now();
     let mut stream = SynthesisStream::start_with_options(
@@ -348,6 +469,8 @@ async fn run() -> anyhow::Result<()> {
         None,
         SynthesisOptions {
             continuation,
+            continuation_span,
+            continuation_boundary,
             params: params.clone(),
             seed: tts_core::SeedPolicy::Pinned(seed),
             ..Default::default()
@@ -405,6 +528,10 @@ async fn run() -> anyhow::Result<()> {
     let elapsed_ms = started.elapsed().as_millis();
     let audio = audio.ok_or_else(|| anyhow::anyhow!("empty generation"))?;
     wav(&output.join("comparison.wav"), &audio)?;
+    if let Some(context) = anchor.borrow().as_ref() {
+        wav(&output.join("fixed-anchor.wav"), context.pcm())?;
+        std::fs::write(output.join("fixed-anchor.txt"), context.text())?;
+    }
     let mut corpus = vec![];
     for (i, (range, pcm)) in segments.iter().enumerate() {
         let path = output.join(format!("segment-{:03}.wav", i + 1));
@@ -426,6 +553,12 @@ async fn run() -> anyhow::Result<()> {
         "voice": args[5],
         "style": style,
         "continuation": continuation,
+        "fixed_anchor": fixed_anchor,
+        "dual_reference": dual_reference,
+        "moss_reference_anchor": moss_reference_anchor,
+        "line_segments": line_segments,
+        "continuation_span": continuation_span,
+        "continuation_boundary": continuation_boundary,
         "load_and_verify_ms": load_ms,
         "elapsed_ms": elapsed_ms,
         "audio_seconds": seconds,

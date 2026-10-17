@@ -5,6 +5,8 @@ use tts_core::backend::{AudioChunk, BackendError, Pcm};
 use tts_protocol::Device;
 use voxcpm::{Model, Options, Outcome};
 pub(super) struct Request {
+    #[cfg(feature = "experimental-dual-reference")]
+    pub dual_reference: bool,
     pub context: Option<tts_core::SpeechContext>,
     pub text: String,
     pub voice: String,
@@ -67,6 +69,20 @@ fn generate(
     request: &Request,
 ) -> Result<(), BackendError> {
     let cancel = || request.audio.is_closed();
+    #[cfg(feature = "experimental-dual-reference")]
+    let dual_reference = request.dual_reference;
+    #[cfg(not(feature = "experimental-dual-reference"))]
+    let dual_reference = false;
+    #[cfg(feature = "experimental-dual-reference")]
+    let identity = if request.dual_reference {
+        Some(
+            cache
+                .isolated_reference(model, variant, directory, &request.voice, &cancel)
+                .map_err(|e| BackendError::Synthesis(e.to_string()))?,
+        )
+    } else {
+        None
+    };
     let reference = if let Some(context) = &request.context {
         let samples = crate::reference::mono(context.pcm(), 16000)
             .map_err(|e| BackendError::Synthesis(e.to_string()))?;
@@ -75,7 +91,7 @@ fn generate(
                 .reference(&samples, Some(context.text().into()), &cancel)
                 .map_err(|e| BackendError::Synthesis(e.to_string()))?,
         )
-    } else if request.voice.starts_with("custom:") {
+    } else if request.voice.starts_with("custom:") && !dual_reference {
         Some(
             cache
                 .reference(model, variant, device, directory, &request.voice, &cancel)
@@ -92,45 +108,67 @@ fn generate(
     let mut audio_ms = 0u64;
     let mut emitted = false;
     let mut invalid = None;
-    let result = model
-        .generate(
+    let deliver = |samples: &[f32]| {
+        if request.audio.is_closed() {
+            return Ok(());
+        }
+        if samples.is_empty() {
+            return Ok(());
+        }
+        let pcm = Pcm {
+            samples: samples.to_vec(),
+            sample_rate: 48000,
+            channels: 1,
+        };
+        let duration = match pcm.duration_ms() {
+            Ok(duration) => duration,
+            Err(error) => {
+                invalid = Some(error);
+                candle_core::bail!("invalid Vox PCM");
+            }
+        };
+        let waiting = std::time::Instant::now();
+        if request
+            .audio
+            .blocking_send(Ok(AudioChunk::Pcm(pcm)))
+            .is_ok()
+        {
+            emitted = true;
+            audio_ms += u64::from(duration);
+        }
+        channel_wait += waiting.elapsed();
+        Ok(())
+    };
+    #[cfg(feature = "experimental-dual-reference")]
+    let result = if let Some(identity) = &identity {
+        model.generate_dual(
+            &request.text,
+            voxcpm::DualReference {
+                identity,
+                continuation: reference.as_ref(),
+            },
+            &request.options,
+            &cancel,
+            deliver,
+        )
+    } else {
+        model.generate(
             &request.text,
             reference.as_ref(),
             &request.options,
             &cancel,
-            |samples| {
-                if request.audio.is_closed() {
-                    return Ok(());
-                }
-                if samples.is_empty() {
-                    return Ok(());
-                }
-                let pcm = Pcm {
-                    samples: samples.to_vec(),
-                    sample_rate: 48000,
-                    channels: 1,
-                };
-                let duration = match pcm.duration_ms() {
-                    Ok(duration) => duration,
-                    Err(error) => {
-                        invalid = Some(error);
-                        candle_core::bail!("invalid Vox PCM");
-                    }
-                };
-                let waiting = std::time::Instant::now();
-                if request
-                    .audio
-                    .blocking_send(Ok(AudioChunk::Pcm(pcm)))
-                    .is_ok()
-                {
-                    emitted = true;
-                    audio_ms += u64::from(duration);
-                }
-                channel_wait += waiting.elapsed();
-                Ok(())
-            },
+            deliver,
         )
-        .map_err(|e| BackendError::Synthesis(e.to_string()))?;
+    };
+    #[cfg(not(feature = "experimental-dual-reference"))]
+    let result = model.generate(
+        &request.text,
+        reference.as_ref(),
+        &request.options,
+        &cancel,
+        deliver,
+    );
+    let result = result.map_err(|e| BackendError::Synthesis(e.to_string()))?;
     if let Some(error) = invalid {
         return Err(error);
     }
