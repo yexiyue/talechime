@@ -1,0 +1,32 @@
+[package]
+name = "indextts"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "Apache-2.0"
+description = "Native Candle IndexTTS 2.5 inference from converted official checkpoints"
+repository = "https://github.com/yexiyue/talechime"
+
+[features]
+default = []
+cuda = ["dep:tts-candle-platform", "tts-candle-platform/cuda"]
+# cuDNN convolutions (recommended on CUDA: the conv-heavy regulator /
+# BigVGAN / CAMPPlus stacks otherwise hit candle's strided-matmul conv
+# fallback, which rejects some layouts).
+cuda-cudnn = ["cuda", "tts-candle-platform/cuda-cudnn"]
+metal = ["dep:tts-candle-platform", "tts-candle-platform/metal"]
+
+[dependencies]
+candle-core.workspace = true
+candle-nn.workspace = true
+tts-candle-platform = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+regex.workspace = true
+rand = "0.9"
+rustfft.workspace = true
+hound.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+clap.workspace = true

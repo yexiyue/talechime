@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/qwen3-asr", "crates/moss-tts", "crates/talechime", "crates/talechime-backends", "crates/talechime-core", "crates/talechime-protocol", "crates/omnivoice", "crates/qwen3-tts", "crates/tts-candle-platform", "crates/voxcpm", "crates/voxcpm-sys"]
+members = ["crates/qwen3-asr", "crates/moss-tts", "crates/talechime", "crates/talechime-backends", "crates/talechime-core", "crates/talechime-protocol", "crates/indextts", "crates/omnivoice", "crates/qwen3-tts", "crates/tts-candle-platform", "crates/voxcpm", "crates/voxcpm-sys"]
 default-members = ["crates/talechime"]
 resolver = "3"
 
@@ -10,6 +10,7 @@ windows = { version = "0.54.0", default-features = false }
 moss-tts = { path = "crates/moss-tts", version = "0.1.0", default-features = false }
 omnivoice = { path = "crates/omnivoice", version = "0.1.0", default-features = false }
 voxcpm = { path = "crates/voxcpm", version = "0.1.0", default-features = false }
+indextts = { path = "crates/indextts", version = "0.1.0", default-features = false }
 tts-candle-platform = { path = "crates/tts-candle-platform", version = "0.1.0" }
 cmake = "0.1.58"
 cc = "1.2"
