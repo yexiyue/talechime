@@ -8,7 +8,9 @@
 use candle_core::{Module, Result, Tensor};
 use candle_nn::VarBuilder;
 
-use super::causal_conv::{CausalConv1d, CausalConv1dUpsample, CausalType, reflection_pad_1d};
+use super::causal_conv::{
+    CausalConv1d, CausalConv1dUpsample, CausalType, reflection_pad_1d, repeat_interleave_dim,
+};
 use super::f0_predictor::CausalConvRnnF0Predictor;
 use super::source_module::SourceModuleHnNSF;
 use super::stft_istft::{HiFTStft, HiFTiStft};
@@ -296,7 +298,6 @@ impl CausalHiFtGenerator {
                 "HiFT requires batch=1, matching channels and nonempty mel (streaming must exceed lookahead plus the tail frame)"
             );
         }
-        let device = mel.device();
         let dtype = mel.dtype();
         let prod_rates: usize = self.cfg.upsample_rates.iter().product();
         let upsample_scale: usize = prod_rates * self.cfg.istft_hop_len;
@@ -307,12 +308,7 @@ impl CausalHiFtGenerator {
         if let Some(trace) = trace.as_deref_mut() {
             trace.push(("f0".into(), f0.to_dtype(dtype)?));
         }
-        let t = f0.dim(1)?;
-        let idx: Vec<u32> = (0..t * upsample_scale)
-            .map(|i| (i / upsample_scale) as u32)
-            .collect();
-        let idx = Tensor::from_vec(idx, t * upsample_scale, device)?;
-        let f0_up = f0.unsqueeze(2)?.index_select(&idx, 1)?.to_dtype(dtype)?; // [B, T*scale, 1]
+        let f0_up = repeat_interleave_dim(&f0.to_dtype(dtype)?.unsqueeze(2)?, 1, upsample_scale)?; // [B, T*scale, 1]
 
         // 2. harmonic source + STFT of the source branch.
         let (source, _uv) = self.m_source.forward(&f0_up)?; // [B, Ts, 1]

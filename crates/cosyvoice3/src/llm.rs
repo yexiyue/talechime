@@ -8,9 +8,10 @@
 use std::sync::Arc;
 
 use candle_core::{DType, Module, Result, Tensor};
-use candle_nn::{Embedding, Linear, RmsNorm, VarBuilder};
+use candle_nn::{Embedding, RmsNorm, VarBuilder};
 
 use crate::config::{LlmConfig, SOS_TOKEN, SamplingConfig, TASK_ID_TOKEN};
+use crate::flow::embeddings::LinT2d;
 use crate::rng::StepRng;
 
 /// Qwen2 rotary table over `head_dim` (interleaved-half convention).
@@ -55,16 +56,17 @@ impl RotaryEmbedding {
 
 #[derive(Debug)]
 struct Attention {
-    q_proj: Linear,
-    k_proj: Linear,
-    v_proj: Linear,
-    o_proj: Linear,
+    q_proj: LinT2d,
+    k_proj: LinT2d,
+    v_proj: LinT2d,
+    o_proj: LinT2d,
     num_heads: usize,
     num_kv_heads: usize,
     num_kv_groups: usize,
     head_dim: usize,
     hidden_size: usize,
     rotary: Arc<RotaryEmbedding>,
+    /// Cached `(k_t [B, H, D, T], v [B, H, T, D])` already expanded across KV groups.
     kv_cache: Option<(Tensor, Tensor)>,
 }
 
@@ -79,10 +81,26 @@ impl Attention {
         let head_dim = hidden / heads;
         Ok(Self {
             // Qwen2: bias on q/k/v, none on o.
-            q_proj: candle_nn::linear(hidden, heads * head_dim, vb.pp("q_proj"))?,
-            k_proj: candle_nn::linear(hidden, kv_heads * head_dim, vb.pp("k_proj"))?,
-            v_proj: candle_nn::linear(hidden, kv_heads * head_dim, vb.pp("v_proj"))?,
-            o_proj: candle_nn::linear_no_bias(heads * head_dim, hidden, vb.pp("o_proj"))?,
+            q_proj: LinT2d::from_linear(candle_nn::linear(
+                hidden,
+                heads * head_dim,
+                vb.pp("q_proj"),
+            )?)?,
+            k_proj: LinT2d::from_linear(candle_nn::linear(
+                hidden,
+                kv_heads * head_dim,
+                vb.pp("k_proj"),
+            )?)?,
+            v_proj: LinT2d::from_linear(candle_nn::linear(
+                hidden,
+                kv_heads * head_dim,
+                vb.pp("v_proj"),
+            )?)?,
+            o_proj: LinT2d::from_linear(candle_nn::linear_no_bias(
+                heads * head_dim,
+                hidden,
+                vb.pp("o_proj"),
+            )?)?,
             num_heads: heads,
             num_kv_heads: kv_heads,
             num_kv_groups: heads / kv_heads,
@@ -110,17 +128,21 @@ impl Attention {
             .forward(x)?
             .reshape((b, t, self.num_kv_heads, self.head_dim))?
             .transpose(1, 2)?;
-        let (q, mut k) = self.rotary.apply(&q, &k, offset)?;
-        let mut v = v;
-        if let Some((pk, pv)) = &self.kv_cache {
-            k = Tensor::cat(&[pk, &k], 2)?;
-            v = Tensor::cat(&[pv, &v], 2)?;
-        }
+        let (q, k) = self.rotary.apply(&q, &k, offset)?;
+        let k_t = if t == 1 {
+            k.reshape((b, self.num_kv_heads, self.head_dim, 1))?
+        } else {
+            k.transpose(2, 3)?.contiguous()?
+        };
+        let k = candle_transformers::utils::repeat_kv(k_t, self.num_kv_groups)?;
+        let v = candle_transformers::utils::repeat_kv(v, self.num_kv_groups)?;
+        let (k, v) = match &self.kv_cache {
+            Some((pk, pv)) => (Tensor::cat(&[pk, &k], 3)?, Tensor::cat(&[pv, &v], 2)?),
+            None => (k, v),
+        };
         self.kv_cache = Some((k.clone(), v.clone()));
-        let k = candle_transformers::utils::repeat_kv(k, self.num_kv_groups)?.contiguous()?;
-        let v = candle_transformers::utils::repeat_kv(v, self.num_kv_groups)?.contiguous()?;
         let attn = q
-            .matmul(&k.transpose(2, 3)?)?
+            .matmul(&k)?
             .affine(1.0 / (self.head_dim as f64).sqrt(), 0.0)?;
         let attn = match mask {
             Some(m) => attn.broadcast_add(m)?,
@@ -128,9 +150,8 @@ impl Attention {
         };
         let attn = candle_nn::ops::softmax_last_dim(&attn)?;
         let out = attn.matmul(&v)?;
-        out.transpose(1, 2)?
-            .reshape((b, t, self.hidden_size))?
-            .apply(&self.o_proj)
+        let out = out.transpose(1, 2)?.reshape((b, t, self.hidden_size))?;
+        self.o_proj.forward(&out)
     }
 
     fn clear_cache(&mut self) {
@@ -141,9 +162,9 @@ impl Attention {
 #[derive(Debug)]
 struct Layer {
     attn: Attention,
-    gate_proj: Linear,
-    up_proj: Linear,
-    down_proj: Linear,
+    gate_proj: LinT2d,
+    up_proj: LinT2d,
+    down_proj: LinT2d,
     input_layernorm: RmsNorm,
     post_attention_layernorm: RmsNorm,
 }
@@ -159,21 +180,21 @@ impl Layer {
                 rotary,
                 vb.pp("self_attn"),
             )?,
-            gate_proj: candle_nn::linear_no_bias(
+            gate_proj: LinT2d::from_linear(candle_nn::linear_no_bias(
                 hidden,
                 cfg.qwen2.intermediate_size,
                 vb.pp("mlp.gate_proj"),
-            )?,
-            up_proj: candle_nn::linear_no_bias(
+            )?)?,
+            up_proj: LinT2d::from_linear(candle_nn::linear_no_bias(
                 hidden,
                 cfg.qwen2.intermediate_size,
                 vb.pp("mlp.up_proj"),
-            )?,
-            down_proj: candle_nn::linear_no_bias(
+            )?)?,
+            down_proj: LinT2d::from_linear(candle_nn::linear_no_bias(
                 cfg.qwen2.intermediate_size,
                 hidden,
                 vb.pp("mlp.down_proj"),
-            )?,
+            )?)?,
             input_layernorm: candle_nn::rms_norm(
                 hidden,
                 cfg.qwen2.rms_norm_eps,
@@ -207,10 +228,13 @@ impl Layer {
 pub struct CosyVoice3Lm {
     embed_tokens: Embedding,
     speech_embedding: Embedding,
-    llm_decoder: Linear,
+    llm_decoder: LinT2d,
     layers: Vec<Layer>,
     norm: RmsNorm,
     speech_token_size: u32,
+    sos_emb: Tensor,
+    task_emb: Tensor,
+    eos_mask: Tensor,
     device: candle_core::Device,
     dtype: DType,
     /// Identity of the single KV-cache run currently owned by this model.
@@ -264,25 +288,36 @@ impl CosyVoice3Lm {
         for i in 0..cfg.qwen2.num_hidden_layers {
             layers.push(Layer::new(cfg, rotary.clone(), vb_layers.pp(i))?);
         }
+        let speech_vocab = cfg.speech_token_size + 200;
+        let speech_embedding =
+            candle_nn::embedding(speech_vocab, hidden, vb.pp("speech_embedding"))?;
+        let sos = Tensor::from_slice(&[SOS_TOKEN], (1, 1), vb.device())?;
+        let task = Tensor::from_slice(&[TASK_ID_TOKEN], (1, 1), vb.device())?;
+        let sos_emb = speech_embedding.forward(&sos)?;
+        let task_emb = speech_embedding.forward(&task)?;
+        let mut eos_bias = vec![0.0f32; speech_vocab];
+        eos_bias[cfg.speech_token_size] = f32::NEG_INFINITY;
+        let eos_mask = Tensor::from_vec(eos_bias, speech_vocab, &candle_core::Device::Cpu)?
+            .to_dtype(vb.dtype())?
+            .to_device(vb.device())?;
         Ok(Self {
             embed_tokens: candle_nn::embedding(
                 cfg.qwen2.vocab_size,
                 hidden,
                 vb.pp("llm.embed_tokens"),
             )?,
-            speech_embedding: candle_nn::embedding(
-                cfg.speech_token_size + 200,
-                hidden,
-                vb.pp("speech_embedding"),
-            )?,
-            llm_decoder: candle_nn::linear_no_bias(
+            speech_embedding,
+            llm_decoder: LinT2d::from_linear(candle_nn::linear_no_bias(
                 cfg.llm_output_size,
-                cfg.speech_token_size + 200,
+                speech_vocab,
                 vb.pp("llm_decoder"),
-            )?,
+            )?)?,
             layers,
             norm: candle_nn::rms_norm(hidden, cfg.qwen2.rms_norm_eps, vb.pp("llm.norm"))?,
             speech_token_size: cfg.speech_token_size as u32,
+            sos_emb,
+            task_emb,
+            eos_mask,
             device: vb.device().clone(),
             dtype: vb.dtype(),
             active_run: None,
@@ -333,16 +368,11 @@ impl CosyVoice3Lm {
         };
         let text_emb = self.embed_tokens.forward(&text)?;
 
-        let sos = Tensor::from_slice(&[SOS_TOKEN], (1, 1), &self.device)?;
-        let task = Tensor::from_slice(&[TASK_ID_TOKEN], (1, 1), &self.device)?;
-        let sos_emb = self.speech_embedding.forward(&sos)?;
-        let task_emb = self.speech_embedding.forward(&task)?;
-
         let lm_input = if prompt_speech_tokens.dim(1)? == 0 {
-            Tensor::cat(&[&sos_emb, &text_emb, &task_emb], 1)?
+            Tensor::cat(&[&self.sos_emb, &text_emb, &self.task_emb], 1)?
         } else {
             let prompt_emb = self.speech_embedding.forward(prompt_speech_tokens)?;
-            Tensor::cat(&[&sos_emb, &text_emb, &task_emb, &prompt_emb], 1)?
+            Tensor::cat(&[&self.sos_emb, &text_emb, &self.task_emb, &prompt_emb], 1)?
         };
 
         self.clear_cache();
@@ -492,18 +522,17 @@ impl CosyVoice3Lm {
         rng: &mut StepRng,
         ignore_eos: bool,
     ) -> Result<u32> {
-        let mut logits = logits.clone();
-        if ignore_eos {
-            let eos = self.speech_token_size as usize;
-            let mut v: Vec<f32> = logits.to_vec1()?;
-            v[eos] = f32::NEG_INFINITY;
-            logits = Tensor::from_vec(v, logits.shape(), logits.device())?;
-        }
-        let top = nucleus_sample(&logits, cfg.top_p, cfg.top_k, rng)?;
+        let logits = if ignore_eos {
+            (logits + &self.eos_mask)?
+        } else {
+            logits.clone()
+        };
+        let probs: Vec<f32> = candle_nn::ops::softmax_last_dim(&logits)?.to_vec1()?;
+        let top = nucleus_sample_probs(&probs, cfg.top_p, cfg.top_k, rng);
         let recent = decoded.len().saturating_sub(cfg.win_size)..decoded.len();
         let rep_num = decoded[recent].iter().filter(|&&t| t == top).count();
         if rep_num as f32 >= cfg.win_size as f32 * cfg.tau_r {
-            return random_sample(&logits, rng);
+            return Ok(random_sample_probs(&probs, rng));
         }
         Ok(top)
     }
@@ -518,12 +547,24 @@ fn rand_seed() -> u64 {
 
 /// `nucleus_sampling`: softmax, stable sort descending, accumulate until
 /// `top_p` or `top_k`, renormalize, multinomial draw.
+#[cfg(test)]
 fn nucleus_sample(logits: &Tensor, top_p: f32, top_k: usize, rng: &mut StepRng) -> Result<u32> {
     let probs: Vec<f32> = candle_nn::ops::softmax_last_dim(logits)?.to_vec1()?;
+    Ok(nucleus_sample_probs(&probs, top_p, top_k, rng))
+}
+
+fn nucleus_sample_probs(probs: &[f32], top_p: f32, top_k: usize, rng: &mut StepRng) -> u32 {
     // Python sorts values descending with stable=True; ties keep original
     // (ascending-index) order.
     let mut idx: Vec<usize> = (0..probs.len()).collect();
-    idx.sort_by(|&a, &b| probs[b].total_cmp(&probs[a]).then(a.cmp(&b)));
+    let cmp = |&a: &usize, &b: &usize| probs[b].total_cmp(&probs[a]).then(a.cmp(&b));
+    if top_k > 0 && top_k < idx.len() {
+        let (head, _, _) = idx.select_nth_unstable_by(top_k, cmp);
+        head.sort_unstable_by(cmp);
+        idx.truncate(top_k + 1);
+    } else {
+        idx.sort_unstable_by(cmp);
+    }
 
     let mut cum = 0.0f32;
     let mut cands: Vec<(usize, f32)> = Vec::new();
@@ -536,7 +577,7 @@ fn nucleus_sample(logits: &Tensor, top_p: f32, top_k: usize, rng: &mut StepRng) 
         }
     }
     if cands.is_empty() {
-        return Ok(idx[0] as u32);
+        return idx[0] as u32;
     }
     let total: f32 = cands.iter().map(|(_, p)| p).sum();
     let pick = rng.next_f32() * total;
@@ -544,23 +585,22 @@ fn nucleus_sample(logits: &Tensor, top_p: f32, top_k: usize, rng: &mut StepRng) 
     for &(i, p) in &cands {
         acc += p;
         if pick < acc {
-            return Ok(i as u32);
+            return i as u32;
         }
     }
-    Ok(cands.last().unwrap().0 as u32)
+    cands.last().unwrap().0 as u32
 }
 
-fn random_sample(logits: &Tensor, rng: &mut StepRng) -> Result<u32> {
-    let probs: Vec<f32> = candle_nn::ops::softmax_last_dim(logits)?.to_vec1()?;
+fn random_sample_probs(probs: &[f32], rng: &mut StepRng) -> u32 {
     let pick = rng.next_f32();
     let mut acc = 0.0f32;
     for (i, &p) in probs.iter().enumerate() {
         acc += p;
         if pick < acc {
-            return Ok(i as u32);
+            return i as u32;
         }
     }
-    Ok((probs.len() - 1) as u32)
+    (probs.len() - 1) as u32
 }
 
 #[cfg(test)]
@@ -667,6 +707,30 @@ mod tests {
             seen.insert(nucleus_sample(&logits, 0.9, 2, &mut rng)?);
         }
         assert!(seen.iter().all(|&t| t == 1 || t == 2));
+        Ok(())
+    }
+
+    #[test]
+    fn sample_ignore_eos_blocks_eos_token() -> Result<()> {
+        let device = candle_core::Device::Cpu;
+        let model = tiny_model(32)?;
+        let vocab = model.speech_token_size as usize + 200;
+        let mut raw = vec![-20.0f32; vocab];
+        raw[model.speech_token_size as usize] = 50.0;
+        raw[7] = 10.0;
+        let logits = Tensor::from_vec(raw, vocab, &device)?;
+        let cfg = SamplingConfig {
+            top_p: 0.9,
+            top_k: 5,
+            win_size: 10,
+            tau_r: 0.1,
+            seed: Some(42),
+        };
+        let mut rng = StepRng::new(42);
+        let picked = model.sample(&logits, &[], &cfg, &mut rng, true)?;
+        assert_eq!(picked, 7);
+        let picked_eos = model.sample(&logits, &[], &cfg, &mut rng, false)?;
+        assert_eq!(picked_eos, model.speech_token_size);
         Ok(())
     }
 }

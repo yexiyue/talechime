@@ -32,6 +32,10 @@ CLI 与 backends 使用同名开关，计算库只提供 `cuda` / `metal` 平台
 | MOSS 实验实现 | `moss-candle` | 在 MOSS 目录增加 Local / Realtime；生产入口目前仅开放 GPU |
 | Candle 加速 | `qwen-cuda` / `qwen-metal`、`voxcpm-cuda` / `voxcpm-metal`、`omnivoice-cuda` / `omnivoice-metal`、`cosyvoice3-cuda` / `cosyvoice3-metal`、`moss-candle-cuda` / `moss-candle-metal`、`moss-nano-candle-cuda` / `moss-nano-candle-metal` | 启用对应适配器及计算库加速；按目标平台门控 |
 | Candle cuDNN 卷积 | `indextts-cuda-cudnn` | indextts 的 cuda 变体：卷积走 cuDNN，绕开 candle unfold 回退对跨步布局的限制（普通 `cuda` 行为不变） |
+
+macOS 上 `cosyvoice3` 的 CPU matmul 默认经系统 Accelerate（AMX BLAS）执行
+（2026-10-18 决定；target 门控依赖，无开关）。数值与其他平台的纯 Rust
+`gemm` 路径非位级一致，详见[性能记录](records/cosyvoice3-performance-2026-10-17.md) §11。
 | ORT provider | `ort-cuda`、`ort-coreml` | 为 Nano 提供 provider，不自动启用模型适配器 |
 
 适配器层不提供通用 `metal` / `cuda` 开关；选择加速时必须明确模型。旧 `metal` / `coreml` 名称已移除，改用 `qwen-metal` / `ort-coreml`。加速开关包含对应模型开关，发行配置无需重复列出模型。`directml-probe` 仅是 backends 的实验 example，不暴露产品设备。

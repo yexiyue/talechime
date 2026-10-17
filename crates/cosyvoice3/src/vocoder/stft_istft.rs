@@ -49,7 +49,7 @@ impl HiFTStft {
         let (re, im) = dft_tables();
         let dft_real = Tensor::from_slice(re, (N_FFT, N_FFT), device)?.to_dtype(dtype)?;
         let dft_imag = Tensor::from_slice(im, (N_FFT, N_FFT), device)?.to_dtype(dtype)?;
-        let window = Tensor::from_vec(hann_periodic(), N_FFT, device)?.to_dtype(dtype)?;
+        let window = Tensor::from_vec(hann_periodic(), (1, 1, N_FFT), device)?.to_dtype(dtype)?;
         Ok(Self {
             dft_real,
             dft_imag,
@@ -64,18 +64,23 @@ impl HiFTStft {
         let (b, samples) = x.dims2()?;
         let pad = N_FFT / 2;
         let padded = super::causal_conv::reflection_pad_1d(&x.reshape((b, 1, samples))?, pad, pad)?
-            .reshape((b, samples + 2 * pad))?;
+            .reshape((b, samples + 2 * pad))?
+            .contiguous()?;
         let total = padded.dim(1)?;
         let n_frames = (total - N_FFT) / HOP + 1;
-
-        let frames: Vec<Tensor> = (0..n_frames)
-            .map(|i| padded.narrow(1, i * HOP, N_FFT))
-            .collect::<Result<Vec<_>>>()?;
-        let frames = Tensor::stack(&frames, 1)?; // [B, F, 16]
-        let window = self.window.unsqueeze(0)?.unsqueeze(0)?;
-        let windowed = frames
-            .broadcast_mul(&window.broadcast_as(frames.shape())?)?
-            .contiguous()?;
+        let span = n_frames * HOP;
+        let mut quarters = Vec::with_capacity(HOP);
+        for q in 0..HOP {
+            // Each quarter q has n_frames overlapping windows at offset q*4:
+            // padded[:, q*4 .. q*4 + span] reshaped to [B, n_frames, 4].
+            quarters.push(
+                padded
+                    .narrow(1, q * HOP, span)?
+                    .reshape((b, n_frames, HOP))?,
+            );
+        }
+        let frames = Tensor::cat(&quarters, 2)?; // [B, F, 16]
+        let windowed = frames.broadcast_mul(&self.window)?;
 
         let re = windowed.broadcast_matmul(&self.dft_real)?;
         let im = windowed.broadcast_matmul(&self.dft_imag)?;
@@ -93,6 +98,8 @@ pub struct HiFTiStft {
     idft_real: Tensor,
     idft_imag: Tensor,
     window: Tensor,
+    win_sq: [f32; N_FFT],
+    mirror_idx: Tensor,
 }
 
 impl HiFTiStft {
@@ -109,11 +116,19 @@ impl HiFTiStft {
         }
         let idft_real = Tensor::from_slice(&re, (N_FFT, N_FFT), device)?.to_dtype(dtype)?;
         let idft_imag = Tensor::from_slice(&im, (N_FFT, N_FFT), device)?.to_dtype(dtype)?;
-        let window = Tensor::from_vec(hann_periodic(), N_FFT, device)?.to_dtype(dtype)?;
+        let win_vec = hann_periodic();
+        let mut win_sq = [0.0f32; N_FFT];
+        for (dst, &w) in win_sq.iter_mut().zip(win_vec.iter()) {
+            *dst = w * w;
+        }
+        let window = Tensor::from_vec(win_vec, (1, 1, N_FFT), device)?.to_dtype(dtype)?;
+        let mirror_idx = Tensor::from_slice(&[7u32, 6, 5, 4, 3, 2, 1], 7, device)?;
         Ok(Self {
             idft_real,
             idft_imag,
             window,
+            win_sq,
+            mirror_idx,
         })
     }
 
@@ -130,8 +145,8 @@ impl HiFTiStft {
         let imag = (&mag * phase.sin()?)?;
 
         // Conjugate-symmetric completion [B, 9, T] -> [B, 16, T].
-        let real_full = complete_spectrum(&real, false)?;
-        let imag_full = complete_spectrum(&imag, true)?;
+        let real_full = complete_spectrum(&real, &self.mirror_idx, false)?;
+        let imag_full = complete_spectrum(&imag, &self.mirror_idx, true)?;
 
         // [B, T, 16] frames; IDFT takes the real part of the complex matmul.
         let real_full = real_full.transpose(1, 2)?.contiguous()?;
@@ -141,26 +156,20 @@ impl HiFTiStft {
 
         // Synthesis window + overlap-add + sum(window^2) normalization.
         let (b, n_frames, _) = frames.dims3()?;
-        let window = self.window.unsqueeze(0)?.unsqueeze(0)?;
-        let frames = frames.broadcast_mul(&window.broadcast_as(frames.shape())?)?;
+        let frames = frames.broadcast_mul(&self.window)?;
         let frames: Vec<f32> = frames
             .to_dtype(DType::F32)?
             .to_device(&Device::Cpu)?
             .flatten_all()?
             .to_vec1()?;
 
-        let win: Vec<f32> = self
-            .window
-            .to_dtype(DType::F32)?
-            .to_device(&Device::Cpu)?
-            .to_vec1()?;
         let ola_len = (n_frames - 1) * HOP + N_FFT;
         let mut out = vec![0.0f32; b * ola_len];
         let mut wsum = vec![0.0f32; ola_len];
         for i in 0..n_frames {
             let base = i * HOP;
             for j in 0..N_FFT {
-                wsum[base + j] += win[j] * win[j];
+                wsum[base + j] += self.win_sq[j];
             }
         }
         for v in wsum.iter_mut() {
@@ -196,36 +205,17 @@ impl HiFTiStft {
 
 /// Mirror bins 1..8 into 9..15; `conjugate` negates the mirror and zeroes
 /// DC/Nyquist imaginary parts.
-fn complete_spectrum(half: &Tensor, conjugate: bool) -> Result<Tensor> {
-    let (b, _, t) = half.dims3()?;
-    let data: Vec<f32> = half
-        .to_dtype(DType::F32)?
-        .to_device(&Device::Cpu)?
-        .flatten_all()?
-        .to_vec1()?;
-    let mut full = vec![0.0f32; b * N_FFT * t];
-    for bi in 0..b {
-        for ti in 0..t {
-            for f in 0..FREQ_BINS {
-                let v = data[bi * FREQ_BINS * t + f * t + ti];
-                let v = if conjugate && (f == 0 || f == FREQ_BINS - 1) {
-                    0.0
-                } else {
-                    v
-                };
-                full[bi * N_FFT * t + f * t + ti] = v;
-            }
-            let sign = if conjugate { -1.0 } else { 1.0 };
-            for i in 0..(N_FFT - FREQ_BINS) {
-                let src = FREQ_BINS - 2 - i; // 7..1
-                let dst = FREQ_BINS + i; // 9..15
-                full[bi * N_FFT * t + dst * t + ti] =
-                    sign * data[bi * FREQ_BINS * t + src * t + ti];
-            }
-        }
+fn complete_spectrum(half: &Tensor, mirror_idx: &Tensor, conjugate: bool) -> Result<Tensor> {
+    let mirror = half.index_select(mirror_idx, 1)?;
+    if conjugate {
+        let (b, _, t) = half.dims3()?;
+        let zero = Tensor::zeros((b, 1, t), half.dtype(), half.device())?;
+        let mid = half.narrow(1, 1, FREQ_BINS - 2)?;
+        let neg_mirror = mirror.neg()?;
+        Tensor::cat(&[&zero, &mid, &zero, &neg_mirror], 1)
+    } else {
+        Tensor::cat(&[half, &mirror], 1)
     }
-    let out = Tensor::from_vec(full, (b, N_FFT, t), &Device::Cpu)?;
-    out.to_device(half.device())?.to_dtype(half.dtype())
 }
 
 #[cfg(test)]

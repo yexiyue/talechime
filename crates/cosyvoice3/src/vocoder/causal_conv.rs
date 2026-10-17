@@ -61,12 +61,14 @@ impl CausalConv1d {
 
 impl Module for CausalConv1d {
     fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        let cache = Tensor::zeros(
-            (x.dim(0)?, x.dim(1)?, self.causal_padding),
-            x.dtype(),
-            x.device(),
-        )?;
-        self.forward_with_cache(x, &cache)
+        if self.causal_padding == 0 {
+            return self.conv.forward(x);
+        }
+        let x = match self.causal_type {
+            CausalType::Left => x.pad_with_zeros(2, self.causal_padding, 0)?,
+            CausalType::Right => x.pad_with_zeros(2, 0, self.causal_padding)?,
+        };
+        self.conv.forward(&x)
     }
 }
 
@@ -103,15 +105,22 @@ impl CausalConv1dUpsample {
 
 impl Module for CausalConv1dUpsample {
     fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        let t = x.dim(2)?;
-        let indices: Vec<u32> = (0..t * self.scale)
-            .map(|i| (i / self.scale) as u32)
-            .collect();
-        let indices = Tensor::from_vec(indices, t * self.scale, x.device())?;
-        let x = x.index_select(&indices, 2)?;
+        let x = repeat_interleave_dim(x, 2, self.scale)?;
         let x = x.pad_with_zeros(2, self.kernel_size - 1, 0)?;
         self.conv.forward(&x)
     }
+}
+
+/// Repeat each slice along `dim` `repeats` times (nearest-neighbor
+/// upsample), materializing one contiguous output: `unsqueeze ->
+/// broadcast -> reshape`.
+pub(crate) fn repeat_interleave_dim(x: &Tensor, dim: usize, repeats: usize) -> Result<Tensor> {
+    let mut broadcast: Vec<usize> = x.dims().to_vec();
+    broadcast.insert(dim + 1, repeats);
+    let mut out = broadcast.clone();
+    out[dim] *= repeats;
+    out.remove(dim + 1);
+    x.unsqueeze(dim + 1)?.broadcast_as(broadcast)?.reshape(out)
 }
 
 /// `ReflectionPad1d` via index gather (torch semantics: no edge repeat).

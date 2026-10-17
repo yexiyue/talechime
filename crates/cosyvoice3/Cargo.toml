@@ -15,6 +15,13 @@ metal = ["dep:tts-candle-platform", "tts-candle-platform/metal"]
 # export_onnx.py flow estimator used for numeric comparison against Candle.
 ort = ["dep:ort"]
 
+# macOS builds link the system Accelerate framework (AMX BLAS) for CPU
+# matmuls by default (owner decision 2026-10-18). Numerics differ from the
+# pure-Rust `gemm` path used on other targets — see the performance record
+# before relying on cross-platform bit-parity.
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { workspace = true, features = ["accelerate"] }
+
 [dependencies]
 candle-core.workspace = true
 candle-nn.workspace = true
@@ -29,3 +36,8 @@ ort = { workspace = true, optional = true }
 anyhow.workspace = true
 hound.workspace = true
 tokio.workspace = true
+
+[[example]]
+name = "bench"
+required-features = ["ort"]
+

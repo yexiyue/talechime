@@ -7,16 +7,17 @@
 //! runs are reproducible; fixture runs can override the buffers.
 
 use candle_core::{Module, Result, Tensor};
-use candle_nn::{Linear, VarBuilder};
+use candle_nn::VarBuilder;
 
 use crate::activations::Tanh;
+use crate::flow::embeddings::LinT2d;
+use crate::vocoder::causal_conv::repeat_interleave_dim;
 
 /// 300 s at 24 kHz of pre-drawn noise, matching the official buffers.
 pub const MAX_AUDIO_SAMPLES: usize = 300 * 24_000;
 
 #[derive(Debug, Clone)]
 pub struct SineGen2 {
-    sampling_rate: usize,
     upsample_scale: usize,
     harmonic_num: usize,
     sine_amp: f64,
@@ -26,6 +27,10 @@ pub struct SineGen2 {
     rand_ini: Tensor,
     /// `[1, MAX, H]` fixed noise in [0, 1).
     sine_waves_noise: Tensor,
+    /// `[1, 1, H]` harmonic multipliers `1..=H`.
+    harmonics: Tensor,
+    /// Scalar `sampling_rate` tensor on device.
+    rate: Tensor,
 }
 
 impl SineGen2 {
@@ -53,16 +58,21 @@ impl SineGen2 {
         device: &candle_core::Device,
     ) -> Result<Self> {
         let mut rng = crate::rng::TorchCpuRng::new(seed);
-        let mut rand_ini = rng.rand_vec(harmonic_num + 1);
+        let h = harmonic_num + 1;
+        let mut rand_ini = rng.rand_vec(h);
         rand_ini[0] = 0.0;
-        let rand_ini = Tensor::from_vec(rand_ini, (1, harmonic_num + 1), device)?;
+        let rand_ini = Tensor::from_vec(rand_ini, (1, h), device)?;
         let sine_waves_noise = Tensor::from_vec(
-            rng.rand_vec(MAX_AUDIO_SAMPLES * (harmonic_num + 1)),
-            (1, MAX_AUDIO_SAMPLES, harmonic_num + 1),
+            rng.rand_vec(MAX_AUDIO_SAMPLES * h),
+            (1, MAX_AUDIO_SAMPLES, h),
             device,
         )?;
+        let harmonics_vec: Vec<f32> = (1..=h).map(|i| i as f32).collect();
+        let harmonics = Tensor::from_vec(harmonics_vec, (1, 1, h), device)?;
+        let rate = Tensor::new(sampling_rate as f64, &candle_core::Device::Cpu)?
+            .to_dtype(candle_core::DType::F32)?
+            .to_device(device)?;
         Ok(Self {
-            sampling_rate,
             upsample_scale,
             harmonic_num,
             sine_amp,
@@ -70,6 +80,8 @@ impl SineGen2 {
             voiced_threshold,
             rand_ini,
             sine_waves_noise,
+            harmonics,
+            rate,
         })
     }
 
@@ -82,20 +94,14 @@ impl SineGen2 {
         let h = self.harmonic_num + 1;
 
         // harmonics: f0 * [1..=H]
-        let harmonics: Vec<f32> = (1..=h).map(|i| i as f32).collect();
-        let harmonics = Tensor::from_vec(harmonics, h, device)?
-            .to_dtype(dtype)?
-            .unsqueeze(0)?
-            .unsqueeze(0)?;
-        let fn_mat = f0.broadcast_as((b, t, h))?.broadcast_mul(&harmonics)?;
+        let harmonics = self.harmonics.to_device(device)?.to_dtype(dtype)?;
+        let fn_mat = f0.broadcast_mul(&harmonics)?;
 
         // rad = (fn / sr) % 1, computed as x - floor(x).
         // Scalar `/` in Candle multiplies by a rounded reciprocal. The
         // official true division rounds differently; phase accumulation
         // amplifies that one-ULP difference across the harmonics.
-        let rate = Tensor::new(self.sampling_rate as f64, &candle_core::Device::Cpu)?
-            .to_dtype(dtype)?
-            .to_device(device)?;
+        let rate = self.rate.to_device(device)?.to_dtype(dtype)?;
         let rad_raw = fn_mat.broadcast_div(&rate)?;
         let rad = (&rad_raw - rad_raw.floor()?)?;
 
@@ -133,20 +139,37 @@ impl SineGen2 {
             .gt(self.voiced_threshold)?
             .to_dtype(dtype)?
             .unsqueeze(2)?;
-        let uv_b = uv.broadcast_as((b, t, h))?;
-        let one_minus_uv = uv_b.affine(-1.0, 1.0)?; // 1 - uv
-        let noise_amp = &(&uv_b.affine(self.noise_std, 0.0)?
+        let one_minus_uv = uv.affine(-1.0, 1.0)?; // 1 - uv, [B, T, 1]
+        let noise_amp = &(&uv.affine(self.noise_std, 0.0)?
             + &one_minus_uv.affine(self.sine_amp / 3.0, 0.0)?)?;
         let noise_slice = self
             .sine_waves_noise
             .narrow(1, 0, t)?
             .to_device(device)?
             .to_dtype(dtype)?;
-        let noise = noise_amp.broadcast_mul(&noise_slice.broadcast_as((b, t, h))?)?;
+        let noise = apply_noise_amplitude(noise_amp, &noise_slice, b, t, h)?;
 
-        let sine = (sine.broadcast_mul(&uv_b)? + noise)?;
+        let sine = (sine.broadcast_mul(&uv)? + noise)?;
         let uv = uv.squeeze(2)?;
         Ok((sine, uv))
+    }
+}
+
+/// `noise_slice * noise_amp` with an explicit broadcast only for `b > 1`
+/// (the production shapes are `[1, T, H]` x `[B, T, 1]`).
+fn apply_noise_amplitude(
+    noise_amp: &Tensor,
+    noise_slice: &Tensor,
+    b: usize,
+    t: usize,
+    h: usize,
+) -> Result<Tensor> {
+    if b == 1 {
+        noise_slice.broadcast_mul(noise_amp)
+    } else {
+        noise_amp
+            .broadcast_as((b, t, h))?
+            .broadcast_mul(&noise_slice.broadcast_as((b, t, h))?)
     }
 }
 
@@ -221,7 +244,10 @@ pub fn interp_linear_time(x: &Tensor, out_t: usize) -> Result<Tensor> {
 
 /// Nearest upsample on the time axis of `[B, T, C]` with integer scale.
 pub fn interp_nearest_time(x: &Tensor, out_t: usize) -> Result<Tensor> {
-    let (_b, t, _c) = x.dims3()?;
+    let t = x.dim(1)?;
+    if t > 0 && out_t.is_multiple_of(t) {
+        return repeat_interleave_dim(x, 1, out_t / t);
+    }
     let scale = t as f64 / out_t as f64;
     let indices: Vec<u32> = (0..out_t)
         .map(|i| ((i as f64 * scale).floor() as usize).min(t - 1) as u32)
@@ -233,7 +259,7 @@ pub fn interp_nearest_time(x: &Tensor, out_t: usize) -> Result<Tensor> {
 #[derive(Debug)]
 pub struct SourceModuleHnNSF {
     sine_gen: SineGen2,
-    l_linear: Linear,
+    l_linear: LinT2d,
     tanh: Tanh,
 }
 
@@ -261,7 +287,11 @@ impl SourceModuleHnNSF {
         )?;
         Ok(Self {
             sine_gen,
-            l_linear: candle_nn::linear(harmonic_num + 1, 1, vb.pp("l_linear"))?,
+            l_linear: LinT2d::from_linear(candle_nn::linear(
+                harmonic_num + 1,
+                1,
+                vb.pp("l_linear"),
+            )?)?,
             tanh: Tanh,
         })
     }
@@ -296,16 +326,11 @@ mod tests {
         let device = Device::Cpu;
         let frames = oracle.f0.len();
         let samples = frames * 480;
-        let sine = SineGen2 {
-            sampling_rate: 24000,
-            upsample_scale: 480,
-            harmonic_num: 8,
-            sine_amp: 0.1,
-            noise_std: 0.003,
-            voiced_threshold: 10.,
-            rand_ini: Tensor::zeros((1, 9), DType::F32, &device)?,
-            sine_waves_noise: Tensor::zeros((1, samples, 9), DType::F32, &device)?,
-        };
+        let mut sine = SineGen2::new(24000, 480, 8, 0.1, 0.003, 10., 0, &device)?;
+        sine.set_noise(
+            Tensor::zeros((1, 9), DType::F32, &device)?,
+            Tensor::zeros((1, samples, 9), DType::F32, &device)?,
+        )?;
         let hz = oracle
             .f0
             .iter()

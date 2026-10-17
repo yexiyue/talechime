@@ -4,10 +4,43 @@
 //! convention of x-transformers 2.11.24 (`partial rotary` over the first
 //! `rot_dim` channels with interleaved frequency duplication).
 
-use candle_core::{D, Module, Result, Tensor};
+use candle_core::{D, DType, Module, Result, Tensor};
 use candle_nn::{Conv1d, Conv1dConfig, Linear, VarBuilder};
 
 use crate::activations::{Mish, Swish};
+
+/// A `Linear` applied as an explicit contiguous 2-D matmul over `(B, T, C)`
+/// inputs, with the transposed weight materialized once at load time.
+/// Avoids `.t()?.contiguous()?` per call across the 22 DiT blocks × 10 CFM steps.
+#[derive(Debug, Clone)]
+pub struct LinT2d {
+    weight_t: Tensor,
+    bias: Option<Tensor>,
+    out_dim: usize,
+}
+
+impl LinT2d {
+    pub fn from_linear(l: Linear) -> Result<Self> {
+        let out_dim = l.weight().dim(0)?;
+        Ok(Self {
+            weight_t: l.weight().t()?.contiguous()?,
+            bias: l.bias().cloned(),
+            out_dim,
+        })
+    }
+
+    pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
+        let (b, t, f) = x.dims3()?;
+        let mut y = x
+            .contiguous()?
+            .reshape((b * t, f))?
+            .matmul(&self.weight_t)?;
+        if let Some(bias) = &self.bias {
+            y = y.broadcast_add(bias)?;
+        }
+        y.reshape((b, t, self.out_dim))
+    }
+}
 
 /// Sinusoidal timestep embedding (freq dim 256, scale 1000) + SiLU MLP.
 #[derive(Debug)]
@@ -15,35 +48,35 @@ pub struct TimestepEmbedding {
     linear1: Linear,
     linear2: Linear,
     swish: Swish,
-    freq_dim: usize,
+    inv_freqs: Tensor,
     dtype: candle_core::DType,
 }
 
 impl TimestepEmbedding {
     pub fn new(dim: usize, vb: VarBuilder) -> Result<Self> {
         let freq_dim = 256;
+        let half = freq_dim / 2;
+        let log_div = 10_000f64.ln() / (half as f64 - 1.0);
+        let inv: Vec<f32> = (0..half)
+            .map(|i| (-(i as f32) * log_div as f32).exp())
+            .collect();
+        let inv_freqs = Tensor::from_vec(inv, (1, half), vb.device())?;
         Ok(Self {
             linear1: candle_nn::linear(freq_dim, dim, vb.pp("time_mlp.0"))?,
             linear2: candle_nn::linear(dim, dim, vb.pp("time_mlp.2"))?,
             swish: Swish,
-            freq_dim,
+            inv_freqs,
             dtype: vb.dtype(),
         })
     }
 
     fn sinusoidal(&self, t: &Tensor) -> Result<Tensor> {
-        let device = t.device();
-        let half = self.freq_dim / 2;
-        // emb = exp(arange(half) * -log(10000)/(half-1)); emb = 1000 * t * emb
-        let log_div = 10_000f64.ln() / (half as f64 - 1.0);
-        let inv: Vec<f32> = (0..half)
-            .map(|i| (-(i as f32) * log_div as f32).exp())
-            .collect();
-        let inv = Tensor::from_vec(inv, (1, half), device)?;
-        let t = t
-            .to_dtype(candle_core::DType::F32)?
-            .unsqueeze(1)?
-            .affine(1000.0, 0.0)?;
+        let inv = if self.inv_freqs.device().same_device(t.device()) {
+            self.inv_freqs.clone()
+        } else {
+            self.inv_freqs.to_device(t.device())?
+        };
+        let t = t.to_dtype(DType::F32)?.unsqueeze(1)?.affine(1000.0, 0.0)?;
         let freqs = t.broadcast_mul(&inv)?;
         let emb = Tensor::cat(&[&freqs.sin()?, &freqs.cos()?], D::Minus1)?;
         emb.to_dtype(self.dtype)
@@ -73,6 +106,7 @@ pub fn layer_norm_no_affine(x: &Tensor) -> Result<Tensor> {
 pub struct AdaLayerNormZero {
     linear: Linear,
     swish: Swish,
+    dim: usize,
 }
 
 impl AdaLayerNormZero {
@@ -80,27 +114,51 @@ impl AdaLayerNormZero {
         Ok(Self {
             linear: candle_nn::linear(dim, dim * 6, vb.pp("linear"))?,
             swish: Swish,
+            dim,
         })
     }
 
-    /// Returns `(modulated_x, gate_msa, shift_mlp, scale_mlp, gate_mlp)`.
+    /// Returns `(modulated_x, gate_msa, shift_mlp, scale_mlp, gate_mlp)` with
+    /// each modulation tensor shaped `[B, D]`.
     pub fn forward(
         &self,
         x: &Tensor,
         emb: &Tensor,
     ) -> Result<(Tensor, Tensor, Tensor, Tensor, Tensor)> {
         let emb = self.linear.forward(&self.swish.forward(emb)?)?;
-        let chunks = emb.chunk(6, D::Minus1)?;
-        let shift_msa = chunks[0].clone();
-        let scale_msa = chunks[1].clone();
-        let gate_msa = chunks[2].clone();
-        let shift_mlp = chunks[3].clone();
-        let scale_mlp = chunks[4].clone();
-        let gate_mlp = chunks[5].clone();
+        let d = self.dim;
+        let shift_msa = emb.narrow(D::Minus1, 0, d)?;
+        let scale_msa = emb.narrow(D::Minus1, d, d)?;
+        let gate_msa = emb.narrow(D::Minus1, 2 * d, d)?;
+        let shift_mlp = emb.narrow(D::Minus1, 3 * d, d)?;
+        let scale_mlp = emb.narrow(D::Minus1, 4 * d, d)?;
+        let gate_mlp = emb.narrow(D::Minus1, 5 * d, d)?;
 
         let x = layer_norm_no_affine(x)?;
         let x = x.broadcast_mul(&(scale_msa.unsqueeze(1)? + 1.0)?)?;
         let x = x.broadcast_add(&shift_msa.unsqueeze(1)?)?;
+        Ok((x, gate_msa, shift_mlp, scale_mlp, gate_mlp))
+    }
+
+    /// Hot-path variant taking an already Swish-activated `emb`, returning
+    /// modulation tensors shaped `[B, 1, D]` ready for broadcast.
+    pub(crate) fn forward_act(
+        &self,
+        x: &Tensor,
+        act_emb: &Tensor,
+    ) -> Result<(Tensor, Tensor, Tensor, Tensor, Tensor)> {
+        let emb = self.linear.forward(act_emb)?.unsqueeze(1)?;
+        let d = self.dim;
+        let shift_msa = emb.narrow(D::Minus1, 0, d)?;
+        let scale_msa = emb.narrow(D::Minus1, d, d)?;
+        let gate_msa = emb.narrow(D::Minus1, 2 * d, d)?;
+        let shift_mlp = emb.narrow(D::Minus1, 3 * d, d)?;
+        let scale_mlp = emb.narrow(D::Minus1, 4 * d, d)?;
+        let gate_mlp = emb.narrow(D::Minus1, 5 * d, d)?;
+
+        let x = layer_norm_no_affine(x)?;
+        let x = x.broadcast_mul(&(scale_msa + 1.0)?)?;
+        let x = x.broadcast_add(&shift_msa)?;
         Ok((x, gate_msa, shift_mlp, scale_mlp, gate_mlp))
     }
 }
@@ -110,6 +168,7 @@ impl AdaLayerNormZero {
 pub struct AdaLayerNormZeroFinal {
     linear: Linear,
     swish: Swish,
+    dim: usize,
 }
 
 impl AdaLayerNormZeroFinal {
@@ -117,14 +176,20 @@ impl AdaLayerNormZeroFinal {
         Ok(Self {
             linear: candle_nn::linear(dim, dim * 2, vb.pp("linear"))?,
             swish: Swish,
+            dim,
         })
     }
 
     pub fn forward(&self, x: &Tensor, emb: &Tensor) -> Result<Tensor> {
-        let emb = self.linear.forward(&self.swish.forward(emb)?)?;
-        let chunks = emb.chunk(2, D::Minus1)?;
-        let scale = chunks[0].clone().unsqueeze(1)?;
-        let shift = chunks[1].clone().unsqueeze(1)?;
+        let act = self.swish.forward(emb)?;
+        self.forward_act(x, &act)
+    }
+
+    pub(crate) fn forward_act(&self, x: &Tensor, act_emb: &Tensor) -> Result<Tensor> {
+        let emb = self.linear.forward(act_emb)?.unsqueeze(1)?;
+        let d = self.dim;
+        let scale = emb.narrow(D::Minus1, 0, d)?;
+        let shift = emb.narrow(D::Minus1, d, d)?;
         let x = layer_norm_no_affine(x)?;
         x.broadcast_mul(&(scale + 1.0)?)?.broadcast_add(&shift)
     }
@@ -173,15 +238,20 @@ impl Module for CausalConvPositionEmbedding {
 /// position information (residual).
 #[derive(Debug)]
 pub struct InputEmbedding {
-    proj: Linear,
+    proj: LinT2d,
     conv_pos_embed: CausalConvPositionEmbedding,
     spk_dim: usize,
 }
 
 impl InputEmbedding {
     pub fn new(mel_dim: usize, spk_dim: usize, out_dim: usize, vb: VarBuilder) -> Result<Self> {
+        let proj = LinT2d::from_linear(candle_nn::linear(
+            mel_dim * 3 + spk_dim,
+            out_dim,
+            vb.pp("proj"),
+        )?)?;
         Ok(Self {
-            proj: candle_nn::linear(mel_dim * 3 + spk_dim, out_dim, vb.pp("proj"))?,
+            proj,
             conv_pos_embed: CausalConvPositionEmbedding::new(
                 out_dim,
                 31,
@@ -196,8 +266,13 @@ impl InputEmbedding {
     pub fn forward(&self, x: &Tensor, cond: &Tensor, mu: &Tensor, spks: &Tensor) -> Result<Tensor> {
         let (b, t, _) = x.dims3()?;
         let spks = spks.unsqueeze(1)?.broadcast_as((b, t, self.spk_dim))?;
-        let combined = Tensor::cat(&[x, cond, mu, &spks], D::Minus1)?.contiguous()?;
-        let x = self.proj.forward(&combined)?;
+        let combined = Tensor::cat(&[x, cond, mu, &spks], D::Minus1)?;
+        self.forward_combined(&combined)
+    }
+
+    /// Project an already concatenated `[x, cond, mu, spks]` tensor `[B, T, 3*mel + spk]`.
+    pub fn forward_combined(&self, combined: &Tensor) -> Result<Tensor> {
+        let x = self.proj.forward(combined)?;
         let pos = self.conv_pos_embed.forward(&x)?;
         x + pos
     }
@@ -233,6 +308,17 @@ impl RotaryEmbedding {
         let freqs = Tensor::cat(&[&freqs, &freqs], D::Minus1)?.reshape((seq_len, self.dim))?;
         freqs.unsqueeze(0)?.to_dtype(dtype)
     }
+
+    /// Precompute `(cos, sin)` tables `[1, seq_len, dim]` once for an entire solve.
+    pub fn forward_cos_sin(
+        &self,
+        seq_len: usize,
+        device: &candle_core::Device,
+        dtype: candle_core::DType,
+    ) -> Result<(Tensor, Tensor)> {
+        let freqs = self.forward(seq_len, device, dtype)?;
+        Ok((freqs.cos()?, freqs.sin()?))
+    }
 }
 
 /// `rotate_half` over interleaved pairs: `[a0,a1,b0,b1] -> [-a1,a0,-b1,b0]`.
@@ -255,17 +341,31 @@ pub fn rotate_half(x: &Tensor) -> Result<Tensor> {
 /// Partial rotary application on `[B, T, H*D]` tensors: only the first
 /// `rot_dim` channels rotate (GPT-J style), the tail passes through.
 pub fn apply_rotary_pos_emb(t: &Tensor, freqs: &Tensor) -> Result<Tensor> {
-    let rot_dim = freqs.dim(D::Minus1)?;
     let seq = t.dim(1)?;
-    let dtype = t.dtype();
     let freqs = if freqs.dim(1)? > seq {
         freqs.narrow(1, freqs.dim(1)? - seq, seq)?
     } else {
         freqs.clone()
     };
+    let cos = freqs.cos()?;
+    let sin = freqs.sin()?;
+    apply_rotary_cos_sin(t, &cos, &sin)
+}
+
+/// Partial rotary application using precomputed `cos` and `sin` `[1, seq, rot_dim]`.
+pub fn apply_rotary_cos_sin(t: &Tensor, cos: &Tensor, sin: &Tensor) -> Result<Tensor> {
+    let rot_dim = cos.dim(D::Minus1)?;
+    let seq = t.dim(1)?;
+    let dtype = t.dtype();
+    let (cos, sin) = if cos.dim(1)? > seq {
+        let start = cos.dim(1)? - seq;
+        (cos.narrow(1, start, seq)?, sin.narrow(1, start, seq)?)
+    } else {
+        (cos.clone(), sin.clone())
+    };
     let t_rot = t.narrow(D::Minus1, 0, rot_dim)?;
     let rotated = rotate_half(&t_rot)?;
-    let t_out = (t_rot.broadcast_mul(&freqs.cos()?)? + rotated.broadcast_mul(&freqs.sin()?)?)?;
+    let t_out = (t_rot.broadcast_mul(&cos)? + rotated.broadcast_mul(&sin)?)?;
     let out = if t.dim(D::Minus1)? > rot_dim {
         Tensor::cat(
             &[

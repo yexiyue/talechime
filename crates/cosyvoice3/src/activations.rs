@@ -8,26 +8,37 @@ use candle_nn::VarBuilder;
 #[derive(Debug, Clone)]
 pub struct Snake {
     alpha: Tensor,
+    inv_alpha: Tensor,
 }
 
 impl Snake {
     pub fn new(channels: usize, vb: VarBuilder) -> Result<Self> {
-        let alpha = vb.get(channels, "alpha")?;
-        Ok(Self { alpha })
+        let alpha = vb.get(channels, "alpha")?.reshape((1, channels, 1))?;
+        let inv_alpha = (&alpha + 1e-9)?.recip()?;
+        Ok(Self { alpha, inv_alpha })
+    }
+
+    #[cfg(test)]
+    fn from_alpha(alpha: Tensor) -> Result<Self> {
+        let channels = alpha.dim(0)?;
+        let alpha = alpha.reshape((1, channels, 1))?;
+        let inv_alpha = (&alpha + 1e-9)?.recip()?;
+        Ok(Self { alpha, inv_alpha })
     }
 }
 
 impl Module for Snake {
     fn forward(&self, x: &Tensor) -> Result<Tensor> {
         // x: [B, C, T]; alpha aligns to the channel axis.
-        let alpha = self
-            .alpha
-            .reshape((1, (), 1))?
-            .to_device(x.device())?
-            .to_dtype(x.dtype())?;
-        let no_div_by_zero = 1e-9;
+        let (alpha, inv) =
+            if self.alpha.device().same_device(x.device()) && self.alpha.dtype() == x.dtype() {
+                (self.alpha.clone(), self.inv_alpha.clone())
+            } else {
+                let a = self.alpha.to_device(x.device())?.to_dtype(x.dtype())?;
+                let inv = (&a + 1e-9)?.recip()?;
+                (a, inv)
+            };
         let sin = x.broadcast_mul(&alpha)?.sin()?;
-        let inv = (alpha + no_div_by_zero)?.recip()?;
         x + sin.sqr()?.broadcast_mul(&inv)?
     }
 }
@@ -105,7 +116,7 @@ mod tests {
     fn snake_formula() -> Result<()> {
         let device = Device::Cpu;
         let alpha = Tensor::full(2.0f32, 3, &device)?;
-        let snake = Snake { alpha };
+        let snake = Snake::from_alpha(alpha)?;
         let x = Tensor::new(0.5f32, &device)?.broadcast_as((1, 3, 2))?;
         let y: Vec<f32> = snake.forward(&x)?.flatten_all()?.to_vec1()?;
         let expected = 0.5 + (2.0f32 * 0.5).sin().powi(2) / 2.0;

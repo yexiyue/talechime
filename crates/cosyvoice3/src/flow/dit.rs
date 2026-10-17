@@ -6,19 +6,19 @@
 //! `dit.*` in the converted `flow.safetensors`.
 
 use candle_core::{D, Device, Module, Result, Tensor};
-use candle_nn::{Linear, VarBuilder};
+use candle_nn::VarBuilder;
 
 use super::embeddings::{
-    AdaLayerNormZero, AdaLayerNormZeroFinal, InputEmbedding, RotaryEmbedding, TimestepEmbedding,
-    apply_rotary_pos_emb, layer_norm_no_affine,
+    AdaLayerNormZero, AdaLayerNormZeroFinal, InputEmbedding, LinT2d, RotaryEmbedding,
+    TimestepEmbedding, apply_rotary_cos_sin, layer_norm_no_affine,
 };
 use crate::config::DiTConfig;
 
 /// FeedForward with tanh-approximate GELU (`approximate="tanh"`).
 #[derive(Debug)]
 pub struct FeedForward {
-    linear1: Linear,
-    linear2: Linear,
+    linear1: LinT2d,
+    linear2: LinT2d,
 }
 
 impl FeedForward {
@@ -26,8 +26,8 @@ impl FeedForward {
         let hidden = dim * ff_mult;
         // nn.Sequential layout: ff.0.0 / ff.2.
         Ok(Self {
-            linear1: candle_nn::linear(dim, hidden, vb.pp("ff.0.0"))?,
-            linear2: candle_nn::linear(hidden, dim, vb.pp("ff.2"))?,
+            linear1: LinT2d::from_linear(candle_nn::linear(dim, hidden, vb.pp("ff.0.0"))?)?,
+            linear2: LinT2d::from_linear(candle_nn::linear(hidden, dim, vb.pp("ff.2"))?)?,
         })
     }
 }
@@ -47,10 +47,10 @@ fn gelu_tanh(x: &Tensor) -> Result<Tensor> {
 
 #[derive(Debug)]
 struct Attention {
-    to_q: Linear,
-    to_k: Linear,
-    to_v: Linear,
-    to_out: Linear,
+    to_q: LinT2d,
+    to_k: LinT2d,
+    to_v: LinT2d,
+    to_out: LinT2d,
     heads: usize,
     head_dim: usize,
     scale: f64,
@@ -60,21 +60,28 @@ impl Attention {
     fn new(dim: usize, heads: usize, head_dim: usize, vb: VarBuilder) -> Result<Self> {
         let inner = heads * head_dim;
         Ok(Self {
-            to_q: candle_nn::linear(dim, inner, vb.pp("to_q"))?,
-            to_k: candle_nn::linear(dim, inner, vb.pp("to_k"))?,
-            to_v: candle_nn::linear(dim, inner, vb.pp("to_v"))?,
-            to_out: candle_nn::linear(inner, dim, vb.pp("to_out.0"))?,
+            to_q: LinT2d::from_linear(candle_nn::linear(dim, inner, vb.pp("to_q"))?)?,
+            to_k: LinT2d::from_linear(candle_nn::linear(dim, inner, vb.pp("to_k"))?)?,
+            to_v: LinT2d::from_linear(candle_nn::linear(dim, inner, vb.pp("to_v"))?)?,
+            to_out: LinT2d::from_linear(candle_nn::linear(inner, dim, vb.pp("to_out.0"))?)?,
             heads,
             head_dim,
             scale: 1.0 / (head_dim as f64).sqrt(),
         })
     }
 
-    /// `mask` is a bool `[1, 1, T, T]` keep-mask (true = attend).
-    fn forward(&self, x: &Tensor, mask: Option<&Tensor>, rope: &Tensor) -> Result<Tensor> {
+    /// `mask_bias` is an optional additive attention mask `[B_m, 1, T_m, T]`
+    /// with `0.0` at visible positions and `-inf` at masked positions.
+    fn forward(
+        &self,
+        x: &Tensor,
+        mask_bias: Option<&Tensor>,
+        rope_cos: &Tensor,
+        rope_sin: &Tensor,
+    ) -> Result<Tensor> {
         let (b, t, _) = x.dims3()?;
-        let q = apply_rotary_pos_emb(&self.to_q.forward(x)?, rope)?;
-        let k = apply_rotary_pos_emb(&self.to_k.forward(x)?, rope)?;
+        let q = apply_rotary_cos_sin(&self.to_q.forward(x)?, rope_cos, rope_sin)?;
+        let k = apply_rotary_cos_sin(&self.to_k.forward(x)?, rope_cos, rope_sin)?;
         let v = self.to_v.forward(x)?;
 
         let shape = |tt: &Tensor| {
@@ -87,14 +94,8 @@ impl Attention {
         let mut attn = q
             .matmul(&k.transpose(D::Minus2, D::Minus1)?)?
             .affine(self.scale, 0.0)?;
-        if let Some(m) = mask {
-            // Build the scalar on CPU: Metal has no F64 -> F32 cast.
-            let neg = Tensor::new(f64::NEG_INFINITY, &Device::Cpu)?
-                .to_dtype(attn.dtype())?
-                .to_device(attn.device())?;
-            attn = m
-                .broadcast_as(attn.shape())?
-                .where_cond(&attn, &neg.broadcast_as(attn.shape())?)?;
+        if let Some(bias) = mask_bias {
+            attn = attn.broadcast_add(bias)?;
         }
         let attn = candle_nn::ops::softmax_last_dim(&attn)?;
         let out = attn.matmul(&v)?;
@@ -121,25 +122,38 @@ impl DiTBlock {
         })
     }
 
-    fn forward(
+    fn forward_act(
         &self,
         x: &Tensor,
-        t: &Tensor,
-        mask: Option<&Tensor>,
-        rope: &Tensor,
+        t_act: &Tensor,
+        mask_bias: Option<&Tensor>,
+        rope_cos: &Tensor,
+        rope_sin: &Tensor,
     ) -> Result<Tensor> {
-        let (norm, gate_msa, shift_mlp, scale_mlp, gate_mlp) = self.attn_norm.forward(x, t)?;
-        let attn = self.attn.forward(&norm, mask, rope)?;
-        let gated = gate_msa.unsqueeze(1)?.broadcast_mul(&attn)?;
+        let (norm, gate_msa, shift_mlp, scale_mlp, gate_mlp) =
+            self.attn_norm.forward_act(x, t_act)?;
+        let attn = self.attn.forward(&norm, mask_bias, rope_cos, rope_sin)?;
+        let gated = gate_msa.broadcast_mul(&attn)?;
         let x = (x + gated)?;
         let ff_norm = layer_norm_no_affine(&x)?;
         let ff_in = ff_norm
-            .broadcast_mul(&(scale_mlp.unsqueeze(1)? + 1.0)?)?
-            .broadcast_add(&shift_mlp.unsqueeze(1)?)?;
+            .broadcast_mul(&(scale_mlp + 1.0)?)?
+            .broadcast_add(&shift_mlp)?;
         let ff = self.ff.forward(&ff_in)?;
-        let gated = gate_mlp.unsqueeze(1)?.broadcast_mul(&ff)?;
+        let gated = gate_mlp.broadcast_mul(&ff)?;
         x + gated
     }
+}
+
+/// Step-invariant inputs prepared once for a multi-step CFM Euler solve.
+pub(crate) struct PreparedDiT {
+    /// Concatenated `[cond_t, mu_t, spks_t]` of shape `[B, T, 2*mel + spk]`.
+    cond_mu_spks: Tensor,
+    rope_cos: Tensor,
+    rope_sin: Tensor,
+    /// Optional additive attention mask (`0.0` keep, `-inf` masked). `None`
+    /// when `streaming == false` and the caller's mask is proven all-ones.
+    mask_bias: Option<Tensor>,
 }
 
 #[derive(Debug)]
@@ -150,7 +164,7 @@ pub struct DiT {
     rotary: RotaryEmbedding,
     blocks: Vec<DiTBlock>,
     norm_out: AdaLayerNormZeroFinal,
-    proj_out: Linear,
+    proj_out: LinT2d,
 }
 
 impl DiT {
@@ -173,9 +187,90 @@ impl DiT {
             rotary: RotaryEmbedding::new(cfg.dim_head, 10_000.0),
             blocks,
             norm_out: AdaLayerNormZeroFinal::new(cfg.dim, vb.pp("norm_out"))?,
-            proj_out: candle_nn::linear(cfg.dim, cfg.out_channels, vb.pp("proj_out"))?,
+            proj_out: LinT2d::from_linear(candle_nn::linear(
+                cfg.dim,
+                cfg.out_channels,
+                vb.pp("proj_out"),
+            )?)?,
             cfg,
         })
+    }
+
+    /// Precompute step-invariant tensors (`[cond, mu, spks]` tail, RoPE cos/sin,
+    /// and attention mask) once before the CFM Euler loop.
+    pub(crate) fn prepare_solve(
+        &self,
+        mask: &Tensor,
+        mu: &Tensor,
+        spks: &Tensor,
+        cond: &Tensor,
+        streaming: bool,
+        mask_all_ones: bool,
+    ) -> Result<PreparedDiT> {
+        let (b, _, seq) = mu.dims3()?;
+        let dtype = mu.dtype();
+        let device = mu.device();
+        let mu_t = mu.transpose(1, 2)?;
+        let cond_t = cond.transpose(1, 2)?;
+        let spks_t = spks
+            .unsqueeze(1)?
+            .broadcast_as((b, seq, self.cfg.spk_dim))?;
+        let cond_mu_spks = Tensor::cat(&[&cond_t, &mu_t, &spks_t], D::Minus1)?;
+        let (rope_cos, rope_sin) = self.rotary.forward_cos_sin(seq, device, dtype)?;
+        let mask_bias = if !streaming && mask_all_ones {
+            None
+        } else {
+            let keep_mask = if mask_all_ones {
+                chunk_attention_mask(seq, self.cfg.static_chunk_size, device)?
+            } else {
+                let keep = mask.to_dtype(candle_core::DType::U8)?.unsqueeze(1)?;
+                if streaming {
+                    chunk_attention_mask(seq, self.cfg.static_chunk_size, device)?
+                        .broadcast_mul(&keep)?
+                } else {
+                    keep
+                }
+            };
+            Some(keep_mask_to_additive(&keep_mask, dtype, device)?)
+        };
+        Ok(PreparedDiT {
+            cond_mu_spks,
+            rope_cos,
+            rope_sin,
+            mask_bias,
+        })
+    }
+
+    pub(crate) fn forward_prepared(
+        &self,
+        x: &Tensor,
+        t: &Tensor,
+        prepared: &PreparedDiT,
+        mut trace: Option<&mut Vec<Tensor>>,
+    ) -> Result<Tensor> {
+        let x_t = x.transpose(1, 2)?;
+        let t_emb = self.time_embed.forward(t)?;
+        let t_act = candle_nn::ops::silu(&t_emb)?;
+        let combined = Tensor::cat(&[&x_t, &prepared.cond_mu_spks], D::Minus1)?;
+        let mut x = self.input_embed.forward_combined(&combined)?;
+        let mask_bias = prepared.mask_bias.as_ref();
+        for block in &self.blocks {
+            x = block.forward_act(
+                &x,
+                &t_act,
+                mask_bias,
+                &prepared.rope_cos,
+                &prepared.rope_sin,
+            )?;
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.push(x.clone());
+            }
+        }
+        let x = self.norm_out.forward_act(&x, &t_act)?;
+        if let Some(trace) = trace {
+            trace.push(x.clone());
+        }
+        self.proj_out.forward(&x)?.transpose(1, 2)
     }
 
     /// Estimator forward.
@@ -230,37 +325,10 @@ impl DiT {
         spks: &Tensor,
         cond: &Tensor,
         streaming: bool,
-        mut trace: Option<&mut Vec<Tensor>>,
+        trace: Option<&mut Vec<Tensor>>,
     ) -> Result<Tensor> {
-        let seq = x.dim(2)?;
-        let x = x.transpose(1, 2)?;
-        let mu = mu.transpose(1, 2)?;
-        let cond = cond.transpose(1, 2)?;
-
-        let t_emb = self.time_embed.forward(t)?;
-        let x = self.input_embed.forward(&x, &cond, &mu, spks)?;
-        let rope = self.rotary.forward(seq, x.device(), x.dtype())?;
-
-        let keep_mask = mask.to_dtype(candle_core::DType::U8)?.unsqueeze(1)?;
-        let keep_mask = if streaming {
-            chunk_attention_mask(seq, self.cfg.static_chunk_size, x.device())?
-                .broadcast_mul(&keep_mask)?
-        } else {
-            keep_mask
-        };
-
-        let mut x = x;
-        for block in &self.blocks {
-            x = block.forward(&x, &t_emb, Some(&keep_mask), &rope)?;
-            if let Some(trace) = trace.as_deref_mut() {
-                trace.push(x.clone());
-            }
-        }
-        let x = self.norm_out.forward(&x, &t_emb)?;
-        if let Some(trace) = trace {
-            trace.push(x.clone());
-        }
-        self.proj_out.forward(&x)?.transpose(1, 2)
+        let prepared = self.prepare_solve(mask, mu, spks, cond, streaming, false)?;
+        self.forward_prepared(x, t, &prepared, trace)
     }
 
     /// Run one transformer block on a caller-supplied activation and return
@@ -274,11 +342,14 @@ impl DiT {
         mask: &Tensor,
         seq: usize,
     ) -> Result<DiTBlockDetail> {
-        let rope = self.rotary.forward(seq, x.device(), x.dtype())?;
+        let (rope_cos, rope_sin) = self.rotary.forward_cos_sin(seq, x.device(), x.dtype())?;
         let keep_mask = mask.to_dtype(candle_core::DType::U8)?.unsqueeze(1)?;
+        let mask_bias = keep_mask_to_additive(&keep_mask, x.dtype(), x.device())?;
         let block = &self.blocks[idx];
         let (norm, gate_msa, shift_mlp, scale_mlp, gate_mlp) = block.attn_norm.forward(x, t_emb)?;
-        let attn = block.attn.forward(&norm, Some(&keep_mask), &rope)?;
+        let attn = block
+            .attn
+            .forward(&norm, Some(&mask_bias), &rope_cos, &rope_sin)?;
         let after_attn = (x + gate_msa.unsqueeze(1)?.broadcast_mul(&attn)?)?;
         let ff_norm = layer_norm_no_affine(&after_attn)?;
         let ff_in = ff_norm
@@ -298,6 +369,24 @@ impl DiT {
             out,
         })
     }
+}
+
+/// Convert a U8 keep-mask (`1` = attend, `0` = mask) into an additive bias
+/// tensor (`0.0` = attend, `-inf` = mask) once before the solver loop.
+fn keep_mask_to_additive(
+    keep_mask: &Tensor,
+    dtype: candle_core::DType,
+    device: &Device,
+) -> Result<Tensor> {
+    let shape = keep_mask.shape();
+    let zeros = Tensor::zeros(shape, dtype, device)?;
+    // Build the scalar on CPU: Metal has no F64 -> F32 cast.
+    let neg = Tensor::new(f64::NEG_INFINITY, &Device::Cpu)?
+        .to_dtype(dtype)?
+        .to_device(device)?
+        .broadcast_as(shape)?
+        .contiguous()?;
+    keep_mask.where_cond(&zeros, &neg)
 }
 
 /// Intermediates of one DiT block, see [`DiT::block_detail`].
@@ -355,6 +444,48 @@ mod tests {
         assert!(v[4 * 6 + 5] != 0);
         assert!(v[5] == 0);
         let _ = DType::F32;
+        Ok(())
+    }
+
+    #[test]
+    fn additive_mask_and_prepared_solve_match_where_cond() -> Result<()> {
+        let dev = Device::Cpu;
+        let keep = chunk_attention_mask(6, 3, &dev)?;
+        let bias = keep_mask_to_additive(&keep, DType::F32, &dev)?;
+        let scores = Tensor::arange(0f32, 36f32, &dev)?.reshape((1, 1, 6, 6))?;
+        let neg = Tensor::new(f32::NEG_INFINITY, &dev)?.broadcast_as((1, 1, 6, 6))?;
+        let via_where = candle_nn::ops::softmax_last_dim(&keep.where_cond(&scores, &neg)?)?;
+        let via_add = candle_nn::ops::softmax_last_dim(&scores.broadcast_add(&bias)?)?;
+        assert_eq!(
+            via_where.flatten_all()?.to_vec1::<f32>()?,
+            via_add.flatten_all()?.to_vec1::<f32>()?
+        );
+
+        let cfg = DiTConfig {
+            dim: 32,
+            depth: 2,
+            heads: 2,
+            dim_head: 16,
+            ff_mult: 2,
+            static_chunk_size: 3,
+            ..DiTConfig::default()
+        };
+        let dit = DiT::new(cfg, VarBuilder::zeros(DType::F32, &dev))?;
+        let x = Tensor::ones((2, 80, 6), DType::F32, &dev)?;
+        let mask = Tensor::ones((2, 1, 6), DType::F32, &dev)?;
+        let mu = Tensor::ones((2, 80, 6), DType::F32, &dev)?;
+        let t = Tensor::from_slice(&[0.25f32, 0.25], 2, &dev)?;
+        let spks = Tensor::ones((2, 80), DType::F32, &dev)?;
+        let cond = Tensor::ones((2, 80, 6), DType::F32, &dev)?;
+        for streaming in [false, true] {
+            let direct = dit.forward(&x, &mask, &mu, &t, &spks, &cond, streaming)?;
+            let prep = dit.prepare_solve(&mask, &mu, &spks, &cond, streaming, true)?;
+            let prepared = dit.forward_prepared(&x, &t, &prep, None)?;
+            assert_eq!(
+                direct.flatten_all()?.to_vec1::<f32>()?,
+                prepared.flatten_all()?.to_vec1::<f32>()?
+            );
+        }
         Ok(())
     }
 }

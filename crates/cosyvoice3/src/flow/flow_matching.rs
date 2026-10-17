@@ -53,8 +53,11 @@ impl CausalConditionalCfm {
     }
 
     /// `mu`: `[B, 80, T]`; `mask`: `[B, 1, T]`; `spks`: `[B, 80]`;
-    /// `cond`: `[B, 80, T]`. Returns the solved mel `[B, 80, T]`.
-    pub fn forward(
+    /// `cond`: `[B, 80, T]`. `mask_all_ones` lets a caller whose mask is
+    /// known to be all-ones skip building the attention bias. Returns the
+    /// solved mel `[B, 80, T]`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn forward(
         &self,
         mu: &Tensor,
         mask: &Tensor,
@@ -62,6 +65,7 @@ impl CausalConditionalCfm {
         spks: &Tensor,
         cond: &Tensor,
         streaming: bool,
+        mask_all_ones: bool,
     ) -> Result<Tensor> {
         if mu.dim(0)? != 1 || n_timesteps == 0 {
             candle_core::bail!("CFM requires batch=1 and at least one solver step");
@@ -74,7 +78,7 @@ impl CausalConditionalCfm {
             None => rand_noise_table(device, dtype)?.narrow(2, 0, seq)?,
         };
         let t_span = t_span(n_timesteps, self.cfg.t_scheduler.as_str(), device, dtype)?;
-        self.solve_euler(z, &t_span, mu, mask, spks, cond, streaming)
+        self.solve_euler(z, &t_span, mu, mask, spks, cond, streaming, mask_all_ones)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -87,6 +91,7 @@ impl CausalConditionalCfm {
         spks: &Tensor,
         cond: &Tensor,
         streaming: bool,
+        mask_all_ones: bool,
     ) -> Result<Tensor> {
         let n = t_span.dim(0)? - 1;
         let seq = x.dim(2)?;
@@ -94,25 +99,40 @@ impl CausalConditionalCfm {
         let device = x.device().clone();
         let use_cfg = self.cfg.inference_cfg_rate > 0.0;
 
+        let prepared = if use_cfg {
+            // Batch of two: [conditioned, unconditioned].
+            let mask_in = Tensor::cat(&[mask, mask], 0)?;
+            let zeros_mu = Tensor::zeros((1, 80, seq), dtype, &device)?;
+            let mu_in = Tensor::cat(&[mu, &zeros_mu], 0)?;
+            let zeros_spks = Tensor::zeros((1, 80), dtype, &device)?;
+            let spks_in = Tensor::cat(&[spks, &zeros_spks], 0)?;
+            let zeros_cond = Tensor::zeros((1, 80, seq), dtype, &device)?;
+            let cond_in = Tensor::cat(&[cond, &zeros_cond], 0)?;
+            self.estimator.prepare_solve(
+                &mask_in,
+                &mu_in,
+                &spks_in,
+                &cond_in,
+                streaming,
+                mask_all_ones,
+            )?
+        } else {
+            self.estimator
+                .prepare_solve(mask, mu, spks, cond, streaming, mask_all_ones)?
+        };
+
+        let t_vals: Vec<f32> = t_span.to_dtype(candle_core::DType::F32)?.to_vec1()?;
         let mut x = x;
-        let mut t: f32 = t_span.get(0)?.to_scalar()?;
-        let mut dt: f32 = t_span.get(1)?.to_scalar::<f32>()? - t;
+        let mut t: f32 = t_vals[0];
+        let mut dt: f32 = t_vals[1] - t;
 
         for step in 1..=n {
             let dphi = if use_cfg {
-                // Batch of two: [conditioned, unconditioned].
                 let x_in = Tensor::cat(&[&x, &x], 0)?;
-                let mask_in = Tensor::cat(&[mask, mask], 0)?;
-                let zeros_mu = Tensor::zeros((1, 80, seq), dtype, &device)?;
-                let mu_in = Tensor::cat(&[mu, &zeros_mu], 0)?;
-                let zeros_spks = Tensor::zeros((1, 80), dtype, &device)?;
-                let spks_in = Tensor::cat(&[spks, &zeros_spks], 0)?;
-                let zeros_cond = Tensor::zeros((1, 80, seq), dtype, &device)?;
-                let cond_in = Tensor::cat(&[cond, &zeros_cond], 0)?;
                 let t_in = Tensor::from_vec(vec![t, t], 2, &device)?.to_dtype(dtype)?;
-                let out = self.estimator.forward(
-                    &x_in, &mask_in, &mu_in, &t_in, &spks_in, &cond_in, streaming,
-                )?;
+                let out = self
+                    .estimator
+                    .forward_prepared(&x_in, &t_in, &prepared, None)?;
                 let cond_part = out.narrow(0, 0, 1)?;
                 let uncond_part = out.narrow(0, 1, 1)?;
                 (cond_part.affine(1.0 + self.cfg.inference_cfg_rate, 0.0)?
@@ -120,12 +140,12 @@ impl CausalConditionalCfm {
             } else {
                 let t_in = Tensor::from_vec(vec![t], 1, &device)?.to_dtype(dtype)?;
                 self.estimator
-                    .forward(&x, mask, mu, &t_in, spks, cond, streaming)?
+                    .forward_prepared(&x, &t_in, &prepared, None)?
             };
             x = (x + dphi.affine(dt as f64, 0.0)?)?;
             t += dt;
             if step < n {
-                dt = t_span.get(step + 1)?.to_scalar::<f32>()? - t;
+                dt = t_vals[step + 1] - t;
             }
         }
         Ok(x)
@@ -280,7 +300,7 @@ impl CausalMaskedDiffWithDiT {
 
         let full = self
             .cfm
-            .forward(&mu, &mask, n_timesteps, &embedding, &cond, streaming)?;
+            .forward(&mu, &mask, n_timesteps, &embedding, &cond, streaming, true)?;
         full.narrow(2, prompt_mel_len, gen_len)
     }
 }
