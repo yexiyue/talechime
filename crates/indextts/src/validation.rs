@@ -189,16 +189,10 @@ fn w2v_campplus_mel_codec_regulator_match_python() {
     // --- reference mel on the Python-side 22 kHz PCM ---
     let pcm = oracle.data(&["reference", "pcm_22k"]);
     let wav = Tensor::from_vec(pcm.clone(), (1, pcm.len()), &device).unwrap();
-    let spect = config.s2mel.preprocess_params.spect_params.clone();
     let mel = mel_spectrogram(
         &wav,
-        spect.n_fft,
-        spect.win_length,
-        spect.hop_length,
-        spect.n_mels,
+        &config.s2mel.preprocess_params.spect_params,
         config.s2mel.preprocess_params.sr,
-        spect.fmin,
-        spect.fmax,
         false,
     )
     .unwrap();
@@ -276,9 +270,7 @@ fn gpt_conditioning_and_first_step_logits_match_python() {
     let text_tokens = oracle.tensor(&["gpt", "text_tokens"], &device).unwrap();
     let lang = oracle.root["gpt"]["lang"].as_u64().unwrap() as u32;
     let conds = gpt.campplus_conditioning(&style, &emovec).unwrap();
-    let (fake_ids, embeds, attn_mask) = gpt
-        .prepare_gpt_inputs_for_test(&conds, &text_tokens, lang)
-        .unwrap();
+    let (fake_ids, embeds, attn_mask) = gpt.prepare_gpt_inputs(&conds, &text_tokens, lang).unwrap();
     assert_close(
         "gpt.embeds",
         &embeds,

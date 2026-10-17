@@ -208,37 +208,15 @@ impl UnifiedVoice {
     #[allow(clippy::too_many_arguments)]
     pub fn inference_speech(
         &self,
-        spk_cond_emb: &Tensor,
         text_tokens: &Tensor,
         lang_id: u32,
-        emo_cond_emb: &Tensor,
         emo_vec: &Tensor,
         campplus_style: &Tensor,
         cfg: &GenerateConfig,
         rng: &mut StdRng,
     ) -> Result<Tensor> {
-        // In campplus mode with a caller-provided emo_vec these two
-        // conditioning tensors are only consumed via `merge_emovec`.
-        let _ = (spk_cond_emb, emo_cond_emb);
-
-        // (1, 192) -> (1, model_dim) -> (1, 1, model_dim)
-        let spk = self
-            .spk_emb_proj
-            .forward(&campplus_style.to_dtype(DType::F32)?)?
-            .unsqueeze(1)?;
-        if spk.dims() != [1, 1, self.model_dim] {
-            candle_core::bail!(
-                "campplus_style must be (1, 192), projected to (1, 1, {}), got {:?}",
-                self.model_dim,
-                spk.dims()
-            );
-        }
-
         // conds = [spk + emo_vec, 0, 0]  (3 conditioning positions)
-        let emo_vec = emo_vec.to_dtype(DType::F32)?.unsqueeze(1)?;
-        let cond0 = spk.broadcast_add(&emo_vec)?;
-        let zeros = Tensor::zeros((1, 2, self.model_dim), DType::F32, spk.device())?;
-        let conds_latent = Tensor::cat(&[&cond0, &zeros], 1)?;
+        let conds_latent = self.campplus_conditioning(campplus_style, emo_vec)?;
 
         let (fake_inputs, mel_emb, attention_mask) =
             self.prepare_gpt_inputs(&conds_latent, text_tokens, lang_id)?;
@@ -270,7 +248,8 @@ impl UnifiedVoice {
     /// `[spk + emo_vec, 0, 0]` conditioning from a CAMPPlus style row and an
     /// emotion vector (`(1, 192)` / `(1, model_dim)`). Pub(crate) for the
     /// oracle validation harness.
-    #[cfg(test)]
+    /// `[spk + emo_vec, 0, 0]` conditioning from a CAMPPlus style row and an
+    /// emotion vector (`(1, 192)` / `(1, model_dim)`).
     pub(crate) fn campplus_conditioning(
         &self,
         campplus_style: &Tensor,
@@ -287,21 +266,9 @@ impl UnifiedVoice {
     }
 
     /// Port of `prepare_gpt_inputs` (batch size 1, `single_cond` case).
-    /// Pub(crate) for the oracle validation harness.
-    #[cfg(test)]
-    pub(crate) fn prepare_gpt_inputs_for_test(
-        &self,
-        conditional_latents: &Tensor,
-        text_inputs: &Tensor,
-        lang_id: u32,
-    ) -> Result<(Tensor, Tensor, Tensor)> {
-        self.prepare_gpt_inputs(conditional_latents, text_inputs, lang_id)
-    }
-
-    /// Port of `prepare_gpt_inputs` (batch size 1, `single_cond` case).
     /// Returns `(fake_inputs (1, target_len + 1) i64, prompt embeds
     /// (1, target_len, dim), attention_mask (1, target_len + 1) u8)`.
-    fn prepare_gpt_inputs(
+    pub(crate) fn prepare_gpt_inputs(
         &self,
         conditional_latents: &Tensor,
         text_inputs: &Tensor,
@@ -620,7 +587,7 @@ mod tests {
         let gen_cfg = GenerateConfig::default();
         let mut rng = rand::rngs::StdRng::seed_from_u64(0);
         let codes = model
-            .inference_speech(&spk, &text, 0, &emo, &merged, &style, &gen_cfg, &mut rng)
+            .inference_speech(&text, 0, &merged, &style, &gen_cfg, &mut rng)
             .expect("inference_speech");
         assert_eq!(codes.dims()[0], 1);
         assert!(codes.dims()[1] > 0);
@@ -780,7 +747,7 @@ mod tests {
         let lang = oracle["gpt"]["lang"].as_u64().unwrap() as u32;
         let conds = model.campplus_conditioning(&style, &merged).unwrap();
         let (_fake, embeds, _mask) = model
-            .prepare_gpt_inputs_for_test(&conds, &text_tokens, lang)
+            .prepare_gpt_inputs(&conds, &text_tokens, lang)
             .unwrap();
         record("gpt.embeds", &embeds, &oracle["gpt"]["embeds"]);
 

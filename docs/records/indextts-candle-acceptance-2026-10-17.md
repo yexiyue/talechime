@@ -109,7 +109,8 @@ validation.rs oracle 路径多处多带 `"data"` 段、tokenizer ids 按字符�
 3. **采样 RNG**：torch 与 Rust StdRng 无法逐位对齐；同 seed 只保证可复现、不保证与 Python 同轨迹；GPU 上 cuBLAS/cuDNN 归约顺序还引入非确定性（同 seed 两次运行 codes 可不同）。
 4. **流式模式**（`stream_return`/`quick_streaming_tokens`）、QwenEmotion 文本情绪 LLM、ja/es（NeMo）、说话人 conformer 条件（检查点缺失）：均未移植（见 SOURCE.md）。
 5. **Metal / CPU 长会话 / 显存峰值**：未验证；CUDA 显存未精确计量（探针运行时 ~1.5–3GB 量级，未采样存档）。
-6. **ONNX 导出脚本**（`tools/tts/indextts_export_onnx.py`）：本机 venv 无 onnx/onnxruntime，未执行过；作为对照路径首验前不得引用其产物。
+6. **哈希绑定的参考编码缓存**：计划阶段三的「与资源哈希绑定的缓存」目前仅为进程内 `Option<ReferenceConditioning>`（无哈希键/持久化/陈旧保护）——延期至阶段四适配器层（VoiceStore 已有 per-revision 目录惯例）。
+7. **ONNX 导出脚本**（`tools/tts/indextts_export_onnx.py`）：本机 venv 无 onnx/onnxruntime，未执行过；作为对照路径首验前不得引用其产物。
 
 ### C. 验收状态判定
 

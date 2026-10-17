@@ -194,18 +194,8 @@ impl Model {
             (1, reference.pcm_22k.len()),
             &self.device,
         )?;
-        let spect = self.config.s2mel.preprocess_params.spect_params.clone();
-        let ref_mel = mel_spectrogram(
-            &wav,
-            spect.n_fft,
-            spect.win_length,
-            spect.hop_length,
-            spect.n_mels,
-            self.config.s2mel.preprocess_params.sr,
-            spect.fmin,
-            spect.fmax,
-            false,
-        )?;
+        let preprocess = &self.config.s2mel.preprocess_params;
+        let ref_mel = mel_spectrogram(&wav, &preprocess.spect_params, preprocess.sr, false)?;
 
         let fbank = dsp::campplus_fbank_tensor(&reference.pcm_16k, &self.device)?;
         let style = self.campplus.forward(&fbank)?;
@@ -244,10 +234,15 @@ impl Model {
 
         // Emotion vector path forces the speaker clip to be the emotion
         // reference with alpha 1.0 (upstream lines 583-617).
+        let mut rng = StdRng::seed_from_u64(opts.seed.unwrap_or_else(random_seed));
         let (emo_cond_emb, emo_alpha, emovec_override) = match opts.emo_vector {
             Some(vector) => {
-                let emovec_mat =
-                    self.emotion_vector_matrix(&vector, &reference.style, opts.emo_use_random)?;
+                let emovec_mat = self.emotion_vector_matrix(
+                    &vector,
+                    &reference.style,
+                    opts.emo_use_random,
+                    &mut rng,
+                )?;
                 (reference.spk_cond_emb.clone(), 1.0f32, Some(emovec_mat))
             }
             None => (
@@ -287,7 +282,6 @@ impl Model {
         let lang_id = tokenizer::lang_to_token(lang);
         let stop_text = self.config.gpt.stop_text_token;
 
-        let mut rng = StdRng::seed_from_u64(opts.seed.unwrap_or_else(random_seed));
         let mut wav_parts: Vec<Vec<f32>> = Vec::new();
 
         for seg_text in &segments {
@@ -318,10 +312,8 @@ impl Model {
             let mut codes = None;
             for attempt in 0..3 {
                 let raw = self.gpt.inference_speech(
-                    &reference.spk_cond_emb,
                     &text_tokens,
                     lang_id,
-                    &emo_cond_emb,
                     &emovec,
                     &reference.style,
                     &opts.generate,
@@ -399,6 +391,7 @@ impl Model {
         vector: &[f32; 8],
         style: &Tensor,
         use_random: bool,
+        rng: &mut StdRng,
     ) -> Result<Tensor> {
         if self.emo_matrix.len() != vector.len() {
             candle_core::bail!(
@@ -410,7 +403,7 @@ impl Model {
         let device = self.device.clone();
         let style = style.to_dtype(DType::F32)?.squeeze(0)?;
         let mut rows = Vec::with_capacity(vector.len());
-        let mut rng = rand::rng();
+        let rng = &mut *rng;
         for (group_idx, group) in self.emo_matrix.iter().enumerate() {
             let group = group.to_dtype(DType::F32)?;
             let row = if use_random {

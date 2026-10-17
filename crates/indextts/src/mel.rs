@@ -149,15 +149,18 @@ fn stft_magnitude(x: &[f32], window: &[f32], n_fft: usize, hop: usize) -> Result
 #[allow(clippy::too_many_arguments)]
 pub fn mel_spectrogram(
     wav: &Tensor,
-    n_fft: usize,
-    win_size: usize,
-    hop_size: usize,
-    num_mels: usize,
+    spect: &crate::config::SpectParams,
     sampling_rate: u32,
-    fmin: f64,
-    fmax: Option<f64>,
     center: bool,
 ) -> Result<Tensor> {
+    let (n_fft, win_size, hop_size, num_mels, fmin, fmax) = (
+        spect.n_fft,
+        spect.win_length,
+        spect.hop_length,
+        spect.n_mels,
+        spect.fmin,
+        spect.fmax,
+    );
     if n_fft == 0 || hop_size == 0 || hop_size > n_fft {
         candle_core::bail!("invalid stft parameters: n_fft {n_fft}, hop {hop_size}");
     }
@@ -216,6 +219,17 @@ pub fn mel_spectrogram(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_spect() -> crate::config::SpectParams {
+        crate::config::SpectParams {
+            n_fft: 256,
+            win_length: 256,
+            hop_length: 128,
+            n_mels: 80,
+            fmin: 0.0,
+            fmax: None,
+        }
+    }
 
     fn close(a: f32, b: f32, tol: f32) -> bool {
         (a - b).abs() <= tol * (1.0 + a.abs().max(b.abs()))
@@ -388,7 +402,7 @@ mod tests {
         both.extend_from_slice(&a);
         both.extend_from_slice(&b);
         let wav = Tensor::from_vec(both, (2, n), &Device::Cpu).unwrap();
-        let out = mel_spectrogram(&wav, 256, 256, 128, 80, 16000, 0.0, None, false).unwrap();
+        let out = mel_spectrogram(&wav, &test_spect(), 16000, false).unwrap();
         assert_eq!(out.dims(), vec![2, 80, 2]);
         let v = out.to_vec3::<f32>().unwrap();
         // Oracles from indextts mel_spectrogram on the same input.
@@ -425,10 +439,32 @@ mod tests {
         // 256 samples, n_fft=128, hop=64: pre-pad 32 -> 320; center pads 64
         // more -> 448; frames = 1 + (448 - 128)/64 = 6.
         let wav = Tensor::zeros((1, 256), DType::F32, &Device::Cpu).unwrap();
-        let out = mel_spectrogram(&wav, 128, 128, 64, 80, 16000, 0.0, None, true).unwrap();
+        let out = mel_spectrogram(
+            &wav,
+            &crate::config::SpectParams {
+                n_fft: 128,
+                win_length: 128,
+                hop_length: 64,
+                ..test_spect()
+            },
+            16000,
+            true,
+        )
+        .unwrap();
         assert_eq!(out.dims(), vec![1, 80, 6]);
         // Without center: 1 + (320 - 128)/64 = 4 frames.
-        let out = mel_spectrogram(&wav, 128, 128, 64, 80, 16000, 0.0, None, false).unwrap();
+        let out = mel_spectrogram(
+            &wav,
+            &crate::config::SpectParams {
+                n_fft: 128,
+                win_length: 128,
+                hop_length: 64,
+                ..test_spect()
+            },
+            16000,
+            false,
+        )
+        .unwrap();
         assert_eq!(out.dims(), vec![1, 80, 4]);
         // All-zero input lands on the 1e-5 clamp: log(1e-5).
         let v = out.to_vec3::<f32>().unwrap();
@@ -439,6 +475,19 @@ mod tests {
     fn mel_spectrogram_rejects_short_reflect_pad() {
         // (1024 - 256)/2 = 384 > 256 samples: torch F.pad errors, so do we.
         let wav = Tensor::zeros((1, 256), DType::F32, &Device::Cpu).unwrap();
-        assert!(mel_spectrogram(&wav, 1024, 1024, 256, 80, 22050, 0.0, None, false).is_err());
+        assert!(
+            mel_spectrogram(
+                &wav,
+                &crate::config::SpectParams {
+                    n_fft: 1024,
+                    win_length: 1024,
+                    hop_length: 256,
+                    ..test_spect()
+                },
+                22050,
+                false
+            )
+            .is_err()
+        );
     }
 }
