@@ -39,6 +39,11 @@ num-complex = "0.4"
 audioadapter-buffers = "2.0.0"
 tracing-chrome = { version = "0.7", optional = true }
 
+# macOS CPU matmuls use Accelerate/AMX BLAS, matching CosyVoice3. This
+# changes CPU numerics; Metal paths are unchanged.
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { workspace = true, features = ["accelerate"] }
+
 [dev-dependencies]
 approx = "0.5"
 tempfile.workspace = true

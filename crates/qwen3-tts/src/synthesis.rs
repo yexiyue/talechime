@@ -1,5 +1,6 @@
 //! Model loading and synthesis orchestration; playback belongs to the caller.
 use crate::models::AnyKVCache;
+use crate::models::code_predictor::sum_codebook_embeddings;
 use crate::models::codec::{Decoder12Hz, Encoder12Hz};
 use crate::models::speaker::SpeakerEncoder;
 use crate::models::talker::codec_tokens;
@@ -71,7 +72,7 @@ pub struct Qwen3TTS {
     model_type: Option<ModelType>,
     /// Device to run inference on
     device: Device,
-    /// Compute dtype for talker + code predictor (BF16 on CUDA, F32 otherwise)
+    /// Compute dtype for talker + code predictor (BF16 on CUDA/Metal, F32 on CPU)
     compute_dtype: DType,
 }
 
@@ -487,10 +488,9 @@ impl Qwen3TTS {
             gpu_frames.push(frame_tensor);
 
             // Use GPU tensor directly for embedding lookup (avoids 15 CPU→GPU transfers)
-            let acoustic_embed_sum = self
+            let summed = self
                 .code_predictor
-                .get_acoustic_embeddings_sum_from_tensor(&acoustic_codes_tensor)?;
-            let summed = semantic_embed.add(&acoustic_embed_sum)?;
+                .get_codec_embeddings_sum_from_tensor(&semantic_embed, &acoustic_codes_tensor)?;
 
             let text_addition = if frame_idx < trailing_text_len {
                 trailing_text_hidden.i((.., frame_idx..frame_idx + 1, ..))?
@@ -785,25 +785,7 @@ impl Qwen3TTS {
         let mut sampling_ctx = generation::SamplingContext::new(options.seed);
         let input_ids = self.text_tokenizer.encode(text)?;
 
-        // Determine if ICL mode is active (ref_codes + ref_text present)
-        let is_icl = prompt.ref_codes.is_some() && prompt.ref_text_ids.is_some();
-
-        // ICL mode adjustments (matching mlx-audio):
-        let repetition_penalty = if is_icl {
-            options.repetition_penalty.max(ICL_MIN_REPETITION_PENALTY)
-        } else {
-            options.repetition_penalty
-        };
-        let max_new_tokens = if is_icl {
-            options
-                .max_length
-                .min(ICL_MIN_FRAMES.max(input_ids.len() * ICL_FRAMES_PER_TOKEN))
-        } else {
-            options.max_length
-        };
-        let mut gen_config = options.to_gen_config();
-        gen_config.max_new_tokens = max_new_tokens;
-        gen_config.repetition_penalty = repetition_penalty;
+        let gen_config = options.to_gen_config();
 
         let (mut kv_caches, offset, last_hidden, logits, trailing_text_hidden) =
             self.voice_clone_prefill(&input_ids, prompt, language, gen_config.max_new_tokens)?;
@@ -1184,20 +1166,20 @@ impl Qwen3TTS {
         // Group 0: semantic codes → talker.codec_embedding
         let semantic_codes = ref_codes.i((.., 0))?; // [T_frames]
         let semantic_codes = semantic_codes.to_dtype(candle_core::DType::U32)?;
-        let summed = self.talker.get_codec_embedding_batch(&semantic_codes)?; // [1, T, hidden]
+        let semantic = self.talker.get_codec_embedding_batch(&semantic_codes)?; // [1, T, hidden]
 
         // Groups 1-15: acoustic codes → code_predictor.embed_codes_for_group
-        let mut summed = summed;
+        let mut embeddings = vec![semantic];
         for group in 1..16 {
             let group_codes = ref_codes.i((.., group))?; // [T_frames]
             let group_codes = group_codes.to_dtype(candle_core::DType::U32)?;
             let group_embed = self
                 .code_predictor
                 .embed_codes_for_group(group - 1, &group_codes)?; // [1, T, embed_dim]
-            summed = summed.add(&group_embed)?;
+            embeddings.push(group_embed);
         }
 
-        Ok(summed)
+        sum_codebook_embeddings(&embeddings)
     }
 
     /// Build default trailing text embeddings (for non-ICL mode).
@@ -1412,19 +1394,50 @@ pub const CODEC_EOS_TOKEN_ID: u32 = codec_tokens::CODEC_EOS;
 /// Number of audio samples per codec frame at 24kHz (1920 = 80ms per frame at 12Hz).
 pub const SAMPLES_PER_FRAME: usize = 1920;
 
-/// ICL mode: minimum frames to generate regardless of text length (matching mlx-audio)
-const ICL_MIN_FRAMES: usize = 75;
-
-/// ICL mode: estimated frames per input text token for max-length cap (matching mlx-audio)
-const ICL_FRAMES_PER_TOKEN: usize = 6;
-
-/// ICL mode: minimum repetition penalty to prevent degenerate loops (matching mlx-audio)
-const ICL_MIN_REPETITION_PENALTY: f64 = 1.5;
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{Qwen3TTSConfig, auto_device, device_info, parse_device};
+
+    #[test]
+    #[ignore = "requires explicit local model, prompt, text and output paths"]
+    fn probe_voice_clone_prefill() -> Result<()> {
+        use anyhow::Context;
+        let model_path = std::env::var("QWEN_PREFILL_MODEL").context("QWEN_PREFILL_MODEL")?;
+        anyhow::ensure!(Path::new(&model_path).is_dir(), "local model required");
+        let prompt_path = std::env::var("QWEN_PREFILL_PROMPT").context("QWEN_PREFILL_PROMPT")?;
+        let output = std::env::var("QWEN_PREFILL_OUTPUT").context("QWEN_PREFILL_OUTPUT")?;
+        let text = std::env::var("QWEN_PREFILL_TEXT").context("QWEN_PREFILL_TEXT")?;
+        let selected = std::env::var("QWEN_PREFILL_DEVICE").context("QWEN_PREFILL_DEVICE")?;
+        let model = Qwen3TTS::from_pretrained(&model_path, parse_device(&selected)?)?;
+        let prompt = VoiceClonePrompt::load(Path::new(&prompt_path), model.device())?;
+        let input_ids = model.text_tokenizer.encode(&text)?;
+        let (_, offset, last_hidden, logits, _) =
+            model.voice_clone_prefill(&input_ids, &prompt, Language::Chinese, 128)?;
+        let mut prefix_cache = model.talker.new_kv_caches(256);
+        let (prefix, _) = model.talker.prefill_voice_clone(
+            &input_ids,
+            &prompt.speaker_embedding.to_dtype(model.compute_dtype)?,
+            Language::Chinese,
+            true,
+            &mut prefix_cache,
+        )?;
+        let ref_embeddings = model
+            .sum_ref_codec_embeddings(prompt.ref_codes.as_ref().context("ICL codes required")?)?;
+        let values = |tensor: &Tensor| -> Result<Vec<f32>> {
+            Ok(tensor.to_dtype(DType::F32)?.flatten_all()?.to_vec1()?)
+        };
+        std::fs::write(
+            output,
+            serde_json::to_vec(&serde_json::json!({
+                "offset": offset, "prefix_shape": prefix.dims(),
+                "prefix_hidden": values(&prefix)?, "last_hidden": values(&last_hidden)?,
+                "logits": values(&logits)?, "reference_embeddings": values(&ref_embeddings)?,
+                "text_ids": input_ids, "ref_text_ids": prompt.ref_text_ids,
+            }))?,
+        )?;
+        Ok(())
+    }
 
     #[test]
     fn test_synthesis_options_default() {

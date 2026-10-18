@@ -1,6 +1,9 @@
 //! Incremental token generation and PCM decoding.
 use super::*;
 
+// Keep bounded codec history so each chunk does not restart from silence.
+const DECODER_LEFT_CONTEXT_FRAMES: usize = 25;
+
 /// Streaming synthesis session.
 ///
 /// Yields audio chunks as they are generated. Use with
@@ -12,10 +15,9 @@ pub struct StreamingSession<'a> {
     kv_caches: Vec<AnyKVCache>,
     offset: usize,
     last_hidden: Tensor,
-    current_token: Option<u32>,
     current_token_tensor: Option<Tensor>,
     frames_generated: usize,
-    frame_buffer: FrameCodes,
+    frame_buffer: Vec<Tensor>,
     chunk_frames: usize,
     done: bool,
     // Trailing text state for residual VQ + text fusion
@@ -29,7 +31,7 @@ pub struct StreamingSession<'a> {
     suppression_mask: generation::SuppressionMask,
     // Pre-allocated code predictor KV caches (reused + reset each frame)
     cp_kv_caches: Vec<AnyKVCache>,
-    reference_frames: Option<FrameCodes>,
+    decoder_context: Option<Tensor>,
 }
 
 impl<'a> StreamingSession<'a> {
@@ -124,10 +126,7 @@ impl<'a> StreamingSession<'a> {
         language: Language,
         options: SynthesisOptions,
     ) -> Result<Self> {
-        let mut config = options.to_gen_config();
-        if prompt.ref_codes.is_some() {
-            config.repetition_penalty = config.repetition_penalty.max(ICL_MIN_REPETITION_PENALTY);
-        }
+        let config = options.to_gen_config();
         let (kv_caches, offset, hidden, logits, trailing) =
             model.voice_clone_prefill(input_ids, prompt, language, config.max_new_tokens)?;
         let trailing_len = trailing.dim(1)?;
@@ -145,11 +144,7 @@ impl<'a> StreamingSession<'a> {
         )?;
         session.offset = offset;
         session.last_hidden = last_hidden;
-        session.reference_frames = prompt
-            .ref_codes
-            .as_ref()
-            .map(|codes| model.tensor_to_frame_codes(codes))
-            .transpose()?;
+        session.decoder_context = prompt.ref_codes.clone();
         Ok(session)
     }
 
@@ -169,6 +164,7 @@ impl<'a> StreamingSession<'a> {
         tts_pad_embed: Tensor,
         chunk_frames: usize,
     ) -> Result<Self> {
+        anyhow::ensure!(chunk_frames > 0, "chunk_frames must be positive");
         let (hidden, logits) = prefill_result;
         let prefill_len = hidden.dim(1)?;
         let last_hidden = hidden.i((.., prefill_len - 1..prefill_len, ..))?;
@@ -205,7 +201,6 @@ impl<'a> StreamingSession<'a> {
             kv_caches,
             offset: prefill_len,
             last_hidden,
-            current_token: if done { None } else { Some(first_token_id) },
             current_token_tensor: if done { None } else { Some(first_token) },
             frames_generated: 0,
             frame_buffer: Vec::new(),
@@ -218,7 +213,7 @@ impl<'a> StreamingSession<'a> {
             token_count: 1,
             suppression_mask,
             cp_kv_caches,
-            reference_frames: None,
+            decoder_context: None,
         })
     }
 
@@ -234,6 +229,8 @@ impl<'a> StreamingSession<'a> {
         &mut self,
         cancelled: impl Fn() -> bool,
     ) -> Result<Option<AudioBuffer>> {
+        #[cfg(feature = "profiling")]
+        let _span = tracing::info_span!("stream_chunk").entered();
         if cancelled() {
             return Ok(None);
         }
@@ -252,14 +249,13 @@ impl<'a> StreamingSession<'a> {
             if cancelled() {
                 return Ok(None);
             }
-            let (token_id, token_tensor) =
-                match (self.current_token, self.current_token_tensor.take()) {
-                    (Some(id), Some(t)) => (id, t),
-                    _ => {
-                        self.done = true;
-                        break;
-                    }
-                };
+            let token_tensor = match self.current_token_tensor.take() {
+                Some(token) => token,
+                None => {
+                    self.done = true;
+                    break;
+                }
+            };
 
             // Embedding lookup using GPU-resident token tensor (no CPU→GPU roundtrip)
             let semantic_embed = self
@@ -268,27 +264,29 @@ impl<'a> StreamingSession<'a> {
                 .get_codec_embedding_from_tensor(&token_tensor)?;
 
             // Generate 15 acoustic codes (stays on GPU)
+            #[cfg(feature = "profiling")]
+            let _cp_span =
+                tracing::info_span!("code_predictor", frame = self.frames_generated).entered();
             let acoustic_codes_tensor = self.model.code_predictor.generate_acoustic_codes(
                 &self.last_hidden,
                 &semantic_embed,
                 &mut self.cp_kv_caches,
             )?;
-
-            // Build frame on GPU, then transfer for frame_buffer
-            let semantic_t = Tensor::new(&[token_id], self.model.device())?;
-            let frame_tensor = Tensor::cat(&[&semantic_t, &acoustic_codes_tensor], 0)?;
-            let frame_codes: Vec<u32> = frame_tensor.to_vec1()?;
-            self.frame_buffer.push(frame_codes);
+            #[cfg(feature = "profiling")]
+            drop(_cp_span);
 
             let frame_idx = self.frames_generated;
             self.frames_generated += 1;
+            self.frame_buffer.push(Tensor::cat(
+                &[&token_tensor.reshape(1)?, &acoustic_codes_tensor],
+                0,
+            )?);
 
             // Build residual VQ sum + trailing text for next step
-            let acoustic_embed_sum = self
+            let summed = self
                 .model
                 .code_predictor
-                .get_acoustic_embeddings_sum_from_tensor(&acoustic_codes_tensor)?;
-            let summed = semantic_embed.add(&acoustic_embed_sum)?;
+                .get_codec_embeddings_sum_from_tensor(&semantic_embed, &acoustic_codes_tensor)?;
 
             let text_addition = if frame_idx < self.trailing_text_len {
                 self.trailing_text_hidden
@@ -299,11 +297,16 @@ impl<'a> StreamingSession<'a> {
             let step_input = summed.add(&text_addition)?;
 
             // Run talker step with fused embedding
+            #[cfg(feature = "profiling")]
+            let _talker_span =
+                tracing::info_span!("talker_step", frame = self.frames_generated).entered();
             let (h, new_logits) = self.model.talker.generate_step_with_embed(
                 &step_input,
                 &mut self.kv_caches,
                 self.offset,
             )?;
+            #[cfg(feature = "profiling")]
+            drop(_talker_span);
             self.offset += 1;
             self.last_hidden = h;
 
@@ -327,11 +330,9 @@ impl<'a> StreamingSession<'a> {
             self.token_count += 1;
 
             if self.config.eos_token_id == Some(next_token_id) {
-                self.current_token = None;
                 self.current_token_tensor = None;
                 self.done = true;
             } else {
-                self.current_token = Some(next_token_id);
                 self.current_token_tensor = Some(next_token_tensor);
             }
         }
@@ -348,15 +349,19 @@ impl<'a> StreamingSession<'a> {
     }
 
     fn decode_buffer(&mut self) -> Result<AudioBuffer> {
-        let mut frames = self.reference_frames.take().unwrap_or_default();
-        let reference_len = frames.len();
-        frames.append(&mut self.frame_buffer);
-        let codes = self.model.codes_to_tensor(&frames)?;
+        let context_len = self
+            .decoder_context
+            .as_ref()
+            .map_or(0, |codes| codes.dims()[0]);
+        let codes = decoder_codes(&self.frame_buffer, self.decoder_context.as_ref())?;
+        let total_frames = codes.dim(2)?;
         let mut audio = AudioBuffer::from_tensor(self.model.decoder.decode(&codes)?, 24000)?;
-        if reference_len > 0 {
-            let cut = reference_len * audio.samples.len() / frames.len();
+        if context_len > 0 {
+            let cut = context_len * audio.samples.len() / total_frames;
             audio.samples.drain(..cut);
         }
+        self.decoder_context = Some(decoder_context_tail(&codes)?);
+        self.frame_buffer.clear();
         Ok(audio)
     }
 
@@ -371,6 +376,31 @@ impl<'a> StreamingSession<'a> {
     }
 }
 
+/// Retain recent reference/generated codes in frame-major layout for the next block.
+fn decoder_context_tail(codes: &Tensor) -> Result<Tensor> {
+    let frames = codes.dim(2)?;
+    let keep = frames.min(DECODER_LEFT_CONTEXT_FRAMES);
+    Ok(codes
+        .narrow(2, frames - keep, keep)?
+        .squeeze(0)?
+        .transpose(0, 1)?
+        .contiguous()?)
+}
+
+/// Pack device-resident frames into the decoder's `[1, 16, T]` layout.
+fn decoder_codes(frames: &[Tensor], reference: Option<&Tensor>) -> Result<Tensor> {
+    let generated = Tensor::stack(frames, 0)?.to_dtype(DType::I64)?;
+    anyhow::ensure!(
+        generated.dims2()?.1 == 16,
+        "codec frames must contain 16 codes"
+    );
+    let combined = match reference {
+        Some(reference) => Tensor::cat(&[&reference.to_dtype(DType::I64)?, &generated], 0)?,
+        None => generated,
+    };
+    Ok(combined.transpose(0, 1)?.unsqueeze(0)?.contiguous()?)
+}
+
 impl<'a> Iterator for StreamingSession<'a> {
     type Item = Result<AudioBuffer>;
 
@@ -380,5 +410,55 @@ impl<'a> Iterator for StreamingSession<'a> {
             Ok(None) => None,
             Err(e) => Some(Err(e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decoder_history_advances_across_chunk_boundaries() -> Result<()> {
+        let device = Device::Cpu;
+        let reference = Tensor::new((0..44u32).map(|v| vec![v; 16]).collect::<Vec<_>>(), &device)?;
+        let mut context = reference;
+        for start in [44, 54, 64, 74] {
+            let frames = (start..start + 10)
+                .map(|v| Tensor::new(&[v; 16], &device))
+                .collect::<candle_core::Result<Vec<_>>>()?;
+            let packed = decoder_codes(&frames, Some(&context))?;
+            assert_eq!(packed.dim(2)?, context.dim(0)? + 10);
+            context = decoder_context_tail(&packed)?;
+            let expected: Vec<Vec<i64>> = (start + 10 - 25..start + 10)
+                .map(|v| vec![i64::from(v); 16])
+                .collect();
+            assert_eq!(context.to_vec2::<i64>()?, expected);
+        }
+        let first_frames = [Tensor::new(&[0u32; 16], &device)?];
+        let packed = decoder_codes(&first_frames, None)?;
+        assert_eq!(decoder_context_tail(&packed)?.dims(), &[1, 16]);
+        Ok(())
+    }
+
+    #[test]
+    fn device_frame_packing_preserves_reference_and_codebook_order() -> Result<()> {
+        let device = Device::Cpu;
+        let reference = Tensor::new(&[[0u32; 16], [1u32; 16]], &device)?;
+        let frames = [Tensor::from_vec(
+            (2u32..18).collect::<Vec<_>>(),
+            16,
+            &device,
+        )?];
+        let actual = decoder_codes(&frames, Some(&reference))?;
+        let expected = codes_to_tensor(&[vec![0; 16], vec![1; 16], (2..18).collect()], &device)?;
+        assert_eq!(actual.dims(), &[1, 16, 3]);
+        assert_eq!(
+            actual.flatten_all()?.to_vec1::<i64>()?,
+            expected.flatten_all()?.to_vec1::<i64>()?
+        );
+        assert_eq!(decoder_codes(&frames, None)?.dims(), &[1, 16, 1]);
+        let malformed = [Tensor::new(&[0u32; 15], &device)?];
+        assert!(decoder_codes(&malformed, None).is_err());
+        Ok(())
     }
 }

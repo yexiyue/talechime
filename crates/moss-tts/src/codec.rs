@@ -229,7 +229,9 @@ impl Stage {
                 output,
                 layers,
             } => {
-                let mut x = x.transpose(1, 2)?;
+                // Chunk slices retain the full sequence stride after transpose.
+                // BLAS requires packed matrices for the input projection.
+                let mut x = x.transpose(1, 2)?.contiguous()?;
                 if let Some(proj) = input {
                     x = proj.forward(&x)?;
                 }

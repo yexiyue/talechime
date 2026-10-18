@@ -9,13 +9,12 @@
 //! - 15 lm_heads (one per acoustic group)
 
 use anyhow::Result;
-use candle_core::{D, IndexOp, Module, Tensor};
+use candle_core::{D, DType, IndexOp, Module, Tensor};
 use candle_nn::{Embedding, Linear, RmsNorm, VarBuilder, embedding, linear_no_bias, rms_norm};
 
 use super::config::Qwen3TTSConfig;
 use super::kv_cache::{AnyKVCache, KVCache, PreAllocKVCache};
 use super::transformer::{DecoderLayer, RoPEType, RotaryEmbedding};
-use candle_core::DType;
 
 /// Code predictor configuration
 #[derive(Debug, Clone)]
@@ -478,14 +477,12 @@ impl CodePredictor {
             );
         }
 
-        let first = self.get_acoustic_embedding(acoustic_codes[0], 0, device)?;
-        acoustic_codes[1..]
+        let embeddings = acoustic_codes
             .iter()
             .enumerate()
-            .try_fold(first, |acc, (i, &code)| {
-                let embed = self.get_acoustic_embedding(code, i + 1, device)?;
-                acc.add(&embed).map_err(Into::into)
-            })
+            .map(|(i, &code)| self.get_acoustic_embedding(code, i, device))
+            .collect::<Result<Vec<_>>>()?;
+        sum_codebook_embeddings(&embeddings)
     }
 
     /// Get sum of all acoustic code embeddings from a GPU tensor.
@@ -496,6 +493,21 @@ impl CodePredictor {
         &self,
         acoustic_codes: &Tensor,
     ) -> Result<Tensor> {
+        sum_codebook_embeddings(&self.acoustic_embeddings_from_tensor(acoustic_codes)?)
+    }
+
+    /// Sum semantic and acoustic embeddings with one final dtype conversion.
+    pub(crate) fn get_codec_embeddings_sum_from_tensor(
+        &self,
+        semantic_embed: &Tensor,
+        acoustic_codes: &Tensor,
+    ) -> Result<Tensor> {
+        let mut embeddings = self.acoustic_embeddings_from_tensor(acoustic_codes)?;
+        embeddings.insert(0, semantic_embed.clone());
+        sum_codebook_embeddings(&embeddings)
+    }
+
+    fn acoustic_embeddings_from_tensor(&self, acoustic_codes: &Tensor) -> Result<Vec<Tensor>> {
         let n = acoustic_codes.dim(0)?;
         if n != self.codec_embeddings.len() {
             anyhow::bail!(
@@ -505,16 +517,26 @@ impl CodePredictor {
             );
         }
 
-        let first_code = acoustic_codes.narrow(0, 0, 1)?;
-        let first = self.codec_embeddings[0]
-            .forward(&first_code)?
-            .unsqueeze(0)?;
-        (1..n).try_fold(first, |acc, i| {
-            let code = acoustic_codes.narrow(0, i, 1)?;
-            let embed = self.codec_embeddings[i].forward(&code)?.unsqueeze(0)?;
-            acc.add(&embed).map_err(Into::into)
-        })
+        (0..n)
+            .map(|i| {
+                let code = acoustic_codes.narrow(0, i, 1)?;
+                let embed = self.codec_embeddings[i].forward(&code)?.unsqueeze(0)?;
+                Ok(embed)
+            })
+            .collect()
     }
+}
+
+pub(crate) fn sum_codebook_embeddings(embeddings: &[Tensor]) -> Result<Tensor> {
+    anyhow::ensure!(!embeddings.is_empty(), "empty codebook embeddings");
+    let dtype = embeddings[0].dtype();
+    let stacked = Tensor::stack(embeddings, 0)?;
+    // Avoid rounding after each addition of a low-precision codebook vector.
+    let accumulated = match dtype {
+        DType::BF16 | DType::F16 => stacked.to_dtype(DType::F32)?,
+        _ => stacked,
+    };
+    Ok(accumulated.sum(0)?.to_dtype(dtype)?)
 }
 
 #[cfg(test)]
@@ -526,6 +548,25 @@ mod tests {
     fn create_mock_vb(device: &Device) -> VarBuilder<'static> {
         let varmap = VarMap::new();
         VarBuilder::from_varmap(&varmap, DType::F32, device)
+    }
+
+    #[test]
+    fn codebook_sum_retains_small_bf16_contributions() -> Result<()> {
+        let embeddings = [256.0f32, 1.0, -256.0]
+            .iter()
+            .map(|&v| Tensor::new(&[[[v]]], &Device::Cpu)?.to_dtype(DType::BF16))
+            .collect::<candle_core::Result<Vec<_>>>()?;
+        let actual = sum_codebook_embeddings(&embeddings)?;
+        assert_eq!(actual.dtype(), DType::BF16);
+        assert_eq!(
+            actual
+                .to_dtype(DType::F32)?
+                .flatten_all()?
+                .to_vec1::<f32>()?,
+            vec![1.0]
+        );
+        assert!(sum_codebook_embeddings(&[]).is_err());
+        Ok(())
     }
 
     #[test]

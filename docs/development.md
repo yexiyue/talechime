@@ -34,10 +34,12 @@ CLI 与 backends 使用同名开关，计算库只提供 `cuda` / `metal` 平台
 | IndexTTS 加速 | `indextts-metal`、`indextts-cuda-cudnn` | 启用 IndexTTS 及对应设备；CUDA 使用 cuDNN 卷积，需要原生工具链 |
 | Candle cuDNN 卷积 | `indextts-cuda-cudnn` | indextts 的 cuda 变体：卷积走 cuDNN，绕开 candle unfold 回退对跨步布局的限制（普通 `cuda` 行为不变） |
 
-macOS 上 `cosyvoice3` 的 CPU matmul 默认经系统 Accelerate（AMX BLAS）执行
-（2026-10-18 决定；target 门控依赖，无开关）。数值与其他平台的纯 Rust
-`gemm` 路径非位级一致，详见[性能记录](records/cosyvoice3/cosyvoice3-performance-2026-10-17.md) §11。
 | ORT provider | `ort-cuda`、`ort-coreml` | 为 Nano 提供 provider，不自动启用模型适配器 |
+
+macOS 上 `cosyvoice3` 与 `qwen` 的 CPU matmul 默认经系统 Accelerate（AMX BLAS）执行
+（2026-10-18 决定；target 门控依赖，无开关）。数值与其他平台的纯 Rust
+`gemm` 路径非位级一致，详见[性能记录](records/cosyvoice3/cosyvoice3-performance-2026-10-17.md) §11
+与 [Qwen 记录](records/qwen/qwen-tts-acceptance.md)。
 
 适配器层不提供通用 `metal` / `cuda` 开关；选择加速时必须明确模型。旧 `metal` / `coreml` 名称已移除，改用 `qwen-metal` / `ort-coreml`。加速开关包含对应模型开关，发行配置无需重复列出模型。`directml-probe` 仅是 backends 的实验 example，不暴露产品设备。
 
@@ -68,6 +70,16 @@ Cargo 发布验证会从打包源码构建，不依赖兄弟 crate 的文件系�
 ## 原生验收
 
 迁移不升级模型、不改 PCM、EOS、取消、用户数据和检查点语义。历史数值与人工试听结论位于 `docs/records/`，平台差异、未通过项与实验入口必须如实记录。迁移后仍应执行独立协议握手、配置隔离、默认/扩展 CPU 构建及 GPU 编译检查。
+
+Qwen ICL 直接使用调用方的 repetition penalty 和帧上限，不再隐式提升至 1.5 或按文本长度截断。
+12Hz codec 默认使用 72 帧滑动注意力；流式保持 10 帧新块与最近 25 帧 codes 上下文，首块保留完整参考。
+这会改变旧输出并增加流式解码开销；上下文样本只用于条件计算，不重复播放。
+参考 encoder 加载 HF 权重时适配半组/交错 RoPE 布局；自定义音色使用新的
+`prompt-encoder-rope-v2.json` 缓存，保留旧 `prompt.json`，从原参考音频自动重建。
+参考与逐帧的 BF16/F16 codebook 向量统一在 F32 中累加，最后转换回原 dtype。
+官方开发对照工具默认保护空历史 repetition penalty，规避本机 Torch 2.7.1 MPS
+返回复用缓冲区内容的问题；历史模式需显式 `--empty_repetition original`，两者分别记录。
+固定 codes 的官方 F32 交叉验证与人工试听反馈见 [Qwen 正确性记录](records/qwen/qwen-performance-review-2026-10-18.md)。
 
 构建产物不进入 Git；也不提交模型权重、用户参考音频、正文、凭据和临时运行输出。第三方源码更新保留固定 revision、许可证和对照夹具。PR 使用 Conventional Commit，说明行为、兼容和验证。
 

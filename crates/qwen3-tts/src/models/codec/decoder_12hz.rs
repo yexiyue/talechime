@@ -20,6 +20,8 @@ pub struct Decoder12HzConfig {
     pub hidden_size: usize,
     /// Number of transformer layers (8)
     pub num_layers: usize,
+    /// Causal attention window in codec frames, including the current frame.
+    pub sliding_window: usize,
     /// Number of attention heads (16)
     pub num_heads: usize,
     /// Head dimension (64)
@@ -51,6 +53,7 @@ impl Default for Decoder12HzConfig {
             latent_dim: 1024,
             hidden_size: 512,
             num_layers: 8,
+            sliding_window: 72,
             num_heads: 16,
             head_dim: 64,
             intermediate_size: 1024,
@@ -554,16 +557,7 @@ impl Decoder12Hz {
         let cos = cos.unsqueeze(0)?.unsqueeze(0)?; // [1, 1, seq, head_dim]
         let sin = sin.unsqueeze(0)?.unsqueeze(0)?;
 
-        // Causal mask - create upper triangular mask with -inf
-        let mut mask_data = vec![0.0f32; seq_len * seq_len];
-        for i in 0..seq_len {
-            for j in (i + 1)..seq_len {
-                mask_data[i * seq_len + j] = f32::NEG_INFINITY;
-            }
-        }
-        let causal_mask = Tensor::from_vec(mask_data, (seq_len, seq_len), device)?
-            .unsqueeze(0)?
-            .unsqueeze(0)?;
+        let causal_mask = decoder_attention_mask(seq_len, self.config.sliding_window, device)?;
 
         for (layer_idx, layer) in self.transformer_weights.layers.iter().enumerate() {
             hidden = self.run_layer(
@@ -698,9 +692,46 @@ impl Decoder12Hz {
     }
 }
 
+fn decoder_attention_mask(
+    frames: usize,
+    window: usize,
+    device: &candle_core::Device,
+) -> Result<Tensor> {
+    anyhow::ensure!(window > 0, "decoder attention window must be positive");
+    let mut values = vec![0.0f32; frames * frames];
+    for query in 0..frames {
+        for key in 0..frames {
+            if key > query || query - key >= window {
+                values[query * frames + key] = f32::NEG_INFINITY;
+            }
+        }
+    }
+    Ok(Tensor::from_vec(values, (frames, frames), device)?
+        .unsqueeze(0)?
+        .unsqueeze(0)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decoder_attention_excludes_expired_history_and_future() -> Result<()> {
+        let device = candle_core::Device::Cpu;
+        let mask = decoder_attention_mask(75, 72, &device)?
+            .squeeze(0)?
+            .squeeze(0)?
+            .to_vec2::<f32>()?;
+        assert_eq!(mask[71][0], 0.0);
+        assert_eq!(mask[72][0], f32::NEG_INFINITY);
+        assert_eq!(mask[72][1], 0.0);
+        assert_eq!(mask[72][72], 0.0);
+        assert_eq!(mask[72][73], f32::NEG_INFINITY);
+        assert_eq!(mask[74][2], f32::NEG_INFINITY);
+        assert_eq!(mask[74][3], 0.0);
+        assert!(decoder_attention_mask(1, 0, &device).is_err());
+        Ok(())
+    }
 
     #[test]
     fn test_config_default() {

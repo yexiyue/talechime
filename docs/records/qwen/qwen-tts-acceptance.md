@@ -59,3 +59,18 @@ VHS 已检查后端 Qwen、Serena 音色切换、Auto → Metal、模型就绪�
 2026-10-07 后续已完成 Windows RTX 5070 的 0.6B/1.7B CustomVoice、Base/VoiceDesign 实际生成、正常 EOS、取消后重试以及 1.7B CustomVoice 30 分钟实际播放。RTF 分别约 0.758、0.716、0.796；30 分钟 RTF 约 0.758，显存未见持续增长。当前协议为 v5，新增模型策略与完整证据见 `tts-model-tiers-acceptance.md`。人工听感、Linux CUDA 与本次新增模型的 macOS Metal 实机仍待验收。OpenSpec 中将这些验收项分别记录，历史 Metal 测量保留为历史数据。
 
 本地 portable feature 集的 workspace lib/tests/examples 回归通过（488 次测试通过，1 次忽略，其中包括既有协议测试对子进程的测试调用）；Clippy `-D warnings`、rustfmt 和 rustdoc `-D warnings` 通过。检查 reader 基础依赖树没有 Candle/ORT/rodio/core，Qwen-only 没有 ORT，esaxx-rs 未启用 cpp。通用 CI/lefthook 改用显式 feature 集；独立 qwen-cuda.yml 使用 CUDA 12.8.1 devel 环境和 CC 120 编译检查，该工作流尚未触发或验证。
+
+## 官方实现对照与本机初测（2026-10-18，比较结论已撤回）
+
+本轮后续修正了参考 encoder RoPE、codec 注意力窗口、流式历史、隐藏采样覆盖及低精度 codebook 累加。用户最终反馈本轮样本“听感差不多了”，此前确认流式不再突变音色；仅限该样本的人工接受，不作为全模型质量或官方数值等价结论。官方本机 Torch 2.7.1 MPS 的空历史重复惩罚异常与受保护的新对照分别保留，详见下述性能审查的最终章节。
+
+后续审查确认旧矩阵的主模型 top-p、声学采样策略不一致，且官方侧未做预热与显式 MPS 同步。以下保留原始观测值用于追溯，不作为公平速度比较；修订与验收见 [性能审查](qwen-performance-review-2026-10-18.md)。
+
+- 官方源码固定为 [QwenLM/Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) revision `022e286b98fbec7e1e916cb940cdf532cd9f488e`，克隆在 git 忽略的 `runs/reference/Qwen3-TTS/`。官方路径是 PyTorch/Transformers：主 Talker 生成语义 token，CodePredictor 每帧生成 15 个声学 token，最后 12Hz tokenizer decoder 输出 24 kHz PCM。
+- 对照条件：Qwen 0.6B Base ICL，官方 revision `022e286…`，同一参考音频与转写，中文文本“山风吹过松林，星光照亮归途。两个人沿着小路慢慢往前走。”，seed 42；Rust 主模型 top-p=0.9、声学贪心，官方主模型 top-p=1.0、声学随机采样。3 个独立进程均是模型加载后的首个请求，官方脚本当时未显式同步 MPS。Apple M4 Pro，macOS 26.x。
+- Rust/Candle Metal BF16 三次：完整生成 9.100 / 9.158 / 9.126 s，音频均 6.88 s，RTF 1.323 / 1.331 / 1.326；首 PCM 约 1.15–1.17 s。官方 PyTorch MPS F32 三次：24.280 / 24.150 / 23.806 s，音频均 6.88 s，RTF 3.529 / 3.510 / 3.460。两侧生成音频样本数一致。该结果仅代表本次 Qwen MPS F32 与 Rust Metal BF16 的组合，不等同于“Rust 比 PyTorch 快”的普遍结论。
+- Rust CPU 单次（F32/Accelerate）总生成 10.388 s、音频 6.48 s、RTF 1.603；关闭 Accelerate 的 gemm 对照为 15.903 s、RTF 2.454。CPU 与 Metal 浮点差异使输出长度不同。官方 CPU 未完成同条件矩阵，不能列入对比。
+- 官方仓库当前 tip 的本地权重缺少 `speech_tokenizer/preprocessor_config.json`，且 wrapper 以 `raw_audio=` 调用 Transformers 4.57.3 的 Wav2Vec2 positional 参数。为运行对照，本地未跟踪副本补了等价的 Wav2Vec2 feature extractor 配置，并把调用改为 positional + padding/attention mask；`tools/tts/qwen3_tts_bench.py` 会记录该限制。此补丁只用于基准，不改变 Talechime 实现。
+- 汇总见 `runs/qwen-bench/summary.json`；目录还保存 Python/Rust 逐轮 JSON、WAV、`/usr/bin/time` 输出和 Rust 逐块诊断日志。`docs/learning/tts-primer.md` 补充了三段结构的性能直觉。
+- 后续 profiling trace（同输入、热模型、Metal BF16）显示流式路径的主要开销为 CodePredictor 约 1.92 s、主 Talker 步进约 0.68 s、采样约 2.82 s、9 次分块 codec 解码约 1.30 s、ICL prefill 约 0.046 s。非流式整段解码路径为 4.88–4.97 s；流式路径为 9.24–9.42 s；当时对“每 chunk 重放参考 codec”的解释错误，源码只在首块使用参考 codes，后续块独立解码。`crates/qwen3-tts/src/synthesis/streaming.rs` 已把每帧 acoustic codes 留在 GPU、每 10 帧 bulk 传输，避免每帧 GPU→CPU 同步；对照三组流式中位数从 9.787 s 降至 9.254 s，非流式中位数从 4.994 s 降至 4.839 s。采样只保留原始词表位置过滤语义；一次“排序后直接 top-p”试验改变 token 位置导致连续生成，已拒绝并入。
+- 追加官方 MPS BF16 矩阵：3 个独立进程为 21.744 / 17.613 / 17.665 s，音频均 6.08 s，RTF 3.576 / 2.897 / 2.905（第一轮为冷后端离群值，未与热路径 F32 混合取均值）。该路径生成有限音频，但输出样本数不同于 F32/Rust 的 6.88 s，不能作为配对速度结论；`tools/tts/qwen3_tts_bench.py` 已支持显式 `--dtype` 并记录 dtype 状态。

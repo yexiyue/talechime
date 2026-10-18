@@ -58,7 +58,7 @@ impl Encoder12Hz {
         //   encoder.encoder_transformer.layers.0.*     → encoder_transformer.layers.0.*
         //   encoder.quantizer.*                        → quantizer.*
         //   encoder.downsample.conv.weight             → downsample.conv.weight
-        let encoder_weights: HashMap<String, Tensor> = weights
+        let mut encoder_weights: HashMap<String, Tensor> = weights
             .iter()
             .filter_map(|(k, v)| {
                 k.strip_prefix("encoder.")
@@ -71,6 +71,16 @@ impl Encoder12Hz {
         }
 
         let cfg = mimi::Config::v0_1(Some(16));
+        // HF Mimi checkpoints rotate two half-heads; Candle Mimi uses adjacent
+        // pairs. Permute Q/K output rows so their attention scores agree.
+        for (name, weight) in encoder_weights.iter_mut() {
+            if name.starts_with("encoder_transformer.layers.")
+                && (name.ends_with(".self_attn.q_proj.weight")
+                    || name.ends_with(".self_attn.k_proj.weight"))
+            {
+                *weight = interleave_rope_projection(weight, cfg.transformer.num_heads)?;
+            }
+        }
         let vb = candle_nn::VarBuilder::from_tensors(encoder_weights, DType::F32, device);
 
         let encoder = mimi::seanet::SeaNetEncoder::new(&cfg.seanet, vb.pp("encoder"))?;
@@ -143,9 +153,35 @@ impl Encoder12Hz {
     }
 }
 
+fn interleave_rope_projection(weight: &Tensor, heads: usize) -> Result<Tensor> {
+    let (output, input) = weight.dims2()?;
+    anyhow::ensure!(
+        heads > 0 && output.is_multiple_of(heads) && (output / heads).is_multiple_of(2),
+        "invalid encoder RoPE projection shape"
+    );
+    Ok(weight
+        .reshape((heads, 2, output / heads / 2, input))?
+        .transpose(1, 2)?
+        .contiguous()?
+        .reshape((output, input))?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hf_rope_projection_interleaves_within_each_head() -> Result<()> {
+        let weight = Tensor::from_vec((0..8).map(|v| v as f32).collect(), (8, 1), &Device::Cpu)?;
+        let actual = interleave_rope_projection(&weight, 2)?;
+        assert_eq!(
+            actual.flatten_all()?.to_vec1::<f32>()?,
+            vec![0., 2., 1., 3., 4., 6., 5., 7.]
+        );
+        assert!(interleave_rope_projection(&weight, 0).is_err());
+        assert!(interleave_rope_projection(&weight, 3).is_err());
+        Ok(())
+    }
 
     #[test]
     fn test_strip_encoder_prefix() {

@@ -135,7 +135,8 @@ fn generate(
             let store = super::voice_store(directory, variant).map_err(inference_error)?;
             let voice = store.load(&request.voice).map_err(inference_error)?;
             let path = store.path(&request.voice).map_err(inference_error)?;
-            let cache = path.join("prompt.json");
+            // Preserve old caches while regenerating references with corrected RoPE.
+            let cache = path.join("prompt-encoder-rope-v2.json");
             let prompt = if cache.exists() {
                 qwen3_tts::VoiceClonePrompt::load(&cache, model.device())
                     .map_err(inference_error)?

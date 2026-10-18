@@ -140,6 +140,7 @@ Qwen 推理源码位于 `crates/qwen3-tts`，来自 TrevorS/qwen3-tts-rs revisio
 - CUDA 编译需要 Toolkit/`nvcc`；驱动提供的 `nvidia-smi` 不代替 Toolkit。RTX 5070 的 CC 为 12.0，使用支持 Blackwell 的 Toolkit；无 GPU 构建机显式设置 `CUDA_COMPUTE_CAP`。
 - tokenizers 仅启用推理用 `onig`，不启用训练用 `esaxx_fast`。上游 esaxx-rs 的 `.static_crt(true)` 与 ORT 的 `/MD` 在 Windows 导致 LNK2038/LNK2005；从依赖 feature 源头移除 C++ 加速，不使用 `/NODEFAULTLIB` 或全局 `/MD` workaround。
 - 模型/音色/检查点格式不变；校准实现标识更新为 `qwen-local-v1`，使旧性能缓存失效。
+- macOS CPU matmul 经系统 Accelerate（AMX BLAS）执行；Metal 路径不变，CPU 数值与其他平台纯 Rust `gemm` 不保证位级一致。
 
 **相关文件**：`crates/qwen3-tts/README.md`、`crates/novel-tts-backends/src/qwen.rs`、`src/qwen/runtime.rs`、`src/devices/calibration.rs`。
 

@@ -17,6 +17,7 @@ pub struct SynthesisOptions {
     /// End-of-sequence token ID (defaults to codec EOS token 2150)
     pub eos_token_id: Option<u32>,
     /// Frames per streaming chunk (default: 10 = ~800ms)
+    /// Decoding retains 25 past frames after the first prompt-conditioned chunk.
     pub chunk_frames: usize,
     /// Minimum tokens before EOS is allowed (default: 2, matching Python)
     pub min_new_tokens: usize,

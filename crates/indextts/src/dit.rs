@@ -730,8 +730,12 @@ mod tests {
         let (cos, sin) = rope_tables(3, 8, &device).unwrap();
         assert_eq!(cos.dims(), vec![1, 3, 1, 4]);
         let cos = cos.flatten_all().unwrap().to_vec1::<f32>().unwrap();
-        // Position 0 rotates by angle 0.
-        assert_eq!(&cos[0..4], &[1.0, 1.0, 1.0, 1.0]);
+        // Position 0 rotates by angle 0; Accelerate's cosf may differ by 1 ULP.
+        assert!(
+            cos[0..4]
+                .iter()
+                .all(|value| (*value - 1.0f32).abs() <= f32::EPSILON)
+        );
         let inv0 = 10000f64.powf(-2.0 / 8.0);
         // (1, 3, 1, 4) row-major: position 1, freq 1 -> index 4 + 1.
         assert!((cos[5] as f64 - inv0.cos()).abs() < 1e-6);

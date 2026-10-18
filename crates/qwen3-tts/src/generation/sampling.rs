@@ -143,6 +143,12 @@ pub fn sample(
     ctx: &mut SamplingContext,
 ) -> Result<Tensor> {
     let logits = logits.to_dtype(DType::F32)?;
+    if !logits.device().is_cpu() {
+        // One logits transfer per semantic step keeps a single CPU sampling
+        // policy and avoids the pinned Metal filter failure at width 3072.
+        let cpu_logits = logits.to_device(&candle_core::Device::Cpu)?;
+        return Ok(sample(&cpu_logits, config, ctx)?.to_device(logits.device())?);
+    }
 
     // Apply temperature
     let logits = if config.temperature != 1.0 && config.temperature > 0.0 {
@@ -179,111 +185,82 @@ pub fn sample(
 
 /// Apply top-k filtering: keep only the top k logits, set rest to -inf
 ///
-/// Dispatches between CPU-native Rust sort and GPU tensor sort.
+/// Uses the CPU policy selected by `sample`.
 fn top_k_filter(logits: &Tensor, k: usize) -> Result<Tensor> {
     #[cfg(feature = "profiling")]
     let _span = tracing::info_span!("top_k").entered();
     let (batch, vocab) = logits.dims2()?;
     let k = k.min(vocab);
 
-    if logits.device().is_cpu() {
-        // CPU path: native Rust partial sort is faster than candle sort_last_dim
-        let mut result_data = Vec::with_capacity(batch * vocab);
-        for b in 0..batch {
-            let row: Vec<f32> = logits.i(b)?.to_vec1()?;
-            let mut sorted = row.clone();
-            sorted.sort_unstable_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-            let threshold = sorted[k - 1];
-            result_data.extend(
-                row.iter()
-                    .map(|&v| if v >= threshold { v } else { f32::NEG_INFINITY }),
-            );
+    // Only the kth threshold is needed; keep ties in original vocabulary order.
+    let mut result_data = Vec::with_capacity(batch * vocab);
+    for b in 0..batch {
+        let row: Vec<f32> = logits.i(b)?.to_vec1()?;
+        let mut sorted = row.clone();
+        let descending = |a: &f32, b: &f32| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal);
+        if sorted.iter().any(|v| v.is_nan()) {
+            // Preserve the previous handling of unordered logits.
+            sorted.sort_unstable_by(descending);
+        } else {
+            sorted.select_nth_unstable_by(k - 1, descending);
         }
-        Ok(Tensor::new(result_data.as_slice(), logits.device())?.reshape((batch, vocab))?)
-    } else {
-        // GPU path: sort on device to avoid GPU→CPU transfer
-        let (sorted, _) = logits.sort_last_dim(false)?;
-        let threshold = sorted.narrow(1, k - 1, 1)?;
-        let mask = logits.ge(&threshold.broadcast_as(logits.shape())?)?;
-        let neg_inf =
-            Tensor::new(&[f32::NEG_INFINITY], logits.device())?.broadcast_as(logits.shape())?;
-        Ok(mask.where_cond(logits, &neg_inf)?)
+        let threshold = sorted[k - 1];
+        result_data.extend(
+            row.iter()
+                .map(|&v| if v >= threshold { v } else { f32::NEG_INFINITY }),
+        );
     }
+    Ok(Tensor::new(result_data.as_slice(), logits.device())?.reshape((batch, vocab))?)
 }
 
-/// Apply top-p (nucleus) filtering: keep smallest set of tokens whose cumulative probability >= top_p
+/// Keep the ranked prefix through the first token whose cumulative probability
+/// exceeds `top_p`. Equal logits may have different tie ordering across devices.
 ///
-/// Dispatches between CPU-native Rust sort and GPU tensor ops.
+/// Runs on CPU so the boundary and tie policy is shared across devices.
 fn top_p_filter(logits: &Tensor, p: f64) -> Result<Tensor> {
     #[cfg(feature = "profiling")]
     let _span = tracing::info_span!("top_p").entered();
 
-    if logits.device().is_cpu() {
-        // CPU path: native Rust sort + cumsum (avoids candle sort_last_dim overhead)
-        let (batch, vocab) = logits.dims2()?;
-        let mut result_data = Vec::with_capacity(batch * vocab);
+    // CPU path: native Rust sort + cumsum (avoids candle sort_last_dim overhead)
+    let (batch, vocab) = logits.dims2()?;
+    let mut result_data = Vec::with_capacity(batch * vocab);
 
-        for b in 0..batch {
-            let row: Vec<f32> = logits.i(b)?.to_vec1()?;
-            let mut indices: Vec<usize> = (0..vocab).collect();
-            indices.sort_unstable_by(|&a, &b| {
-                row[b]
-                    .partial_cmp(&row[a])
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+    for b in 0..batch {
+        let row: Vec<f32> = logits.i(b)?.to_vec1()?;
+        let mut indices: Vec<usize> = (0..vocab).collect();
+        indices.sort_unstable_by(|&a, &b| {
+            row[b]
+                .partial_cmp(&row[a])
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
-            // Softmax over sorted values
-            let max_val = row[indices[0]];
-            let mut exp_sorted: Vec<f32> =
-                indices.iter().map(|&i| (row[i] - max_val).exp()).collect();
-            let sum: f32 = exp_sorted.iter().sum();
-            for v in &mut exp_sorted {
-                *v /= sum;
-            }
-
-            // Cumulative probability cutoff
-            let mut cumsum = 0.0f32;
-            let mut cutoff_idx = vocab;
-            for (i, &prob) in exp_sorted.iter().enumerate() {
-                cumsum += prob;
-                if cumsum > p as f32 {
-                    cutoff_idx = i + 1;
-                    break;
-                }
-            }
-
-            let mut filtered = vec![f32::NEG_INFINITY; vocab];
-            for &idx in &indices[..cutoff_idx] {
-                filtered[idx] = row[idx];
-            }
-            result_data.extend(filtered);
+        // Softmax over sorted values
+        let max_val = row[indices[0]];
+        let mut exp_sorted: Vec<f32> = indices.iter().map(|&i| (row[i] - max_val).exp()).collect();
+        let sum: f32 = exp_sorted.iter().sum();
+        for v in &mut exp_sorted {
+            *v /= sum;
         }
 
-        Ok(Tensor::new(result_data.as_slice(), logits.device())?.reshape((batch, vocab))?)
-    } else {
-        // GPU path: sort + cumsum on device
-        let (sorted_logits, _) = logits.sort_last_dim(false)?;
-        let sorted_probs = candle_nn::ops::softmax_last_dim(&sorted_logits)?;
-        let cumulative_probs = sorted_probs.cumsum(1)?;
+        // Cumulative probability cutoff
+        let mut cumsum = 0.0f32;
+        let mut cutoff_idx = vocab;
+        for (i, &prob) in exp_sorted.iter().enumerate() {
+            cumsum += prob;
+            if cumsum > p as f32 {
+                cutoff_idx = i + 1;
+                break;
+            }
+        }
 
-        let shifted = cumulative_probs.narrow(1, 0, cumulative_probs.dim(1)? - 1)?;
-        let zeros = Tensor::zeros((logits.dim(0)?, 1), DType::F32, logits.device())?;
-        let shifted_cumsum = Tensor::cat(&[&zeros, &shifted], 1)?;
-
-        let threshold_val =
-            Tensor::new(&[p as f32], logits.device())?.broadcast_as(shifted_cumsum.shape())?;
-        let remove_mask = shifted_cumsum.ge(&threshold_val)?;
-
-        let pos_inf =
-            Tensor::new(&[f32::INFINITY], logits.device())?.broadcast_as(sorted_logits.shape())?;
-        let kept_logits = remove_mask.where_cond(&pos_inf, &sorted_logits)?;
-        let min_kept = kept_logits.min(D::Minus1)?.unsqueeze(1)?;
-
-        let keep_original = logits.ge(&min_kept.broadcast_as(logits.shape())?)?;
-        let neg_inf =
-            Tensor::new(&[f32::NEG_INFINITY], logits.device())?.broadcast_as(logits.shape())?;
-        Ok(keep_original.where_cond(logits, &neg_inf)?)
+        let mut filtered = vec![f32::NEG_INFINITY; vocab];
+        for &idx in &indices[..cutoff_idx] {
+            filtered[idx] = row[idx];
+        }
+        result_data.extend(filtered);
     }
+
+    Ok(Tensor::new(result_data.as_slice(), logits.device())?.reshape((batch, vocab))?)
 }
 
 /// Sample from probability distribution using multinomial sampling
@@ -300,18 +277,14 @@ fn multinomial_sample(probs: &Tensor, ctx: &mut SamplingContext) -> Result<Tenso
     // Find first index where cumsum >= uniform
     let mask = cumsum.ge(&uniform.broadcast_as(cumsum.shape())?)?;
 
-    // Convert mask to f32 for operations
-    let mask_f32 = mask.to_dtype(DType::F32)?;
-
     // Use a trick: multiply by position and find first nonzero
     let positions: Vec<f32> = (0..vocab).map(|i| i as f32 + 1.0).collect();
     let positions = Tensor::new(positions.as_slice(), probs.device())?
         .unsqueeze(0)?
-        .broadcast_as(mask_f32.shape())?;
+        .broadcast_as(mask.shape())?;
 
     // Where mask is true, use position; else use large value
-    let large =
-        Tensor::new(&[vocab as f32 + 1.0], probs.device())?.broadcast_as(mask_f32.shape())?;
+    let large = Tensor::new(&[vocab as f32 + 1.0], probs.device())?.broadcast_as(mask.shape())?;
     let masked_positions = mask.where_cond(&positions, &large)?;
 
     // Argmin gives first True position
@@ -703,6 +676,135 @@ mod tests {
             results1, results2,
             "Seeded sampling should be deterministic"
         );
+    }
+
+    #[test]
+    fn test_top_k_then_top_p_filters_original_vocab_ids() {
+        let device = Device::Cpu;
+        let logits = Tensor::new(&[[1.0f32, 5.0, 3.0, 2.0, 4.0, 4.0]], &device).unwrap();
+        let config = GenerationConfig {
+            temperature: 1.0,
+            top_k: 3,
+            top_p: 0.9,
+            ..Default::default()
+        };
+        let filtered = top_k_filter(&logits, config.top_k).unwrap();
+        assert_eq!(finite_ids(&filtered), vec![1, 4, 5]);
+
+        let filtered = top_p_filter(&filtered, config.top_p).unwrap();
+        assert_eq!(finite_ids(&filtered), vec![1, 4, 5]);
+    }
+
+    fn finite_ids(logits: &Tensor) -> Vec<usize> {
+        logits
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .filter_map(|(id, value)| value.is_finite().then_some(id))
+            .collect()
+    }
+
+    fn check_nucleus_boundaries(device: &Device) {
+        let mut sparse = vec![f32::NEG_INFINITY; 3072];
+        for (id, value) in [(1001, 4.0), (500, 3.0), (2000, 2.0), (100, 1.0)] {
+            sparse[id] = value;
+        }
+        let logits = Tensor::from_vec(sparse, (1, 3072), device).unwrap();
+        assert_eq!(
+            finite_ids(&top_p_filter(&logits, 0.8).unwrap()),
+            vec![500, 1001]
+        );
+        let logits = Tensor::new(&[[2f32, 1., 1., -10.]], device).unwrap();
+        let kept = finite_ids(&top_p_filter(&logits, 0.7).unwrap());
+        assert_eq!(kept.len(), 2);
+        assert!(kept.contains(&0));
+        assert!(kept.iter().all(|id| *id < 3));
+
+        let uniform = Tensor::new(&[[0f32; 4]], device).unwrap();
+        assert_eq!(finite_ids(&top_p_filter(&uniform, 0.5).unwrap()).len(), 3);
+        // Non-sorted IDs and more than one row exercise scatter's dimension.
+        let logits = Tensor::new(&[[0f32, 3., 1., 2.], [2., 1., 3., 0.]], device).unwrap();
+        let filtered = top_p_filter(&logits, 0.6)
+            .unwrap()
+            .to_vec2::<f32>()
+            .unwrap();
+        assert!(filtered[0][1].is_finite());
+        assert!(filtered[1][2].is_finite());
+        assert_eq!(
+            filtered.iter().flatten().filter(|v| v.is_finite()).count(),
+            2
+        );
+    }
+
+    #[test]
+    fn nucleus_preserves_ranked_mass_and_original_ids() {
+        check_nucleus_boundaries(&Device::Cpu);
+    }
+
+    #[test]
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[ignore = "requires a native Metal device"]
+    fn metal_sampling_matches_cpu_at_model_vocabulary_size() {
+        let device = Device::new_metal(0).unwrap();
+        for vocab in [4, 3072] {
+            let mut values = vec![f32::NEG_INFINITY; vocab];
+            for (id, value) in [(vocab - 1, 2.0), (vocab / 2, 1.0), (1, 1.0)] {
+                values[id] = value;
+            }
+            let cpu = Tensor::from_vec(values, (1, vocab), &Device::Cpu).unwrap();
+            let metal = cpu.to_device(&device).unwrap();
+            for top_p in [0.5, 0.7, 0.9] {
+                let config = GenerationConfig {
+                    top_k: 3,
+                    top_p,
+                    ..Default::default()
+                };
+                for seed in 0..16 {
+                    let expected =
+                        sample(&cpu, &config, &mut SamplingContext::new(Some(seed))).unwrap();
+                    let actual =
+                        sample(&metal, &config, &mut SamplingContext::new(Some(seed))).unwrap();
+                    assert_eq!(
+                        actual.to_vec1::<u32>().unwrap(),
+                        expected.to_vec1::<u32>().unwrap()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn top_k_selection_matches_sort_at_model_vocabulary_size() {
+        let rows: Vec<Vec<f32>> = (0..4)
+            .map(|offset| {
+                (0..3072)
+                    .map(|i| {
+                        if (i + offset) % 17 == 0 {
+                            f32::NEG_INFINITY
+                        } else {
+                            ((i * 37 + offset) % 101) as f32 - 50.0
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        let logits = Tensor::new(rows.clone(), &Device::Cpu).unwrap();
+        for k in [1, 2, 50, 1024, 3072, 4096] {
+            let actual = top_k_filter(&logits, k).unwrap().to_vec2::<f32>().unwrap();
+            for (row, filtered) in rows.iter().zip(actual) {
+                let mut ranked = row.clone();
+                ranked.sort_unstable_by(|a, b| b.partial_cmp(a).unwrap());
+                let threshold = ranked[k.min(row.len()) - 1];
+                let expected: Vec<f32> = row
+                    .iter()
+                    .map(|&v| if v >= threshold { v } else { f32::NEG_INFINITY })
+                    .collect();
+                assert_eq!(filtered, expected, "k={k}");
+            }
+        }
     }
 
     #[test]
