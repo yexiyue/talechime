@@ -8,6 +8,15 @@ This crate independently implements those model operations using workspace Candl
 0.11.0 (crates.io source revision `31f35b147389700ed2a178ee66a91c3cc25cc80d`).
 It does not link or execute the mapping reference's inference engine.
 
+Candle is consumed through the workspace `[patch.crates-io]` entry, which points
+at the Talechime fork [yexiyue/candle](https://github.com/yexiyue/candle), branch
+`talechime-perf`. The fork is based on the same upstream revision
+`31f35b147389700ed2a178ee66a91c3cc25cc80d` (upstream tag `0.11.0`) and keeps the
+upstream dual Apache-2.0 / MIT license; see `LICENSE.candle-APACHE`,
+`LICENSE.candle-MIT` and `docs/legal/candle-fork.md`. Patches in that fork must
+be behaviour-only and upstreamable, because published crates.io builds of this
+library resolve the registry release instead of the fork.
+
 Weights remain the existing DennisHuang648/VoxCPM2-GGUF resource revision
 `169f64d8b98bbaab1761e4ca3a83e6af653456cc`; see the production resource manifest
 in `novel-tts-backends` for sizes and SHA-256. The production adapter uses this

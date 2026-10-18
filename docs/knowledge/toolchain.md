@@ -306,6 +306,30 @@ Candle 0.11 all-features 测试第一次链接报告 LNK1318 / LIMIT(12)，当�
 
 CUDA 13 官方 `cuda.lib` 的静态 driver loader 对象带 `/DEFAULTLIB:LIBCMT`，当前 release 链接仍有 LNK4098；Candle 0.11 MOE 对象已全部为 `/MD`。不通过全局 `/NODEFAULTLIB`、修改 SDK 或压制警告掩盖冲突。独立 sm120 CUDA 程序及 Vox Q8/BF16 实际播放通过，CRT 风险继续记录。
 
+### Candle fork patch 与 TTS 基准协议（2026-10-18）
+
+Candle 0.11.0 由工作区 `[patch.crates-io]` 指向 fork `yexiyue/candle` 的
+`talechime-perf` 分支（基线 = 上游 `31f35b147389700ed2a178ee66a91c3cc25cc80d`，
+tag `0.11.0`）。
+
+**正确做法：**
+- fork 补丁只做行为级、可上游改动，不新增/删除/改变公开 API；`cargo publish`
+  会剥离 `[patch]`，本仓库发布的 candle 消费库在下游解析 registry 版本，依赖
+  fork 独有 API 会导致发布版本无法编译。
+- 每个补丁在 fork 的 `FORK.md` 登记上游 issue/PR；确需新 API 时把受影响库标
+  `publish = false` 直到上游合并。来源与许可见 `docs/legal/candle/SOURCE.md`，
+  许可副本随 `crates/voxcpm/` 分发以便 `prepare-notices.py` 收集。
+- CUDA Graph capture 用 candle 0.11 已公开的 `CudaDevice::enable_cuda_graph_htod_cache()`
+  与 `CudaDevice::cuda_stream()`，capture 入口是 `cudarc` 0.19.10 的公开
+  `begin_capture/end_capture/launch`；cudarc 版本必须与 candle-core 解析到同一实例。
+
+TTS 性能对照统一协议（劣化排查结论，见
+`docs/records/voxcpm/voxcpm-performance-comparison-2026-10-18.md` §6.2/§6.3）：
+ABBA 交替 ≥8 进程、丢弃 ≥1 轮预热、电源计划用高性能、测量期间不编译不并行推理、
+同时报 mean-of-means 与各 run 明细，两组区间重叠即判为无收益。Windows「平衡」
+电源计划下的逐轮漂移**未复现**（一次 +3.0%，重复实验 −1.3%），且 GPU 时钟、
+功耗、温度、显存、CPU 频率全程恒定，不能归因于硬件状态；不宣称已定位。
+
 ### ORT CUDA 预编译包与 Blackwell 架构覆盖
 
 本机 rc.13 Runtime 1.28 CUDA13 provider 中只有 sm75/sm80/sm90a cubin，且没有 PTX；RTX 5070 sm120 的 Nano `/Cast` 实际生成报 `cudaErrorNoKernelImageForDevice`。CUDA 13 安装、驱动可用、EP 注册成功都不能证明模型算子覆盖。用 `cuobjdump --list-elf` 和 `--list-ptx` 检查实际打包 DLL，并保存真实生成错误；不静默降级显式 CUDA，不以升级 Toolkit 修复缺失内核。后续验证匹配的含 Blackwell Runtime/provider 分发或可重复原生构建，不能只替换不匹配的 provider DLL。详见 `docs/records/platform/ort-rc13-upgrade.md`。
