@@ -360,6 +360,17 @@ tag `0.11.0`）。
   `CUDNN_PATH` 而链接找不到 `cudnn.lib`，给构建进程设置 `CUDNN_LIB` 为该 SDK 根目录，
   `LIB` 包含 `lib\x64`，PATH 包含 `bin`。不把链接失败当作图不支持 cuDNN；补齐路径后
   dense conv 与完整 decoder capture/replay 均已通过逐位测试。
+- 固定缓冲 recorder 在第二个真实使用者（Qwen CodePredictor 帧图）出现后提取到
+  `crates/candle-cuda-graph`（`talechime-candle-cuda-graph`）。它只做设备机制：
+  capture/replay、输入覆盖、输出回拷、缓冲与流生命周期；模型策略留在
+  `voxcpm::cuda_graph` 与 `qwen3_tts::models::code_predictor::graph`。该 crate 依赖
+  Candle 的 `cuda` feature（而非自己挑 cudarc 库加载模式，与 `tts-candle-platform`
+  同一约定），支持整数 storage slice 以录制 U32 token 输出，并导出 `is_capturing`
+  供测试断言 capture 已干净退出——因此两个模型 crate 都不再直接依赖 cudarc。
+- Qwen CUDA 默认录制 CP 帧图：`QWEN_CP_GRAPH=0` 关闭，`profiling` feature 强制
+  eager。图为每代 session 所有（完整合成每次调用一个、流式每 session 一个），
+  依赖“每次回放重写全部 16 个 KV 位置”的不变式而非回放重置 Rust 簿记。实测与
+  边界见 `docs/records/qwen/qwen-cp-graph-2026-10-18.md`。
 
 TTS 性能对照统一协议（劣化排查结论，见
 `docs/records/voxcpm/voxcpm-performance-comparison-2026-10-18.md` §6.2/§6.3）：

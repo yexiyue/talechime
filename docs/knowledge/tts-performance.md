@@ -31,9 +31,11 @@ flowchart TD
 
 Qwen 的 `synthesis/streaming/decoder.rs` 保留有限 codes 历史，并事务式交付新 PCM；
 VoxCPM 的 `cuda_graph/decoder.rs` 回放 AudioVAE 的卷积历史和 overlap。它们不是相同的
-状态模型，不合并。Vox 的 `cuda_graph/replay.rs` 只管理录制、固定缓冲、复制与流；
-模型级缓存键、schedule 保活及失败策略仍归 CFM/decoder。当前只有 Vox 使用该 recorder，
-暂不搬到 `tts-candle-platform`；后者继续承担平台 feature，不承担推理。
+状态模型，不合并。固定缓冲 recorder（录制、输入覆盖、输出回拷、流与缓冲生命周期）
+已由第二个真实使用者促成提取到 `crates/candle-cuda-graph`，只做设备机制；模型级
+缓存键、状态保活、取消与失败策略仍归各模型的私有模块（Vox CFM/decoder、Qwen
+`code_predictor/graph.rs`）。`tts-candle-platform` 继续只承担 target feature，
+不承担推理，也不吞并 recorder。
 
 ## 基线与官方对照
 
@@ -114,6 +116,17 @@ Qwen Metal depthwise 的窗口 matmul 只适用已验证的卷积条件；CUDA �
    与正常 graph 性能分开；取消在帧前后检查，不使健康图永久失效。
 7. RAII 收尾失败 capture。无状态图可在确认上下文可用时 eager 回落；有状态 launch
    失败且不能证明未推进时，终止当前请求，不能重复算该帧。下一请求先重置状态。
+8. 回放不重跑 Rust 簿记（`reset`、`current_len`、计数器）。可回放区域的判据是
+  **不变式**：每次回放把图内稍后读取的每个字节都重写。Qwen CP 每帧重写全部 16 个
+  KV 位置，因此无需图内重置；AudioVAE 的卷积历史不被每帧重写，只能改为图内更新
+  的持久状态，否则按第 7 条终止请求。
+9. recorder 必须支持被录区域的输出 dtype。Qwen 输出 `[15] U32`；只支持浮点的
+   recorder 会逼出“转浮点再转回”的数值-changing 绕路，宁可先扩共享机制。
+10. 图与被捕获状态归**每次生成**所有：完整合成的每次调用、流式的每个 session。
+    不得放进全局模型的可变缓存，也不得放在每次帧新建的临时值里。完整合成即使
+    每调用捕获一次，也在同一次调用的所有帧上摊销。
+11. `profiling` feature 下停用图：逐步 span 会把 replay 压成一次 launch，trace
+    失真。基准用无插桩 release 构建。
 
 低层最小复现通过后再决定 fork：不能把未缓存 h2d、未配平输出分配、错误流或历史
 张量释放误判为 Candle 缺陷。真实 CUDA/cuDNN 版本和实机证据独立记录。
@@ -144,11 +157,13 @@ patch 下能编译当作发行可用。确需 fork 独有公开 API 时，受影
 | Qwen 设备帧缓冲简化 | 严格 PCM/codes 一致，未证明提速；保留理由是数据流更简单 |
 | Qwen 采样边界修复 | 修正 nucleus 同分与累积规则；改变旧输出，属于准确性修复，另建基线 |
 | Qwen CUDA CodePredictor 一次 cat 打包 | 输出严格一致，但 ABBA 初筛完整慢 1.04%、流式快 0.46%，收益不明确，撤回；后续优先评估固定 15 步图 |
+| Qwen CUDA CodePredictor 帧图 | 正式 ABBA 八进程完整 3.0840→1.9113 s（-38.0%）、流式 3.6529→2.4353 s（-33.3%），区间不重叠；60 份 codes/PCM/WAV 与 eager 逐字节一致；CUDA 默认开，`QWEN_CP_GRAPH=0` 关闭 |
 
 复现细节与人工验收范围见 [VoxCPM 扩展审查](../records/voxcpm/voxcpm-review-extension-2026-10-18.md)、
 [Qwen 性能审查](../records/qwen/qwen-performance-review-2026-10-18.md)、
 [Qwen Metal 优化](../records/qwen/qwen-performance-optimization-2026-10-18.md)、
 [Qwen CUDA 调研](../records/qwen/qwen-cuda-performance-2026-10-18.md)、
+[Qwen CP 帧图](../records/qwen/qwen-cp-graph-2026-10-18.md)、
 [IndexTTS 性能记录](../records/indextts/indextts-candle-performance-2026-10-17.md)、
 [CosyVoice3 性能记录](../records/cosyvoice3/cosyvoice3-performance-2026-10-17.md)。
 旧官方/C++ RTF 使用不同协议，不与这些数值直接排名。后续后端按本文流程建立自己的基线。

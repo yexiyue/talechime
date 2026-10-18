@@ -1,0 +1,4 @@
+interface:
+  display_name: "Candle 性能优化"
+  short_description: "诊断 Candle 推理热点，验证 Metal、Accelerate/AMX 与 CUDA 优化"
+  default_prompt: "使用 $candle-performance 定位当前 Candle 推理项目的性能热点，提出并验证保持准确性的优化。"
