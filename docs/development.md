@@ -26,11 +26,12 @@ CLI 与 backends 使用同名开关，计算库只提供 `cuda` / `metal` 平台
 
 | 层次 | 开关 | 含义 |
 | --- | --- | --- |
-| 模型适配器 | `moss`、`qwen`、`voxcpm`、`omnivoice`、`cosyvoice3` | 启用对应模型；默认构建启用 `moss-nano-candle`；单独启用 `moss` 保留 ONNX |
+| 模型适配器 | `moss`、`qwen`、`voxcpm`、`omnivoice`、`cosyvoice3`、`indextts` | 启用对应模型；默认构建启用 `moss-nano-candle`；单独启用 `moss` 保留 ONNX；IndexTTS 仅源码构建 |
 | 回读模型组 | `asr` | Qwen3-ASR 0.6B Candle CPU + SenseVoiceSmall INT8 ORT CPU；合成策略仍默认关闭 |
 | Nano 默认实现 | `moss-nano-candle` | 在 MOSS 目录优先选择原生 Nano；ONNX 仍可显式选择 |
 | MOSS 实验实现 | `moss-candle` | 在 MOSS 目录增加 Local / Realtime；生产入口目前仅开放 GPU |
 | Candle 加速 | `qwen-cuda` / `qwen-metal`、`voxcpm-cuda` / `voxcpm-metal`、`omnivoice-cuda` / `omnivoice-metal`、`cosyvoice3-cuda` / `cosyvoice3-metal`、`moss-candle-cuda` / `moss-candle-metal`、`moss-nano-candle-cuda` / `moss-nano-candle-metal` | 启用对应适配器及计算库加速；按目标平台门控 |
+| IndexTTS 加速 | `indextts-metal`、`indextts-cuda-cudnn` | 启用 IndexTTS 及对应设备；CUDA 使用 cuDNN 卷积，需要原生工具链 |
 | Candle cuDNN 卷积 | `indextts-cuda-cudnn` | indextts 的 cuda 变体：卷积走 cuDNN，绕开 candle unfold 回退对跨步布局的限制（普通 `cuda` 行为不变） |
 
 macOS 上 `cosyvoice3` 的 CPU matmul 默认经系统 Accelerate（AMX BLAS）执行

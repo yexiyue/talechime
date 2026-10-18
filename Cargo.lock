@@ -4057,6 +4057,7 @@ dependencies = [
  "cosyvoice3",
  "dirs",
  "hound",
+ "indextts",
  "kaldi-fbank",
  "moss-tts",
  "omnivoice",

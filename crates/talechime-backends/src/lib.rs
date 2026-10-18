@@ -13,9 +13,12 @@ mod cache_identity;
     feature = "qwen",
     feature = "voxcpm",
     feature = "cosyvoice3",
+    feature = "indextts",
     feature = "omnivoice",
 ))]
 pub mod devices;
+#[cfg(feature = "indextts")]
+pub mod indextts;
 #[cfg(feature = "moss")]
 pub mod moss;
 #[cfg(feature = "omnivoice")]
@@ -26,6 +29,7 @@ pub mod qwen;
     feature = "qwen",
     feature = "voxcpm",
     feature = "cosyvoice3",
+    feature = "indextts",
     feature = "omnivoice",
     feature = "moss-candle"
 ))]
@@ -70,11 +74,20 @@ impl Registry {
         feature = "qwen",
         feature = "voxcpm",
         feature = "cosyvoice3",
+        feature = "indextts",
         feature = "omnivoice",
     ))]
     fn devices_for(&self, backend: &str, available: bool) -> Vec<tts_protocol::Device> {
         let _ = available;
         match backend {
+            #[cfg(feature = "indextts")]
+            "indextts" => {
+                if available {
+                    indextts::available_devices()
+                } else {
+                    indextts::compiled_devices()
+                }
+            }
             #[cfg(feature = "cosyvoice3")]
             "cosyvoice3" => {
                 if available {
@@ -131,6 +144,7 @@ impl Registry {
         feature = "qwen",
         feature = "voxcpm",
         feature = "cosyvoice3",
+        feature = "indextts",
         feature = "omnivoice",
     ))]
     pub fn compiled_devices(&self, backend: &str) -> Vec<tts_protocol::Device> {
@@ -141,6 +155,7 @@ impl Registry {
         feature = "qwen",
         feature = "voxcpm",
         feature = "cosyvoice3",
+        feature = "indextts",
         feature = "omnivoice",
     ))]
     pub fn available_devices(&self, backend: &str) -> Vec<tts_protocol::Device> {
@@ -151,6 +166,7 @@ impl Registry {
         feature = "qwen",
         feature = "voxcpm",
         feature = "cosyvoice3",
+        feature = "indextts",
         feature = "omnivoice",
     ))]
     pub fn device_status(
@@ -172,6 +188,7 @@ impl Registry {
         feature = "qwen",
         feature = "voxcpm",
         feature = "cosyvoice3",
+        feature = "indextts",
         feature = "omnivoice",
     ))]
     pub fn compiled_devices_for(
@@ -204,6 +221,7 @@ impl Registry {
         feature = "qwen",
         feature = "voxcpm",
         feature = "cosyvoice3",
+        feature = "indextts",
         feature = "omnivoice",
     ))]
     pub fn available_devices_for(
@@ -239,6 +257,7 @@ impl Registry {
         feature = "qwen",
         feature = "voxcpm",
         feature = "cosyvoice3",
+        feature = "indextts",
         feature = "omnivoice",
     ))]
     pub fn device_status_for(
@@ -272,6 +291,8 @@ impl Registry {
             omnivoice::capabilities(&omnivoice::directory(&self.root))?,
             #[cfg(feature = "cosyvoice3")]
             cosyvoice3::capabilities(&cosyvoice3::directory(&self.root))?,
+            #[cfg(feature = "indextts")]
+            indextts::capabilities(&indextts::directory(&self.root))?,
         ];
         #[cfg(feature = "voxcpm")]
         let entries = {
@@ -297,6 +318,7 @@ impl Registry {
             feature = "qwen",
             feature = "voxcpm",
             feature = "cosyvoice3",
+            feature = "indextts",
             feature = "omnivoice",
         ))]
         for caps in &mut entries {
@@ -381,6 +403,7 @@ impl Registry {
             feature = "qwen",
             feature = "voxcpm",
             feature = "cosyvoice3",
+            feature = "indextts",
             feature = "omnivoice",
         ))]
         anyhow::ensure!(
@@ -388,6 +411,14 @@ impl Registry {
             "device {device:?} is unavailable for {id}"
         );
         match id {
+            #[cfg(feature = "indextts")]
+            "indextts" => {
+                let directory = indextts::directory(&self.root);
+                indextts::resources::prepare(&directory, progress).await?;
+                Ok(Rc::new(
+                    indextts::IndexBackend::load_on(directory, device).await?,
+                ))
+            }
             #[cfg(feature = "cosyvoice3")]
             "cosyvoice3" => {
                 let directory = cosyvoice3::directory(&self.root);

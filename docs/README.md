@@ -21,6 +21,7 @@
 - [工具链与平台](knowledge/toolchain.md)：原生依赖、设备探测、构建、平台限制和实验记录。
 - [会话与宿主集成](knowledge/booksource.md)：从 TRNovel 提取的听书知识；原阅读器专属条目为历史背景。
 - [CosyVoice3 后端](cosyvoice3.md)：实验性零样本克隆、原生流式、固定本地转换文件与音色导入。
+- [IndexTTS 2.5 后端](indextts.md)：实验性参考克隆、源码 feature、本地转换文件与设备边界。
 
 ## 历史记录（records/）
 

@@ -483,6 +483,60 @@ pub fn generate_mel_tokens(
     cfg: &GenerateConfig,
     rng: &mut StdRng,
 ) -> Result<Tensor> {
+    generate_mel_tokens_inner(
+        parts,
+        fake_inputs,
+        prompt_embeds,
+        attention_mask,
+        eos_token,
+        start_mel_token,
+        cfg,
+        rng,
+        &|| false,
+        false,
+    )
+}
+
+/// Like [`generate_mel_tokens`], with a cancellation check between decoder steps.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_mel_tokens_with_cancel(
+    parts: &InferenceParts,
+    fake_inputs: &Tensor,
+    prompt_embeds: &Tensor,
+    attention_mask: &Tensor,
+    eos_token: u32,
+    start_mel_token: u32,
+    cfg: &GenerateConfig,
+    rng: &mut StdRng,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Tensor> {
+    generate_mel_tokens_inner(
+        parts,
+        fake_inputs,
+        prompt_embeds,
+        attention_mask,
+        eos_token,
+        start_mel_token,
+        cfg,
+        rng,
+        cancelled,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn generate_mel_tokens_inner(
+    parts: &InferenceParts,
+    fake_inputs: &Tensor,
+    prompt_embeds: &Tensor,
+    attention_mask: &Tensor,
+    eos_token: u32,
+    start_mel_token: u32,
+    cfg: &GenerateConfig,
+    rng: &mut StdRng,
+    cancelled: &dyn Fn() -> bool,
+    require_eos: bool,
+) -> Result<Tensor> {
     let device = prompt_embeds.device();
     let dims = fake_inputs.dims();
     if dims.len() != 2 {
@@ -567,6 +621,9 @@ pub fn generate_mel_tokens(
     let mut input_ids = fake_rows;
     let mut steps = 0usize;
     while steps < cfg.max_new_tokens {
+        if cancelled() {
+            candle_core::bail!("IndexTTS synthesis cancelled");
+        }
         let seq = hidden.dims()[1];
         let h_last = hidden.narrow(1, seq - 1, 1)?;
         let logits = {
@@ -696,9 +753,14 @@ pub fn generate_mel_tokens(
         };
     }
 
+    // A padded EOS after reaching the token limit is not a generated stop.
+    // Preserve only hypotheses that actually emitted EOS for production calls.
+    if require_eos && scorer.hyps.iter().any(|hyp| hyp.beams.is_empty()) {
+        candle_core::bail!("IndexTTS semantic generation reached its limit without EOS");
+    }
     // ---- `BeamSearchScorer.finalize` (num_beam_hyps_to_keep = 1).
     for bi in 0..b {
-        if scorer.done[bi] {
+        if scorer.done[bi] || require_eos {
             continue;
         }
         for j in 0..num_beams {
@@ -1003,6 +1065,70 @@ mod tests {
         let a = run_tiny(&parts, &cfg, 4242);
         let b = run_tiny(&parts, &cfg, 4242);
         assert_eq!(a.to_vec2::<u32>().unwrap(), b.to_vec2::<u32>().unwrap());
+    }
+
+    #[test]
+    fn dropped_consumer_stops_generation_before_next_token() {
+        let parts = tiny_parts(16, 8);
+        let device = Device::Cpu;
+        let fake = Tensor::from_vec(vec![1i64, 1, 1, 7], (1, 4), &device).unwrap();
+        let prompt = Tensor::zeros((1, 3, 8), DType::F32, &device).unwrap();
+        let mask = Tensor::ones((1, 4), DType::F32, &device).unwrap();
+        let cfg = GenerateConfig {
+            num_beams: 2,
+            max_new_tokens: 5,
+            ..Default::default()
+        };
+        let result = generate_mel_tokens_with_cancel(
+            &InferenceParts {
+                gpt: &parts.model,
+                embeddings: &parts.embeddings,
+                mel_pos_embedding: &parts.mel_pos,
+                final_norm: &parts.final_norm,
+                mel_head: &parts.mel_head,
+            },
+            &fake,
+            &prompt,
+            &mask,
+            5,
+            7,
+            &cfg,
+            &mut StdRng::seed_from_u64(42),
+            &|| true,
+        );
+        assert!(result.unwrap_err().to_string().contains("cancelled"));
+    }
+
+    #[test]
+    fn token_limit_without_real_eos_is_an_error() {
+        let parts = tiny_parts(16, 8);
+        let device = Device::Cpu;
+        let fake = Tensor::from_vec(vec![1i64, 1, 1, 7], (1, 4), &device).unwrap();
+        let prompt = Tensor::zeros((1, 3, 8), DType::F32, &device).unwrap();
+        let mask = Tensor::ones((1, 4), DType::F32, &device).unwrap();
+        let cfg = GenerateConfig {
+            num_beams: 2,
+            max_new_tokens: 2,
+            ..Default::default()
+        };
+        let result = generate_mel_tokens_with_cancel(
+            &InferenceParts {
+                gpt: &parts.model,
+                embeddings: &parts.embeddings,
+                mel_pos_embedding: &parts.mel_pos,
+                final_norm: &parts.final_norm,
+                mel_head: &parts.mel_head,
+            },
+            &fake,
+            &prompt,
+            &mask,
+            99,
+            7,
+            &cfg,
+            &mut StdRng::seed_from_u64(42),
+            &|| false,
+        );
+        assert!(result.unwrap_err().to_string().contains("without EOS"));
     }
 
     #[test]

@@ -72,6 +72,29 @@ impl Cfm {
         n_timesteps: usize,
         cfg_rate: f64,
     ) -> Result<Tensor> {
+        self.inference_with_cancel(
+            condition,
+            condition_lengths,
+            ref_mel,
+            style,
+            n_timesteps,
+            cfg_rate,
+            &|| false,
+        )
+    }
+
+    /// Run the solver with a cancellation check between diffusion steps.
+    #[allow(clippy::too_many_arguments)]
+    pub fn inference_with_cancel(
+        &self,
+        condition: &Tensor,
+        condition_lengths: &[usize],
+        ref_mel: &Tensor,
+        style: &Tensor,
+        n_timesteps: usize,
+        cfg_rate: f64,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Tensor> {
         if n_timesteps == 0 {
             candle_core::bail!("n_timesteps must be positive");
         }
@@ -120,6 +143,9 @@ impl Cfm {
             .collect();
         let mut t = 0f64;
         for step in 1..=n_timesteps {
+            if cancelled() {
+                candle_core::bail!("IndexTTS synthesis cancelled");
+            }
             let dt = t_span[step] - t_span[step - 1];
             let t_vec = Tensor::full(t as f32, (b,), device)?;
             let dphi = if cfg_rate > 0.0 {

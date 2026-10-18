@@ -28,7 +28,8 @@ fn unsupported(backend: &str) -> VoiceImportError {
 #[cfg(any(
     not(feature = "qwen"),
     not(feature = "voxcpm"),
-    not(feature = "omnivoice")
+    not(feature = "omnivoice"),
+    not(feature = "indextts")
 ))]
 fn not_compiled(backend: &str) -> VoiceImportError {
     VoiceImportError {
@@ -36,7 +37,12 @@ fn not_compiled(backend: &str) -> VoiceImportError {
     }
 }
 
-#[cfg(any(feature = "qwen", feature = "voxcpm", feature = "omnivoice"))]
+#[cfg(any(
+    feature = "qwen",
+    feature = "voxcpm",
+    feature = "omnivoice",
+    feature = "indextts"
+))]
 fn custom_id(id: &str) -> String {
     format!("custom:{}", id.trim_start_matches("custom:"))
 }
@@ -115,6 +121,32 @@ pub fn import_reference_voice(
             }
             #[cfg(not(feature = "omnivoice"))]
             Err(not_compiled("omnivoice"))
+        }
+        "indextts" => {
+            #[cfg(feature = "indextts")]
+            {
+                if options.model.as_deref().is_some_and(|model| model != "2.5") {
+                    return Err(VoiceImportError {
+                        message: "IndexTTS model must be 2.5".into(),
+                    });
+                }
+                let reference = tts_backends::reference::load(wav, 22_050).map_err(fail)?;
+                if reference.len() > 15 * 22_050 {
+                    return Err(VoiceImportError {
+                        message: "IndexTTS reference must be at most 15 seconds".into(),
+                    });
+                }
+                let store = tts_backends::indextts::voice_store(
+                    &tts_backends::indextts::directory(options.resources.as_path()),
+                )
+                .map_err(fail)?;
+                store
+                    .import(&custom_id(id), name, wav, transcript, None)
+                    .map_err(fail)?;
+                Ok(())
+            }
+            #[cfg(not(feature = "indextts"))]
+            Err(not_compiled("indextts"))
         }
         backend => Err(unsupported(backend)),
     }

@@ -97,6 +97,7 @@ impl Worker {
         feature = "qwen",
         feature = "voxcpm",
         feature = "cosyvoice3",
+        feature = "indextts",
         feature = "omnivoice",
     ))]
     pub fn unprepared_device_status(&self) -> anyhow::Result<Event> {
@@ -116,6 +117,7 @@ impl Worker {
         feature = "qwen",
         feature = "voxcpm",
         feature = "cosyvoice3",
+        feature = "indextts",
         feature = "omnivoice",
     ))]
     pub fn has_prepared_model(&self) -> bool {
@@ -216,6 +218,7 @@ impl Worker {
                     feature = "qwen",
                     feature = "voxcpm",
                     feature = "cosyvoice3",
+                    feature = "indextts",
                     feature = "omnivoice",
                 ))]
                 if let Some(device) = patch.tts_device.or_else(|| {

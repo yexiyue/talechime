@@ -15,6 +15,9 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [features]
+indextts = ["tts-backends/indextts"]
+indextts-metal = ["indextts", "tts-backends/indextts-metal"]
+indextts-cuda-cudnn = ["indextts", "tts-backends/indextts-cuda-cudnn"]
 cosyvoice3 = ["tts-backends/cosyvoice3"]
 cosyvoice3-metal = ["cosyvoice3", "tts-backends/cosyvoice3-metal"]
 cosyvoice3-cuda = ["cosyvoice3", "tts-backends/cosyvoice3-cuda"]

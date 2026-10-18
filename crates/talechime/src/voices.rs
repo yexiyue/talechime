@@ -52,6 +52,7 @@ pub async fn run(
     }
     #[cfg(any(
         feature = "cosyvoice3",
+        feature = "indextts",
         feature = "voxcpm",
         feature = "omnivoice",
         feature = "moss-candle"
@@ -72,6 +73,10 @@ pub async fn run(
                     anyhow::anyhow!("{backend} cloning requires --text matching the reference WAV")
                 })?;
                 let reference = tts_backends::reference::load(&wav, rate)?;
+                anyhow::ensure!(
+                    backend != "indextts" || reference.len() <= 15 * rate as usize,
+                    "IndexTTS reference must be at most 15 seconds"
+                );
                 anyhow::ensure!(
                     backend != "moss" || reference.len() <= 240000,
                     "MOSS trial reference must be at most 10 seconds"
@@ -349,6 +354,7 @@ pub async fn run(
 }
 #[cfg(any(
     feature = "cosyvoice3",
+    feature = "indextts",
     feature = "voxcpm",
     feature = "omnivoice",
     feature = "moss-candle"
@@ -358,6 +364,13 @@ fn shared_store(
     config: &tts_protocol::Config,
 ) -> anyhow::Result<Option<(tts_core::voices::VoiceStore, u32)>> {
     Ok(match config.backend.as_str() {
+        #[cfg(feature = "indextts")]
+        "indextts" => Some((
+            tts_backends::indextts::voice_store(&tts_backends::indextts::directory(
+                resources.root(),
+            ))?,
+            22_050,
+        )),
         #[cfg(feature = "cosyvoice3")]
         "cosyvoice3" => Some((
             tts_backends::cosyvoice3::voice_store(&tts_backends::cosyvoice3::directory(

@@ -343,6 +343,17 @@ impl Model {
     /// Synthesize `text` (a whole paragraph; segmentation mirrors
     /// `split_text_by_tokens`) into PCM.
     pub fn generate(&mut self, text: &str, lang: &str, opts: &Options) -> Result<Outcome> {
+        self.generate_with_cancel(text, lang, opts, &|| false)
+    }
+
+    /// Generate one segment, observing cancellation between model stages.
+    pub fn generate_with_cancel(
+        &mut self,
+        text: &str,
+        lang: &str,
+        opts: &Options,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Outcome> {
         let _report = crate::profile::report();
         // Cloned tensor handles: the owned copy releases the `&self`
         // borrow so experiments like `decode_on_cpu` can take `&mut self`
@@ -428,6 +439,9 @@ impl Model {
         let mut wav_parts: Vec<Vec<f32>> = Vec::new();
 
         for seg_text in &segments {
+            if cancelled() {
+                candle_core::bail!("IndexTTS synthesis cancelled");
+            }
             let mut ids = self.tokenizer.encode(&format!("{lang_prefix}{seg_text}"));
             ids.push(stop_text);
             let id_len = ids.len();
@@ -435,15 +449,19 @@ impl Model {
 
             let codes = {
                 let _g = crate::profile::scope(Some(&self.device), "gpt");
-                self.gpt.inference_speech(
+                self.gpt.inference_speech_with_cancel(
                     &text_tokens,
                     lang_id,
                     &emovec,
                     &reference.style,
                     &opts.generate,
                     &mut rng,
+                    cancelled,
                 )?
             };
+            if cancelled() {
+                candle_core::bail!("IndexTTS synthesis cancelled");
+            }
             let codes = truncate_at_stop(&codes, self.config.gpt.stop_mel_token)?;
             if codes.dim(1)? == 0 {
                 candle_core::bail!("generation stopped without producing semantic tokens");
@@ -470,15 +488,19 @@ impl Model {
             let cat_condition = Tensor::cat(&[&reference.prompt_condition, &cond], 1)?;
             let vc_target = {
                 let _g = crate::profile::scope(Some(&self.device), "cfm");
-                self.s2mel.cfm.inference(
+                self.s2mel.cfm.inference_with_cancel(
                     &cat_condition,
                     &[cat_condition.dim(1)?],
                     &reference.ref_mel,
                     &reference.style,
                     opts.diffusion_steps,
                     opts.inference_cfg_rate,
+                    cancelled,
                 )?
             };
+            if cancelled() {
+                candle_core::bail!("IndexTTS synthesis cancelled");
+            }
             let ref_frames = reference.ref_mel.dim(2)?;
             let vc_target = vc_target.narrow(2, ref_frames, vc_target.dim(2)? - ref_frames)?;
 

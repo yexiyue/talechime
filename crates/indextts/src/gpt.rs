@@ -222,6 +222,29 @@ impl UnifiedVoice {
         cfg: &GenerateConfig,
         rng: &mut StdRng,
     ) -> Result<Tensor> {
+        self.inference_speech_with_cancel(
+            text_tokens,
+            lang_id,
+            emo_vec,
+            campplus_style,
+            cfg,
+            rng,
+            &|| false,
+        )
+    }
+
+    /// Synthesize semantic codes while checking for cancellation between tokens.
+    #[allow(clippy::too_many_arguments)]
+    pub fn inference_speech_with_cancel(
+        &self,
+        text_tokens: &Tensor,
+        lang_id: u32,
+        emo_vec: &Tensor,
+        campplus_style: &Tensor,
+        cfg: &GenerateConfig,
+        rng: &mut StdRng,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Tensor> {
         // conds = [spk + emo_vec, 0, 0]  (3 conditioning positions)
         let conds_latent = self.campplus_conditioning(campplus_style, emo_vec)?;
 
@@ -229,7 +252,7 @@ impl UnifiedVoice {
             self.prepare_gpt_inputs(&conds_latent, text_tokens, lang_id)?;
 
         let parts = self.inference_parts();
-        crate::generation::generate_mel_tokens(
+        crate::generation::generate_mel_tokens_with_cancel(
             &parts,
             &fake_inputs,
             &mel_emb,
@@ -238,6 +261,7 @@ impl UnifiedVoice {
             self.start_mel_token,
             cfg,
             rng,
+            cancelled,
         )
     }
 

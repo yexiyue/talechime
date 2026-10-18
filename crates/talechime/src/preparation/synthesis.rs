@@ -190,6 +190,10 @@ pub(super) async fn prepare(
 }
 pub(super) fn tts_revision(config: &Config) -> &'static str {
     let backend = config.backend.as_str();
+    #[cfg(feature = "indextts")]
+    if backend == "indextts" {
+        return tts_backends::indextts::resources::REVISION;
+    }
     #[cfg(feature = "cosyvoice3")]
     if backend == "cosyvoice3" {
         return tts_backends::cosyvoice3::resources::REVISION;
