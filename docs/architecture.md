@@ -6,6 +6,11 @@ Talechime 拥有语音合成和播放；章节获取、阅读界面、角色识�
 不拥有模型状态或采样策略。Qwen 的 codes 历史解码与 VoxCPM 的有状态图回放各自封装，
 不将两种状态生命周期合并。共享边界与验证规则见 [TTS 性能优化方法](knowledge/tts-performance.md)。
 
+Qwen 12Hz 历史解码没有跨调用内部状态，CUDA 流式图可以由模型持有，按短块帧数
+有界缓存；锁覆盖回放与输出复制，图保活常量且先于权重销毁。模型算术、常量缓存、
+图策略分别放在 `decoder_12hz.rs`、私有 `tables.rs`、`graph.rs`；有请求 KV 的
+CodePredictor 图继续归 session。设备录制机制复用 `candle-cuda-graph`，不进入宿主层。
+
 ```mermaid
 flowchart TD
     H[宿主应用] --> P[talechime-protocol]

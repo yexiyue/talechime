@@ -378,11 +378,12 @@ tag `0.11.0`）。
   依赖“每次回放重写全部 16 个 KV 位置”的不变式而非回放重置 Rust 簿记。实测与
   边界见 `docs/records/qwen/qwen-cp-graph-2026-10-18.md`：ABBA 八进程完整 -38.0%、
   流式 -33.3%、首 PCM -26.3%。
-- Qwen 12Hz 解码器把语义 code 的取模改成设备端查表，并按帧数缓存 RoPE 表与
-  滑窗 mask：解码器此前每次调用都有一次设备→主机往返，以及一个超过捕获期 h2d
-  缓存上限的 mask 上传，因此无法 capture。改动逐字节一致、无性能变化，保留是为了
-  去掉同步；余量评估见
-  `docs/records/qwen/qwen-cuda-graph-partition-2026-10-18.md`。
+- Qwen CUDA 流式 12Hz 解码图默认开启（`QWEN_DECODE_GRAPH=0` 关闭，profiling
+  强制 eager）。无跨调用内部状态，模型内串行回放与复制输出；最多缓存 4 种
+  1–64 帧短块，图保活常量并先于权重销毁。RoPE/掩码表缓存最多 4 项、8 MiB；
+  CUDA 语义 code 用整数算术取模，不再依赖主机往返或 Talker 词表大小。
+  CP 图已开启时，正式 ABBA 八进程流式耗时进一步减少 12.8%，240 份产物相同；
+  见 `docs/records/qwen/qwen-decoder-graph-2026-10-18.md`。
 
 TTS 性能对照统一协议（劣化排查结论，见
 `docs/records/voxcpm/voxcpm-performance-comparison-2026-10-18.md` §6.2/§6.3）：

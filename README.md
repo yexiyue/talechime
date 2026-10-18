@@ -108,7 +108,7 @@ talechime --backend voxcpm --param steps=32 --param temperature=0.9 --seed 7 cha
 
 CosyVoice3 的 Rust Metal 没有对应的官方 MPS 实现可作同设备对照；[报告](docs/records/cosyvoice3/cosyvoice3-performance-2026-10-17.md)另列 Metal 和官方 CPU 的绝对结果，不能把设备差异算成移植提速。Qwen 官方对照使用显式匹配采样和空历史 repetition guard；官方源码补丁只用于可运行的 MPS 基准与 EOS/来源记录，不改变 Talechime 实现，历史失效比较保留在[审查记录](docs/records/qwen/qwen-performance-review-2026-10-18.md)。MOSS、VoxCPM2 和 OmniVoice 目前缺少同条件的**官方实现**性能基准，因此不报“比官方快多少”。VoxCPM2 的[原生 llama.cpp-omni 对照](docs/records/voxcpm/voxcpm-candle-acceptance.md)与官方 PyTorch 是不同基线。
 
-**仓库内优化（Qwen3-TTS 0.6B Base ICL，RTX 5070 CUDA）**：上表是“对官方”口径；CUDA 上另有一项仓库内 A/B——CodePredictor 整帧 CUDA 图（`qwen-cuda` 默认启用，`QWEN_CP_GRAPH=0` 关闭，profiling 走 eager）。ABBA 八进程、锁频、丢弃预热，每帧 59 帧 / 4.72 s 音频，两组区间均不重叠，codes、原始 PCM 与 WAV 与 eager 逐字节一致：
+**仓库内优化（Qwen3-TTS 0.6B Base ICL，RTX 5070 CUDA）**：上表是“对官方”口径；CUDA 上另有一项仓库内 A/B——CodePredictor 整帧 CUDA 图（`qwen-cuda` 默认启用，`QWEN_CP_GRAPH=0` 关闭，profiling 走 eager）。ABBA 八进程、锁频、丢弃预热，每次生成 59 帧 / 4.72 s 音频，两组区间均不重叠，codes、原始 PCM 与 WAV 与 eager 逐字节一致：
 
 | 指标 | eager | 启用帧图 | 改善 |
 | --- | ---: | ---: | ---: |
@@ -117,6 +117,8 @@ CosyVoice3 的 Rust Metal 没有对应的官方 MPS 实现可作同设备对照�
 | 首 PCM | 0.7688 s | 0.5663 s | -26.3% |
 
 这是同一二进制 eager 与图回放之间的比较，不代表比官方 CUDA/PyTorch 快多少，也不外推到其他模型或设备；口径、锁频采样与未复验项见[记录](docs/records/qwen/qwen-cp-graph-2026-10-18.md)。
+
+后续在 **CP 图已开启**的条件下，流式解码图将耗时从 **2.4240 s 降至 2.1140 s（减少 12.8%，RTF 0.514→0.448）**，完整合成与首 PCM 没有明确变化。八进程、各 1 预热 + 5 热轮，240 份产物逐字节一致；CUDA 默认开启，`QWEN_DECODE_GRAPH=0` 关闭。该增量实验使用平衡电源计划，不能和前表不同条件的数字直接叠加；[设计、审查与原始口径](docs/records/qwen/qwen-decoder-graph-2026-10-18.md)另列。
 
 ## 接入应用
 
