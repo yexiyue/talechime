@@ -80,6 +80,10 @@ Qwen ICL 直接使用调用方的 repetition penalty 和帧上限，不再隐式
 官方开发对照工具默认保护空历史 repetition penalty，规避本机 Torch 2.7.1 MPS
 返回复用缓冲区内容的问题；历史模式需显式 `--empty_repetition original`，两者分别记录。
 固定 codes 的官方 F32 交叉验证与人工试听反馈见 [Qwen 正确性记录](records/qwen/qwen-performance-review-2026-10-18.md)。
+Metal depthwise ConvNeXt fast path 及实现内性能边界见
+[Qwen 性能优化记录](records/qwen/qwen-performance-optimization-2026-10-18.md)；
+该路径只适用于符合条件的 causal depthwise 卷积，路由测试要求与原路径逐元素一致，
+不改变固定 seed codes 或 PCM。
 
 构建产物不进入 Git；也不提交模型权重、用户参考音频、正文、凭据和临时运行输出。第三方源码更新保留固定 revision、许可证和对照夹具。PR 使用 Conventional Commit，说明行为、兼容和验证。
 

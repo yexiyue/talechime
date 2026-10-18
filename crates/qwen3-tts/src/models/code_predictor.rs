@@ -326,14 +326,20 @@ impl CodePredictor {
         let _span = tracing::info_span!("code_predictor_inner").entered();
 
         // Reset caches from previous frame
+        #[cfg(feature = "profiling")]
+        let _reset_span = tracing::info_span!("code_predictor_cache_reset").entered();
         for cache in cp_kv_caches.iter_mut() {
             cache.reset();
         }
+        #[cfg(feature = "profiling")]
+        drop(_reset_span);
 
         let device = talker_hidden.device();
         let num_acoustic = self.config.num_code_groups - 1; // 15 acoustic codes
 
         // Step 1: Prefill with [talker_hidden, semantic_embed]
+        #[cfg(feature = "profiling")]
+        let _prefill_span = tracing::info_span!("code_predictor_prefill").entered();
         let input = Tensor::cat(&[talker_hidden, semantic_embed], 1)?;
 
         // Apply projection if needed (CustomVoice: 2048 -> 1024)
@@ -364,6 +370,8 @@ impl CodePredictor {
             )?;
         }
         hidden = self.norm.forward(&hidden)?;
+        #[cfg(feature = "profiling")]
+        drop(_prefill_span);
 
         // Step 2: Predict first acoustic code from last position
         // Keep codes as GPU tensors to avoid per-step GPU→CPU syncs.
@@ -382,6 +390,9 @@ impl CodePredictor {
 
         // Step 3: Autoregressively generate remaining 14 codes
         for (offset, group_idx) in (seq_len..).zip(1..num_acoustic) {
+            #[cfg(feature = "profiling")]
+            let _step_span =
+                tracing::info_span!("code_predictor_acoustic_step", group = group_idx).entered();
             // Embed previous code using the previous group's embedding (stays on GPU)
             let code_embed = self.codec_embeddings[group_idx - 1].forward(&prev_code)?;
             let code_embed = code_embed.unsqueeze(0)?; // [1, 1, codec_embed_dim]

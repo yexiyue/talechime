@@ -142,17 +142,37 @@ pub fn sample(
     config: &GenerationConfig,
     ctx: &mut SamplingContext,
 ) -> Result<Tensor> {
+    #[cfg(feature = "profiling")]
+    let _dtype_span = tracing::info_span!("sampling_dtype_conversion").entered();
     let logits = logits.to_dtype(DType::F32)?;
+    #[cfg(feature = "profiling")]
+    drop(_dtype_span);
+
     if !logits.device().is_cpu() {
         // One logits transfer per semantic step keeps a single CPU sampling
         // policy and avoids the pinned Metal filter failure at width 3072.
+        #[cfg(feature = "profiling")]
+        let _transfer_span = tracing::info_span!("sampling_gpu_to_cpu_transfer").entered();
         let cpu_logits = logits.to_device(&candle_core::Device::Cpu)?;
-        return Ok(sample(&cpu_logits, config, ctx)?.to_device(logits.device())?);
+        #[cfg(feature = "profiling")]
+        drop(_transfer_span);
+        let sampled = sample(&cpu_logits, config, ctx)?;
+        #[cfg(feature = "profiling")]
+        let _return_span = tracing::info_span!("sampling_cpu_to_gpu_return").entered();
+        let sampled = sampled.to_device(logits.device())?;
+        #[cfg(feature = "profiling")]
+        drop(_return_span);
+        return Ok(sampled);
     }
 
     // Apply temperature
     let logits = if config.temperature != 1.0 && config.temperature > 0.0 {
-        (logits / config.temperature)?
+        #[cfg(feature = "profiling")]
+        let _temperature_span = tracing::info_span!("sampling_temperature").entered();
+        let scaled = (logits / config.temperature)?;
+        #[cfg(feature = "profiling")]
+        drop(_temperature_span);
+        scaled
     } else {
         logits
     };
@@ -177,10 +197,19 @@ pub fn sample(
     };
 
     // Convert to probabilities
+    #[cfg(feature = "profiling")]
+    let _softmax_span = tracing::info_span!("sampling_softmax").entered();
     let probs = candle_nn::ops::softmax_last_dim(&logits)?;
+    #[cfg(feature = "profiling")]
+    drop(_softmax_span);
 
     // Sample from distribution
-    multinomial_sample(&probs, ctx)
+    #[cfg(feature = "profiling")]
+    let _select_span = tracing::info_span!("sampling_cdf_and_selection").entered();
+    let tokens = multinomial_sample(&probs, ctx)?;
+    #[cfg(feature = "profiling")]
+    drop(_select_span);
+    Ok(tokens)
 }
 
 /// Apply top-k filtering: keep only the top k logits, set rest to -inf
@@ -188,7 +217,7 @@ pub fn sample(
 /// Uses the CPU policy selected by `sample`.
 fn top_k_filter(logits: &Tensor, k: usize) -> Result<Tensor> {
     #[cfg(feature = "profiling")]
-    let _span = tracing::info_span!("top_k").entered();
+    let _span = tracing::info_span!("sampling_top_k").entered();
     let (batch, vocab) = logits.dims2()?;
     let k = k.min(vocab);
 
@@ -219,7 +248,7 @@ fn top_k_filter(logits: &Tensor, k: usize) -> Result<Tensor> {
 /// Runs on CPU so the boundary and tie policy is shared across devices.
 fn top_p_filter(logits: &Tensor, p: f64) -> Result<Tensor> {
     #[cfg(feature = "profiling")]
-    let _span = tracing::info_span!("top_p").entered();
+    let _span = tracing::info_span!("sampling_top_p").entered();
 
     // CPU path: native Rust sort + cumsum (avoids candle sort_last_dim overhead)
     let (batch, vocab) = logits.dims2()?;

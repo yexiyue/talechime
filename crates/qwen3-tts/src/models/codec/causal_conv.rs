@@ -18,6 +18,40 @@ pub struct CausalConv1d {
 }
 
 impl CausalConv1d {
+    /// Accessors required by the Qwen depthwise fast path.
+    pub(super) fn bias(&self) -> Option<&Tensor> {
+        self.conv.bias()
+    }
+
+    pub(super) fn causal_padding(&self) -> usize {
+        self.causal_padding
+    }
+
+    pub(super) fn channels(&self) -> usize {
+        self.conv.weight().dims()[0]
+    }
+
+    pub(super) fn is_depthwise(&self) -> bool {
+        let config = self.conv.config();
+        let [out_channels, inputs_per_group, _] = self.conv.weight().dims() else {
+            return false;
+        };
+        config.stride == 1
+            && config.dilation == 1
+            && config.groups == *out_channels
+            && *inputs_per_group == 1
+    }
+
+    pub(super) fn kernel_size(&self) -> usize {
+        self.conv.weight().dims()[2]
+    }
+
+    pub(super) fn weight(&self) -> &Tensor {
+        self.conv.weight()
+    }
+}
+
+impl CausalConv1d {
     /// Create a new causal conv1d layer.
     ///
     /// # Arguments

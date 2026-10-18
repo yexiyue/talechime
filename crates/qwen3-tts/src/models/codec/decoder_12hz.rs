@@ -412,6 +412,8 @@ impl Decoder12Hz {
     /// # Returns
     /// Audio tensor of shape [batch, 1, samples]
     pub fn decode(&self, codes: &Tensor) -> Result<Tensor> {
+        #[cfg(feature = "profiling")]
+        let _quantizer_span = tracing::info_span!("codec_quantizer").entered();
         let device = codes.device();
         let (batch_size, _num_quantizers, seq_len) = codes.dims3()?;
 
@@ -453,10 +455,16 @@ impl Decoder12Hz {
 
         // Sum the two projected outputs
         let quantized = (first_proj + rest_proj)?; // [batch, 512, seq]
+        #[cfg(feature = "profiling")]
+        drop(_quantizer_span);
 
         // 2. Pre-conv
         // quantized is already [batch, 512, seq] from projections
+        #[cfg(feature = "profiling")]
+        let _pre_conv_span = tracing::info_span!("codec_pre_conv").entered();
         let hidden = self.pre_conv.forward(&quantized)?; // [batch, 1024, seq]
+        #[cfg(feature = "profiling")]
+        drop(_pre_conv_span);
 
         // 3. Pre-transformer
         let hidden = hidden.transpose(1, 2)?; // [batch, seq, 1024]
@@ -467,7 +475,11 @@ impl Decoder12Hz {
         )?;
 
         // Run transformer layers
+        #[cfg(feature = "profiling")]
+        let _transformer_span = tracing::info_span!("codec_transformer").entered();
         let hidden = self.run_transformer(hidden, seq_len)?;
+        #[cfg(feature = "profiling")]
+        drop(_transformer_span);
 
         // Final norm before output projection
         let hidden = self.rms_norm(&hidden, &self.final_norm_weight)?;
@@ -483,17 +495,25 @@ impl Decoder12Hz {
         let mut hidden = hidden.transpose(1, 2)?;
 
         // 5. Upsample stages
+        #[cfg(feature = "profiling")]
+        let _upsample_span = tracing::info_span!("codec_upsample_stages").entered();
         for stage in self.upsample_stages.iter() {
             hidden = stage.forward(&hidden)?;
         }
+        #[cfg(feature = "profiling")]
+        drop(_upsample_span);
 
         // 6. Decoder.0 (initial conv)
         hidden = self.decoder_init_conv.forward(&hidden)?;
 
         // 7. Decoder blocks
+        #[cfg(feature = "profiling")]
+        let _blocks_span = tracing::info_span!("codec_decoder_blocks").entered();
         for block in self.decoder_blocks.iter() {
             hidden = block.forward(&hidden)?;
         }
+        #[cfg(feature = "profiling")]
+        drop(_blocks_span);
 
         // 8. Final SnakeBeta
         hidden = self.final_snake.forward(&hidden)?;
