@@ -32,6 +32,19 @@
 中临时注释根 `Cargo.toml` 的 `[patch.crates-io]` 区块后重试，发布完成再恢复。
 该步骤只影响本地打包，不修改 `publish-libraries.py` 的逻辑。
 
+2026-10-18 实测：`cargo publish --dry-run --locked --allow-dirty -p voxcpm`
+在**保留** `[patch.crates-io]` 的情况下直接通过（打包时 patch 被忽略，依赖按
+registry 版本解析），因此该回退步骤目前未被触发，保留作为兜底。
+
+## fork 是否真的被用到
+
+截至 2026-10-18，fork 相对上游**没有任何功能性改动**（仅新增 `FORK.md`）。
+每帧 CFM 的 CUDA Graph 只用 candle-core 0.11 / cudarc 0.19 的公开 API 实现，
+未新增也未修改 candle 的 API（见
+`docs/records/voxcpm/voxcpm-performance-comparison-2026-10-18.md` §6.4）。
+因此轨道 B（`publish = false`）尚未触发；`[patch.crates-io]` 目前只是把 candle
+来源固定到可审计的 fork rev 上，不改变任何依赖解析结果。
+
 ## 退出条件
 
 当 `FORK.md` 中登记的补丁全部被上游合并或放弃后，删除 `[patch.crates-io]`、

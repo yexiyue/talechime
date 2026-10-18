@@ -322,6 +322,18 @@ tag `0.11.0`）。
 - CUDA Graph capture 用 candle 0.11 已公开的 `CudaDevice::enable_cuda_graph_htod_cache()`
   与 `CudaDevice::cuda_stream()`，capture 入口是 `cudarc` 0.19.10 的公开
   `begin_capture/end_capture/launch`；cudarc 版本必须与 candle-core 解析到同一实例。
+- candle 只在 `enable_cuda_graph_htod_cache()` guard **生效期间**填充 h2d 参数
+  缓存，且录制中拒绝任何未缓存上传。预热必须放在 guard 之内，否则首次录制直接
+  以 `h2d param cache miss during CUDA graph capture` 失败。
+- **含未配对分配节点的 CUDA 图只能 launch 一次**：此后每次 `cuGraphLaunch` 返回
+  `CUDA_ERROR_INVALID_VALUE`（capture 本身成功，故障延迟到第二次回放才暴露）。
+  candle 的函数式张量天然在录制区间内释放每个中间张量，因此唯一未配对的分配是
+  被保活的输出张量——在录制区间内把它 d2d 拷进录制前分配好的常驻缓冲再释放，
+  图即配平。加 `CUDA_GRAPH_INSTANTIATE_FLAG_AUTO_FREE_ON_LAUNCH` 也能配平，但会
+  在每次 launch 末尾释放输出，不适合图外还要读的结果。该现象与 candle 无关，
+  纯 cudarc 最小复现即可观察到，不必先怀疑 candle 或驱动。
+- 图内不要放取消轮询、profiling 同步或任何 host 读回；这些留在图外逐帧检查。
+  取消粒度因此从「算子内」变成「每帧」，基准与回归用例的阈值要按新粒度设定。
 
 TTS 性能对照统一协议（劣化排查结论，见
 `docs/records/voxcpm/voxcpm-performance-comparison-2026-10-18.md` §6.2/§6.3）：

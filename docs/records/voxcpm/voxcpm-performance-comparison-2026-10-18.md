@@ -144,9 +144,10 @@ GGUF 路径 31 项、原始路径 397 项超差属于历史结果，未声称已
 
 ```mermaid
 flowchart LR
-  A["阶段0 测量卫生<br/>（本次延后）"] --> B["阶段1 位级等价<br/>减少算子次数"]
+  A["阶段0 测量卫生<br/>（单独排查，未定位）"] --> B["阶段1 位级等价<br/>减少算子次数 ✅"]
   B --> C["阶段2 算子级<br/>GQA/注意力布局"]
-  C --> D["阶段3 图级<br/>CUDA Graph（技术可行，改动大）"]
+  C --> D["阶段3 图级<br/>CUDA Graph ✅"]
+  D --> E["阶段4 扩展<br/>Encoder/LM/VAE（待做）"]
 ```
 
 **阶段 0（本次不做）**：首次五轮从 0.537 劣化到 0.601 的稳定性问题，
@@ -271,13 +272,73 @@ E4（冷/暖启动）被「丢弃预热轮」规则取代。
 `broadcast_as+reshape` 物化；`k.transpose().contiguous()` 改用 cuBLAS 原生转置布局。
 两者都可能因 GEMM kernel 选择变化而改变累加顺序，不能默认位级等价。
 
-**阶段 3（CUDA Graph）：技术可行，但属图级大改。** 此前「Candle 无公开 capture
-API」的判断已被上游调研推翻，详见 §7。要点：candle-core 0.11 + cudarc 0.19 的
-**公开 API 即可完成 capture/replay，无需私有 fork**；真正的难点是
-issue #3728 指出的三类 capture 不友好结构——RoPE 的 host 侧 offset 每帧变化、
-KV cache 每帧 `cat` 重新分配、RNG/噪声注入。落地前需要：形状分桶 + 预分配 KV 存储 +
-把噪声等 host 输入移出图外 + 预热填充 h2d 参数缓存。建议先做可行性 spike，
-再决定是否全量迁移。
+**阶段 3（CUDA Graph）：已实施，仅覆盖每帧 CFM，验收通过。** 见 §6.4。
+
+**阶段 4（扩展）：待做。** LocalEncoder `encode`（形状恒定，可直接套用同一条
+路径）；BaseLM + FSQ / ResidualLM 需要预分配 KV 与设备端 offset；AudioVAE decode
+需先实测 cuDNN 调用能否被 capture。三项各自独立 ABBA，收益 < 10% 即撤回。
+
+### 6.4 CUDA Graph：每帧 CFM 单帧图（阶段 3，已验收）
+
+**范围**：只录制 acoustic 的每帧 CFM 步（LocDiT 序列 `(2,11,1024)`，占 §3
+成本的 61.9%）。BaseLM / ResidualLM / LocalEncoder / AudioVAE 仍走 eager。
+
+**为什么这一段适合录制**：每帧调用一次，输入恒为 `mu (1,2,1024)` /
+`prefix (1,64,4)` / `noise (1,64,4)`，序列长度恒定，RoPE offset 恒 0，
+无 KV cache，图内无 d2h。candle 用函数式张量，cudarc 走
+`cuMemAllocAsync`，因此录制期间**每个中间张量都会变成图中的一个分配节点**——
+这一点是本次真正的难点，见下。
+
+**关键发现（根因）**：**含未配对分配节点的图只能 launch 一次**，此后每次
+`cuGraphLaunch` 都返回 `CUDA_ERROR_INVALID_VALUE`。该现象与 candle 无关，用纯
+cudarc 最小复现即可观察到（真实流 + 关闭 event tracking，录一次
+`memcpy_dtod`）：
+
+| 图内容 | 第 1 次 launch | 第 2 次 launch | 第 3 次 launch |
+| --- | --- | --- | --- |
+| 录制前分配、图内不释放 | Ok | Ok | Ok |
+| 录制内分配、图内**不**释放 | Ok | **INVALID_VALUE** | **INVALID_VALUE** |
+| 录制内分配 + 图内释放 | Ok | Ok | Ok |
+| 录制内分配 + `AUTO_FREE_ON_LAUNCH` | Ok | Ok | Ok |
+
+candle 的函数式写法已经让每个中间张量在录制区间内释放，所以**唯一未配对的
+分配就是被保活的输出张量**。落地做法：录制区间内把结果 d2d 拷进一块录制前
+就分配好的常驻缓冲，随即释放结果张量，图因此配平，输出地址也稳定。录制只
+记录不执行，所以未命中缓存的那一帧照常 eager 跑，下一帧起才是回放。
+
+**与原方案的偏差（按证据调整）**：方案里为防御「录制期中间张量被提前回收」
+准备的**私有 mempool 最终删除**。根因是分配节点未配平而非回收，配平后不需要
+隔离 pool，去掉后少约 90 行 unsafe FFI，也不再改动设备默认内存池这一全局
+状态。A/B 实测两种配置 RTF 与输出完全一致。
+
+**另一处必要修正**：candle 只在 `enable_cuda_graph_htod_cache()` 生效期间填充
+h2d 参数缓存，而录制中禁止未缓存上传。预热必须放在 guard **之内**，否则首次
+录制会以 `h2d param cache miss` 失败。
+
+**语义变化（如实记录）**：图内不轮询取消标志，改为**每帧 replay 前检查一次**，
+取消粒度从「transformer 层内」变为「每帧」（PCM 仍在图外产出，被取消的帧不
+出声）。探针里那条「prefill/CFM 取消不得出声」的用例阈值从 80 下调到 8，让它
+落在两条路径一致的 prefill 区间；帧边界之后的取消由既有的 callback 用例覆盖。
+
+**验收结果**：
+
+| 项 | 结果 |
+| --- | --- |
+| 正确性 | 语料 11 段 × 6 轮 = **66 个 WAV 与 eager 基线 SHA-256 逐字节一致** |
+| 探针回归 | 取消 / EOS / max_frames / 空文本 / 非法参数 全部通过（探针内置） |
+| 性能协议 | ABBA 8 进程、锁频 2700 MHz、高性能电源、1 预热 + 5 热轮 |
+| 性能（eager 臂） | mean-of-means **0.4289**，区间 [0.4203, 0.4332] |
+| 性能（图臂） | mean-of-means **0.2978**，区间 [0.2970, 0.2984] |
+| 收益 | **−30.6%**，两组区间不重叠（门槛 ≥ 10%） |
+| 门禁 | `cargo fmt --check`、`cargo test -p voxcpm --lib`（9 passed）、clippy `-D warnings`、rustdoc `-D warnings`、`cargo check --workspace`、`cargo publish --dry-run --locked -p voxcpm` 全部通过 |
+
+RTF 由 0.429 降到 0.298，已进入方案设定的 0.25–0.30 目标带，但**仍高于 C++
+原生的 0.256**。剩余差距的归属要等阶段 4 拆完才知道。
+
+**降级行为**：录制或回放出错 → tracing 警告 + 该 Model 实例永久回落 eager，
+不向用户报错；`VOXCPM_CUDA_GRAPH=0` 关闭；`measure_modules` 打开时整段走
+eager（profiling 在测量区间内同步，图里放不下）。探针每轮 JSON 新增
+`cuda_graph` 字段，基准报告能如实反映当轮走的是哪条路径。
 
 ## 7. Candle 上游 issue / PR 调研（2026-10-18）
 
@@ -287,7 +348,7 @@ KV cache 每帧 `cat` 重新分配、RNG/噪声注入。落地前需要：形状
 
 | 主题 | 上游状态 | 对本项目的结论 |
 | --- | --- | --- |
-| CUDA Graph | issue **#3002**（2025-06 至今 open，candle 无 capture/replay 公共 API，维护者称无 roadmap）；PR **#3083** 至今 draft。**但 candle-core 0.11.0 已内置兼容层**：PR **#3564**（h2d 参数缓存）、PR **#3598**（2026-06-24 合并，0.11.0 发布前 2 天）公开 `CudaDevice::enable_cuda_graph_htod_cache()`，上游实测 A100 Llama-3.1-8B Q4K 收益 +3.59%~+14.63% | **推翻**「阶段 3 不可行」的旧判断。capture 入口是 cudarc 0.19.10 公开 API（`CudaStream::begin_capture/end_capture`、`CudaGraph::launch/upload`），candle `pub use cudarc` 且 `Device::Cuda(dev).cuda_stream()` 为 public（`cuda_backend/device.rs:288`），参数缓存在 `cuda_backend/mod.rs:65`；未预热会直接 bail（`device.rs:158 check_capture_copy` 禁 capture 中 d2h）。**仍需自写 capture/replay 包装**，且要解决 issue **#3728**（open）指出的 RoPE offset 固化与 KV 重分配 |
+| CUDA Graph | issue **#3002**（2025-06 至今 open，candle 无 capture/replay 公共 API，维护者称无 roadmap）；PR **#3083** 至今 draft。**但 candle-core 0.11.0 已内置兼容层**：PR **#3564**（h2d 参数缓存）、PR **#3598**（2026-06-24 合并，0.11.0 发布前 2 天）公开 `CudaDevice::enable_cuda_graph_htod_cache()`，上游实测 A100 Llama-3.1-8B Q4K 收益 +3.59%~+14.63% | **已落地，见 §6.4**：仅用 candle-core 0.11 + cudarc 0.19 的**公开 API**（`CudaStream::begin_capture/end_capture`、`CudaGraph::launch`、`Device::Cuda(dev).cuda_stream()`）即可，无需私有 fork，也未新增 candle API。issue **#3728** 列的三类结构在 CFM 段都不存在（RoPE offset 恒 0、无 KV、噪声已移出图外）。真正的阻塞是**未配对的分配节点**（§6.4 表格），上游文档未提及。预热必须在 `enable_cuda_graph_htod_cache()` guard 之内，否则 `h2d param cache miss` |
 | GQA 广播 | issue **#3253**（open）：`broadcast_matmul` 对 stride-0 广播报 "non-contiguous lhs"，workaround 是 `.broadcast_as(...).contiguous()` 物化整个 K/V。PR **#3872**（2026-08-13 合并）只修了 rank-2 RHS，高阶广播仍走物化 | **无可抄的 PR**。阶段 2 的分组 matmul 需自写，并自证容差（会改 GEMM kernel 选择与累加顺序） |
 | depthwise conv | issue **#3389** / PR **#3531**（IndexTTS 当时采用的手法：pad + 逐 tap narrow·broadcast_mul 累加，绕开 cudarc group conv） | **本仓库已做**：`crates/voxcpm/src/codec.rs:53` 已有同一 fast path（`groups == c && weight.dim(0) == c && weight.dim(1) == 1`）。本轮无需再动 |
 | 量化小批量 matmul | issue **#2074**；candle-core 0.11 已有 `src/quantized/fast_mmvq.rs`（batch 1–8）与 `fast_mmq.rs`（batch > 8），`cuda.rs:852` 在 `!FORCE_DMMV` 时优先尝试 | **已自动受益**：我们 Q8、M=22 走快路径，无需改代码 |
@@ -298,6 +359,13 @@ KV cache 每帧 `cat` 重新分配、RNG/噪声注入。落地前需要：形状
 - Candle 首次五轮（0.576）与复测（0.515）差 12%，原因未定位，按用户要求延后。
 - 劣化同样污染了 §6.1 的绝对值（ABBA before 均值 0.545 差于历史 0.515）；
   ABBA 的相对结论不受影响。劣化排查按用户要求单独进行。
+- §6.4 的 CUDA Graph 目前只覆盖每帧 CFM。RTF 0.298 仍高于 C++ 原生 0.256，
+  剩余差距要等阶段 4（LocalEncoder / BaseLM+FSQ / AudioVAE decode）拆完才知道归属；
+  阶段 2 的算子级优化也仍未做。
+- 图路径下取消粒度为每帧（eager 为每个 transformer 层）。PCM 与 EOS 判定仍在
+  图外，语义未变，但取消的最大额外延迟是一个 CFM 步的时长。
+- CUDA Graph 只在 CUDA 上验证（本机 RTX 5070 / 驱动 616.56 / CUDA 13.4）。
+  分配节点配平这一约束是 CUDA 语义，与具体卡无关，但其他驱动未实测。
 - 官方为 BF16 + LlamaTokenizerFast，Candle 为 Q8 + SentencePiece，数值路径不同。
 - 官方 eager 与 Candle 的首 PCM 差异（145–185 ms vs 80–89 ms）来自
   `build_prompt_cache` 与逐段重编码策略不同，未做归因。
@@ -328,11 +396,33 @@ target\release\examples\voxcpm_candle_probe.exe $model cuda target\tmp\voxcpm-op
 
 # C++ 原生 1+5 轮
 target\release\examples\voxcpm_native_benchmark.exe $model cuda target\tmp\voxcpm-opt\native-hot $corpus "$voice\reference.wav" $text
+
+# 每帧 CFM CUDA Graph（默认开启；VOXCPM_CUDA_GRAPH=0 回到 eager）
+$env:VOXCPM_CUDA_GRAPH = "1"
+$env:VOXCPM_BENCH_WARMUP = "1"
+target\release\examples\voxcpm_candle_probe.exe $model cuda target\tmp\voxcpm-opt\graph-full $corpus "$voice\reference.wav" $text
 ```
 
 阶段 1 的 ABBA 交替基准脚本：`target/tmp/voxcpm-opt/abba.ps1`
 （用 `probe-before.exe` / `probe-after.exe` 两个预构建二进制交替执行，
 输出 `target/tmp/voxcpm-opt/abba/abba.json` 与每 run 的 `summary.json` / WAV）。
+
+阶段 3 的 ABBA 脚本：`target/tmp/voxcpm-opt/abba-graph.ps1`
+（同一二进制、`VOXCPM_CUDA_GRAPH` 在 0/1 间按 ABBA ABBA 交替，锁频 2700 MHz、
+高性能电源，`finally` 恢复 `-rgc` 与平衡电源；输出
+`target/tmp/voxcpm-opt/abba-graph/{abba.json,summary-eager.json,summary-graph.json}`）。
+逐字节校验（与 eager 基线目录比 SHA-256）：
+
+```powershell
+$base = "target\tmp\voxcpm-opt\rope-fused-repeat"   # eager 基线
+$test = "target\tmp\voxcpm-opt\graph-full"         # 图路径
+$bp = (Resolve-Path $base).Path; $tp = (Resolve-Path $test).Path
+Get-ChildItem $base -Recurse -Filter *.wav | ForEach-Object {
+  $rel = $_.FullName.Substring($bp.Length + 1)
+  if ((Get-FileHash $_.FullName -Algorithm SHA256).Hash -eq
+      (Get-FileHash (Join-Path $tp $rel) -Algorithm SHA256).Hash) { "same $rel" } else { "DIFF $rel" }
+}
+```
 
 构建命令：
 
@@ -351,8 +441,9 @@ cargo test --locked -p voxcpm --lib
 cargo clippy --locked -p voxcpm --all-targets --all-features -j 1 -- -D warnings
 $env:RUSTDOCFLAGS = "-D warnings"
 cargo doc --locked --no-deps --document-private-items --all-features -p voxcpm -j 1
+cargo publish --dry-run --locked --allow-dirty -p voxcpm
 ```
 
 产物目录：
-`target/tmp/voxcpm-opt/{candle-hot,candle-hot-repeat,candle-profile,native-hot,official-hot,rope-fused-repeat,abba}/`。
+`target/tmp/voxcpm-opt/{candle-hot,candle-hot-repeat,candle-profile,native-hot,official-hot,rope-fused-repeat,abba,graph-full,abba-graph,degrade}/`。
 

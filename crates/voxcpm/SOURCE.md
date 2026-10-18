@@ -13,9 +13,14 @@ at the Talechime fork [yexiyue/candle](https://github.com/yexiyue/candle), branc
 `talechime-perf`. The fork is based on the same upstream revision
 `31f35b147389700ed2a178ee66a91c3cc25cc80d` (upstream tag `0.11.0`) and keeps the
 upstream dual Apache-2.0 / MIT license; see `LICENSE.candle-APACHE`,
-`LICENSE.candle-MIT` and `docs/legal/candle-fork.md`. Patches in that fork must
+`LICENSE.candle-MIT` and `docs/legal/candle/SOURCE.md`. Patches in that fork must
 be behaviour-only and upstreamable, because published crates.io builds of this
 library resolve the registry release instead of the fork.
+
+The `cuda` feature additionally depends on `cudarc` (optional, CUDA builds only)
+pinned to the exact version candle-core 0.11.0 resolves, so the CUDA graph
+capture API used by `cuda_graph.rs` operates on the same `CudaContext` instance
+as candle. No Metal or CPU build pulls it in.
 
 Weights remain the existing DennisHuang648/VoxCPM2-GGUF resource revision
 `169f64d8b98bbaab1761e4ca3a83e6af653456cc`; see the production resource manifest
