@@ -49,15 +49,10 @@ fn main() -> anyhow::Result<()> {
     let mut records = Vec::new();
     let device = model.device();
     let mut transfer_records = Vec::new();
-    ensure!(
-        device.is_metal(),
-        "the isolated transfer diagnostic requires Metal"
-    );
-    let logits = logits_fixture(device, LOGIT_LENGTH)?;
-    ensure!(
-        logits.dims2()? == (1, LOGIT_LENGTH),
-        "unexpected fixture shape"
-    );
+    let readback_logits = device
+        .is_metal()
+        .then(|| logits_fixture(device, LOGIT_LENGTH))
+        .transpose()?;
     for round in 0..=rounds {
         model.device().synchronize()?;
         let started = Instant::now();
@@ -69,6 +64,10 @@ fn main() -> anyhow::Result<()> {
         )?;
         model.device().synchronize()?;
         let full_seconds = started.elapsed().as_secs_f64();
+        ensure!(
+            codes.len() < options.max_length,
+            "full generation hit frame limit; EOS unverified"
+        );
         save_audio(directory, &format!("full-{round}"), &full)?;
         fs::write(
             directory.join(format!("codes-{round}.json")),
@@ -97,6 +96,19 @@ fn main() -> anyhow::Result<()> {
         ensure!(stream.is_done(), "generation ended without EOS");
         let frames = stream.frames_generated();
         let sample_count = samples.len();
+        ensure!(
+            frames < options.max_length,
+            "stream generation hit frame limit; EOS unverified"
+        );
+        ensure!(frames == codes.len(), "full/stream frame counts differ");
+        ensure!(
+            sample_count == full.samples.len(),
+            "full/stream sample counts differ"
+        );
+        ensure!(
+            sample_count == frames * 1920,
+            "chunk sample coverage differs from generated frames"
+        );
         save_audio(
             directory,
             &format!("stream-{round}"),
@@ -112,7 +124,9 @@ fn main() -> anyhow::Result<()> {
 
         // Isolate a committed readback from model kernels and queue submission.
         // F32 is the production dtype after `sample`; BF16 checks transfer size.
-        transfer_records.extend(measure_readback(device, round, &logits)?);
+        if let Some(logits) = &readback_logits {
+            transfer_records.extend(measure_readback(device, round, logits)?);
+        }
     }
     fs::write(
         directory.join("rounds.json"),

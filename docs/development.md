@@ -84,6 +84,10 @@ Metal depthwise ConvNeXt fast path 及实现内性能边界见
 [Qwen 性能优化记录](records/qwen/qwen-performance-optimization-2026-10-18.md)；
 该路径只适用于符合条件的 causal depthwise 卷积，路由测试要求与原路径逐元素一致，
 不改变固定 seed codes 或 PCM。
+Qwen 的设备传输与 CPU 采样策略分别负责；depthwise fast path 封装在 causal conv
+模块，流式 decoder 状态独立负责 codes 历史、PCM 裁剪和成功后提交，会话负责生成与取消。
+修改这些边界时，应同时验证多 batch mask 广播、旧 CDF fallback、解码失败重试、
+末尾短块与真实模型输出 hash；不能仅用两条调用路径共用同一实现的测试证明等价。
 
 构建产物不进入 Git；也不提交模型权重、用户参考音频、正文、凭据和临时运行输出。第三方源码更新保留固定 revision、许可证和对照夹具。PR 使用 Conventional Commit，说明行为、兼容和验证。
 

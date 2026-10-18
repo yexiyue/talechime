@@ -1,8 +1,9 @@
 //! Incremental token generation and PCM decoding.
 use super::*;
 
-// Keep bounded codec history so each chunk does not restart from silence.
-const DECODER_LEFT_CONTEXT_FRAMES: usize = 25;
+mod decoder;
+
+use decoder::StreamingDecoder;
 
 /// Streaming synthesis session.
 ///
@@ -17,7 +18,7 @@ pub struct StreamingSession<'a> {
     last_hidden: Tensor,
     current_token_tensor: Option<Tensor>,
     frames_generated: usize,
-    frame_buffer: Vec<Tensor>,
+    decoder: StreamingDecoder,
     chunk_frames: usize,
     done: bool,
     // Trailing text state for residual VQ + text fusion
@@ -31,7 +32,6 @@ pub struct StreamingSession<'a> {
     suppression_mask: generation::SuppressionMask,
     // Pre-allocated code predictor KV caches (reused + reset each frame)
     cp_kv_caches: Vec<AnyKVCache>,
-    decoder_context: Option<Tensor>,
 }
 
 impl<'a> StreamingSession<'a> {
@@ -144,7 +144,7 @@ impl<'a> StreamingSession<'a> {
         )?;
         session.offset = offset;
         session.last_hidden = last_hidden;
-        session.decoder_context = prompt.ref_codes.clone();
+        session.decoder = StreamingDecoder::new(prompt.ref_codes.clone());
         Ok(session)
     }
 
@@ -203,7 +203,7 @@ impl<'a> StreamingSession<'a> {
             last_hidden,
             current_token_tensor: if done { None } else { Some(first_token) },
             frames_generated: 0,
-            frame_buffer: Vec::new(),
+            decoder: StreamingDecoder::new(None),
             chunk_frames,
             done,
             trailing_text_hidden,
@@ -213,7 +213,6 @@ impl<'a> StreamingSession<'a> {
             token_count: 1,
             suppression_mask,
             cp_kv_caches,
-            decoder_context: None,
         })
     }
 
@@ -236,14 +235,14 @@ impl<'a> StreamingSession<'a> {
         }
         if self.done {
             // Flush remaining buffer
-            if !self.frame_buffer.is_empty() {
+            if !self.decoder.frames.is_empty() {
                 return self.decode_buffer().map(Some);
             }
             return Ok(None);
         }
 
         // Generate frames until we have enough for a chunk
-        while self.frame_buffer.len() < self.chunk_frames
+        while self.decoder.frames.len() < self.chunk_frames
             && self.frames_generated < self.config.max_new_tokens
         {
             if cancelled() {
@@ -277,7 +276,7 @@ impl<'a> StreamingSession<'a> {
 
             let frame_idx = self.frames_generated;
             self.frames_generated += 1;
-            self.frame_buffer.push(Tensor::cat(
+            self.decoder.frames.push(Tensor::cat(
                 &[&token_tensor.reshape(1)?, &acoustic_codes_tensor],
                 0,
             )?);
@@ -338,7 +337,7 @@ impl<'a> StreamingSession<'a> {
         }
 
         // Decode the buffered frames
-        if self.frame_buffer.is_empty() {
+        if self.decoder.frames.is_empty() {
             return Ok(None);
         }
 
@@ -349,20 +348,8 @@ impl<'a> StreamingSession<'a> {
     }
 
     fn decode_buffer(&mut self) -> Result<AudioBuffer> {
-        let context_len = self
-            .decoder_context
-            .as_ref()
-            .map_or(0, |codes| codes.dims()[0]);
-        let codes = decoder_codes(&self.frame_buffer, self.decoder_context.as_ref())?;
-        let total_frames = codes.dim(2)?;
-        let mut audio = AudioBuffer::from_tensor(self.model.decoder.decode(&codes)?, 24000)?;
-        if context_len > 0 {
-            let cut = context_len * audio.samples.len() / total_frames;
-            audio.samples.drain(..cut);
-        }
-        self.decoder_context = Some(decoder_context_tail(&codes)?);
-        self.frame_buffer.clear();
-        Ok(audio)
+        self.decoder
+            .decode(|codes| AudioBuffer::from_tensor(self.model.decoder.decode(codes)?, 24000))
     }
 
     /// Returns the total number of frames generated so far.
@@ -372,33 +359,8 @@ impl<'a> StreamingSession<'a> {
 
     /// Returns true if generation is complete.
     pub fn is_done(&self) -> bool {
-        self.done && self.frame_buffer.is_empty()
+        self.done && self.decoder.frames.is_empty()
     }
-}
-
-/// Retain recent reference/generated codes in frame-major layout for the next block.
-fn decoder_context_tail(codes: &Tensor) -> Result<Tensor> {
-    let frames = codes.dim(2)?;
-    let keep = frames.min(DECODER_LEFT_CONTEXT_FRAMES);
-    Ok(codes
-        .narrow(2, frames - keep, keep)?
-        .squeeze(0)?
-        .transpose(0, 1)?
-        .contiguous()?)
-}
-
-/// Pack device-resident frames into the decoder's `[1, 16, T]` layout.
-fn decoder_codes(frames: &[Tensor], reference: Option<&Tensor>) -> Result<Tensor> {
-    let generated = Tensor::stack(frames, 0)?.to_dtype(DType::I64)?;
-    anyhow::ensure!(
-        generated.dims2()?.1 == 16,
-        "codec frames must contain 16 codes"
-    );
-    let combined = match reference {
-        Some(reference) => Tensor::cat(&[&reference.to_dtype(DType::I64)?, &generated], 0)?,
-        None => generated,
-    };
-    Ok(combined.transpose(0, 1)?.unsqueeze(0)?.contiguous()?)
 }
 
 impl<'a> Iterator for StreamingSession<'a> {
@@ -410,55 +372,5 @@ impl<'a> Iterator for StreamingSession<'a> {
             Ok(None) => None,
             Err(e) => Some(Err(e)),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn decoder_history_advances_across_chunk_boundaries() -> Result<()> {
-        let device = Device::Cpu;
-        let reference = Tensor::new((0..44u32).map(|v| vec![v; 16]).collect::<Vec<_>>(), &device)?;
-        let mut context = reference;
-        for start in [44, 54, 64, 74] {
-            let frames = (start..start + 10)
-                .map(|v| Tensor::new(&[v; 16], &device))
-                .collect::<candle_core::Result<Vec<_>>>()?;
-            let packed = decoder_codes(&frames, Some(&context))?;
-            assert_eq!(packed.dim(2)?, context.dim(0)? + 10);
-            context = decoder_context_tail(&packed)?;
-            let expected: Vec<Vec<i64>> = (start + 10 - 25..start + 10)
-                .map(|v| vec![i64::from(v); 16])
-                .collect();
-            assert_eq!(context.to_vec2::<i64>()?, expected);
-        }
-        let first_frames = [Tensor::new(&[0u32; 16], &device)?];
-        let packed = decoder_codes(&first_frames, None)?;
-        assert_eq!(decoder_context_tail(&packed)?.dims(), &[1, 16]);
-        Ok(())
-    }
-
-    #[test]
-    fn device_frame_packing_preserves_reference_and_codebook_order() -> Result<()> {
-        let device = Device::Cpu;
-        let reference = Tensor::new(&[[0u32; 16], [1u32; 16]], &device)?;
-        let frames = [Tensor::from_vec(
-            (2u32..18).collect::<Vec<_>>(),
-            16,
-            &device,
-        )?];
-        let actual = decoder_codes(&frames, Some(&reference))?;
-        let expected = codes_to_tensor(&[vec![0; 16], vec![1; 16], (2..18).collect()], &device)?;
-        assert_eq!(actual.dims(), &[1, 16, 3]);
-        assert_eq!(
-            actual.flatten_all()?.to_vec1::<i64>()?,
-            expected.flatten_all()?.to_vec1::<i64>()?
-        );
-        assert_eq!(decoder_codes(&frames, None)?.dims(), &[1, 16, 1]);
-        let malformed = [Tensor::new(&[0u32; 15], &device)?];
-        assert!(decoder_codes(&malformed, None).is_err());
-        Ok(())
     }
 }

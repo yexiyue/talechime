@@ -46,7 +46,7 @@ impl SamplingContext {
 
     /// Reset the RNG to its initial seeded state.
     ///
-    /// Only meaningful for seeded contexts. For unseeded contexts, this is a no-op.
+    /// An unseeded context switches to seeded mode.
     pub fn reset(&mut self, seed: u64) {
         self.state = initial_pcg_state(seed);
         self.seeded = true;
@@ -153,7 +153,7 @@ pub fn sample(
         let cpu_logits = logits.to_device(&candle_core::Device::Cpu)?;
         #[cfg(feature = "profiling")]
         drop(_transfer_span);
-        let sampled = sample(&cpu_logits, config, ctx)?;
+        let sampled = sample_cpu(cpu_logits, config, ctx)?;
         #[cfg(feature = "profiling")]
         let _return_span = tracing::info_span!("sampling_cpu_to_gpu_return").entered();
         let sampled = sampled.to_device(logits.device())?;
@@ -162,6 +162,15 @@ pub fn sample(
         return Ok(sampled);
     }
 
+    sample_cpu(logits, config, ctx)
+}
+
+/// Shared CPU policy; device transfer belongs to `sample`.
+fn sample_cpu(
+    logits: Tensor,
+    config: &GenerationConfig,
+    ctx: &mut SamplingContext,
+) -> Result<Tensor> {
     // Apply temperature
     let logits = if config.temperature != 1.0 && config.temperature > 0.0 {
         #[cfg(feature = "profiling")]
@@ -291,14 +300,14 @@ fn top_p_filter(logits: &Tensor, p: f64) -> Result<Tensor> {
 
 /// Sample from probability distribution using multinomial sampling
 fn multinomial_sample(probs: &Tensor, ctx: &mut SamplingContext) -> Result<Tensor> {
-    let (batch, vocab) = probs.dims2()?;
+    let (batch, _) = probs.dims2()?;
     let rows = probs.to_vec2::<f32>()?;
 
     let mut selected = Vec::with_capacity(batch);
     for row in &rows {
         let threshold = ctx.rand_f32();
-        let fallback = vocab.saturating_sub(1);
-        selected.push(first_cdf_index(row, threshold).unwrap_or(fallback) as u32);
+        // Legacy argmin returns index zero when no CDF entry reaches the draw.
+        selected.push(first_cdf_index(row, threshold).unwrap_or(0) as u32);
     }
     Ok(Tensor::from_vec(selected, batch, probs.device())?)
 }
@@ -350,7 +359,7 @@ pub fn apply_repetition_penalty(
     apply_repetition_penalty_with_mask(logits, &penalty_mask, penalty)
 }
 
-/// Apply repetition penalty using a pre-built boolean mask on GPU.
+/// Apply repetition penalty using a pre-built F32 mask on the logits device.
 ///
 /// Instead of transferring all generated token IDs to CPU each frame,
 /// callers maintain a `[1, vocab]` mask on GPU that marks which tokens
@@ -366,6 +375,7 @@ pub fn apply_repetition_penalty_with_mask(
     }
 
     // Where the mask is 1.0, apply the sign-dependent penalty; otherwise keep 1.0.
+    let penalty_mask = penalty_mask.broadcast_as(logits.shape())?;
     let penalty_factor = repetition_penalty_factor(logits, penalty)?;
     let ones = Tensor::ones(logits.shape(), DType::F32, logits.device())?;
     let is_penalized =
@@ -605,17 +615,74 @@ mod tests {
     }
 
     #[test]
-    fn first_cdf_index_falls_back_to_zero() {
+    fn first_cdf_index_reports_no_match() {
         assert_eq!(first_cdf_index(&[0.0f32; 4], 0.5), None);
         assert_eq!(first_cdf_index(&[f32::NAN, 0.5], 0.25), None);
     }
 
     #[test]
-    fn multinomial_sample_falls_back_to_last_index() {
-        let probs = Tensor::new(&[[0.0f32; 4]], &Device::Cpu).unwrap();
-        let mut ctx = SamplingContext::new(Some(42));
-        let result = multinomial_sample(&probs, &mut ctx).unwrap();
-        assert_eq!(result.to_vec1::<u32>().unwrap(), vec![3]);
+    fn multinomial_fallback_matches_legacy_tensor_selection() -> Result<()> {
+        for row in [[0.0f32; 4], [f32::NAN; 4], [0.01f32; 4]] {
+            let probs = Tensor::new(&[row], &Device::Cpu)?;
+            let mut expected_ctx = SamplingContext::new(Some(42));
+            let threshold = expected_ctx.rand_f32();
+            let cumulative = probs.cumsum(1)?;
+            let mask = cumulative.ge(&Tensor::full(threshold, (1, 4), &Device::Cpu)?)?;
+            let positions = Tensor::new(&[[1.0f32, 2.0, 3.0, 4.0]], &Device::Cpu)?;
+            let expected = mask
+                .where_cond(&positions, &Tensor::full(5.0f32, (1, 4), &Device::Cpu)?)?
+                .argmin(D::Minus1)?;
+            let mut actual_ctx = SamplingContext::new(Some(42));
+            let actual = multinomial_sample(&probs, &mut actual_ctx)?;
+            assert_eq!(actual.to_vec1::<u32>()?, expected.to_vec1::<u32>()?);
+            assert_eq!(actual_ctx.rand_f32(), expected_ctx.rand_f32());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn multinomial_matches_legacy_cdf_for_fixed_seed_vocabulary_fixtures() -> Result<()> {
+        for vocab in [4, 3072] {
+            let logits: Vec<Vec<f32>> = (0..2)
+                .map(|batch| {
+                    (0..vocab)
+                        .map(|id| ((id * 37 + batch * 17) % 101) as f32 * 0.125 - 6.0)
+                        .collect()
+                })
+                .collect();
+            let probs = candle_nn::ops::softmax_last_dim(&Tensor::new(logits, &Device::Cpu)?)?;
+            let legacy_cdf = probs.cumsum(1)?.to_vec2::<f32>()?;
+            for seed in 0..512 {
+                let mut expected_ctx = SamplingContext::new(Some(seed));
+                let expected: Vec<u32> = legacy_cdf
+                    .iter()
+                    .map(|row| {
+                        let threshold = expected_ctx.rand_f32();
+                        row.iter().position(|&v| v >= threshold).unwrap_or(0) as u32
+                    })
+                    .collect();
+                let mut actual_ctx = SamplingContext::new(Some(seed));
+                let actual = multinomial_sample(&probs, &mut actual_ctx)?.to_vec1::<u32>()?;
+                assert_eq!(actual, expected, "vocab={vocab}, seed={seed}");
+                assert_eq!(actual_ctx.rand_f32(), expected_ctx.rand_f32());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn repetition_mask_broadcasts_across_batch() -> Result<()> {
+        let logits = Tensor::new(&[[2.0f32, -4.0, 6.0], [-2.0, 4.0, -6.0]], &Device::Cpu)?;
+        let ids = Tensor::new(&[0u32, 1], &Device::Cpu)?;
+        let mask = Tensor::new(&[[1.0f32, 1.0, 0.0]], &Device::Cpu)?;
+        let expected = apply_repetition_penalty(&logits, &ids, 2.0)?;
+        let actual = apply_repetition_penalty_with_mask(&logits, &mask, 2.0)?;
+        assert_eq!(actual.to_vec2::<f32>()?, expected.to_vec2::<f32>()?);
+        assert_eq!(
+            actual.to_vec2::<f32>()?,
+            vec![vec![1.0, -8.0, 6.0], vec![-4.0, 2.0, -6.0]]
+        );
+        Ok(())
     }
 
     #[test]

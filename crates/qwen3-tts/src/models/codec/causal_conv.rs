@@ -17,21 +17,20 @@ pub struct CausalConv1d {
     causal_padding: usize,
 }
 
+/// Causal depthwise convolution.
+///
+/// Candle's grouped `conv1d` decomposes into one convolution per channel on
+/// Metal (upstream issue #3389; PR #3531 is CUDA-only and still open). This
+/// path computes the same mathematical convolution while replacing those tiny
+/// launches with a batched matmul over stacked causal windows.
+pub(super) struct DepthwiseCausalConv1d {
+    stock: CausalConv1d,
+    /// Broadcast-ready `(1, channels, kernel)` weights.
+    taps: Option<Tensor>,
+}
+
 impl CausalConv1d {
-    /// Accessors required by the Qwen depthwise fast path.
-    pub(super) fn bias(&self) -> Option<&Tensor> {
-        self.conv.bias()
-    }
-
-    pub(super) fn causal_padding(&self) -> usize {
-        self.causal_padding
-    }
-
-    pub(super) fn channels(&self) -> usize {
-        self.conv.weight().dims()[0]
-    }
-
-    pub(super) fn is_depthwise(&self) -> bool {
+    fn is_unit_depthwise(&self) -> bool {
         let config = self.conv.config();
         let [out_channels, inputs_per_group, _] = self.conv.weight().dims() else {
             return false;
@@ -41,13 +40,58 @@ impl CausalConv1d {
             && config.groups == *out_channels
             && *inputs_per_group == 1
     }
+}
 
-    pub(super) fn kernel_size(&self) -> usize {
-        self.conv.weight().dims()[2]
+impl DepthwiseCausalConv1d {
+    pub(super) fn new(stock: CausalConv1d) -> Result<Self> {
+        let eligible = stock.is_unit_depthwise();
+        let taps = eligible
+            .then(|| {
+                let (channels, _, kernel) = stock.conv.weight().dims3()?;
+                stock.conv.weight().reshape((1, channels, kernel))
+            })
+            .transpose()?;
+        Ok(Self { stock, taps })
     }
 
-    pub(super) fn weight(&self) -> &Tensor {
-        self.conv.weight()
+    pub(super) fn forward(&self, x: &Tensor) -> Result<Tensor> {
+        let (batch, channels, length) = x.dims3()?;
+        if let Some(taps) = &self.taps
+            && x.device().is_metal()
+            && channels == self.stock.conv.weight().dims()[0]
+        {
+            return self.forward_fast(x, taps, batch, channels, length);
+        }
+        self.stock.forward(x)
+    }
+
+    fn forward_fast(
+        &self,
+        x: &Tensor,
+        taps: &Tensor,
+        batch: usize,
+        channels: usize,
+        length: usize,
+    ) -> Result<Tensor> {
+        let kernel_size = taps.dim(2)?;
+        let padded = self.stock.pad_input(x)?;
+
+        let windows: Vec<Tensor> = (0..kernel_size)
+            .map(|tap| padded.narrow(2, tap, length))
+            .collect::<std::result::Result<_, _>>()?;
+        let windows =
+            Tensor::stack(&windows, 3)?.reshape((batch * channels, length, kernel_size))?;
+        let weights = taps
+            .reshape((channels, kernel_size))?
+            .broadcast_as((batch, channels, kernel_size))?
+            .reshape((batch * channels, kernel_size, 1))?;
+        let mut output = windows
+            .matmul(&weights)?
+            .reshape((batch, channels, length))?;
+        if let Some(bias) = self.stock.conv.bias() {
+            output = output.broadcast_add(&bias.reshape((1, channels, 1))?)?;
+        }
+        Ok(output)
     }
 }
 
@@ -126,14 +170,16 @@ impl CausalConv1d {
     /// Input shape: [batch, in_channels, seq_len]
     /// Output shape: [batch, out_channels, seq_len]
     pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        // Pad only on the left side for causality
-        let x_padded = if self.causal_padding > 0 {
-            x.pad_with_zeros(2, self.causal_padding, 0)?
-        } else {
-            x.clone()
-        };
+        Ok(self.conv.forward(&self.pad_input(x)?)?)
+    }
 
-        Ok(self.conv.forward(&x_padded)?)
+    fn pad_input(&self, x: &Tensor) -> Result<Tensor> {
+        // Pad only on the left side for causality
+        if self.causal_padding > 0 {
+            Ok(x.pad_with_zeros(2, self.causal_padding, 0)?)
+        } else {
+            Ok(x.clone())
+        }
     }
 }
 
@@ -148,6 +194,52 @@ mod tests {
     use super::*;
     use candle_core::{DType, Device};
     use candle_nn::VarMap;
+
+    fn lcg_fill(seed: u32, n: usize) -> Vec<f32> {
+        let mut state = seed;
+        (0..n)
+            .map(|_| {
+                state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                ((state >> 8) & 0xffff) as f32 / 32768.0 - 1.0
+            })
+            .collect()
+    }
+
+    #[test]
+    fn depthwise_causal_fast_path_matches_stock_conv() {
+        check_depthwise_causal_fast_path(&Device::Cpu);
+    }
+
+    #[cfg(feature = "metal")]
+    #[test]
+    fn depthwise_causal_fast_path_matches_stock_conv_metal() {
+        check_depthwise_causal_fast_path(&Device::new_metal(0).unwrap());
+    }
+
+    fn check_depthwise_causal_fast_path(device: &Device) {
+        let cases = [(1usize, 32usize, 25usize), (2, 16, 7), (1, 8, 1)];
+        for (batch, channels, length) in cases {
+            let input = Tensor::from_vec(
+                lcg_fill(0xA7 ^ channels as u32, batch * channels * length),
+                (batch, channels, length),
+                device,
+            )
+            .unwrap();
+            let weight =
+                Tensor::from_vec(lcg_fill(0x5EED, channels * 7), (channels, 1, 7), device).unwrap();
+            let bias = Tensor::from_vec(lcg_fill(0xB1A5, channels), (channels,), device).unwrap();
+            let stock =
+                CausalConv1d::from_weights_grouped(weight, Some(bias), 1, channels).unwrap();
+            let fast = DepthwiseCausalConv1d::new(stock).unwrap();
+            let expected = fast.stock.forward(&input).unwrap();
+            let actual = fast.forward(&input).unwrap();
+            assert_eq!(actual.dims(), expected.dims());
+
+            let expected = expected.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+            let actual = actual.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+            assert_eq!(actual, expected, "case {cases:?}");
+        }
+    }
 
     fn create_mock_vb(device: &Device) -> VarBuilder<'static> {
         let varmap = VarMap::new();

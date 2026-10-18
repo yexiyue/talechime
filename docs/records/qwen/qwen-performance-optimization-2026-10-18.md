@@ -134,7 +134,7 @@ transposed conv 单点异常。证据在 `runs/qwen-review/optimization-stage6/`
 只替换 `multinomial_sample` 内的 CDF 构建与选择：直接读取 CPU 概率行，按原
 vocabulary 顺序用 f32 累加，返回首个 `cumulative >= threshold` 的索引。temperature、
 top-k、top-p、softmax、PCG 随机数、阈值比较和 CPU/Metal 统一采样策略均不变。
-该实现不宣称与 Candle `cumsum` 的矩阵乘内部舍入逐位等价；当前证据是共同 4 轮真实模型 codes/full/stream PCM 逐字节一致。无命中时 fallback 到最后一个 vocabulary index，与旧实现的 argmin 位置一致；若后续固定输入出现首个差异，应回退本优化并记录差异阈值。
+该实现不宣称与 Candle `cumsum` 的矩阵乘内部舍入逐位等价；当前证据是共同 4 轮真实模型 codes/full/stream PCM 逐字节一致。阶段 7 最初把无命中 fallback 设为最后一个 vocabulary index；后续完整复审用旧 tensor 选择路径复现后确认，旧版全候选相等时的 argmin 实际返回 0，现已修正并增加独立对照回归。若后续固定输入出现首个差异，应回退本优化并记录差异阈值。
 
 | 版本 | 完整 / s | 流式 / s | 首 PCM / s |
 | --- | ---: | ---: | ---: |
@@ -211,7 +211,100 @@ stream PCM 逐字节一致；Stage 7/8 分别有各自 A/B 与输出等价证据
 attention / MLP 增加只读计时，再评估 RoPE 小张量、Q/K norm、projection 合并或
 custom Metal kernel。任何合并必须证明固定 hidden 与 codes 逐位一致。
 
-## 验证
+## 完整复审与职责收拢
+
+审查范围为 `59696d5...9d0765a` 的 Qwen 正确性与性能改动；本轮修改以
+`9d0765aa97c2f3954d7bc27bf62b65fa50a1b259` 为对照。规范与计划符合性分别审查，
+修改后再次独立复核。没有引入新的采样算法、Metal kernel 或增量 KV/conv 缓存。
+
+### 规范与架构审查
+
+- depthwise 实现及其等价测试移回 `codec/causal_conv.rs`。删除原来为 ConvNeXt
+  暴露卷积表示的六个 getter，stock/fast 路径共享左侧 padding；窗口、matmul 和 bias
+  的顺序不变。ConvNeXt 只组合卷积、归一化、MLP 与残差。
+- `synthesis/streaming/decoder.rs` 拥有 pending frames、25 帧 codes 历史、打包、
+  PCM 裁剪和成功后提交。会话继续拥有自回归生成、EOS 与取消。注入的单次解码闭包
+  使用静态分派，使普通单测能覆盖真实的状态提交路径，不需构造模型或加载权重。
+  这里缓存的是 codes，上下文仍完整重算，不属于已延期的增量 codec 实现。
+- `sample` 负责设备传输，`sample_cpu` 负责统一采样策略，移除一次递归调用和重复
+  dtype span。随机数调用数量、top-k/top-p/softmax 和正常 CDF 选择顺序不变。
+- 计时探针只在 Metal 上运行附加 readback 诊断，不再阻止 CPU/CUDA 合成计时。
+  本轮未进行 CPU/CUDA 真模型性能验收，不能由入口可运行推断已验收。
+
+按四类设计原则复核：
+
+| 原则 | 本轮约束 |
+| --- | --- |
+| KISS | 保留现有算子与成功路径，只拆出有独立职责的状态和设备边界 |
+| DRY | 共用 causal padding 与 repetition penalty 计算，回归测试使用独立旧实现作对照 |
+| YAGNI | 不引入通用推理框架、动态 trait、插件路由或未验证的增量缓存 |
+| SOLID | 卷积拥有卷积表示，会话拥有生成生命周期，decoder 拥有块解码状态；测试依赖窄解码接口 |
+
+### 计划与准确性审查
+
+两项实际回归先由新增测试复现失败，再修复：
+
+1. CDF 无命中时返回末 token，偏离旧版 argmin 的 0。现用原 tensor
+   `cumsum/ge/where/argmin` 路径核验零概率、全 NaN 和概率和不足的 fallback，
+   并验证 RNG 状态推进一致。另以 vocab 4/3072、两行分布和 512 个 seed
+   对照旧 Candle CDF；这仍不构成所有浮点分布的舍入等价证明。
+2. repetition penalty 公共路径简化时丢失 mask 广播，导致 `[1, vocab]` mask
+   对多 batch logits 报 shape mismatch。恢复元数据广播，测试同时检查正负 logits、
+   未惩罚位置和两条公开调用路径的一致性。
+
+新增 decoder 事务测试覆盖解码失败后原帧/历史保留并可重试，以及 10 帧后 2 帧尾块
+只输出新 PCM、不重复历史。既有参考顺序及 25 帧历史推进测试随模块迁移保留。
+计时探针额外拒绝达到帧上限的 EOS 未证实结果，并检查整段/流式帧数、样本数和
+每帧 1920 samples 覆盖；整段 PCM 与流式 PCM 各自对照旧版，不要求两种解码方式互相逐字节相同。
+
+macOS Accelerate 是先前已经记录的 CPU 数值边界；本轮与 `9d0765a` 对照时两侧
+都启用它。当前 Metal 等价证据不能证明 Accelerate 与旧纯 Rust GEMM 的 CPU
+codes/PCM 逐位相同，不能宣称已满足这项跨 CPU 实现的等价要求。
+
+本轮原始构建、测试、逐轮耗时和 hashes 保存于
+`runs/qwen-review/architecture-review-20261018/`；真模型结果与最终检查补充如下。
+
+### 本轮真实模型对照
+
+同一 M4 Pro、0.6B Base / Metal BF16、seed 42、默认显式生成配置、10 帧块，
+使用 `reference-cross/fixed-prompt.json`。A 从 `git archive 9d0765a` 的不可变源码
+单独 release 构建，B 为本轮实现；两侧同 feature，未启用 profiling。
+模型加载、文件导出和附加 readback 诊断在计时外；各进程先预热整段和流式路径。
+测量期间没有本任务的并行编译或推理。二进制、prompt hash 与完整文本见
+`architecture-review-20261018/manifest.json`。
+
+主样本按 A1/B1/B2/A2 串行，每进程 1 次预热 + 2 次测量，两侧各 4 个测量值；
+中句和新增长句分别 A/B 各 1 次预热 + 1 次测量，只作补充回归。
+
+| 文本 / 帧数 | 整段 A → B / s | 流式 A → B / s | 首 PCM A → B / s |
+| --- | ---: | ---: | ---: |
+| 主样本 / 86 | 3.8210 → 3.7201 | 5.5375 → 5.2787 | 0.8566 → 0.7901 |
+| 约 15 字 / 40 | 2.0893 → 2.1025 | 2.8520 → 2.9229 | 0.9165 → 0.9568 |
+| 约 60 字 / 163 | 7.6971 → 7.7252 | 11.2027 → 11.2435 | 0.9210 → 0.8657 |
+
+三文本各自所有预热及测量轮的 codes/full PCM/stream PCM hash 全一致；所有输出
+finite、正常 EOS，整段与流式帧数/样本数相等，流式 chunks 无样本丢失或重复。
+主样本仍为阶段 4 的 `5a4b8fb3…4c9a28` / `bbd6adf3…4b02485` /
+`21f4993a…7991`；新增长句为 `d61ea2b5…7b5b28` / `7f651864…654b11` /
+`77281c9f…48cbb`。完整 hashes 与逐轮记录在 `comparison-rounds.json`、`summary.json`。
+
+本轮以输出不回归、主样本 ABBA 未见性能损伤作为验收；中句和长句单轮耗时升幅
+约 0.4%–2.5%，不足以判断稳定差异，不把主样本下降宣称为新增提速。
+本轮主样本为 86 帧，不与上文 102 帧的最终官方对照表计算增减，也未重新运行官方实现。
+PCM 与本轮前的文件相同，未重复要求人工试听；数值证据只覆盖这些本机输入。
+
+真实后端额外执行一次“收到首块 PCM 后销毁接收端，再在同一模型上发起新请求”，
+并与独立加载模型的正常请求比较：两者都正常 End、165120 个有限 samples，PCM
+SHA-256 均为 `21f4993a…7991`。接收端销毁耗时小于 1 ms；这不是 GPU 在 1 ms 内
+停止的证明。同模型复用请求 5.293 s、独立请求 5.341 s，仅用于验收正常复用，
+不用于速度比较；结果见 `cancel-reuse-summary.json`。
+
+本轮普通 Qwen 测试 220 passed / 3 ignored，后端测试 43 passed；显式执行原生
+Metal vocab 4/3072 采样对照 1 passed。Qwen/backends Metal + profiling 的 Clippy
+（`-D warnings`）、rustdoc（`-D warnings`）、格式及 diff 检查通过，`Cargo.lock` 未变。
+本轮没有重跑全 workspace；前述范围以外的既有 workspace 结果见历次验证。
+
+## 历次验证
 
 - `cargo test --locked -p talechime-qwen3-tts --features metal,profiling --tests --examples`：
   216 passed，3 ignored（复审后新增 CDF 边界/fallback 测试；最终简化后重跑通过）。
