@@ -86,4 +86,21 @@ Candle CUDA；Qwen 没有默认启用 cuDNN，其他后端的 cuDNN feature 合�
 
 主机 profiling 指向 CodePredictor，随后完成一次 cat 打包的无插桩 ABBA 初筛：
 输出一致但未过收益门槛，候选源码已撤回；固定 15 步图尚未实现，不用 Vox 或 Metal
-的收益代替 Qwen CUDA 的实际结果。
+的收益代替 Qwen CUDA 的实际结果（该候选的实现与结果见文末追加）。
+
+## 后续追加：CodePredictor 帧图已实现并合入主线
+
+上述“固定 15 步图尚未实现”已于同日完成：commit `8ab5962`（把
+`voxcpm::cuda_graph::replay` 提取为 `crates/candle-cuda-graph`，整数输出支持）、
+`59a7d7b`（Qwen CP 帧图）、`94fada2`（Concat 变体实测）。正式 ABBA 八进程
+（锁频 2692 MHz、1 预热 + 2 热轮、59 帧 / 4.72 s 音频、区间不重叠）：
+
+| 指标 | eager | 帧图 | 改善 |
+| --- | ---: | ---: | ---: |
+| 完整合成 | 3.0840 s（RTF 0.653） | 1.9113 s（RTF 0.405） | -38.0% |
+| 流式合成 | 3.6529 s（RTF 0.774） | 2.4353 s（RTF 0.516） | -33.3% |
+| 首 PCM | 0.7688 s | 0.5663 s | -26.3% |
+
+八进程 × 三轮 × 五类产物（codes、完整/流式原始 PCM、两份 WAV）跨变体 SHA-256
+唯一，`qwen-cuda` 默认启用；完整边界见
+[Qwen CP 帧图](../qwen/qwen-cp-graph-2026-10-18.md)。

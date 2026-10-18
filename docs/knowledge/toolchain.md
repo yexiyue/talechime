@@ -376,7 +376,8 @@ tag `0.11.0`）。
 - Qwen CUDA 默认录制 CP 帧图：`QWEN_CP_GRAPH=0` 关闭，`profiling` feature 强制
   eager。图为每代 session 所有（完整合成每次调用一个、流式每 session 一个），
   依赖“每次回放重写全部 16 个 KV 位置”的不变式而非回放重置 Rust 簿记。实测与
-  边界见 `docs/records/qwen/qwen-cp-graph-2026-10-18.md`。
+  边界见 `docs/records/qwen/qwen-cp-graph-2026-10-18.md`：ABBA 八进程完整 -38.0%、
+  流式 -33.3%、首 PCM -26.3%。
 
 TTS 性能对照统一协议（劣化排查结论，见
 `docs/records/voxcpm/voxcpm-performance-comparison-2026-10-18.md` §6.2/§6.3）：
