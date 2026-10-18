@@ -314,8 +314,8 @@ fn multinomial_sample(probs: &Tensor, ctx: &mut SamplingContext) -> Result<Tenso
 
 /// Selects the first vocabulary index whose sequential f32 CDF reaches `threshold`.
 ///
-/// This mirrors the previous full-tensor CDF comparison without allocating three
-/// extra vocabulary-sized tensors.
+/// The boundary rule matches the previous tensor comparison, but sequential f32
+/// addition can round differently from Candle's matmul-based cumsum.
 fn first_cdf_index(row: &[f32], threshold: f32) -> Option<usize> {
     let mut cumulative = 0.0f32;
     for (index, &probability) in row.iter().enumerate() {
@@ -641,16 +641,20 @@ mod tests {
     }
 
     #[test]
-    fn multinomial_matches_legacy_cdf_for_fixed_seed_vocabulary_fixtures() -> Result<()> {
+    fn multinomial_matches_legacy_cdf_for_exact_probability_fixtures() -> Result<()> {
         for vocab in [4, 3072] {
-            let logits: Vec<Vec<f32>> = (0..2)
+            // Dyadic probabilities keep both accumulation orders exact. Arbitrary
+            // softmax probabilities need not match the legacy GEMM-based CDF.
+            let rows: Vec<Vec<f32>> = (0..2)
                 .map(|batch| {
-                    (0..vocab)
-                        .map(|id| ((id * 37 + batch * 17) % 101) as f32 * 0.125 - 6.0)
-                        .collect()
+                    let mut row: Vec<f32> = (0..vocab - 1)
+                        .map(|id| ((id * 37 + batch * 17) % 5) as f32 / 16384.0)
+                        .collect();
+                    row.push(1.0 - row.iter().sum::<f32>());
+                    row
                 })
                 .collect();
-            let probs = candle_nn::ops::softmax_last_dim(&Tensor::new(logits, &Device::Cpu)?)?;
+            let probs = Tensor::new(rows, &Device::Cpu)?;
             let legacy_cdf = probs.cumsum(1)?.to_vec2::<f32>()?;
             for seed in 0..512 {
                 let mut expected_ctx = SamplingContext::new(Some(seed));
@@ -852,14 +856,28 @@ mod tests {
     #[cfg(all(feature = "metal", target_os = "macos"))]
     #[ignore = "requires a native Metal device"]
     fn metal_sampling_matches_cpu_at_model_vocabulary_size() {
-        let device = Device::new_metal(0).unwrap();
+        check_device_sampling_matches_cpu(&Device::new_metal(0).unwrap());
+    }
+
+    #[test]
+    #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+    #[ignore = "requires a native CUDA device"]
+    fn cuda_sampling_matches_cpu_at_model_vocabulary_size() {
+        check_device_sampling_matches_cpu(&Device::new_cuda(0).unwrap());
+    }
+
+    #[cfg(any(
+        all(feature = "metal", target_os = "macos"),
+        all(feature = "cuda", any(target_os = "windows", target_os = "linux"))
+    ))]
+    fn check_device_sampling_matches_cpu(device: &Device) {
         for vocab in [4, 3072] {
             let mut values = vec![f32::NEG_INFINITY; vocab];
             for (id, value) in [(vocab - 1, 2.0), (vocab / 2, 1.0), (1, 1.0)] {
                 values[id] = value;
             }
             let cpu = Tensor::from_vec(values, (1, vocab), &Device::Cpu).unwrap();
-            let metal = cpu.to_device(&device).unwrap();
+            let accelerated = cpu.to_device(device).unwrap();
             for top_p in [0.5, 0.7, 0.9] {
                 let config = GenerationConfig {
                     top_k: 3,
@@ -870,7 +888,8 @@ mod tests {
                     let expected =
                         sample(&cpu, &config, &mut SamplingContext::new(Some(seed))).unwrap();
                     let actual =
-                        sample(&metal, &config, &mut SamplingContext::new(Some(seed))).unwrap();
+                        sample(&accelerated, &config, &mut SamplingContext::new(Some(seed)))
+                            .unwrap();
                     assert_eq!(
                         actual.to_vec1::<u32>().unwrap(),
                         expected.to_vec1::<u32>().unwrap()

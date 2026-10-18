@@ -210,7 +210,7 @@ mod tests {
         check_depthwise_causal_fast_path(&Device::Cpu);
     }
 
-    #[cfg(feature = "metal")]
+    #[cfg(all(feature = "metal", target_os = "macos"))]
     #[test]
     fn depthwise_causal_fast_path_matches_stock_conv_metal() {
         check_depthwise_causal_fast_path(&Device::new_metal(0).unwrap());

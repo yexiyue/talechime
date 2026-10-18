@@ -7,6 +7,9 @@ use crate::{
 use candle_core::{DType, Device, Result, Tensor};
 use std::path::Path;
 
+#[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+use crate::cuda_graph::CfmGraphs;
+
 /// Production output sample rate.
 pub const SAMPLE_RATE: u32 = 48_000;
 /// Generation termination; only EOS completes a playback checkpoint.
@@ -15,6 +18,12 @@ pub enum Outcome {
     Eos,
     Cancelled,
     Truncated,
+}
+/// Cached CUDA specializations available for subsequent unprofiled frames.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct CudaGraphStatus {
+    pub cfm: bool,
+    pub decoder: bool,
 }
 /// Flow matching and autoregressive sampling parameters.
 #[derive(Debug, Clone)]
@@ -53,6 +62,11 @@ pub struct DualReference<'a> {
 /// All weights use one Candle device. No runtime subprocess or native TTS engine.
 pub struct Model {
     pub tokenizer: Tokenizer,
+    /// Graphs must be destroyed before the weights and state they reference.
+    #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+    graphs: Option<CfmGraphs>,
+    #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+    decoder_graph: Option<crate::cuda_graph::decoder::DecoderGraph>,
     embedding: Tensor,
     base: Transformer,
     residual: Transformer,
@@ -157,6 +171,10 @@ impl Model {
             backbone_dtype: DType::F32,
             codec_dtype: dtype,
             timings: Timings::default(),
+            #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+            graphs: CfmGraphs::new(device),
+            #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+            decoder_graph: crate::cuda_graph::decoder::DecoderGraph::for_device(device, true),
         })
     }
     /// Load original OpenBMB weights without quantization. CPU requires F32;
@@ -226,11 +244,37 @@ impl Model {
             backbone_dtype: dtype,
             codec_dtype: DType::F32,
             timings: Timings::default(),
+            #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+            graphs: CfmGraphs::new(device),
+            #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+            decoder_graph: crate::cuda_graph::decoder::DecoderGraph::for_device(device, false),
         })
     }
     /// Measurements for the latest request when module timing is enabled.
     pub fn timings(&self) -> &Timings {
         &self.timings
+    }
+    /// Whether the per-frame CFM step is running as a replayed CUDA graph.
+    ///
+    /// False on CPU and Metal, while a CUDA model is still warming up, and
+    /// after a capture or replay failure has forced the model back to the
+    /// eager path for the rest of its lifetime.
+    pub fn cuda_graph_replay(&self) -> bool {
+        self.cuda_graph_status().cfm
+    }
+
+    /// Graph availability by module; all fields are false on CPU and Metal.
+    pub fn cuda_graph_status(&self) -> CudaGraphStatus {
+        #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+        return CudaGraphStatus {
+            cfm: self.graphs.as_ref().is_some_and(CfmGraphs::active),
+            decoder: self
+                .decoder_graph
+                .as_ref()
+                .is_some_and(crate::cuda_graph::decoder::DecoderGraph::active),
+        };
+        #[cfg(not(all(feature = "cuda", any(target_os = "windows", target_os = "linux"))))]
+        CudaGraphStatus::default()
     }
     /// Encode mono 16kHz samples. Padding follows the official reference mode.
     pub fn reference(
@@ -492,6 +536,10 @@ impl Model {
             self.device.synchronize()?;
             self.timings.prefill = start.elapsed();
         }
+        #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+        if let Some(graph) = &mut self.decoder_graph {
+            graph.reset();
+        }
         let mut noise = Noise(o.seed);
         for i in 0..o.max_frames {
             if cancel() {
@@ -509,11 +557,37 @@ impl Model {
                 .collect();
             let initial = Tensor::from_vec(values, (1, 64, 4), &self.device)?;
             let (patch, elapsed) = measure(o.measure_modules, &self.device, || {
+                // Module timing synchronizes inside the measured region, which
+                // a captured graph cannot contain, so profiling stays eager.
+                #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+                if let Some(graphs) = self.graphs.as_mut()
+                    && !o.measure_modules
+                {
+                    return graphs.sample(
+                        &mut self.acoustic,
+                        &mu,
+                        &prefix,
+                        &initial,
+                        o.steps,
+                        o.cfg,
+                        cancel,
+                    );
+                }
                 self.acoustic
                     .sample(&mu, &prefix, &initial, o.steps, o.cfg, cancel)
             })?;
             self.timings.cfm += elapsed;
             let (decoded, elapsed) = measure(o.measure_modules, &self.device, || {
+                #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+                if let Some(graph) = &mut self.decoder_graph
+                    && !o.measure_modules
+                {
+                    return graph.decode(
+                        &mut self.codec,
+                        &patch.to_dtype(self.codec_dtype)?,
+                        cancel,
+                    );
+                }
                 self.codec
                     .decode(&patch.to_dtype(self.codec_dtype)?, cancel)
             })?;

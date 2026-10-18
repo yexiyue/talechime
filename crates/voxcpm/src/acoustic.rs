@@ -33,6 +33,13 @@ pub(crate) struct Acoustic {
     schedule: Option<Schedule>,
 }
 impl Acoustic {
+    #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+    pub(crate) fn schedule_tensors(&self) -> Vec<Tensor> {
+        self.schedule
+            .as_ref()
+            .map_or_else(Vec::new, |schedule| schedule.times.clone())
+    }
+
     pub fn load(w: &mut Weights, rope: &Tensor) -> Result<Self> {
         Ok(Self {
             encoder: Transformer::load(

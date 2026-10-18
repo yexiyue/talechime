@@ -2,6 +2,10 @@
 
 Talechime 拥有语音合成和播放；章节获取、阅读界面、角色识别及角色音色绑定由使用方拥有。
 
+推理优化保留在模型库内；`tts-candle-platform` 统一目标平台 feature 与设备探测，
+不拥有模型状态或采样策略。Qwen 的 codes 历史解码与 VoxCPM 的有状态图回放各自封装，
+不将两种状态生命周期合并。共享边界与验证规则见 [TTS 性能优化方法](knowledge/tts-performance.md)。
+
 ```mermaid
 flowchart TD
     H[宿主应用] --> P[talechime-protocol]

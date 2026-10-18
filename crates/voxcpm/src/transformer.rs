@@ -1,4 +1,5 @@
 //! MiniCPM4 shared by the global, residual and local networks.
+use crate::attention::attention;
 use crate::weights::{Linear, Weights};
 use candle_core::{DType, Result, Tensor};
 
@@ -39,7 +40,9 @@ fn norm(x: &Tensor, w: &Tensor, eps: f64) -> Result<Tensor> {
     candle_nn::ops::rms_norm(&x.contiguous()?, w, eps as f32)
 }
 struct Rope {
+    /// `cos` repeated as `[cos, cos]` so one multiply covers the rotated halves.
     cos: Tensor,
+    /// `sin` split by the official signs as `[-sin, sin]`.
     sin: Tensor,
 }
 impl Rope {
@@ -53,9 +56,11 @@ impl Rope {
             .to_dtype(DType::F32)?
             .unsqueeze(1)?;
         let angles = positions.matmul(&f)?;
+        let cos = angles.cos()?;
+        let sin = angles.sin()?;
         Ok(Self {
-            cos: angles.cos()?,
-            sin: angles.sin()?,
+            cos: Tensor::cat(&[&cos, &cos], 1)?,
+            sin: Tensor::cat(&[sin.neg()?, sin.clone()], 1)?,
         })
     }
 }
@@ -115,7 +120,12 @@ impl Transformer {
             let k = l.k.forward(&h)?.reshape((b, t, 2, 128))?.transpose(1, 2)?;
             let v = l.v.forward(&h)?.reshape((b, t, 2, 128))?.transpose(1, 2)?;
             let (q, k) = match &self.rope {
-                Some(factors) => (rotate(&q, offset, factors)?, rotate(&k, offset, factors)?),
+                Some(rope) => {
+                    // One rotation for the stacked heads: same per-element arithmetic
+                    // as rotating q and k separately, in fewer kernel launches.
+                    let rotated = rotate(&Tensor::cat(&[&q, &k], 1)?, offset, rope)?;
+                    (rotated.narrow(1, 0, 16)?, rotated.narrow(1, 16, 2)?)
+                }
                 None => (q, k),
             };
             let (k, v) = if let Some(c) = cache.as_mut() {
@@ -130,34 +140,7 @@ impl Transformer {
             } else {
                 (k, v)
             };
-            let len = k.dim(2)?;
-            let k = k
-                .unsqueeze(2)?
-                .broadcast_as((b, 2, 8, len, 128))?
-                .reshape((b, 16, len, 128))?;
-            let v = v
-                .unsqueeze(2)?
-                .broadcast_as((b, 2, 8, len, 128))?
-                .reshape((b, 16, len, 128))?;
-            let mut scores = (q
-                .contiguous()?
-                .matmul(&k.transpose(2, 3)?.contiguous()?)?
-                .to_dtype(DType::F32)?
-                / 128f64.sqrt())?;
-            if self.causal && t > 1 {
-                let mask: Vec<u8> = (0..t)
-                    .flat_map(|i| (0..len).map(move |j| u8::from(j > offset + i)))
-                    .collect();
-                let mask = Tensor::from_vec(mask, (1, 1, t, len), x.device())?
-                    .broadcast_as(scores.shape())?;
-                scores = mask.where_cond(
-                    &Tensor::full(f32::NEG_INFINITY, scores.shape(), x.device())?,
-                    &scores,
-                )?;
-            }
-            let attended = candle_nn::ops::softmax_last_dim(&scores)?
-                .to_dtype(x.dtype())?
-                .matmul(&v.contiguous()?)?
+            let attended = attention(&q, &k, &v, self.causal, offset)?
                 .transpose(1, 2)?
                 .reshape((b, t, 2048))?;
             x = (x + l.o.forward(&attended)?)?;
@@ -172,6 +155,7 @@ impl Transformer {
         norm(&x, &self.norm, self.eps)
     }
 }
+
 fn rotate(x: &Tensor, offset: usize, rope: &Rope) -> Result<Tensor> {
     let (_, _, t, d) = x.dims4()?;
     let cos = rope.cos.narrow(0, offset, t)?.unsqueeze(0)?.unsqueeze(0)?;
@@ -179,7 +163,75 @@ fn rotate(x: &Tensor, offset: usize, rope: &Rope) -> Result<Tensor> {
     let f = x.to_dtype(DType::F32)?;
     let first = f.narrow(3, 0, d / 2)?;
     let second = f.narrow(3, d / 2, d / 2)?;
-    let left = (first.broadcast_mul(&cos)? - second.broadcast_mul(&sin)?)?;
-    let right = (second.broadcast_mul(&cos)? + first.broadcast_mul(&sin)?)?;
-    Tensor::cat(&[left, right], 3)?.to_dtype(x.dtype())
+    // `f` already holds both halves, so the official `x * cos + rotate_half(x) * sin`
+    // reduces to one multiply-add pair over the doubled tables.
+    let swapped = Tensor::cat(&[&second, &first], 3)?;
+    (f.broadcast_mul(&cos)? + swapped.broadcast_mul(&sin)?)?.to_dtype(x.dtype())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use candle_core::Device;
+
+    /// The fused rotation must reproduce `x*cos + rotate_half(x)*sin` bit for bit.
+    #[test]
+    fn fused_rotation_matches_per_head_formula() -> Result<()> {
+        let device = Device::Cpu;
+        let rope = Rope::new(&Tensor::from_vec(
+            (0..64).map(|i| 1.0 + i as f32 * 0.05).collect::<Vec<_>>(),
+            64,
+            &device,
+        )?)?;
+        for dtype in [DType::F32, DType::F16] {
+            let values: Vec<f32> = (0..18 * 3 * 128)
+                .map(|i| ((i % 37) as f32 - 18.0) / 7.0)
+                .collect();
+            let x = Tensor::from_vec(values.clone(), (1, 18, 3, 128), &device)?.to_dtype(dtype)?;
+            let fused = rotate(&x, 5, &rope)?;
+            for (head, expected) in [
+                (0usize, rotate_head_by_hand(&x.narrow(1, 0, 1)?, 5, &rope)?),
+                (16, rotate_head_by_hand(&x.narrow(1, 16, 1)?, 5, &rope)?),
+            ] {
+                let actual = fused.narrow(1, head, 1)?;
+                assert_eq!(
+                    actual
+                        .to_dtype(DType::F32)?
+                        .flatten_all()?
+                        .to_vec1::<f32>()?,
+                    expected
+                        .to_dtype(DType::F32)?
+                        .flatten_all()?
+                        .to_vec1::<f32>()?,
+                    "dtype {dtype:?} head {head}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn rotate_head_by_hand(x: &Tensor, offset: usize, rope: &Rope) -> Result<Tensor> {
+        let (_, _, t, d) = x.dims4()?;
+        let cos = rope
+            .cos
+            .narrow(0, offset, t)?
+            .narrow(1, 0, d / 2)?
+            .unsqueeze(0)?
+            .unsqueeze(0)?;
+        // The stored table keeps the official sign split, so recover `sin` for the
+        // first half before applying the unfused formula.
+        let sin = rope
+            .sin
+            .narrow(0, offset, t)?
+            .narrow(1, 0, d / 2)?
+            .neg()?
+            .unsqueeze(0)?
+            .unsqueeze(0)?;
+        let f = x.to_dtype(DType::F32)?;
+        let first = f.narrow(3, 0, d / 2)?;
+        let second = f.narrow(3, d / 2, d / 2)?;
+        let left = (first.broadcast_mul(&cos)? - second.broadcast_mul(&sin)?)?;
+        let right = (second.broadcast_mul(&cos)? + first.broadcast_mul(&sin)?)?;
+        Tensor::cat(&[left, right], 3)?.to_dtype(x.dtype())
+    }
 }

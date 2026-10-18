@@ -57,7 +57,18 @@ fn main() -> anyhow::Result<()> {
         .map(|v| v.parse::<usize>())
         .transpose()?
         .unwrap_or(5);
-    anyhow::ensure!((1..=10).contains(&rounds), "rounds must be 1..10");
+    anyhow::ensure!((1..=30).contains(&rounds), "rounds must be 1..30");
+    // Rounds before this index still run and are recorded, but stay out of the
+    // measured aggregate so warmup effects remain visible in the raw log.
+    let warmup_rounds = std::env::var("VOXCPM_BENCH_WARMUP")
+        .ok()
+        .map(|v| v.parse::<usize>())
+        .transpose()?
+        .unwrap_or(1);
+    anyhow::ensure!(
+        warmup_rounds <= rounds,
+        "warmup rounds must not exceed rounds"
+    );
     let mut results = Vec::new();
     for round in 0..=rounds {
         let directory = output.join(format!("round-{round}"));
@@ -111,7 +122,8 @@ fn main() -> anyhow::Result<()> {
         device.synchronize()?;
         let elapsed = started.elapsed();
         let seconds = count as f64 / SAMPLE_RATE as f64;
-        let result = serde_json::json!({"round":round,"warmup":round==0,"first_pcm_ms":first.map(|v|v.as_millis()),"generate_ms":elapsed.as_millis(),"audio_seconds":seconds,"rtf":elapsed.as_secs_f64()/seconds,"segments":segments.len()});
+        let graphs = model.cuda_graph_status();
+        let result = serde_json::json!({"round":round,"warmup":round < warmup_rounds,"first_pcm_ms":first.map(|v|v.as_millis()),"generate_ms":elapsed.as_millis(),"audio_seconds":seconds,"rtf":elapsed.as_secs_f64()/seconds,"segments":segments.len(),"cuda_graph":graphs.cfm,"cuda_decoder_graph":graphs.decoder});
         println!("{result}");
         results.push(result);
         std::fs::write(
@@ -119,6 +131,26 @@ fn main() -> anyhow::Result<()> {
             serde_json::to_vec_pretty(&index)?,
         )?;
     }
+    let measured: Vec<f64> = results
+        .iter()
+        .filter(|round| {
+            round["round"]
+                .as_u64()
+                .is_some_and(|index| index >= warmup_rounds as u64)
+        })
+        .filter_map(|round| round["rtf"].as_f64())
+        .collect();
+    let measured_summary = (!measured.is_empty()).then(|| {
+        serde_json::json!({
+            "rounds": measured.len(),
+            "rtf_mean": measured.iter().sum::<f64>() / measured.len() as f64,
+            "rtf_min": measured.iter().copied().fold(f64::INFINITY, f64::min),
+            "rtf_max": measured
+                .iter()
+                .copied()
+                .fold(f64::NEG_INFINITY, f64::max),
+        })
+    });
     let cancelled = std::cell::Cell::new(false);
     let cancel_start = std::cell::Cell::new(None);
     let status = model.generate(
@@ -182,13 +214,18 @@ fn main() -> anyhow::Result<()> {
     );
     let checks = std::cell::Cell::new(0);
     let mut delivered = 0;
+    // Cancellation granularity differs by path: the eager sampler polls the
+    // flag inside every transformer layer, while a replayed CUDA graph can only
+    // poll it once per frame. Trip the flag inside prefill, before the frame
+    // loop, so both paths are held to the same guarantee. Cancelling after the
+    // first frame is covered by the earlier callback-driven case.
     let status = model.generate(
         "检查扩散迭代取消。",
         None,
         &options,
         &|| {
             checks.set(checks.get() + 1);
-            checks.get() > 80
+            checks.get() > 8
         },
         |pcm| {
             delivered += pcm.len();
@@ -197,7 +234,7 @@ fn main() -> anyhow::Result<()> {
     )?;
     anyhow::ensure!(
         status == Outcome::Cancelled && delivered == 0,
-        "cancel during prefill/CFM must not emit PCM"
+        "cancel during prefill/CFM must not emit PCM: status={status:?} delivered={delivered}"
     );
     let release = Instant::now();
     drop(reference);
@@ -221,7 +258,7 @@ fn main() -> anyhow::Result<()> {
     std::fs::write(
         output.join("summary.json"),
         serde_json::to_vec_pretty(
-            &serde_json::json!({"precision":precision,"load_ms":load.as_millis(),"device_init_ms":device_init.as_millis(),"cold_load_ms":(load+device_init).as_millis(),"reference_ms":encoding.as_millis(),"cancel_ms":cancel_ms,"release_ms":release_ms,"regressions":"passed","rounds":results}),
+            &serde_json::json!({"precision":precision,"load_ms":load.as_millis(),"device_init_ms":device_init.as_millis(),"cold_load_ms":(load+device_init).as_millis(),"reference_ms":encoding.as_millis(),"cancel_ms":cancel_ms,"release_ms":release_ms,"regressions":"passed","warmup_rounds":warmup_rounds,"measured":measured_summary,"rounds":results}),
         )?,
     )?;
     Ok(())

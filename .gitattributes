@@ -4,4 +4,7 @@
 *.yml text eol=lf
 *.py text eol=lf
 *.sh text eol=lf
+# Byte-offset fixtures must retain the line endings used by their baselines.
+crates/talechime-core/tests/fixtures/narration.txt text eol=lf
+crates/talechime-protocol/tests/fixtures/narration.txt text eol=lf
 *.png binary

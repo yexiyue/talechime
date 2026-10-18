@@ -336,8 +336,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 [[package]]
 name = "candle-core"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ecb245093b0f791b89d3420c3df9c6d49c60ab63ba54db896bf8a3baf486706"
+source = "git+https://github.com/yexiyue/candle?rev=bafb03db81c3eae48e63ff28d6b30f5a6576ba38#bafb03db81c3eae48e63ff28d6b30f5a6576ba38"
 dependencies = [
  "accelerate-src",
  "byteorder",
@@ -369,8 +368,7 @@ dependencies = [
 [[package]]
 name = "candle-kernels"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67450168a281bbb195a14cc85cf164c7a12023a54a03409a3324f476346e0789"
+source = "git+https://github.com/yexiyue/candle?rev=bafb03db81c3eae48e63ff28d6b30f5a6576ba38#bafb03db81c3eae48e63ff28d6b30f5a6576ba38"
 dependencies = [
  "cudaforge",
 ]
@@ -378,8 +376,7 @@ dependencies = [
 [[package]]
 name = "candle-metal-kernels"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "242e83c6acf639bb273c929d73c67a882bb4dd08a140f121096e19ba2f213d3e"
+source = "git+https://github.com/yexiyue/candle?rev=bafb03db81c3eae48e63ff28d6b30f5a6576ba38#bafb03db81c3eae48e63ff28d6b30f5a6576ba38"
 dependencies = [
  "block2",
  "half",
@@ -394,8 +391,7 @@ dependencies = [
 [[package]]
 name = "candle-nn"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eaa10b6ccc365b33210ce404fbf45e60d3e0bdac1004463cf1052e6ee1c1739a"
+source = "git+https://github.com/yexiyue/candle?rev=bafb03db81c3eae48e63ff28d6b30f5a6576ba38#bafb03db81c3eae48e63ff28d6b30f5a6576ba38"
 dependencies = [
  "candle-core",
  "candle-metal-kernels",
@@ -412,8 +408,7 @@ dependencies = [
 [[package]]
 name = "candle-transformers"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3bcbbf7ff00ff6fe2af22b93600195917fe90e90ff48424a140d1a926c44b1c1"
+source = "git+https://github.com/yexiyue/candle?rev=bafb03db81c3eae48e63ff28d6b30f5a6576ba38#bafb03db81c3eae48e63ff28d6b30f5a6576ba38"
 dependencies = [
  "byteorder",
  "candle-core",
@@ -431,8 +426,7 @@ dependencies = [
 [[package]]
 name = "candle-ug"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "257411c33abf7d898a31ac20d80813dfe96ff09e23a73039e22ab293aea9b871"
+source = "git+https://github.com/yexiyue/candle?rev=bafb03db81c3eae48e63ff28d6b30f5a6576ba38#bafb03db81c3eae48e63ff28d6b30f5a6576ba38"
 dependencies = [
  "ug",
  "ug-cuda",
@@ -1098,7 +1092,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3045,7 +3039,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3420,7 +3414,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3477,7 +3471,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4166,7 +4160,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4702,9 +4696,11 @@ dependencies = [
  "anyhow",
  "candle-core",
  "candle-nn",
+ "cudarc 0.19.10",
  "hound",
  "serde_json",
  "tokenizers",
+ "tracing",
  "tts-candle-platform",
 ]
 
@@ -4874,7 +4870,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

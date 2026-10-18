@@ -4,6 +4,11 @@
 
 Rust 2024，声明最低 Rust 1.89；当前 stable 验证不等于最低版本实机验收。Linux 安装 `libasound2-dev libssl-dev pkg-config`。CUDA 可选构建需要匹配 Toolkit；显式设备不可用时不能静默替代。ORT 固定 rc.13，Candle core/nn/transformers 固定 0.11.0；保持 Windows 动态 CRT。
 
+TTS 热路径修改先按 [性能优化方法](knowledge/tts-performance.md) 固定基线与输出门禁。
+Candle core/nn/transformers/metal-kernels 的 fork 来源统一在根 `[patch.crates-io]`，
+CUDA/Metal feature 仍由 `tts-candle-platform` 按 target 路由；详见
+[来源与发布策略](legal/candle/SOURCE.md)。组合启用模型时须检查 feature 合并后的依赖与测试。
+
 ```bash
 cargo test --locked --workspace --lib --tests --examples
 cargo clippy --locked --workspace --all-targets -- -D warnings

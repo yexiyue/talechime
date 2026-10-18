@@ -4,6 +4,12 @@
 
 # 工具链 / 工程
 
+跨后端优化的当前方法见 [TTS 性能优化方法](tts-performance.md)，包括测量与准确性门禁、
+模块边界、CUDA Graph 生命周期和失败实验。下方带日期的条目保留历史环境，
+实际版本与来源以根 Cargo.toml/Cargo.lock 及 [Candle 声明](../legal/candle/SOURCE.md) 为准。
+core/nn/transformers/metal-kernels 统一 patch 到 fork 同一 revision；只检查 CPU/CUDA
+依赖树会漏掉 Metal kernels 的 registry/git 双来源，需检查 macOS feature 解析。
+
 ## 2026-10-09 T3 库装配
 
 talechime 包新增 lib.rs/engine.rs/listening.rs 薄库入口，沿用模型 feature，未新增 crate 或 CLI 裁剪 feature。新增依赖仅是 workspace 已锁定的 thiserror/tokio-util，不升级推理库；library 与 binary 共同编译，协议/CLI 接线在 T4。MOSS Nano 保存推理线程 owner，Loading 字段顺序确保初始化 receiver 先关闭再 join；已准备 owner 先关闭请求通道再 join。普通检查/示例不加载模型。
@@ -306,6 +312,64 @@ Windows ML 新路线不是只有 DirectML：官方 MIGraphX 插件要求 RDNA3+�
 Candle 0.11 all-features 测试第一次链接报告 LNK1318 / LIMIT(12)，当时 D 盘仅剩 29 MiB，失败 PDB 约 61 MiB；不能据错误名称推断触及 4 GiB PDB 格式限制。将 20:20 之前的旧 Rust incremental 缓存移到 C 盘后（保留移动清单，未移动模型/源码/试听材料），原参数 `-j1` 重跑 537 passed / 7 ignored。没有修改 PDB 页面参数或压制 CRT 警告。CUDA 模型开发的多次 debug/profile/feature 编译可积累大量 incremental 缓存；先检查实际磁盘空间，再诊断链接限制。
 
 CUDA 13 官方 `cuda.lib` 的静态 driver loader 对象带 `/DEFAULTLIB:LIBCMT`，当前 release 链接仍有 LNK4098；Candle 0.11 MOE 对象已全部为 `/MD`。不通过全局 `/NODEFAULTLIB`、修改 SDK 或压制警告掩盖冲突。独立 sm120 CUDA 程序及 Vox Q8/BF16 实际播放通过，CRT 风险继续记录。
+
+### Candle fork patch 与 TTS 基准协议（2026-10-18）
+
+Candle 0.11.0 由工作区 `[patch.crates-io]` 指向 fork `yexiyue/candle` 的
+`talechime-perf` 分支（基线 = 上游 `31f35b147389700ed2a178ee66a91c3cc25cc80d`，
+tag `0.11.0`）。
+
+**正确做法：**
+- fork 补丁只做行为级、可上游改动，不新增/删除/改变公开 API；`cargo publish`
+  会剥离 `[patch]`，本仓库发布的 candle 消费库在下游解析 registry 版本，依赖
+  fork 独有 API 会导致发布版本无法编译。
+- 每个补丁在 fork 的 `FORK.md` 登记上游 issue/PR；确需新 API 时把受影响库标
+  `publish = false` 直到上游合并。来源与许可见 `docs/legal/candle/SOURCE.md`，
+  许可副本随 `crates/voxcpm/` 分发以便 `prepare-notices.py` 收集。
+- CUDA Graph capture 用 candle 0.11 已公开的 `CudaDevice::enable_cuda_graph_htod_cache()`
+  与 `CudaDevice::cuda_stream()`，capture 入口是 `cudarc` 0.19.10 的公开
+  `begin_capture/end_capture/launch`；cudarc 版本必须与 candle-core 解析到同一实例。
+- candle 只在 `enable_cuda_graph_htod_cache()` guard **生效期间**填充 h2d 参数
+  缓存，且录制中拒绝任何未缓存上传。预热必须放在 guard 之内，否则首次录制直接
+  以 `h2d param cache miss during CUDA graph capture` 失败。
+- **含未配对分配节点的 CUDA 图只能 launch 一次**：此后每次 `cuGraphLaunch` 返回
+  `CUDA_ERROR_INVALID_VALUE`（capture 本身成功，故障延迟到第二次回放才暴露）。
+  candle 的函数式张量天然在录制区间内释放每个中间张量，因此唯一未配对的分配是
+  被保活的输出张量——在录制区间内把它 d2d 拷进录制前分配好的常驻缓冲再释放，
+  图即配平。加 `CUDA_GRAPH_INSTANTIATE_FLAG_AUTO_FREE_ON_LAUNCH` 也能配平，但会
+  在再次 launch 之前释放尚未释放的图分配（不是上次 launch 末尾）；本项目仍用
+  配平分配和图外常驻输出来明确生命周期。该现象与 candle 无关，
+  纯 cudarc 最小复现即可观察到，不必先怀疑 candle 或驱动。
+- 图内不要放取消轮询、profiling 同步或任何 host 读回；这些留在图外逐帧检查。
+  取消粒度因此从「算子内」变成「每帧」，基准与回归用例的阈值要按新粒度设定。
+- 图必须保活所有外部参数地址，包括各 steps 对应的时间表；只保活输入输出不足以
+  支持多特化缓存。用 steps A→B→A 与 LRU 淘汰验证，不能只跑默认参数的 WAV。
+- `contiguous()` 不保证 storage 偏移为零：连续 narrow 可能仍共享更大的 storage。
+  原始复制必须使用 `start_offset` 和逻辑元素长度，检查设备身份；不能复制整个 storage。
+- 录制错误要在释放缓冲前结束 capture；Replay 自己持有录制流，输入复制与 launch
+  不允许分别传不同的流。异步上下文错误不保证能恢复，不能吞错继续交付 PCM。
+- VoxCPM GGUF CUDA 默认启用 CFM + AudioVAE 图；原始权重的 decoder 保持 opt-in。
+  加载前设置 `VOXCPM_CUDA_GRAPH=0` 关闭全部图，`VOXCPM_DECODER_GRAPH=0` 单独关闭
+  decoder。profiling 走 eager，`Model::cuda_graph_status()` 提供各模块缓存可用状态。
+- AudioVAE 有历史与重叠尾部，必须录制状态的原地更新，并在每请求开始清零。
+  snapshot/restore 共用状态遍历。录制失败返回实际 warmup，不能重复推进状态；
+  launch 出错若不能证明状态未变则终止当前请求，后续请求重置后 eager。
+  LocalEncoder 与分组 GQA 等未过门槛的候选不保留运行时开关。实测与边界见
+  `docs/records/voxcpm/voxcpm-review-extension-2026-10-18.md`。
+- 显式补测 cuDNN 时，本机 SDK 在 `D:\dev-tools\cudnn\v9.14-cuda13`。若只设置
+  `CUDNN_PATH` 而链接找不到 `cudnn.lib`，给构建进程设置 `CUDNN_LIB` 为该 SDK 根目录，
+  `LIB` 包含 `lib\x64`，PATH 包含 `bin`。不把链接失败当作图不支持 cuDNN；补齐路径后
+  dense conv 与完整 decoder capture/replay 均已通过逐位测试。
+
+TTS 性能对照统一协议（劣化排查结论，见
+`docs/records/voxcpm/voxcpm-performance-comparison-2026-10-18.md` §6.2/§6.3）：
+ABBA 交替 ≥8 进程、丢弃 ≥1 轮预热、电源计划用高性能、测量期间不编译不并行推理、
+同时报 mean-of-means 与各 run 明细，两组区间重叠即判为无收益。Windows「平衡」
+电源计划下的逐轮漂移**未复现**（一次 +3.0%，重复实验 −1.3%），且 GPU 时钟、
+功耗、温度、显存、CPU 频率未呈现对应变化，仍不足以排除所有硬件/调度因素。
+后审查发现旧脚本高性能电源 GUID 无效且未检查退出码，其电源对照结论撤销；
+新脚本用 `powercfg /setactive SCHEME_MIN` 并检查退出码，finally 恢复先前方案。
+劣化仍未定位，不因接口能编译或一次测量稳定而宣称完成归因。
 
 ### ORT CUDA 预编译包与 Blackwell 架构覆盖
 
