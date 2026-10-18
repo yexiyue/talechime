@@ -1,10 +1,11 @@
 [workspace]
-members = ["crates/cosyvoice3", "crates/qwen3-asr", "crates/moss-tts", "crates/talechime", "crates/talechime-backends", "crates/talechime-core", "crates/talechime-protocol", "crates/indextts", "crates/omnivoice", "crates/qwen3-tts", "crates/tts-candle-platform", "crates/voxcpm", "crates/voxcpm-sys"]
+members = ["crates/candle-cuda-graph", "crates/cosyvoice3", "crates/qwen3-asr", "crates/moss-tts", "crates/talechime", "crates/talechime-backends", "crates/talechime-core", "crates/talechime-protocol", "crates/indextts", "crates/omnivoice", "crates/qwen3-tts", "crates/tts-candle-platform", "crates/voxcpm", "crates/voxcpm-sys"]
 default-members = ["crates/talechime"]
 resolver = "3"
 
 [workspace.dependencies]
 cosyvoice3 = { path = "crates/cosyvoice3", version = "0.1.0", default-features = false }
+candle-cuda-graph = { package = "talechime-candle-cuda-graph", path = "crates/candle-cuda-graph", version = "0.1.0" }
 clap = { version = "4.6", features = ["derive"] }
 crossterm = { version = "0.29.0", features = ["event-stream"] }
 windows = { version = "0.54.0", default-features = false }

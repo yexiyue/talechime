@@ -136,12 +136,7 @@ fn views_capture_cleanup_and_fallback() -> Result<()> {
         candle_core::bail!("injected recording failure")
     });
     assert!(failure.is_err());
-    assert_eq!(
-        cuda.cuda_stream()
-            .capture_status()
-            .map_err(replay::driver_error)?,
-        cudarc::driver::sys::CUstreamCaptureStatus_enum::CU_STREAM_CAPTURE_STATUS_NONE
-    );
+    assert!(!candle_cuda_graph::is_capturing(&cuda.cuda_stream())?);
     identical(&view.affine(2.0, 1.0)?, &warmup)?;
 
     let mut graphs = CfmGraphs::new(&device).expect("enable graphs");

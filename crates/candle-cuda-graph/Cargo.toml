@@ -1,0 +1,18 @@
+[package]
+name = "talechime-candle-cuda-graph"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+description = "Fixed-buffer CUDA graph capture and replay for Candle tensor programs"
+repository = "https://github.com/yexiyue/talechime"
+
+[lib]
+name = "candle_cuda_graph"
+
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+# CUDA-only by construction: Candle's `cuda` feature also selects cudarc's
+# library loading mode, which the workspace leaves to Candle.
+candle-core = { workspace = true, features = ["cuda"] }
+cudarc = { workspace = true }
+tracing.workspace = true

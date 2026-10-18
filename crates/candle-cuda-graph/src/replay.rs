@@ -4,8 +4,17 @@ use candle_core::{CudaStorage, Device, Result, Storage, Tensor};
 use cudarc::driver::{CudaGraph, CudaStream, DevicePtr, SyncOnDrop, sys};
 use std::sync::Arc;
 
-pub(super) fn driver_error(error: cudarc::driver::DriverError) -> candle_core::Error {
+pub fn driver_error(error: cudarc::driver::DriverError) -> candle_core::Error {
     candle_core::Error::Msg(format!("cuda driver: {error:?}"))
+}
+
+/// Whether `stream` is still inside an unfinished capture.
+///
+/// A recording that ends inside capture leaves the stream in a capturing
+/// state, which silently invalidates every later capture on it.
+pub fn is_capturing(stream: &CudaStream) -> Result<bool> {
+    Ok(stream.capture_status().map_err(driver_error)?
+        != sys::CUstreamCaptureStatus_enum::CU_STREAM_CAPTURE_STATUS_NONE)
 }
 
 struct Buffer {
@@ -16,7 +25,7 @@ struct Buffer {
 
 /// Output is borrowed scratch: consume it on the same stream before replaying.
 /// The graph is destroyed before any buffers or captured parameters are dropped.
-pub(super) struct Replay {
+pub struct Replay {
     graph: CudaGraph,
     stream: Arc<CudaStream>,
     output: Buffer,
@@ -25,6 +34,12 @@ pub(super) struct Replay {
 }
 
 impl Replay {
+    /// Records `operation` once, with `inputs` copied into persistent buffers.
+    ///
+    /// `warmup` must be the result of the same operation on the same inputs:
+    /// its value is both the output buffer's shape and this frame's result,
+    /// because recording does not execute. `parameters` are tensors the graph
+    /// reads that the caller would otherwise drop.
     pub fn record(
         device: &CudaDevice,
         inputs: &[&Tensor],
@@ -68,6 +83,9 @@ impl Replay {
         })
     }
 
+    /// Overwrites the persistent inputs and re-executes the recorded kernels.
+    ///
+    /// Returns the output buffer; it stays valid until the next launch.
     pub fn launch(&self, inputs: &[&Tensor]) -> Result<Tensor> {
         if inputs.len() != self.inputs.len() {
             candle_core::bail!("cuda graph input count changed");
@@ -131,7 +149,8 @@ impl Buffer {
     }
 }
 
-pub(super) fn copy_into(stream: &CudaStream, destination: &Tensor, source: &Tensor) -> Result<()> {
+/// Overwrites a persistent tensor with values produced this frame.
+pub fn copy_into(stream: &CudaStream, destination: &Tensor, source: &Tensor) -> Result<()> {
     write(stream, &Buffer::from_tensor(stream, destination)?, source)
 }
 
@@ -143,9 +162,9 @@ fn write(stream: &CudaStream, buffer: &Buffer, src: &Tensor) -> Result<()> {
     if buffer.tensor.dims() != src.dims() || buffer.tensor.dtype() != src.dtype() {
         candle_core::bail!("cuda graph buffer shape or dtype changed");
     }
-    // Conditioning read from reference audio is a narrowed, transposed view into a
-    // much larger storage, so it has to be materialized before its raw pointer and
-    // element count can be used.
+    // Conditioning read from reference audio can be a narrowed, transposed view
+    // into a much larger storage, so it has to be materialized before its raw
+    // pointer and element count can be used.
     let src = src.contiguous()?;
     let (storage, layout) = src.storage_and_layout();
     let Storage::Cuda(storage) = &*storage else {
@@ -161,24 +180,15 @@ fn write(stream: &CudaStream, buffer: &Buffer, src: &Tensor) -> Result<()> {
     if offset > allocated || bytes > allocated - offset {
         candle_core::bail!("cuda graph input exceeds its allocation");
     }
-    memcpy(stream, base + offset as u64, bytes, buffer, sync)
-}
-
-fn memcpy(
-    stream: &CudaStream,
-    source: sys::CUdeviceptr,
-    bytes: usize,
-    buffer: &Buffer,
-    sync: SyncOnDrop<'_>,
-) -> Result<()> {
     if bytes != buffer.bytes {
         candle_core::bail!("cuda graph buffer size changed");
     }
     // SAFETY: both pointers are device allocations of `bytes` bytes in the same
-    // context, and the stream orders this copy after the kernels that produced the
-    // source.
-    let status =
-        unsafe { sys::cuMemcpyDtoDAsync_v2(buffer.ptr, source, bytes, stream.cu_stream()) };
+    // context, and the stream orders this copy after the kernels that produced
+    // the source.
+    let status = unsafe {
+        sys::cuMemcpyDtoDAsync_v2(buffer.ptr, base + offset as u64, bytes, stream.cu_stream())
+    };
     // Keep the source alive until the copy has been scheduled.
     drop(sync);
     if status != sys::cudaError_enum::CUDA_SUCCESS {
@@ -192,25 +202,28 @@ fn memcpy(
 ///
 /// The storage slice variants carry the concrete element type, so the pointer and
 /// byte count come from the variant instead of from a dtype-to-type conversion
-/// this crate cannot name.
+/// this crate cannot name. Integer codes are first-class: Qwen's acoustic codes
+/// are `U32`, not floating point.
 fn device_slice<'a>(
     storage: &'a CudaStorage,
     stream: &'a CudaStream,
 ) -> Result<(sys::CUdeviceptr, usize, SyncOnDrop<'a>)> {
-    let (ptr, bytes, sync) = match &storage.slice {
-        CudaStorageSlice::F16(slice) => {
-            let (ptr, sync) = slice.device_ptr(stream);
-            (ptr, slice.len() * 2, sync)
-        }
-        CudaStorageSlice::BF16(slice) => {
-            let (ptr, sync) = slice.device_ptr(stream);
-            (ptr, slice.len() * 2, sync)
-        }
-        CudaStorageSlice::F32(slice) => {
-            let (ptr, sync) = slice.device_ptr(stream);
-            (ptr, slice.len() * 4, sync)
-        }
-        other => candle_core::bail!("cuda graph input storage {other:?} is not supported"),
+    let (entry, bytes) = match &storage.slice {
+        CudaStorageSlice::U8(slice) => (slice.device_ptr(stream), slice.len()),
+        CudaStorageSlice::U32(slice) => (slice.device_ptr(stream), slice.len() * 4),
+        CudaStorageSlice::I16(slice) => (slice.device_ptr(stream), slice.len() * 2),
+        CudaStorageSlice::I32(slice) => (slice.device_ptr(stream), slice.len() * 4),
+        CudaStorageSlice::I64(slice) => (slice.device_ptr(stream), slice.len() * 8),
+        CudaStorageSlice::BF16(slice) => (slice.device_ptr(stream), slice.len() * 2),
+        CudaStorageSlice::F16(slice) => (slice.device_ptr(stream), slice.len() * 2),
+        CudaStorageSlice::F32(slice) => (slice.device_ptr(stream), slice.len() * 4),
+        CudaStorageSlice::F64(slice) => (slice.device_ptr(stream), slice.len() * 8),
+        CudaStorageSlice::F8E4M3(slice) => (slice.device_ptr(stream), slice.len()),
+        CudaStorageSlice::F6E2M3(slice) => (slice.device_ptr(stream), slice.len()),
+        CudaStorageSlice::F6E3M2(slice) => (slice.device_ptr(stream), slice.len()),
+        CudaStorageSlice::F4(slice) => (slice.device_ptr(stream), slice.len()),
+        CudaStorageSlice::F8E8M0(slice) => (slice.device_ptr(stream), slice.len()),
     };
+    let (ptr, sync) = entry;
     Ok((ptr, bytes, sync))
 }

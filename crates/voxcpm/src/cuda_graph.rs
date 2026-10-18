@@ -2,14 +2,13 @@
 pub(crate) mod decoder;
 #[cfg(test)]
 mod decoder_tests;
-mod replay;
 #[cfg(test)]
 mod tests;
 
 use crate::acoustic::Acoustic;
 use candle_core::cuda_backend::CudaDevice;
 use candle_core::{DType, Device, Result, Tensor};
-use replay::Replay;
+use candle_cuda_graph::Replay;
 use std::collections::HashMap;
 
 const MAX_CAPTURED: usize = 4;

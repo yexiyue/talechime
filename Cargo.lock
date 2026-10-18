@@ -4074,6 +4074,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "talechime-candle-cuda-graph"
+version = "0.1.0"
+dependencies = [
+ "candle-core",
+ "cudarc 0.19.10",
+ "tracing",
+]
+
+[[package]]
 name = "talechime-core"
 version = "0.4.1"
 dependencies = [
@@ -4141,6 +4150,7 @@ dependencies = [
  "safetensors 0.7.0",
  "serde",
  "serde_json",
+ "talechime-candle-cuda-graph",
  "tempfile",
  "thiserror 2.0.21",
  "tokenizers",
@@ -4696,9 +4706,9 @@ dependencies = [
  "anyhow",
  "candle-core",
  "candle-nn",
- "cudarc 0.19.10",
  "hound",
  "serde_json",
+ "talechime-candle-cuda-graph",
  "tokenizers",
  "tracing",
  "tts-candle-platform",
