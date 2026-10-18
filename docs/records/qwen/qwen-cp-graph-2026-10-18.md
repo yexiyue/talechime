@@ -1,5 +1,8 @@
 # Qwen CUDA CodePredictor 帧图（2026-10-18）
 
+本文的性能数字针对 0.6B Base；后续 1.7B Base 的独立正确性与性能结果见
+[1.7B 验收](qwen17-cuda-acceptance-2026-10-18.md)，不将本表收益直接套到 1.7B。
+
 ## 结论
 
 CodePredictor 每帧的完整自回归循环（2-token prefill + 14 步单 token 前向/argmax）
@@ -22,7 +25,7 @@ CodePredictor 每帧的完整自回归循环（2-token prefill + 14 步单 token
 
 源码固定点 `94b4054`（合并 VoxCPM 与 Qwen 主线）。承接
 [Qwen CUDA 调研](qwen-cuda-performance-2026-10-18.md) 与
-[candle-performance 试用](platform/candle-performance-skill-trial-2026-10-18.md)
+[candle-performance 试用](../platform/candle-performance-skill-trial-2026-10-18.md)
 的候选结论，本轮把该候选实现并测量。
 
 ## 基线与边界

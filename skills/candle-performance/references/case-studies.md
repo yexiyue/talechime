@@ -14,6 +14,7 @@ skill 的操作规则自包含；这里的仓库相对链接在移出 Talechime 
 | Qwen CUDA code 打包 | 四进程初筛完整慢 1.04%、流式快 0.46%，输出相同，撤回；说明“输出相同”与“有收益”是两个独立判据 | 打包候选本身等于帧图候选或已取得可靠 CUDA 提速（帧图是独立候选，见下行） |
 | Qwen CUDA CP 帧图 | ABBA 八进程完整 3.0840→1.9113 s（-38.0%）、流式 3.6529→2.4353 s（-33.3%）、首 PCM 0.7688→0.5663 s（-26.3%），区间不重叠，60 份 codes/PCM/WAV 与 eager 逐字节一致；dispatch-bound 区域（每帧约 34 ms 主机墙钟的小 kernel 循环）成图收益最大 | 其他模型的帧循环都有同样收益；KV 变体、状态与 dtype 前提可从本例照搬；「平衡」电源计划下测得的数字适用于高性能计划 |
 | Qwen CUDA 流式历史解码图 | CP 图两侧开启，ABBA 八进程各 1 预热 + 5 热轮，流式 2.4240→2.1140 s（耗时减少 12.8%），240 份产物逐字节一致；无内部历史状态的子图可以模型级有界缓存，但要串行覆盖输入/回放/复制输出，并显式保活常量 | 带卷积/KV 状态的解码器也能跨请求共享图；局部回放省 60% 等于端到端省 60%；不同实验的 CP 与解码提速能直接相加 |
+| Qwen 1.7B Base CUDA | 换模型后重新校验权重、编码 2048 维参考（0.6B 为 1024），独立 12 进程三配置：完整耗时 −34.3%、流式 −39.1%，360 份产物逐字节一致 | 同一优化代码路径自动证明另一模型已验收；直接沿用低规格模型 prompt；Base 结果适用于 CustomVoice/VoiceDesign |
 | CosyVoice3 Accelerate | M4 Pro CPU 样例大幅改善；BLAS/Rayon 组合存在争用，波形非逐位一致 | 已证明全部算子用了 AMX，或数值/试听普遍等价 |
 | IndexTTS depthwise/FIR | 上游 PR 的局部借鉴及大形状算法对照有效，CUDA oracle 有精度配置边界 | 小输入通过即可覆盖长音频，或所有误差都由 TF32 导致 |
 
@@ -27,6 +28,7 @@ skill 的操作规则自包含；这里的仓库相对链接在移出 Talechime 
 - [Qwen CP 帧图](../../../docs/records/qwen/qwen-cp-graph-2026-10-18.md)：整帧自回归循环成图、主机簿记不变式、失败策略分档、共享 recorder 提取与复验边界。
 - [Qwen CUDA 图分区评估](../../../docs/records/qwen/qwen-cuda-graph-partition-2026-10-18.md)：历史探索数据与后续口径修正；固定容量不等于相同有效 KV 长度。
 - [Qwen 解码图与审查](../../../docs/records/qwen/qwen-decoder-graph-2026-10-18.md)：有状态/无内部状态图的生命周期边界、eager oracle 必须独立、表缓存按字节约束、初次录制与多请求稳态计时。
+- [Qwen 1.7B Base CUDA 独立验收](../../../docs/records/qwen/qwen17-cuda-acceptance-2026-10-18.md)：另一模型规格的资源与 prompt 身份、eager/单图/双图三配置配对验收；模型统一存储与经哈希验证的重复权重去重。
 - [CosyVoice3](../../../docs/records/cosyvoice3/cosyvoice3-performance-2026-10-17.md) §11：Accelerate 线程矩阵、数值和试听边界。
 - [IndexTTS](../../../docs/records/indextts/indextts-candle-performance-2026-10-17.md) §10–12：depthwise PR、FIR 大形状、严格 F32 与默认配置的区别。
 

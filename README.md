@@ -120,6 +120,8 @@ CosyVoice3 的 Rust Metal 没有对应的官方 MPS 实现可作同设备对照�
 
 后续在 **CP 图已开启**的条件下，流式解码图将耗时从 **2.4240 s 降至 2.1140 s（减少 12.8%，RTF 0.514→0.448）**，完整合成与首 PCM 没有明确变化。八进程、各 1 预热 + 5 热轮，240 份产物逐字节一致；CUDA 默认开启，`QWEN_DECODE_GRAPH=0` 关闭。该增量实验使用平衡电源计划，不能和前表不同条件的数字直接叠加；[设计、审查与原始口径](docs/records/qwen/qwen-decoder-graph-2026-10-18.md)另列。
 
+**1.7B Base ICL 也已独立验收**：同一 RTX 5070 上，eager→两项图开启，完整 **2.8463→1.8713 s（减少 34.3%，RTF 0.684→0.450）**、流式 **3.3973→2.0698 s（减少 39.1%，RTF 0.817→0.498）**、首 PCM **0.7665→0.6138 s**。12 个独立进程比较 eager／CP／两图三种配置，各 1 预热＋5 热轮，360 份产物逐字节一致；模型按固定清单保存于 `~/.talechime`。这里只验收 1.7B Base，不外推到 CustomVoice/VoiceDesign；[完整报告](docs/records/qwen/qwen17-cuda-acceptance-2026-10-18.md)包含配置、显存与磁盘清理记录。
+
 ## 接入应用
 
 Rust 应用可直接使用 `talechime::Engine` 的 `prepare`、`synthesize`、`synthesize_pcm` 和 `listen`。直接合成无需播放器或检查点；朗读计划可在同一模型内切换音色。无模型示例：

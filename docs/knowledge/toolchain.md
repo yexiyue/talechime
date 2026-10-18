@@ -384,6 +384,11 @@ tag `0.11.0`）。
   CUDA 语义 code 用整数算术取模，不再依赖主机往返或 Talker 词表大小。
   CP 图已开启时，正式 ABBA 八进程流式耗时进一步减少 12.8%，240 份产物相同；
   见 `docs/records/qwen/qwen-decoder-graph-2026-10-18.md`。
+- Qwen 1.7B Base 也已独立验证（12 进程三配置、360 份产物逐字节一致）：两图
+  相对 eager 的完整/流式耗时分别减少 34.3%/39.1%，流式 RTF 0.498。模型按
+  `1.7b-base.json` 固定 revision 与哈希保存在 `~/.talechime/resources/qwen/models/`，
+  参考按 1.7B 重新编码；不将结果外推到 CustomVoice/VoiceDesign。见
+  `docs/records/qwen/qwen17-cuda-acceptance-2026-10-18.md`。
 
 TTS 性能对照统一协议（劣化排查结论，见
 `docs/records/voxcpm/voxcpm-performance-comparison-2026-10-18.md` §6.2/§6.3）：
