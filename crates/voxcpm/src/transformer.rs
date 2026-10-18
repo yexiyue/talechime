@@ -1,4 +1,5 @@
 //! MiniCPM4 shared by the global, residual and local networks.
+use crate::attention::attention;
 use crate::weights::{Linear, Weights};
 use candle_core::{DType, Result, Tensor};
 
@@ -139,34 +140,7 @@ impl Transformer {
             } else {
                 (k, v)
             };
-            let len = k.dim(2)?;
-            let k = k
-                .unsqueeze(2)?
-                .broadcast_as((b, 2, 8, len, 128))?
-                .reshape((b, 16, len, 128))?;
-            let v = v
-                .unsqueeze(2)?
-                .broadcast_as((b, 2, 8, len, 128))?
-                .reshape((b, 16, len, 128))?;
-            let mut scores = (q
-                .contiguous()?
-                .matmul(&k.transpose(2, 3)?.contiguous()?)?
-                .to_dtype(DType::F32)?
-                / 128f64.sqrt())?;
-            if self.causal && t > 1 {
-                let mask: Vec<u8> = (0..t)
-                    .flat_map(|i| (0..len).map(move |j| u8::from(j > offset + i)))
-                    .collect();
-                let mask = Tensor::from_vec(mask, (1, 1, t, len), x.device())?
-                    .broadcast_as(scores.shape())?;
-                scores = mask.where_cond(
-                    &Tensor::full(f32::NEG_INFINITY, scores.shape(), x.device())?,
-                    &scores,
-                )?;
-            }
-            let attended = candle_nn::ops::softmax_last_dim(&scores)?
-                .to_dtype(x.dtype())?
-                .matmul(&v.contiguous()?)?
+            let attended = attention(&q, &k, &v, self.causal, offset)?
                 .transpose(1, 2)?
                 .reshape((b, t, 2048))?;
             x = (x + l.o.forward(&attended)?)?;
@@ -181,6 +155,7 @@ impl Transformer {
         norm(&x, &self.norm, self.eps)
     }
 }
+
 fn rotate(x: &Tensor, offset: usize, rope: &Rope) -> Result<Tensor> {
     let (_, _, t, d) = x.dims4()?;
     let cos = rope.cos.narrow(0, offset, t)?.unsqueeze(0)?.unsqueeze(0)?;

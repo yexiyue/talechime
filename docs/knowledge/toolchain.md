@@ -330,17 +330,39 @@ tag `0.11.0`）。
   candle 的函数式张量天然在录制区间内释放每个中间张量，因此唯一未配对的分配是
   被保活的输出张量——在录制区间内把它 d2d 拷进录制前分配好的常驻缓冲再释放，
   图即配平。加 `CUDA_GRAPH_INSTANTIATE_FLAG_AUTO_FREE_ON_LAUNCH` 也能配平，但会
-  在每次 launch 末尾释放输出，不适合图外还要读的结果。该现象与 candle 无关，
+  在再次 launch 之前释放尚未释放的图分配（不是上次 launch 末尾）；本项目仍用
+  配平分配和图外常驻输出来明确生命周期。该现象与 candle 无关，
   纯 cudarc 最小复现即可观察到，不必先怀疑 candle 或驱动。
 - 图内不要放取消轮询、profiling 同步或任何 host 读回；这些留在图外逐帧检查。
   取消粒度因此从「算子内」变成「每帧」，基准与回归用例的阈值要按新粒度设定。
+- 图必须保活所有外部参数地址，包括各 steps 对应的时间表；只保活输入输出不足以
+  支持多特化缓存。用 steps A→B→A 与 LRU 淘汰验证，不能只跑默认参数的 WAV。
+- `contiguous()` 不保证 storage 偏移为零：连续 narrow 可能仍共享更大的 storage。
+  原始复制必须使用 `start_offset` 和逻辑元素长度，检查设备身份；不能复制整个 storage。
+- 录制错误要在释放缓冲前结束 capture；Replay 自己持有录制流，输入复制与 launch
+  不允许分别传不同的流。异步上下文错误不保证能恢复，不能吞错继续交付 PCM。
+- VoxCPM GGUF CUDA 默认启用 CFM + AudioVAE 图；原始权重的 decoder 保持 opt-in。
+  加载前设置 `VOXCPM_CUDA_GRAPH=0` 关闭全部图，`VOXCPM_DECODER_GRAPH=0` 单独关闭
+  decoder。profiling 走 eager，`Model::cuda_graph_status()` 提供各模块缓存可用状态。
+- AudioVAE 有历史与重叠尾部，必须录制状态的原地更新，并在每请求开始清零。
+  snapshot/restore 共用状态遍历。录制失败返回实际 warmup，不能重复推进状态；
+  launch 出错若不能证明状态未变则终止当前请求，后续请求重置后 eager。
+  LocalEncoder 与分组 GQA 等未过门槛的候选不保留运行时开关。实测与边界见
+  `docs/records/voxcpm/voxcpm-review-extension-2026-10-18.md`。
+- 显式补测 cuDNN 时，本机 SDK 在 `D:\dev-tools\cudnn\v9.14-cuda13`。若只设置
+  `CUDNN_PATH` 而链接找不到 `cudnn.lib`，给构建进程设置 `CUDNN_LIB` 为该 SDK 根目录，
+  `LIB` 包含 `lib\x64`，PATH 包含 `bin`。不把链接失败当作图不支持 cuDNN；补齐路径后
+  dense conv 与完整 decoder capture/replay 均已通过逐位测试。
 
 TTS 性能对照统一协议（劣化排查结论，见
 `docs/records/voxcpm/voxcpm-performance-comparison-2026-10-18.md` §6.2/§6.3）：
 ABBA 交替 ≥8 进程、丢弃 ≥1 轮预热、电源计划用高性能、测量期间不编译不并行推理、
 同时报 mean-of-means 与各 run 明细，两组区间重叠即判为无收益。Windows「平衡」
 电源计划下的逐轮漂移**未复现**（一次 +3.0%，重复实验 −1.3%），且 GPU 时钟、
-功耗、温度、显存、CPU 频率全程恒定，不能归因于硬件状态；不宣称已定位。
+功耗、温度、显存、CPU 频率未呈现对应变化，仍不足以排除所有硬件/调度因素。
+后审查发现旧脚本高性能电源 GUID 无效且未检查退出码，其电源对照结论撤销；
+新脚本用 `powercfg /setactive SCHEME_MIN` 并检查退出码，finally 恢复先前方案。
+劣化仍未定位，不因接口能编译或一次测量稳定而宣称完成归因。
 
 ### ORT CUDA 预编译包与 Blackwell 架构覆盖
 

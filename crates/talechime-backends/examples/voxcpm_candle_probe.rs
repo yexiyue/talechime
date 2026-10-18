@@ -122,7 +122,8 @@ fn main() -> anyhow::Result<()> {
         device.synchronize()?;
         let elapsed = started.elapsed();
         let seconds = count as f64 / SAMPLE_RATE as f64;
-        let result = serde_json::json!({"round":round,"warmup":round==0,"first_pcm_ms":first.map(|v|v.as_millis()),"generate_ms":elapsed.as_millis(),"audio_seconds":seconds,"rtf":elapsed.as_secs_f64()/seconds,"segments":segments.len(),"cuda_graph":model.cuda_graph_replay()});
+        let graphs = model.cuda_graph_status();
+        let result = serde_json::json!({"round":round,"warmup":round < warmup_rounds,"first_pcm_ms":first.map(|v|v.as_millis()),"generate_ms":elapsed.as_millis(),"audio_seconds":seconds,"rtf":elapsed.as_secs_f64()/seconds,"segments":segments.len(),"cuda_graph":graphs.cfm,"cuda_decoder_graph":graphs.decoder});
         println!("{result}");
         results.push(result);
         std::fs::write(

@@ -16,11 +16,13 @@ metal = ["dep:tts-candle-platform", "tts-candle-platform/metal"]
 [dependencies]
 candle-core.workspace = true
 candle-nn.workspace = true
-cudarc = { workspace = true, optional = true }
 tts-candle-platform = { workspace = true, optional = true }
 serde_json.workspace = true
 tracing.workspace = true
 tokenizers = { workspace = true, features = ["onig"] }
+
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+cudarc = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow.workspace = true

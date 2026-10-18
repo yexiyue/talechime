@@ -233,6 +233,45 @@ impl Codec {
             last: Conv::load(w, "audio_vae.decoder.model.9", 1, 1, 1, 6)?,
         })
     }
+    #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+    fn decoder_state_slots(&mut self) -> Vec<&mut Option<Tensor>> {
+        let mut slots = vec![
+            &mut self.dec_first.history,
+            &mut self.dec_proj.history,
+            &mut self.last.history,
+        ];
+        for block in &mut self.dec {
+            slots.push(&mut block.up.tail);
+            for residual in &mut block.res {
+                slots.push(&mut residual.depthwise.history);
+                slots.push(&mut residual.pointwise.history);
+            }
+        }
+        slots
+    }
+
+    /// Decoder-only snapshot; clones retain storage, not independent values.
+    #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+    pub(crate) fn decoder_state(&mut self) -> Vec<Option<Tensor>> {
+        self.decoder_state_slots()
+            .into_iter()
+            .map(|slot| (*slot).clone())
+            .collect()
+    }
+
+    /// Snapshot and restore share one traversal; validate before any mutation.
+    #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+    pub(crate) fn restore_decoder_state(&mut self, state: &[Option<Tensor>]) -> Result<()> {
+        let slots = self.decoder_state_slots();
+        if state.len() != slots.len() {
+            candle_core::bail!("decoder state length {} != {}", state.len(), slots.len());
+        }
+        for (slot, value) in slots.into_iter().zip(state) {
+            *slot = value.clone();
+        }
+        Ok(())
+    }
+
     pub fn reset(&mut self) {
         self.first.reset();
         self.mu.reset();
