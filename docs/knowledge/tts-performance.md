@@ -122,6 +122,8 @@ Qwen Metal depthwise 的窗口 matmul 只适用已验证的卷积条件；CUDA �
 
 所有消费者用 workspace Candle 0.11.0；core/nn/transformers/metal-kernels patch 到同一
 固定 fork revision。CUDA cudarc 与 Candle core 必须是同一 0.19.10 包实例。
+直接使用 driver API 的依赖关闭 cudarc 默认 feature，只启用 std/driver，库加载方式与
+可选 CUDA 库由 Candle 的 feature 决定，避免额外启用 runtime/fallback-dynamic-loading。
 其他隔离依赖的旧 cudarc 不因此强行升级。检查完整 `cargo metadata` 和目标 feature
 依赖树，特别是 macOS Metal；只检查 Windows CPU 树看不到 Metal kernels 重复来源。
 源码与测试都用 `cfg(all(feature, target_os))`，不只在 manifest 门控依赖。
@@ -141,10 +143,12 @@ patch 下能编译当作发行可用。确需 fork 独有公开 API 时，受影
 | VoxCPM 静态 KV LM 原型 | primitive 通过但 Q8 BaseLM 真模型严格对照失败；原因未证明，不作为上游缺陷或已完成能力 |
 | Qwen 设备帧缓冲简化 | 严格 PCM/codes 一致，未证明提速；保留理由是数据流更简单 |
 | Qwen 采样边界修复 | 修正 nucleus 同分与累积规则；改变旧输出，属于准确性修复，另建基线 |
+| Qwen CUDA CodePredictor 一次 cat 打包 | 输出严格一致，但 ABBA 初筛完整慢 1.04%、流式快 0.46%，收益不明确，撤回；后续优先评估固定 15 步图 |
 
 复现细节与人工验收范围见 [VoxCPM 扩展审查](../records/voxcpm/voxcpm-review-extension-2026-10-18.md)、
 [Qwen 性能审查](../records/qwen/qwen-performance-review-2026-10-18.md)、
 [Qwen Metal 优化](../records/qwen/qwen-performance-optimization-2026-10-18.md)、
+[Qwen CUDA 调研](../records/qwen/qwen-cuda-performance-2026-10-18.md)、
 [IndexTTS 性能记录](../records/indextts/indextts-candle-performance-2026-10-17.md)、
 [CosyVoice3 性能记录](../records/cosyvoice3/cosyvoice3-performance-2026-10-17.md)。
 旧官方/C++ RTF 使用不同协议，不与这些数值直接排名。后续后端按本文流程建立自己的基线。

@@ -52,6 +52,7 @@
 - IndexTTS 2.5：[官方 / 社区对照与修复](records/indextts/indextts-official-community-review-2026-10-17.md)、[性能优化与计时修复](records/indextts/indextts-candle-performance-2026-10-17.md)（三轮：RTF 0.70→0.47 ABBA 均值；固定语料验证与人工试听边界分开记录）、[历史验收台账](records/indextts/indextts-candle-acceptance-2026-10-17.md)、[移植过程](records/indextts/indextts-candle-port.md)。
 - MOSS：[Nano Candle 验证与默认切换](records/moss/moss-nano-candle-trial-2026-10-10.md)、[模型验收](records/moss/moss-tts-acceptance.md)、[Candle 验收](records/moss/moss-candle-acceptance.md)、[macOS 1.7B 流式输出](records/moss/moss-macos-streaming.md)、[连贯性与对齐](records/moss/moss-continuity-acceptance.md)、[DirectML 实验](records/moss/moss-directml-evaluation.md)。
 - Qwen：[Candle 集成与官方对照](records/qwen/qwen-tts-acceptance.md)、[性能审查与准确性验证](records/qwen/qwen-performance-review-2026-10-18.md)、[Metal 性能优化](records/qwen/qwen-performance-optimization-2026-10-18.md)。
+- Qwen CUDA：[性能调研](records/qwen/qwen-cuda-performance-2026-10-18.md)（Windows 本地基线、热点与候选边界）。
 - VoxCPM：[Candle 移植](records/voxcpm/voxcpm-candle-acceptance.md)、[macOS 性能](records/voxcpm/voxcpm-macos-performance.md)、[CUDA 性能对照](records/voxcpm/voxcpm-performance-comparison-2026-10-18.md)、[优化审查与扩展](records/voxcpm/voxcpm-review-extension-2026-10-18.md)。
 
 ### ASR 回读（asr/）

@@ -13,6 +13,9 @@
   来自 git，`tts-candle-platform` 的直接依赖来自 registry，lockfile 出现同版本双来源。
   补充同一 revision 的第四个 patch，删除 registry kernels 条目。CUDA kernels 和
   candle-ug 的 fork 内部路径来源保留，不增加重复声明。
+- 原 Vox 直接 cudarc 依赖还启用了默认 runtime/fallback-dynamic-loading，而 Candle
+  自身使用关闭默认 feature 的 dynamic-linking 配置。追加关闭直接依赖的默认 feature，
+  仅声明 std/driver，CUDA 加载方式及其他库能力统一由 Candle feature 激活。
 - P2：Qwen depthwise 的 Metal 测试仅检查 feature，Windows all-features 会执行
   不存在的 Metal 设备。补充 `target_os = "macos"`，与既有采样测试和平台 crate 一致。
 - 文档索引冲突合并保留 Qwen 和 VoxCPM 两组完整链接；其余模型源码自动合并，无算术冲突。
@@ -44,18 +47,6 @@ YAGNI、SOLID 检查模块边界，并统一测量、输出门禁、失败回退
 Candle/Vox 共用 cudarc 0.19.10；其他依赖的 0.17.8 不属于这条设备数据通路，保留。
 这只验证跨平台解析，不代表本机执行过 macOS Metal 编译或性能测试。
 
-## 后续追加：Qwen CUDA 调研
-
-用户在合并期间追加要求检查 Qwen CUDA 性能。当前 `qwen-cuda` 经模型库 `cuda`
-feature 与 `tts-candle-platform/cuda` 启用统一 Candle CUDA；Qwen 本身没有默认启用
-cuDNN，组合启用其他后端的 cuDNN feature 会改变同进程卷积实现，应另建对照。
-本地完整 0.6B Base 权重与 ICL 参考缓存可用于显式探针，1.7B 目录缺少主权重。
-
-先用既有 timing/profiling 探针记录完整、流式、首 PCM、CodePredictor、Talker、采样与
-codec 的边界；host spans 不直接作为 GPU kernel 耗时。候选包括 CodePredictor 小算子
-分派/结果打包、RoPE/位置表复用和 codec 卷积；在本机输出与测量通过前不更改默认路径。
-此处只登记追加范围，实机结果另记 Qwen 记录，不能用 Vox 或 Metal 的收益代替。
-
 - `cargo test --locked --workspace --lib --tests --examples -j 1 -- --test-threads=1`：
   修正上述夹具后 56 个测试二进制，667 passed / 24 ignored / 0 failed，未跳过遗留
   `default_home_migration_keeps_hello_lightweight_and_legacy_voices_visible` 时限用例。
@@ -64,7 +55,35 @@ codec 的边界；host spans 不直接作为 GPU kernel 耗时。候选包括 Co
   all-targets Clippy 与 private-items/examples rustdoc：`-D warnings` 通过。
 - Qwen CUDA + profiling timing/conv 探针 release 构建通过；既有 CUDA SDK 静态 loader
   的 LNK4098 保留，不用 `/NODEFAULTLIB` 压制。该构建本身不是性能验收。
+- `cargo build --locked --release -p talechime --no-default-features --features cli,qwen-cuda,voxcpm-cuda -j 1`：
+  主程序同时链接两种 CUDA 后端通过，生成的 `talechime --help` 冒烟通过。
 - 格式与 staged diff 检查通过；本地日志存于忽略目录 `target/tmp/voxcpm-opt/merge-*.log`。
+- VoxCPM `cargo publish --dry-run --locked --allow-dirty -p voxcpm -j 1`：通过，
+  使用 registry Candle 验证打包；未上传。
+- `prepare-notices.py`：通过，产物包含 Candle Apache/MIT 许可副本。
+- 拒绝候选撤回后，Qwen 标准 CUDA release 探针重新构建、运行，10 份最终制品与基线
+  对应类型逐字节相同；没有把忽略目录中的候选二进制作为最终标准探针。
 
-CUDA 采样与真模型图对照另行显式运行；不把普通测试中的 ignored 项统计为执行通过。
+CUDA 普通库组合测试：Qwen 219 passed / 3 ignored，Vox 10 passed / 10 ignored。
+CUDA sampler 对照另行显式执行 1 passed；Vox 真模型图对照另行串行执行 4 passed。
+关闭 cudarc 默认 feature 后的组合 CUDA Clippy 与 rustdoc 再次通过。
+不把普通测试中的其他 ignored 项统计为执行通过。
 本轮 Windows 验证不能代替 Linux CUDA 或 macOS Metal 原生门禁。
+
+## 双轴复审
+
+| 轴 | 结果 |
+| --- | --- |
+| Standards | 复查固定点 `704e819` 以来的集成差异，未发现新的规范违反或需要提取的公共抽象 |
+| Spec | 文档纳入提交与 Qwen CUDA 追加范围两项检查已落实；模型私有状态未被合并，性能与平台证据边界保留 |
+
+## 后续追加：Qwen CUDA 调研
+
+实测与候选状态见 [Qwen CUDA 性能调研](../qwen/qwen-cuda-performance-2026-10-18.md)。
+当前 `qwen-cuda` 经模型库 `cuda` feature 与 `tts-candle-platform/cuda` 启用统一
+Candle CUDA；Qwen 没有默认启用 cuDNN，其他后端的 cuDNN feature 合并会改变同进程
+卷积实现，应另建对照。本地完整 0.6B Base 权重与 ICL 缓存用于显式探针，未下载模型。
+
+主机 profiling 指向 CodePredictor，随后完成一次 cat 打包的无插桩 ABBA 初筛：
+输出一致但未过收益门槛，候选源码已撤回；固定 15 步图尚未实现，不用 Vox 或 Metal
+的收益代替 Qwen CUDA 的实际结果。

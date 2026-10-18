@@ -23,7 +23,8 @@ candle-transformers = "=0.11.0"
 candle-metal-kernels = "=0.11.0"
 # Pinned to the same resolution candle-core 0.11.0 uses, so the CUDA graph
 # capture API used by `voxcpm` operates on the same CudaContext instance.
-cudarc = "=0.19.10"
+# Leave CUDA library loading and optional libraries to Candle's feature set.
+cudarc = { version = "=0.19.10", default-features = false, features = ["std", "driver"] }
 tokenizers = { version = "0.22.2", default-features = false }
 hound = "3.5"
 rustfft = "6.4"
