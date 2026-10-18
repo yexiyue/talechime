@@ -1563,6 +1563,190 @@ mod tests {
         Ok(())
     }
 
+    /// Measures the dispatch headroom of the two loops left after the code
+    /// predictor frame graph: one talker step at a fixed KV length, and the
+    /// 12 Hz decoder at the shapes streaming chunks and full synthesis use.
+    ///
+    /// Evaluation only. Both paths rewrite the same KV position, every replay
+    /// must reproduce the eager result bit for bit, and the reported numbers
+    /// are per-call wall time rather than a synthesis benchmark.
+    #[test]
+    #[ignore = "requires a local CUDA model; run serially"]
+    #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+    fn cuda_graph_headroom_probe() -> Result<()> {
+        use anyhow::Context;
+        use std::time::Instant;
+
+        /// Per-call wall time in milliseconds, one untimed call first.
+        fn per_call_ms(
+            device: &Device,
+            calls: usize,
+            mut run: impl FnMut(usize) -> Result<Tensor>,
+        ) -> Result<f64> {
+            run(0)?;
+            device.synchronize()?;
+            let started = Instant::now();
+            for call in 1..=calls {
+                run(call)?;
+            }
+            device.synchronize()?;
+            Ok(started.elapsed().as_secs_f64() * 1000.0 / calls as f64)
+        }
+
+        let model_path = std::env::var("QWEN_CP_TEST_MODEL").context("QWEN_CP_TEST_MODEL")?;
+        anyhow::ensure!(Path::new(&model_path).is_dir(), "local model required");
+        let device = Device::new_cuda(0)?;
+        let Device::Cuda(cuda) = &device else {
+            unreachable!("new_cuda returns a cuda device")
+        };
+        let model = Qwen3TTS::from_pretrained(&model_path, device.clone())?;
+
+        // A talker step is only shape-stable at a fixed KV length. Every stage
+        // below reads its own cache set warmed to the same offset, because a
+        // set that a warm-up already advanced would hand the capture a longer
+        // KV length than the one recorded.
+        let offset = 30usize;
+        let step_input = model
+            .talker
+            .get_codec_embedding_from_tensor(&Tensor::new(&[7u32], &device)?)?;
+        let warm_caches = || -> Result<Vec<AnyKVCache>> {
+            let mut caches = model.talker.new_kv_caches(offset + 64);
+            for filled in 0..offset {
+                model
+                    .talker
+                    .generate_step_with_embed(&step_input, &mut caches, filled)?;
+            }
+            Ok(caches)
+        };
+        let talker_step = |caches: &mut [AnyKVCache], at: usize| {
+            model
+                .talker
+                .generate_step_with_embed(&step_input, caches, at)
+                .map(|(_, logits)| logits)
+        };
+        // Eager timing walks the offset forward the way a session fills the
+        // cache; the recorded graph is fixed at `offset`.
+        let mut eager_caches = warm_caches()?;
+        let eager_a = per_call_ms(&device, 12, |call| {
+            talker_step(&mut eager_caches, offset + call)
+        })?;
+        let mut verify_caches = warm_caches()?;
+        let expected = talker_step(&mut verify_caches, offset)?
+            .to_dtype(DType::F32)?
+            .flatten_all()?
+            .to_vec1::<f32>()?;
+        let mut capture_caches = warm_caches()?;
+        // The warm-up has to run under the guard, on a cache set the capture
+        // has not advanced, so the host data the step uploads is cached.
+        let guard = cuda.enable_cuda_graph_htod_cache();
+        let mut warmup_caches = warm_caches()?;
+        let warmup = talker_step(&mut warmup_caches, offset)?;
+        let talker_record =
+            candle_cuda_graph::Replay::record(cuda, &[&step_input], &warmup, vec![], |inputs| {
+                model
+                    .talker
+                    .generate_step_with_embed(&inputs[0], &mut capture_caches, offset)
+                    .map(|(_, logits)| logits)
+                    .map_err(|error| candle_core::Error::Msg(error.to_string()))
+            });
+        drop(guard);
+        let talker_replay = match talker_record {
+            Ok(replay) => replay,
+            Err(error) => {
+                println!(
+                    "{}",
+                    serde_json::json!({"probe": "talker_step", "captured": false, "error": error.to_string()})
+                );
+                return Ok(());
+            }
+        };
+        let replayed = talker_replay
+            .launch(&[&step_input])?
+            .to_dtype(DType::F32)?
+            .flatten_all()?
+            .to_vec1::<f32>()?;
+        assert_eq!(replayed, expected, "talker replay differs from eager");
+        let replay_a = per_call_ms(&device, 12, |_| {
+            talker_replay
+                .launch(&[&step_input])
+                .map_err(anyhow::Error::from)
+        })?;
+        let eager_b = per_call_ms(&device, 12, |call| {
+            talker_step(&mut eager_caches, offset + 13 + call)
+        })?;
+        let replay_b = per_call_ms(&device, 12, |_| {
+            talker_replay
+                .launch(&[&step_input])
+                .map_err(anyhow::Error::from)
+        })?;
+        println!(
+            "{}",
+            serde_json::json!({"probe": "talker_step", "captured": true,
+                "recorded_kv_len": offset + 1, "bitwise_equal": true,
+                "eager_ms": [eager_a, eager_b], "replay_ms": [replay_a, replay_b]})
+        );
+        drop(talker_replay);
+
+        // Streaming decodes 25 frames of left context plus 10 new frames on
+        // every chunk after the first; full synthesis decodes all frames once.
+        for frames in [35usize, 185] {
+            let codes = Tensor::from_vec(
+                (0..16 * frames)
+                    .map(|index| (index % 2048) as i64)
+                    .collect(),
+                (1, 16, frames),
+                &device,
+            )?;
+            let decode_eager = || model.decoder.decode(&codes);
+            let eager_a = per_call_ms(&device, 6, |_| decode_eager())?;
+            let guard = cuda.enable_cuda_graph_htod_cache();
+            let warmup = decode_eager()?;
+            let decode_record =
+                candle_cuda_graph::Replay::record(cuda, &[&codes], &warmup, vec![], |inputs| {
+                    model
+                        .decoder
+                        .decode(&inputs[0])
+                        .map_err(|error| candle_core::Error::Msg(error.to_string()))
+                });
+            drop(guard);
+            let decode_replay = match decode_record {
+                Ok(replay) => replay,
+                Err(error) => {
+                    println!(
+                        "{}",
+                        serde_json::json!({"probe": "codec_decode", "frames": frames,
+                            "captured": false, "error": error.to_string()})
+                    );
+                    continue;
+                }
+            };
+            let expected = warmup
+                .to_dtype(DType::F32)?
+                .flatten_all()?
+                .to_vec1::<f32>()?;
+            let replayed = decode_replay
+                .launch(&[&codes])?
+                .to_dtype(DType::F32)?
+                .flatten_all()?
+                .to_vec1::<f32>()?;
+            assert_eq!(replayed, expected, "decode replay differs from eager");
+            let replay_a = per_call_ms(&device, 6, |_| {
+                decode_replay.launch(&[&codes]).map_err(anyhow::Error::from)
+            })?;
+            let eager_b = per_call_ms(&device, 6, |_| decode_eager())?;
+            let replay_b = per_call_ms(&device, 6, |_| {
+                decode_replay.launch(&[&codes]).map_err(anyhow::Error::from)
+            })?;
+            println!(
+                "{}",
+                serde_json::json!({"probe": "codec_decode", "frames": frames,
+                    "captured": true, "bitwise_equal": true,
+                    "eager_ms": [eager_a, eager_b], "replay_ms": [replay_a, replay_b]})
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     #[ignore = "requires explicit local model, prompt, text and output paths"]
     fn probe_voice_clone_prefill() -> Result<()> {

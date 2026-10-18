@@ -24,6 +24,7 @@ skill 的操作规则自包含；这里的仓库相对链接在移出 Talechime 
 - [Qwen CUDA](../../../docs/records/qwen/qwen-cuda-performance-2026-10-18.md)：固定权重、无插桩初筛和拒绝的打包候选。
 - [本 skill 的 Qwen 试用](../../../docs/records/platform/candle-performance-skill-trial-2026-10-18.md)：原始证据复核、capture 前提和由试用发现的参考缺口；不是图已通过的证明。
 - [Qwen CP 帧图](../../../docs/records/qwen/qwen-cp-graph-2026-10-18.md)：整帧自回归循环成图、主机簿记不变式、失败策略分档、共享 recorder 提取与复验边界。
+- [Qwen CUDA 图分区评估](../../../docs/records/qwen/qwen-cuda-graph-partition-2026-10-18.md)：同形状回放的余量探针、capture 前 host→device 障碍的排查顺序（d2h 往返、超大 h2d 上传、缓存长度漂移），以及"收益最大但需要上游改动"的候选该怎么停。
 - [CosyVoice3](../../../docs/records/cosyvoice3/cosyvoice3-performance-2026-10-17.md) §11：Accelerate 线程矩阵、数值和试听边界。
 - [IndexTTS](../../../docs/records/indextts/indextts-candle-performance-2026-10-17.md) §10–12：depthwise PR、FIR 大形状、严格 F32 与默认配置的区别。
 

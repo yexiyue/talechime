@@ -160,12 +160,15 @@ patch 下能编译当作发行可用。确需 fork 独有公开 API 时，受影
 | Qwen 采样边界修复 | 修正 nucleus 同分与累积规则；改变旧输出，属于准确性修复，另建基线 |
 | Qwen CUDA CodePredictor 一次 cat 打包 | 输出严格一致，但 ABBA 初筛完整慢 1.04%、流式快 0.46%，收益不明确，撤回；后续优先评估固定 15 步图 |
 | Qwen CUDA CodePredictor 帧图 | 正式 ABBA 八进程完整 3.0840→1.9113 s（-38.0%，RTF 0.653→0.405）、流式 3.6529→2.4353 s（-33.3%，RTF 0.774→0.516）、首 PCM 0.7688→0.5663 s（-26.3%），区间均不重叠；60 份 codes/PCM/WAV 与 eager 逐字节一致；CUDA 默认开，`QWEN_CP_GRAPH=0` 关闭 |
+| Qwen 12Hz 解码器设备端查表与按帧数缓存常量 | 语义 code 的 `% 2048` 从每块一次设备→主机往返改为设备查表；滑窗 mask 与 RoPE 表从每次调用主机拼装改为按帧数缓存；配对 ABBA 八进程无回归也无收益（完整 1.8817→1.8739 s、流式 2.4100→2.4204 s），10 类产物逐字节一致；保留理由是去掉同步并让解码器可捕获 |
+| Qwen CUDA Talker 步 / 解码器成图余量 | 仅为评估，未实现：Talker 步同形状回放 12.06→3.59 ms（-70%），但只在固定 KV 长度有效，复用需要补齐掩码、设备端 RoPE offset 与设备端 KV 写入（candle fork）；解码器 35 帧 130.16→49.91 ms（-60%）、185 帧 313.96→241.56 ms（-27%），完整合成只解码一次不适用 |
 
 复现细节与人工验收范围见 [VoxCPM 扩展审查](../records/voxcpm/voxcpm-review-extension-2026-10-18.md)、
 [Qwen 性能审查](../records/qwen/qwen-performance-review-2026-10-18.md)、
 [Qwen Metal 优化](../records/qwen/qwen-performance-optimization-2026-10-18.md)、
 [Qwen CUDA 调研](../records/qwen/qwen-cuda-performance-2026-10-18.md)、
 [Qwen CP 帧图](../records/qwen/qwen-cp-graph-2026-10-18.md)、
+[Qwen CUDA 图分区评估](../records/qwen/qwen-cuda-graph-partition-2026-10-18.md)、
 [IndexTTS 性能记录](../records/indextts/indextts-candle-performance-2026-10-17.md)、
 [CosyVoice3 性能记录](../records/cosyvoice3/cosyvoice3-performance-2026-10-17.md)。
 旧官方/C++ RTF 使用不同协议，不与这些数值直接排名。后续后端按本文流程建立自己的基线。
