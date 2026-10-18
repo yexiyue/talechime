@@ -3,7 +3,7 @@
 
 Derived from SpenserCai/cosyvoice3.rs scripts/convert_weights.py (Apache-2.0),
 with config values pinned to the official cosyvoice3.yaml
-(docs/records/cosyvoice3-candle-audit-2026-10-17.md).
+(docs/records/cosyvoice3/cosyvoice3-candle-audit-2026-10-17.md).
 
 Usage:
     python cosyvoice3_convert_weights.py --input <Fun-CosyVoice3-0.5B-2512> --output <dir> --official_repo <CosyVoice>

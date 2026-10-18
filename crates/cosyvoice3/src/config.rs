@@ -2,7 +2,7 @@
 //!
 //! Defaults mirror `cosyvoice3.yaml` shipped with
 //! FunAudioLLM/Fun-CosyVoice3-0.5B-2512 (fetched 2026-10-17); see
-//! docs/records/cosyvoice3-candle-audit-2026-10-17.md for provenance.
+//! docs/records/cosyvoice3/cosyvoice3-candle-audit-2026-10-17.md for provenance.
 
 use serde::Deserialize;
 

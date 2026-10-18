@@ -78,7 +78,7 @@ v7 `PlanRequest` 可添加以下 `verification` 字段；省略即关闭，仍�
 
 ## 验证与候选
 
-选型和原生运行证据见[主线验收记录](records/asr-readback-mainline-2026-10-09.md)，候选对照见[选型 spike](records/asr-spike-2026-10-09.md)。Whisper large-v3-turbo、Qwen 1.7B、FireRed 保留实验候选，未作为内置可切换适配器交付。宿主可以用其他 `Recognizer` 组合，只要求明确模型身份与不同家族复核。小样本不证明自然漏读召回率或人工听感。
+选型和原生运行证据见[主线验收记录](records/asr/asr-readback-mainline-2026-10-09.md)，候选对照见[选型 spike](records/asr/asr-spike-2026-10-09.md)。Whisper large-v3-turbo、Qwen 1.7B、FireRed 保留实验候选，未作为内置可切换适配器交付。宿主可以用其他 `Recognizer` 组合，只要求明确模型身份与不同家族复核。小样本不证明自然漏读召回率或人工听感。
 
 
 ## 语言自动检测与音频标签

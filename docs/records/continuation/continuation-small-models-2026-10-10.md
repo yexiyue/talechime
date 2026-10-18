@@ -82,7 +82,7 @@ CUDA 与其他平台原生编译仍由既有平台 CI 验证，本记录不宣�
 
 ## 重现与试听
 
-构建和调用方法见[开发指南](../development.md#段落内接续探针)。
+构建和调用方法见[开发指南](../../development.md#段落内接续探针)。
 本机完整证据目录为 `target/continuation-evidence/`，每个成功运行保存 `comparison.wav`、逐段 WAV、
 PCM16 回读 WAV、`summary.json` 和 `readback-corpus.json`；峰值内存与日志保存在对应 `*-time.log`。
 回读结果为 `readback-part1-results.json`、`readback-part2-results.json` 和 `readback-part3-results.json`。

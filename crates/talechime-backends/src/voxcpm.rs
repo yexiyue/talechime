@@ -191,7 +191,7 @@ impl Backend for VoxBackend {
 ///
 /// Combined with execution-local continuation the prefix sits between the
 /// previous transcript and the target text; a real-model trial (see
-/// docs/records/style-exposure-2026-10-10.md) truncated the continued
+/// docs/records/tts-core/style-exposure-2026-10-10.md) truncated the continued
 /// segment there. The combination stays enabled for listening acceptance;
 /// a styled segment may therefore finish audibly short.
 fn styled_text(style: Option<&str>, text: &str) -> Result<String, BackendError> {

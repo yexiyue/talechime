@@ -42,7 +42,7 @@ CUDA 尚无本机编译／实测结论。
 ## 音频与回读
 
 设备为 Apple M4 Pro，24 GiB 统一内存；release，Metal，Weiguo，固定种子 42。
-语料和 SHA256 与[三小模型接续对照](continuation-small-models-2026-10-10.md)相同。
+语料和 SHA256 与[三小模型接续对照](../continuation/continuation-small-models-2026-10-10.md)相同。
 当前默认分块器按实际生成时长学习，开／关分块数量可能不同，但都覆盖同一份原文。
 部分运行与编译或回读并行，下列性能仅是本次观察，不是隔离负载基准。
 

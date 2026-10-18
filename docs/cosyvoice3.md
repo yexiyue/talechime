@@ -21,7 +21,7 @@ ROOT/cosyvoice3/models/0.5b/2512-candle-f64-v1/
 
 使用官方 `FunAudioLLM/Fun-CosyVoice3-0.5B-2512` 权重和固定官方源码 commit
 `074ca6dc9e80a2f424f1f74b48bdd7d3fea531cc`，按
-[本机对照记录](records/cosyvoice3-local-parity-2026-10-17.md)准备 Python 环境和来源文件。
+[本机对照记录](records/cosyvoice3/cosyvoice3-local-parity-2026-10-17.md)准备 Python 环境和来源文件。
 `llm.pt`、`flow.pt`、`hift.pt` 的原始 SHA-256 见该记录末尾。
 
 ```sh
@@ -72,4 +72,4 @@ cargo run --release --locked -p talechime --features cosyvoice3-metal \
 当前不声明持久音频缓存身份，防止参考文件变化后复用旧结果。
 
 严格非流式整链数值门禁仍未通过，先前最大波形误差约 0.162；组件及流式对照结果见
-[审查记录](records/cosyvoice3-review-2026-10-17.md)。接入后端不代表完全复刻官方、试听验收或 CUDA 实机验收。
+[审查记录](records/cosyvoice3/cosyvoice3-review-2026-10-17.md)。接入后端不代表完全复刻官方、试听验收或 CUDA 实机验收。

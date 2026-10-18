@@ -8,7 +8,7 @@
 
 ## 背景与调研结论
 
-[独立生成计划](../independent-tts-candle-plan.md)阶段三选定 IndexTTS 2.5 作为主质量路线。本轮调研补充：
+[独立生成计划](../plans/independent-tts-candle-plan.md)阶段三选定 IndexTTS 2.5 作为主质量路线。本轮调研补充：
 
 - 社区无完整 Rust 实现：[8b-is/IndexTTS-Rust](https://github.com/8b-is/IndexTTS-Rust) 是 v1 时代 ORT 实验项目（GPT 集成未完成、许可证声明不一致）；[ThreadAbort/IndexTTS-Rust](https://huggingface.co/ThreadAbort/IndexTTS-Rust) 只提供旧版 GPT 的 `torch.onnx.export` 转换路线。两者都不覆盖 2.5，不能作为 Candle 完成证明。
 - 官方 2.5 不提供 ONNX；声学路径是 **s2mel（InterpolateRegulator + CFM/DiT-wavenet 流匹配）+ BigVGAN v2**，计划文档中的「Zipformer 声学生成」描述与源码不符（源码中无 zipformer），本文以源码为准。

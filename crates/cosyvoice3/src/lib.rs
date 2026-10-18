@@ -5,11 +5,11 @@
 //! (FunAudioLLM/CosyVoice commit 074ca6dc) with the community Rust layout
 //! as a starting skeleton; numeric deviations found during the audit were
 //! fixed against the Python sources. See
-//! `docs/records/cosyvoice3-candle-audit-2026-10-17.md` for the component
+//! `docs/records/cosyvoice3/cosyvoice3-candle-audit-2026-10-17.md` for the component
 //! map. Local component/real-weight results, the remaining end-to-end
 //! waveform gates (kept failing with f64-anchor root-cause evidence), and
 //! the streaming implementation are recorded in
-//! `docs/records/cosyvoice3-local-parity-2026-10-17.md`. Talechime backend
+//! `docs/records/cosyvoice3/cosyvoice3-local-parity-2026-10-17.md`. Talechime backend
 //! registration is available through the opt-in `cosyvoice3` adapter feature.
 //!
 //! Weights come from the conversion script

@@ -6,7 +6,7 @@
 
 Whisper large-v3-turbo 已进行 CPU/MPS spike，保留候选：这组小样本未显示默认主筛查替代 Qwen 的收益，且贪心对照在静音/噪声出现幻觉。本实验没有完整 VAD/no-speech 门禁，不能将其当作 Whisper 官方默认用法的质量结论。FireRed Rust 前端等价仍待解决，暂不交付。候选细节见[首阶段 spike](asr-spike-2026-10-09.md)。
 
-现已交付：独立 `Verifier::report`、显式 ASR 准备/复用、按次 off/report/gate、实际模型片段先校验后交付、保持原文/音色/风格的有界重试、Streaming 与 AfterChapterReady 共用门禁、证据缓存、取消/关闭与原生任务等待、CLI verify/开关、v7 计划可选校验字段和事件。标准包增加 `asr`，运行策略仍默认关闭。模型独立于 TTS 准备，调用中不隐式下载。当前 API 与限制见[使用指南](../readback.md)。
+现已交付：独立 `Verifier::report`、显式 ASR 准备/复用、按次 off/report/gate、实际模型片段先校验后交付、保持原文/音色/风格的有界重试、Streaming 与 AfterChapterReady 共用门禁、证据缓存、取消/关闭与原生任务等待、CLI verify/开关、v7 计划可选校验字段和事件。标准包增加 `asr`，运行策略仍默认关闭。模型独立于 TTS 准备，调用中不隐式下载。当前 API 与限制见[使用指南](../../readback.md)。
 
 ## 原生适配
 

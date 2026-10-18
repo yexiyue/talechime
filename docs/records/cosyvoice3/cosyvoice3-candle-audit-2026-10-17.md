@@ -1,7 +1,7 @@
 # Fun-CosyVoice 3.0 Rust 复刻调研与社区实现审计
 
 调研日期：2026-10-17。状态：源码级调研与审计完成；`crates/cosyvoice3` 移植进行中。本文是
-[independent-tts-candle-plan.md](../independent-tts-candle-plan.md) 阶段二的审计交付物。本文保留最初源码审计结论；后续本机组件、真实权重对照与修复见
+[independent-tts-candle-plan.md](../plans/independent-tts-candle-plan.md) 阶段二的审计交付物。本文保留最初源码审计结论；后续本机组件、真实权重对照与修复见
 [本机对照记录](cosyvoice3-local-parity-2026-10-17.md)。严格整链波形等价尚未通过。
 
 ## 固定来源

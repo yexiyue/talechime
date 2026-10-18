@@ -1,7 +1,7 @@
 # CosyVoice3 后端接入验收
 
 日期：2026-10-17。设备：本机 macOS，Metal；代码基于 `930c6bf` 后续接入。
-当前用法与限制见 [CosyVoice3 后端](../cosyvoice3.md)。
+当前用法与限制见 [CosyVoice3 后端](../../cosyvoice3.md)。
 
 本次增加 `cosyvoice3` / `0.5b` 能力目录、CPU/Metal/CUDA feature 路由、本地转换清单校验、
 共享音色导入/删除、Registry 准备、Engine 与 CLI/worker 接入。标准包启用该适配器，

@@ -35,7 +35,7 @@ CLI 与 backends 使用同名开关，计算库只提供 `cuda` / `metal` 平台
 
 macOS 上 `cosyvoice3` 的 CPU matmul 默认经系统 Accelerate（AMX BLAS）执行
 （2026-10-18 决定；target 门控依赖，无开关）。数值与其他平台的纯 Rust
-`gemm` 路径非位级一致，详见[性能记录](records/cosyvoice3-performance-2026-10-17.md) §11。
+`gemm` 路径非位级一致，详见[性能记录](records/cosyvoice3/cosyvoice3-performance-2026-10-17.md) §11。
 | ORT provider | `ort-cuda`、`ort-coreml` | 为 Nano 提供 provider，不自动启用模型适配器 |
 
 适配器层不提供通用 `metal` / `cuda` 开关；选择加速时必须明确模型。旧 `metal` / `coreml` 名称已移除，改用 `qwen-metal` / `ort-coreml`。加速开关包含对应模型开关，发行配置无需重复列出模型。`directml-probe` 仅是 backends 的实验 example，不暴露产品设备。
@@ -80,7 +80,7 @@ GNU release runner 为 Ubuntu 24.04，最低 glibc 2.39，ORT 1.28 预编译库�
 
 ## 文档归档
 
-使用与架构指南直接放在 `docs/`，历史验收与实验放在 `docs/records/`，开发知识放在 `docs/knowledge/`，原生第三方声明放在 `docs/legal/`。[文档索引](README.md)是统一入口。搬迁记录时只更新路径引用，保留验收日期、设备、未通过项及原始结论；当前行为变化写入指南和知识库。
+使用与架构指南直接放在 `docs/`，历史验收与实验放在 `docs/records/` 的主题子目录（划分与归档规则见 [records/README.md](records/README.md)），开发知识放在 `docs/knowledge/`，原生第三方声明放在 `docs/legal/`。[文档索引](README.md)是统一入口。搬迁记录时只更新路径引用，保留验收日期、设备、未通过项及原始结论；当前行为变化写入指南和知识库。
 
 
 ## 仅库构建
@@ -94,7 +94,7 @@ cargo clippy --locked -p talechime --no-default-features --all-targets -- -D war
 
 无默认 feature 的二进制构建需显式加 cli，例如 `--features cli,qwen-metal`。core 当前仍编译播放器依赖，直接合成运行时不打开设备。
 
-ASR 普通测试使用确定性转写和合成夹具，不下载权重；原生前端用固定整数合成波形对照独立 kaldi-native-fbank 数值。手工真实模型探针：`cargo run --release --locked -p talechime-backends --features asr --example asr_readback -- QWEN_DIR SENSEVOICE_DIR CORPUS_JSON OUTPUT_JSON`。语料、模型、结果只放 Git 忽略目录；验证范围见[原生验收](records/asr-readback-mainline-2026-10-09.md)。
+ASR 普通测试使用确定性转写和合成夹具，不下载权重；原生前端用固定整数合成波形对照独立 kaldi-native-fbank 数值。手工真实模型探针：`cargo run --release --locked -p talechime-backends --features asr --example asr_readback -- QWEN_DIR SENSEVOICE_DIR CORPUS_JSON OUTPUT_JSON`。语料、模型、结果只放 Git 忽略目录；验证范围见[原生验收](records/asr/asr-readback-mainline-2026-10-09.md)。
 
 ## 段落内接续探针
 
@@ -115,7 +115,7 @@ target/release/examples/moss_continuation_codec NANO_DIR
 用 `/usr/bin/time -l` 额外记录进程峰值内存。`readback-corpus.json` 可传入上面的 `asr_readback`。
 取消、错误不会自动退回独立生成；失败保留已产生的音频与错误摘要。
 Nano 数值探针对比分批前缀预热与整段预热后同一组新 codes 的 PCM，前缀音频本身不交付。
-[本次结果与限制](records/continuation-small-models-2026-10-10.md)包含固定语料、权重 revision、回读及试听边界。
+[本次结果与限制](records/continuation/continuation-small-models-2026-10-10.md)包含固定语料、权重 revision、回读及试听边界。
 
 其他模型复用上述探针：`qwen-base17` 的目录是 Base 1.7B revision 目录；`voxcpm` /
 `voxcpm-bf16` 使用对应 revision 目录；`moss-local` / `moss-realtime` 使用资源根目录，

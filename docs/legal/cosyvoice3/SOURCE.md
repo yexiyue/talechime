@@ -2,7 +2,7 @@
 
 `crates/cosyvoice3` 的实现以 Fun-CosyVoice3 官方 PyTorch 实现为行为规范，模块结构参考社区
 Rust 移植，全部代码在本仓库内按 Candle 0.11.0 重写并修复审计偏差
-（见 docs/records/cosyvoice3-candle-audit-2026-10-17.md）。
+（见 docs/records/cosyvoice3/cosyvoice3-candle-audit-2026-10-17.md）。
 
 | 来源 | 固定版本 | 许可 | 使用方式 |
 | --- | --- | --- | --- |

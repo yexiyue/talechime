@@ -104,9 +104,9 @@ target/release/talechime --backend qwen --tts-device metal chapter.txt
 cargo build --release -p talechime --features qwen,voxcpm,omnivoice
 ```
 
-`ort-cuda` 和 `qwen-cuda` 是不同计算路径；启用一个不会为另一个提供 GPU 支持。当前原生 ORT CUDA 分发在部分 Blackwell 算子上存在覆盖问题，见[验收记录](docs/records/ort-rc13-upgrade.md)。实际能力以编译目录与运行检查为准。
+`ort-cuda` 和 `qwen-cuda` 是不同计算路径；启用一个不会为另一个提供 GPU 支持。当前原生 ORT CUDA 分发在部分 Blackwell 算子上存在覆盖问题，见[验收记录](docs/records/platform/ort-rc13-upgrade.md)。实际能力以编译目录与运行检查为准。
 
-各模型的数值、听感、流式边界与连续播放验收状态不同。已有适配器不等于所有模型和设备均已完成质量验收；详情见[模型验收记录](docs/records/tts-model-tiers-acceptance.md)及[VoxCPM 记录](docs/records/voxcpm-candle-acceptance.md)。
+各模型的数值、听感、流式边界与连续播放验收状态不同。已有适配器不等于所有模型和设备均已完成质量验收；详情见[模型验收记录](docs/records/tts-core/tts-model-tiers-acceptance.md)及[VoxCPM 记录](docs/records/voxcpm/voxcpm-candle-acceptance.md)。
 
 ## 音色
 
@@ -207,8 +207,8 @@ max_duration/chunk_frames）、OmniVoice（num_step/guidance_scale/language/spee
 MOSS Local（instruction/language/max_duration）与 Realtime（max_duration）；Nano 仅消费 seed。
 逐段风格（`VoiceSpan.style`）现支持 Qwen 1.7B CustomVoice、VoxCPM2（与接续互斥待验收）、
 OmniVoice instruct 与 MOSS Local Instruction 槽位。详见
-[参数记录](docs/records/params-exposure-2026-10-10.md)与
-[风格记录](docs/records/style-exposure-2026-10-10.md)。
+[参数记录](docs/records/tts-core/params-exposure-2026-10-10.md)与
+[风格记录](docs/records/tts-core/style-exposure-2026-10-10.md)。
 
 ## 段落内接续
 

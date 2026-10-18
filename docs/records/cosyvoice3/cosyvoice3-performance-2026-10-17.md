@@ -330,7 +330,7 @@ RSS 峰值、stderr 标记）、`rounds.csv`（201 行）、`summary.json`、
 
 ## 十、同日后续：借鉴 IndexTTS 的热路径位级等价优化与 ABBA 复测
 
-对照 [IndexTTS 推理性能排查与优化](indextts-candle-performance-2026-10-17.md)（`b98e17b`）已验证的优化模式，在不修改 native 依赖（`Cargo.lock` 不变）、不放宽任何数值门禁的前提下，对 `crates/cosyvoice3` 实施以下 **100% 位级等价（bit-exact）** 热路径优化：
+对照 [IndexTTS 推理性能排查与优化](../indextts/indextts-candle-performance-2026-10-17.md)（`b98e17b`）已验证的优化模式，在不修改 native 依赖（`Cargo.lock` 不变）、不放宽任何数值门禁的前提下，对 `crates/cosyvoice3` 实施以下 **100% 位级等价（bit-exact）** 热路径优化：
 
 ### 1. 已保留的位级等价优化
 
