@@ -109,19 +109,112 @@ SHA-256 全一致：codes `5a4b8fb3…4c9a28`，full `bbd6adf3…4b02485`，stre
 `18b26a13…74d4a`。trace 汇总未导出到这些目录；阶段 1/4 的 trace 已覆盖瓶颈定位，
 不把本表伪装成逐阶段 trace 矩阵。
 
+## 阶段 6：readback 与 codec 卷积诊断
+
+孤立探针使用已提交的 `[1, 3072]` logits fixture，并在每次采样前后同步 Metal。
+F32 p50 约 `0.122–0.139 ms`；BF16 样本计时包含 F32→BF16 转换和 6 KiB 回传，不能当作纯传输。即使如此，两者都说明表观 `19 ms` 不是 12 KiB 传输带宽。
+Candle 0.11 的 `MetalStorage::to_cpu` 会提交并等待当前 command buffer；Metal 队列
+FIFO，因此生产 trace 中的 `sampling_gpu_to_cpu_transfer` p50 `19.23 ms` 主要是在
+等待此前排队的 logits 相关 GPU 工作。重新按 B/E 事件配对后，CPU→GPU 单 token
+返回 p50 仅 `0.018 ms`；早先“返回也约 19 ms”是汇总单位误读。生产采样中
+`sampling_cdf_and_selection` p50 `5.76 ms`，来自 Candle `cumsum`（矩阵乘三角矩阵）
+及其后 mask / where / argmin 全词表小算子。
+
+新增 `qwen_conv_probe` 按真实 0.6B 12Hz decoder 权重几何构造 dense causal conv 与
+transposed conv 微基准。268 帧、1 次预热 + 10 轮测量时，6 组 residual dense conv
+p50 合计约 `570 ms`，4 个 decoder transposed conv 约 `130 ms`，其余卷积约
+`188 ms`；合计约 `887 ms`。该 isolated fixture 只覆盖卷积调用本身，不包含
+Snake/nonlinearity、残差组合和调度间隙，因此低于 full decode；54 帧输入下同一
+集合 p50 约 `186 ms`。固定 codes 的 `context25` trace 显示非首块 `codec_decoder_blocks`
+约 `15.5 ms`，前端/量化等阶段约 `2.4 ms`；慢因是每个 10 帧块重复计算 79 帧，而非
+transposed conv 单点异常。证据在 `runs/qwen-review/optimization-stage6/`。
+
+## 阶段 7：CPU CDF/选择等价优化
+
+只替换 `multinomial_sample` 内的 CDF 构建与选择：直接读取 CPU 概率行，按原
+vocabulary 顺序用 f32 累加，返回首个 `cumulative >= threshold` 的索引。temperature、
+top-k、top-p、softmax、PCG 随机数、阈值比较和 CPU/Metal 统一采样策略均不变。
+该实现不宣称与 Candle `cumsum` 的矩阵乘内部舍入逐位等价；当前证据是共同 4 轮真实模型 codes/full/stream PCM 逐字节一致。无命中时 fallback 到最后一个 vocabulary index，与旧实现的 argmin 位置一致；若后续固定输入出现首个差异，应回退本优化并记录差异阈值。
+
+| 版本 | 完整 / s | 流式 / s | 首 PCM / s |
+| --- | ---: | ---: | ---: |
+| 旧 full-tensor CDF | 9.5446 | 12.5395 | 1.0144 |
+| sequential CPU CDF | 6.6953 | 9.6648 | 0.7937 |
+
+上表只作非配对、方向性观察，不作为性能收益结论：优化侧 5 轮先跑，旧版 3 轮后跑，
+轮数与机器状态不同。可归因证据是
+`sampling_cdf_and_selection` p50 从 `5.76 ms` 降到 `0.002 ms`；总 `sampling` p50
+约 `22.27 ms`，仍被等待 logits 的同步边界主导。优化侧与旧版在共同 4 轮（含预热）
+中 codes、整段 PCM、流式 PCM 逐字节一致；trace 文件在
+`runs/qwen-review/optimization-stage7/`。
+
+## 阶段 8：additive token suppression
+
+将复用的 suppression mask 从 boolean `where_cond` 改为预构建的
+`[1, vocab]` 0/-inf additive mask，每帧一次 `broadcast_add` 替代 boolean broadcast、
+负无穷 broadcast 和 `where_cond` 三个小 GPU kernel。保留 token、EOS 和 min-new-token
+语义。短句同机 A/B：各 1 轮预热 + 5 轮测量，旧/新 codes、整段 PCM、流式 PCM
+逐字节一致；流式中位数 `7.026 s -> 6.087 s`，首 PCM `0.967 s -> 0.760 s`。
+整段中位数 `4.741 s -> 4.180 s`。A/B 的旧版后跑，且旧版轮间波动更大，因此该表
+只作为同输出等价下的方向性观察。长句 203 帧仅在新实现上验证 6 轮输出稳定与正常
+EOS；后半段机器负载升高，耗时未用于比较。试听文件见
+`runs/qwen-review/optimization-stage8/additive-suppression/short/`。
+
+复审后仅做等价简化：suppression mask 直接构建 F32 数据，repetition penalty 两条
+公开路径合并到同一实现，readback 探针把计时辅助逻辑移出主循环并把不变式校验移出
+采样区间。这些简化不改变生产输出或 trace 字段。
+
+用户已确认本阶段新旧对照音频“听感没问题”。由于两侧文件逐字节相同，该试听确认的是
+优化没有损伤当前样本听感，不扩展为全模型质量结论。
+
+## 最终汇总
+
+当前可与官方对照的是同一 M4 Pro、Qwen 0.6B Base ICL、同一中文短句与参考音频、
+seed 42、显式匹配语义采样（top-k 50 / top-p 0.9 / temperature 0.9 /
+repetition penalty 1.05，声学贪心）、空历史 repetition guard、模型准备和导出均在
+计时外、各 1 轮预热 + 5 轮测量的非流式路径。官方为 PyTorch 2.7.1 / Transformers
+4.57.3 MPS BF16；Talechime 为 Candle Metal BF16 Talker/CodePredictor 与 F32 codec。
+两边随机数实现、浮点传播和输出长度不同，因此这是同输入条件观察，不是同一 token
+工作负载的配对加速。
+
+| 路径 | 合成中位数 / s | 音频 / s | RTF | 首 PCM / s |
+| --- | ---: | ---: | ---: | ---: |
+| 官方 PyTorch MPS BF16 | 20.5737 | 6.96 | 2.9560 | — |
+| Talechime Rust Metal 完整 | 4.1796 | 8.16 | 0.5122 | — |
+| Talechime Rust Metal 流式（10 帧） | 6.0868 | 8.16 | 0.7459 | 0.7597 |
+
+在上述边界内，完整路径 RTF 低约 82.7%、合成耗时低约 79.7%；流式合成耗时低约
+70.4%。这些比例不表示音质、内容完整性、CUDA/Windows 或其他设备的普遍优势。
+官方原始证据在 `runs/qwen-review/fair-comparison-20261019/official/summary.json`；
+最终 Rust 证据在 `optimization-stage8/additive-suppression/short/rounds.json`。
+
+阶段内可归因收益不能跨阶段相加：Stage 4 的 depthwise fast path 在固定输出下将
+流式中位数 `10.1980 s -> 5.4465 s`、首 PCM `1.0947 s -> 0.8013 s`，且 codes/full/
+stream PCM 逐字节一致；Stage 7/8 分别有各自 A/B 与输出等价证据，但后续正确性修复
+会改变输出和工作负载，因此不能用起点与最终表的差值宣称全链路总提速。后续仍应优先
+定位 talker 28 层小 kernel 与 codec 增量 residual state。
+
 后续优先级：
 
-1. 定位 GPU→CPU logits 回传为何约 19 ms，并找出首个 fused sampler 差异 token 的
-   浮点原因；否则不改采样语义。
-2. 为 decoder block 的 dense causal conv / transposed conv 建立独立微基准，再评估
-   官方增量状态方案。
+1. 采样若要进一步加速，需要减少 logits 产生路径中已排队的小 GPU kernel，或实现
+   位等价 GPU 采样；不能用 dtype/传输微调替代该证据。
+   当前 trace 的语义循环中，每个生成帧包含 15 次 CodePredictor acoustic step、一次
+   talker decode 和一次 logits 回传同步；`talker_step` p50 约 `5.08 ms`，回传等待
+   p50 约 `22.31 ms`。下一轮优先审视 talker 单步和 logits penalty / suppression
+   的小 kernel 提交流水，而不是继续压缩 12 KiB CPU 采样本身。
+2. codec 侧优先评估完整增量 residual causal conv 状态；transposed conv 只占约 6%
+   卷积时间，先做局部 transposed conv 优化收益不足。
 3. CodePredictor 仅在小张量分派仍有明显占比时优化，固定隐藏态下 15 个 acoustic
    codes 必须完全一致。
+
+阶段 8 后，剩余主要疑点在 talker 单步 28 层小 kernel 串行提交；需要先为 layer /
+attention / MLP 增加只读计时，再评估 RoPE 小张量、Q/K norm、projection 合并或
+custom Metal kernel。任何合并必须证明固定 hidden 与 codes 逐位一致。
 
 ## 验证
 
 - `cargo test --locked -p talechime-qwen3-tts --features metal,profiling --tests --examples`：
-  213 passed，3 ignored（复审后新增 Metal 路由测试）。
+  216 passed，3 ignored（复审后新增 CDF 边界/fallback 测试；最终简化后重跑通过）。
 - depthwise / sampling 定向测试：29 passed，2 ignored，包含原生 Metal 路由测试。
 - depthwise fast path CPU/Metal 路由等价测试：2 passed。
 - 显式原生 Metal 3072 词表采样测试：1 passed。
@@ -134,9 +227,11 @@ SHA-256 全一致：codes `5a4b8fb3…4c9a28`，full `bbd6adf3…4b02485`，stre
   `default_home_migration_keeps_hello_lightweight_and_legacy_voices_visible`
   5 秒时限测试。
 - `cargo fmt --all -- --check`、`git diff --check`：通过。
+- 阶段 7 采样定向测试：30 passed，1 ignored；旧/新共同 4 轮固定 seed 输出逐字节一致。
 - 真模型：1 轮预热 + 5 轮测量；输出文件见
   `runs/qwen-review/optimization-stage3/baseline-prealloc/`、`concat/`、
   `optimization-stage4/depthwise-matmul-final/`（被拒绝的广播实验在 `depthwise/`）。
 
-尚未执行 CUDA/Windows 或新的人工试听；三文本 Rust 矩阵已完成，官方 guard 只覆盖起点短句。
+尚未执行 CUDA/Windows；本阶段人工试听已完成，三文本 Rust 矩阵已完成，官方 guard
+只覆盖上述短句。
 本记录中的性能比例只适用于上述本机输入和计时边界。

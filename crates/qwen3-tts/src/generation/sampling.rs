@@ -31,17 +31,11 @@ impl SamplingContext {
     /// When `None`, uses system time + counter for randomness.
     pub fn new(seed: Option<u64>) -> Self {
         match seed {
-            Some(s) => {
-                // Mix seed with PCG increment to avoid degenerate states
-                let state = s
-                    .wrapping_mul(2685821657736338717)
-                    .wrapping_add(1442695040888963407);
-                Self {
-                    state,
-                    seeded: true,
-                    counter: 0,
-                }
-            }
+            Some(seed) => Self {
+                state: initial_pcg_state(seed),
+                seeded: true,
+                counter: 0,
+            },
             None => Self {
                 state: 0,
                 seeded: false,
@@ -54,10 +48,7 @@ impl SamplingContext {
     ///
     /// Only meaningful for seeded contexts. For unseeded contexts, this is a no-op.
     pub fn reset(&mut self, seed: u64) {
-        let state = seed
-            .wrapping_mul(2685821657736338717)
-            .wrapping_add(1442695040888963407);
-        self.state = state;
+        self.state = initial_pcg_state(seed);
         self.seeded = true;
     }
 
@@ -93,6 +84,12 @@ impl SamplingContext {
 
         (output as f32) / (u32::MAX as f32)
     }
+}
+
+/// Mixes the seed with the PCG increment to avoid degenerate states.
+fn initial_pcg_state(seed: u64) -> u64 {
+    seed.wrapping_mul(2685821657736338717)
+        .wrapping_add(1442695040888963407)
 }
 
 /// Configuration for autoregressive generation
@@ -282,11 +279,11 @@ fn top_p_filter(logits: &Tensor, p: f64) -> Result<Tensor> {
             }
         }
 
-        let mut filtered = vec![f32::NEG_INFINITY; vocab];
+        let row_start = result_data.len();
+        result_data.extend(std::iter::repeat_n(f32::NEG_INFINITY, vocab));
         for &idx in &indices[..cutoff_idx] {
-            filtered[idx] = row[idx];
+            result_data[row_start + idx] = row[idx];
         }
-        result_data.extend(filtered);
     }
 
     Ok(Tensor::new(result_data.as_slice(), logits.device())?.reshape((batch, vocab))?)
@@ -295,29 +292,30 @@ fn top_p_filter(logits: &Tensor, p: f64) -> Result<Tensor> {
 /// Sample from probability distribution using multinomial sampling
 fn multinomial_sample(probs: &Tensor, ctx: &mut SamplingContext) -> Result<Tensor> {
     let (batch, vocab) = probs.dims2()?;
+    let rows = probs.to_vec2::<f32>()?;
 
-    // Cumulative distribution for sampling
-    let cumsum = probs.cumsum(1)?;
+    let mut selected = Vec::with_capacity(batch);
+    for row in &rows {
+        let threshold = ctx.rand_f32();
+        let fallback = vocab.saturating_sub(1);
+        selected.push(first_cdf_index(row, threshold).unwrap_or(fallback) as u32);
+    }
+    Ok(Tensor::from_vec(selected, batch, probs.device())?)
+}
 
-    // Generate uniform random values
-    let uniform: Vec<f32> = (0..batch).map(|_| ctx.rand_f32()).collect();
-    let uniform = Tensor::new(uniform.as_slice(), probs.device())?.unsqueeze(1)?;
-
-    // Find first index where cumsum >= uniform
-    let mask = cumsum.ge(&uniform.broadcast_as(cumsum.shape())?)?;
-
-    // Use a trick: multiply by position and find first nonzero
-    let positions: Vec<f32> = (0..vocab).map(|i| i as f32 + 1.0).collect();
-    let positions = Tensor::new(positions.as_slice(), probs.device())?
-        .unsqueeze(0)?
-        .broadcast_as(mask.shape())?;
-
-    // Where mask is true, use position; else use large value
-    let large = Tensor::new(&[vocab as f32 + 1.0], probs.device())?.broadcast_as(mask.shape())?;
-    let masked_positions = mask.where_cond(&positions, &large)?;
-
-    // Argmin gives first True position
-    Ok(masked_positions.argmin(D::Minus1)?)
+/// Selects the first vocabulary index whose sequential f32 CDF reaches `threshold`.
+///
+/// This mirrors the previous full-tensor CDF comparison without allocating three
+/// extra vocabulary-sized tensors.
+fn first_cdf_index(row: &[f32], threshold: f32) -> Option<usize> {
+    let mut cumulative = 0.0f32;
+    for (index, &probability) in row.iter().enumerate() {
+        cumulative += probability;
+        if cumulative >= threshold {
+            return Some(index);
+        }
+    }
+    None
 }
 
 /// Apply repetition penalty to logits
@@ -334,7 +332,6 @@ pub fn apply_repetition_penalty(
     }
 
     let (_batch, vocab) = logits.dims2()?;
-    let penalty_f32 = penalty as f32;
 
     // Build a one-hot-style mask on device for penalized token positions.
     // Only input_ids (typically small) are transferred to CPU.
@@ -350,22 +347,7 @@ pub fn apply_repetition_penalty(
         .unsqueeze(0)?
         .broadcast_as(logits.shape())?; // [batch, vocab]
 
-    // For positive logits: penalized = logit / penalty, so factor = 1/penalty
-    // For negative logits: penalized = logit * penalty, so factor = penalty
-    // Non-penalized positions: factor = 1.0
-    let is_positive = logits.gt(&Tensor::zeros(logits.shape(), DType::F32, logits.device())?)?;
-    let pos_factor =
-        Tensor::new(&[1.0 / penalty_f32], logits.device())?.broadcast_as(logits.shape())?;
-    let neg_factor = Tensor::new(&[penalty_f32], logits.device())?.broadcast_as(logits.shape())?;
-    let penalty_factor = is_positive.where_cond(&pos_factor, &neg_factor)?;
-
-    // Where mask is 1.0, apply penalty factor; where 0.0, keep factor as 1.0
-    let ones = Tensor::ones(logits.shape(), DType::F32, logits.device())?;
-    let is_penalized =
-        penalty_mask.gt(&Tensor::zeros(logits.shape(), DType::F32, logits.device())?)?;
-    let final_factor = is_penalized.where_cond(&penalty_factor, &ones)?;
-
-    Ok((logits * final_factor)?)
+    apply_repetition_penalty_with_mask(logits, &penalty_mask, penalty)
 }
 
 /// Apply repetition penalty using a pre-built boolean mask on GPU.
@@ -383,22 +365,23 @@ pub fn apply_repetition_penalty_with_mask(
         return Ok(logits.clone());
     }
 
-    let penalty_f32 = penalty as f32;
-
-    let penalty_mask = penalty_mask.broadcast_as(logits.shape())?;
-
-    let is_positive = logits.gt(&Tensor::zeros(logits.shape(), DType::F32, logits.device())?)?;
-    let pos_factor =
-        Tensor::new(&[1.0 / penalty_f32], logits.device())?.broadcast_as(logits.shape())?;
-    let neg_factor = Tensor::new(&[penalty_f32], logits.device())?.broadcast_as(logits.shape())?;
-    let penalty_factor = is_positive.where_cond(&pos_factor, &neg_factor)?;
-
+    // Where the mask is 1.0, apply the sign-dependent penalty; otherwise keep 1.0.
+    let penalty_factor = repetition_penalty_factor(logits, penalty)?;
     let ones = Tensor::ones(logits.shape(), DType::F32, logits.device())?;
     let is_penalized =
         penalty_mask.gt(&Tensor::zeros(logits.shape(), DType::F32, logits.device())?)?;
     let final_factor = is_penalized.where_cond(&penalty_factor, &ones)?;
 
     Ok((logits * final_factor)?)
+}
+
+fn repetition_penalty_factor(logits: &Tensor, penalty: f64) -> Result<Tensor> {
+    let penalty_f32 = penalty as f32;
+    let is_positive = logits.gt(&Tensor::zeros(logits.shape(), DType::F32, logits.device())?)?;
+    let pos_factor =
+        Tensor::new(&[1.0 / penalty_f32], logits.device())?.broadcast_as(logits.shape())?;
+    let neg_factor = Tensor::new(&[penalty_f32], logits.device())?.broadcast_as(logits.shape())?;
+    Ok(is_positive.where_cond(&pos_factor, &neg_factor)?)
 }
 
 /// Greedy sampling (argmax)
@@ -608,6 +591,31 @@ mod tests {
         let result = multinomial_sample(&probs, &mut ctx).unwrap();
         let idx: Vec<u32> = result.to_vec1().unwrap();
         assert_eq!(idx[0], 1); // Should always pick index 1
+    }
+
+    #[test]
+    fn first_cdf_index_uses_inclusive_threshold_boundaries() {
+        let row = [0.25f32, 0.5, 0.25];
+        assert_eq!(first_cdf_index(&row, 0.0), Some(0));
+        assert_eq!(first_cdf_index(&row, 0.25), Some(0));
+        assert_eq!(first_cdf_index(&row, 0.250001), Some(1));
+        assert_eq!(first_cdf_index(&row, 0.75), Some(1));
+        assert_eq!(first_cdf_index(&row, 0.750001), Some(2));
+        assert_eq!(first_cdf_index(&row, 1.0), Some(2));
+    }
+
+    #[test]
+    fn first_cdf_index_falls_back_to_zero() {
+        assert_eq!(first_cdf_index(&[0.0f32; 4], 0.5), None);
+        assert_eq!(first_cdf_index(&[f32::NAN, 0.5], 0.25), None);
+    }
+
+    #[test]
+    fn multinomial_sample_falls_back_to_last_index() {
+        let probs = Tensor::new(&[[0.0f32; 4]], &Device::Cpu).unwrap();
+        let mut ctx = SamplingContext::new(Some(42));
+        let result = multinomial_sample(&probs, &mut ctx).unwrap();
+        assert_eq!(result.to_vec1::<u32>().unwrap(), vec![3]);
     }
 
     #[test]

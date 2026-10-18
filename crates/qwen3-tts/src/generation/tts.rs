@@ -4,42 +4,40 @@
 //! tokens in the reserved control range.
 
 use anyhow::Result;
-use candle_core::{DType, Device, Tensor};
+use candle_core::{Device, Tensor};
 
-/// Pre-computed boolean mask for token suppression.
+/// Pre-computed additive token-suppression mask.
 ///
 /// Build once with [`build_suppression_mask`], then apply cheaply each frame
 /// with [`apply_token_suppression_with_mask`].
 pub struct SuppressionMask {
-    /// Boolean mask: true at positions to suppress. Shape [1, vocab].
-    mask: Tensor,
+    /// 0 for kept tokens and -inf for suppressed tokens. Shape [1, vocab].
+    additive_mask: Tensor,
 }
 
 /// Build a reusable suppression mask for the given vocab/EOS config.
 ///
-/// The mask is a [1, vocab] boolean tensor that can be broadcast to any batch size.
+/// The mask is a [1, vocab] additive F32 tensor that can be broadcast to any
+/// batch size.
 pub fn build_suppression_mask(
     vocab_size: usize,
     eos_token_id: u32,
     device: &Device,
 ) -> Result<SuppressionMask> {
     let suppress_start = vocab_size - 1024;
-    let mut mask_data = vec![0u8; vocab_size];
-    for (v, val) in mask_data
+    let mut additive = vec![0.0f32; vocab_size];
+    for (token, value) in additive
         .iter_mut()
         .enumerate()
         .skip(suppress_start)
         .take(1024)
     {
-        if v as u32 != eos_token_id {
-            *val = 1;
+        if token as u32 != eos_token_id {
+            *value = f32::NEG_INFINITY;
         }
     }
-    let mask = Tensor::new(mask_data.as_slice(), device)?.unsqueeze(0)?; // [1, vocab]
-    // Convert to boolean by comparing > 0
-    let zeros = Tensor::zeros((1, vocab_size), DType::U8, device)?;
-    let mask = mask.gt(&zeros)?;
-    Ok(SuppressionMask { mask })
+    let additive_mask = Tensor::new(additive.as_slice(), device)?.unsqueeze(0)?;
+    Ok(SuppressionMask { additive_mask })
 }
 
 /// Apply a pre-built suppression mask to logits (cheap per-frame operation).
@@ -47,10 +45,9 @@ pub fn apply_token_suppression_with_mask(
     logits: &Tensor,
     suppression: &SuppressionMask,
 ) -> Result<Tensor> {
-    let mask = suppression.mask.broadcast_as(logits.shape())?;
-    let neg_inf =
-        Tensor::new(&[f32::NEG_INFINITY], logits.device())?.broadcast_as(logits.shape())?;
-    Ok(mask.where_cond(&neg_inf, logits)?)
+    // The additive mask has the same 0/-inf semantics and avoids materializing
+    // broadcasted boolean/value tensors for every decode step.
+    Ok(logits.broadcast_add(&suppression.additive_mask)?)
 }
 
 /// Apply token suppression to logits (builds mask each call — use the mask

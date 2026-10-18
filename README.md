@@ -102,10 +102,11 @@ talechime --backend voxcpm --param steps=32 --param temperature=0.9 --seed 7 cha
 
 | 模型与条件 | 官方 RTF | Talechime / Rust RTF | 相对官方 | 证据与限制 |
 | --- | ---: | ---: | --- | --- |
+| Qwen3-TTS 0.6B Base ICL，M4 Pro：官方 MPS BF16 vs Rust Metal BF16，同一文本/参考/seed/匹配采样，各 1 轮预热 + 5 轮热模型测量，非流式 | 2.956 | 0.512 | RTF 低约 82.7%；合成耗时低约 79.7% | [性能记录](docs/records/qwen/qwen-performance-optimization-2026-10-18.md)：双方随机数、浮点传播与输出长度不同，是同输入条件观察而非同一 token 负载配对；Rust 流式 RTF 0.746，首 PCM 0.760 s，官方未提供流式首 PCM |
 | CosyVoice3 0.5B，M4 Pro CPU，`long` 样例，热模型非流式 | 1.17 | 1.089 | RTF 约低 7% | [本机报告](docs/records/cosyvoice3/cosyvoice3-performance-2026-10-17.md)：Rust 为 10 月 18 日默认启用 Accelerate 后的单组测量；官方与 Rust 采样 token 数不同，尚无最终版本的配对多轮官方复测 |
 | IndexTTS 2.5，RTX 5070 CUDA，同语料 6 段 × 2 轮 | 0.45577 | 0.42137 | 整体 RTF 低 7.55%；排除首条后低 1.53% | [串行 ABBA 对照](docs/records/indextts/indextts-candle-performance-2026-10-17.md)：测于独立计算库；接入后端的实机性能尚未复测，稳态差距不能外推为稳定优势 |
 
-CosyVoice3 的 Rust Metal 没有对应的官方 MPS 实现可作同设备对照；[报告](docs/records/cosyvoice3/cosyvoice3-performance-2026-10-17.md)另列 Metal 和官方 CPU 的绝对结果，不能把设备差异算成移植提速。Qwen3-TTS 已完成本机官方实现初测，但旧数据的主模型 top-p 与声学采样策略不同；[审查记录](docs/records/qwen/qwen-performance-review-2026-10-18.md)撤回旧百分比比较，优化收益按本实现前后对照验证，当前 Metal 优化见[性能记录](docs/records/qwen/qwen-performance-optimization-2026-10-18.md)。MOSS、VoxCPM2 和 OmniVoice 目前缺少同条件的**官方实现**性能基准，因此不报“比官方快多少”。VoxCPM2 的[原生 llama.cpp-omni 对照](docs/records/voxcpm/voxcpm-candle-acceptance.md)与官方 PyTorch 是不同基线。
+CosyVoice3 的 Rust Metal 没有对应的官方 MPS 实现可作同设备对照；[报告](docs/records/cosyvoice3/cosyvoice3-performance-2026-10-17.md)另列 Metal 和官方 CPU 的绝对结果，不能把设备差异算成移植提速。Qwen 官方对照使用显式匹配采样和空历史 repetition guard；官方源码补丁只用于可运行的 MPS 基准与 EOS/来源记录，不改变 Talechime 实现，历史失效比较保留在[审查记录](docs/records/qwen/qwen-performance-review-2026-10-18.md)。MOSS、VoxCPM2 和 OmniVoice 目前缺少同条件的**官方实现**性能基准，因此不报“比官方快多少”。VoxCPM2 的[原生 llama.cpp-omni 对照](docs/records/voxcpm/voxcpm-candle-acceptance.md)与官方 PyTorch 是不同基线。
 
 ## 接入应用
 

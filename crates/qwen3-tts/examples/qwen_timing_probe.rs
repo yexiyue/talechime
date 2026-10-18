@@ -1,9 +1,13 @@
 //! Real-model probe. Arguments: `MODEL PROMPT TEXT DEVICE OUTPUT_DIR [ROUNDS] [CHUNK_FRAMES]`.
 //! Round zero warms both paths; WAV/raw F32 exports happen outside timing.
 use anyhow::{Context, ensure};
+use candle_core::{DType, Device, Tensor};
 use qwen3_tts::{AudioBuffer, Language, Qwen3TTS, SynthesisOptions, VoiceClonePrompt};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::{fs, path::Path, time::Instant};
+
+const LOGIT_LENGTH: usize = 3072;
+const READBACK_SAMPLE_COUNT: usize = 32;
 
 fn save_audio(directory: &Path, name: &str, audio: &AudioBuffer) -> anyhow::Result<()> {
     ensure!(!audio.samples.is_empty(), "empty audio: {name}");
@@ -43,6 +47,17 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
     let mut records = Vec::new();
+    let device = model.device();
+    let mut transfer_records = Vec::new();
+    ensure!(
+        device.is_metal(),
+        "the isolated transfer diagnostic requires Metal"
+    );
+    let logits = logits_fixture(device, LOGIT_LENGTH)?;
+    ensure!(
+        logits.dims2()? == (1, LOGIT_LENGTH),
+        "unexpected fixture shape"
+    );
     for round in 0..=rounds {
         model.device().synchronize()?;
         let started = Instant::now();
@@ -94,10 +109,57 @@ fn main() -> anyhow::Result<()> {
             "eos": stream.is_done(), "finite": true, "chunks": chunks});
         println!("{record}");
         records.push(record);
+
+        // Isolate a committed readback from model kernels and queue submission.
+        // F32 is the production dtype after `sample`; BF16 checks transfer size.
+        transfer_records.extend(measure_readback(device, round, &logits)?);
     }
     fs::write(
         directory.join("rounds.json"),
         serde_json::to_vec_pretty(&records)?,
     )?;
+    fs::write(
+        directory.join("transfer.json"),
+        serde_json::to_vec_pretty(&transfer_records)?,
+    )?;
     Ok(())
+}
+
+fn readback_milliseconds(device: &Device, logits: &Tensor, dtype: DType) -> anyhow::Result<f64> {
+    device.synchronize()?;
+    let started = Instant::now();
+    logits.to_dtype(dtype)?.to_device(&Device::Cpu)?;
+    device.synchronize()?;
+    Ok(started.elapsed().as_secs_f64() * 1000.0)
+}
+
+fn measure_readback(device: &Device, round: usize, logits: &Tensor) -> anyhow::Result<Vec<Value>> {
+    let mut records = Vec::new();
+    for (dtype_name, dtype) in [("f32", DType::F32), ("bf16", DType::BF16)] {
+        let mut samples = Vec::new();
+        for _ in 0..READBACK_SAMPLE_COUNT {
+            samples.push(readback_milliseconds(device, logits, dtype)?);
+        }
+        samples.sort_by(|a, b| a.total_cmp(b));
+        let record = json!({
+            "round": round,
+            "dtype": dtype_name,
+            "shape": [1, LOGIT_LENGTH],
+            "samples": samples,
+            "min_ms": samples[0],
+            "p50_ms": samples[samples.len() / 2],
+            "mean_ms": samples.iter().sum::<f64>() / samples.len() as f64,
+            "max_ms": *samples.last().expect("non-empty"),
+        });
+        println!("{record}");
+        records.push(record);
+    }
+    Ok(records)
+}
+
+fn logits_fixture(device: &Device, vocab: usize) -> anyhow::Result<Tensor> {
+    let values: Vec<f32> = (0..vocab)
+        .map(|index| (index as f32 * 0.37).sin() * 12.0)
+        .collect();
+    Ok(Tensor::from_vec(values, (1, vocab), device)?)
 }
