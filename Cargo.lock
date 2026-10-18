@@ -4712,9 +4712,11 @@ dependencies = [
  "anyhow",
  "candle-core",
  "candle-nn",
+ "cudarc 0.19.10",
  "hound",
  "serde_json",
  "tokenizers",
+ "tracing",
  "tts-candle-platform",
 ]
 

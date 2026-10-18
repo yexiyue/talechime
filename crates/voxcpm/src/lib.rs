@@ -4,6 +4,8 @@
 //! weights are available for explicit precision and performance qualification.
 mod acoustic;
 mod codec;
+#[cfg(feature = "cuda")]
+mod cuda_graph;
 mod model;
 mod timing;
 mod transformer;

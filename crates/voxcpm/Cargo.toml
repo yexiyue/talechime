@@ -10,14 +10,16 @@ repository = "https://github.com/yexiyue/talechime"
 [features]
 default = []
 experimental-dual-reference = []
-cuda = ["dep:tts-candle-platform", "tts-candle-platform/cuda"]
+cuda = ["dep:cudarc", "dep:tts-candle-platform", "tts-candle-platform/cuda"]
 metal = ["dep:tts-candle-platform", "tts-candle-platform/metal"]
 
 [dependencies]
 candle-core.workspace = true
 candle-nn.workspace = true
+cudarc = { workspace = true, optional = true }
 tts-candle-platform = { workspace = true, optional = true }
 serde_json.workspace = true
+tracing.workspace = true
 tokenizers = { workspace = true, features = ["onig"] }
 
 [dev-dependencies]

@@ -7,6 +7,9 @@ use crate::{
 use candle_core::{DType, Device, Result, Tensor};
 use std::path::Path;
 
+#[cfg(feature = "cuda")]
+use crate::cuda_graph::CfmGraphs;
+
 /// Production output sample rate.
 pub const SAMPLE_RATE: u32 = 48_000;
 /// Generation termination; only EOS completes a playback checkpoint.
@@ -63,6 +66,9 @@ pub struct Model {
     backbone_dtype: DType,
     codec_dtype: DType,
     timings: Timings,
+    /// CUDA graph replay for the per-frame CFM step; absent on CPU and Metal.
+    #[cfg(feature = "cuda")]
+    graphs: Option<CfmGraphs>,
 }
 impl Model {
     /// Load the existing two GGUF files from their current model directory.
@@ -157,6 +163,8 @@ impl Model {
             backbone_dtype: DType::F32,
             codec_dtype: dtype,
             timings: Timings::default(),
+            #[cfg(feature = "cuda")]
+            graphs: CfmGraphs::new(device),
         })
     }
     /// Load original OpenBMB weights without quantization. CPU requires F32;
@@ -226,11 +234,27 @@ impl Model {
             backbone_dtype: dtype,
             codec_dtype: DType::F32,
             timings: Timings::default(),
+            #[cfg(feature = "cuda")]
+            graphs: CfmGraphs::new(device),
         })
     }
     /// Measurements for the latest request when module timing is enabled.
     pub fn timings(&self) -> &Timings {
         &self.timings
+    }
+    /// Whether the per-frame CFM step is running as a replayed CUDA graph.
+    ///
+    /// False on CPU and Metal, while a CUDA model is still warming up, and
+    /// after a capture or replay failure has forced the model back to the
+    /// eager path for the rest of its lifetime.
+    pub fn cuda_graph_replay(&self) -> bool {
+        #[cfg(feature = "cuda")]
+        return self
+            .graphs
+            .as_ref()
+            .is_some_and(crate::cuda_graph::CfmGraphs::active);
+        #[cfg(not(feature = "cuda"))]
+        false
     }
     /// Encode mono 16kHz samples. Padding follows the official reference mode.
     pub fn reference(
@@ -509,6 +533,22 @@ impl Model {
                 .collect();
             let initial = Tensor::from_vec(values, (1, 64, 4), &self.device)?;
             let (patch, elapsed) = measure(o.measure_modules, &self.device, || {
+                // Module timing synchronizes inside the measured region, which
+                // a captured graph cannot contain, so profiling stays eager.
+                #[cfg(feature = "cuda")]
+                if let Some(graphs) = self.graphs.as_mut()
+                    && !o.measure_modules
+                {
+                    return graphs.sample(
+                        &mut self.acoustic,
+                        &mu,
+                        &prefix,
+                        &initial,
+                        o.steps,
+                        o.cfg,
+                        cancel,
+                    );
+                }
                 self.acoustic
                     .sample(&mu, &prefix, &initial, o.steps, o.cfg, cancel)
             })?;

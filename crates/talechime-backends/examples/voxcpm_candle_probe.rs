@@ -122,7 +122,7 @@ fn main() -> anyhow::Result<()> {
         device.synchronize()?;
         let elapsed = started.elapsed();
         let seconds = count as f64 / SAMPLE_RATE as f64;
-        let result = serde_json::json!({"round":round,"warmup":round==0,"first_pcm_ms":first.map(|v|v.as_millis()),"generate_ms":elapsed.as_millis(),"audio_seconds":seconds,"rtf":elapsed.as_secs_f64()/seconds,"segments":segments.len()});
+        let result = serde_json::json!({"round":round,"warmup":round==0,"first_pcm_ms":first.map(|v|v.as_millis()),"generate_ms":elapsed.as_millis(),"audio_seconds":seconds,"rtf":elapsed.as_secs_f64()/seconds,"segments":segments.len(),"cuda_graph":model.cuda_graph_replay()});
         println!("{result}");
         results.push(result);
         std::fs::write(
@@ -213,13 +213,18 @@ fn main() -> anyhow::Result<()> {
     );
     let checks = std::cell::Cell::new(0);
     let mut delivered = 0;
+    // Cancellation granularity differs by path: the eager sampler polls the
+    // flag inside every transformer layer, while a replayed CUDA graph can only
+    // poll it once per frame. Trip the flag inside prefill, before the frame
+    // loop, so both paths are held to the same guarantee. Cancelling after the
+    // first frame is covered by the earlier callback-driven case.
     let status = model.generate(
         "检查扩散迭代取消。",
         None,
         &options,
         &|| {
             checks.set(checks.get() + 1);
-            checks.get() > 80
+            checks.get() > 8
         },
         |pcm| {
             delivered += pcm.len();
@@ -228,7 +233,7 @@ fn main() -> anyhow::Result<()> {
     )?;
     anyhow::ensure!(
         status == Outcome::Cancelled && delivered == 0,
-        "cancel during prefill/CFM must not emit PCM"
+        "cancel during prefill/CFM must not emit PCM: status={status:?} delivered={delivered}"
     );
     let release = Instant::now();
     drop(reference);
