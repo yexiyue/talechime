@@ -8,8 +8,15 @@ use candle_core::{D, DType, IndexOp, Tensor};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+mod tables;
+#[cfg(test)]
+use tables::decoder_attention_mask;
+use tables::{DecoderTables, TableCache};
+
+#[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+mod graph;
+
 use super::{CausalConv1d, CausalTransConv1d, ConvNeXtBlock, DecoderBlock, SnakeBeta};
-use crate::models::talker::codec_tokens::CODEC_VOCAB_SIZE;
 
 /// Configuration for the 12Hz decoder
 #[derive(Debug, Clone)]
@@ -124,17 +131,20 @@ impl UpsampleStage {
 
 /// Full 12Hz decoder
 pub struct Decoder12Hz {
+    // Drop graphs before any weights or cached tensors whose addresses they captured.
+    #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+    graphs: Mutex<graph::DecoderGraphs>,
     config: Decoder12HzConfig,
     /// Codebook embeddings for first quantizer [codebook_size, 256]
     first_codebook: Tensor,
     /// Codebook embeddings for rest quantizers (15 codebooks) [15, codebook_size, 256]
     rest_codebooks: Vec<Tensor>,
-    /// Codec token to first-codebook index `[CODEC_VOCAB_SIZE]`
-    semantic_code_lut: Tensor,
+    /// Integer divisor used by CUDA semantic-code folding.
+    codebook_divisor: Tensor,
     /// Inverse RoPE frequencies `[head_dim / 2]`
     inv_freq: Tensor,
     /// Per-frame-count decoder transformer constants, see [`Self::tables`]
-    table_cache: Mutex<HashMap<usize, Arc<DecoderTables>>>,
+    table_cache: Mutex<TableCache>,
     /// Output projection for first quantizer (semantic) [512, 256, 1]
     first_output_proj: Tensor,
     /// Output projection for rest quantizers (acoustic) [512, 256, 1]
@@ -182,19 +192,6 @@ struct TransformerLayerWeights {
 struct TransformerWeights {
     layers: Vec<TransformerLayerWeights>,
 }
-
-/// Decoder transformer constants for one frame count.
-struct DecoderTables {
-    /// `[1, 1, frames, head_dim]`
-    cos: Tensor,
-    /// `[1, 1, frames, head_dim]`
-    sin: Tensor,
-    /// `[1, 1, frames, frames]`
-    mask: Tensor,
-}
-
-/// Cached frame counts before the decoder drops its constants.
-const DECODER_TABLE_CACHE_LIMIT: usize = 16;
 
 /// Fetch a weight tensor by key, returning a helpful error if missing.
 fn get_weight(weights: &HashMap<String, Tensor>, key: &str) -> Result<Tensor> {
@@ -253,17 +250,8 @@ impl Decoder12Hz {
             get_weight(weights, "decoder.quantizer.rvq_first.output_proj.weight")?;
         let rest_output_proj =
             get_weight(weights, "decoder.quantizer.rvq_rest.output_proj.weight")?;
-        // The codec vocabulary is larger than the first codebook, so decode
-        // folds tokens through this table on device. Reading the codes back to
-        // the host for the modulo would stall the pipeline on every chunk and
-        // makes the decoder uncapturable.
-        let semantic_code_lut = Tensor::from_vec(
-            (0..CODEC_VOCAB_SIZE)
-                .map(|token| (token % config.codebook_size) as i64)
-                .collect::<Vec<_>>(),
-            CODEC_VOCAB_SIZE,
-            first_codebook.device(),
-        )?;
+        anyhow::ensure!(config.codebook_size > 0, "codebook size must be positive");
+        let codebook_divisor = Tensor::new(config.codebook_size as i64, first_codebook.device())?;
         let inv_freq = Tensor::from_vec(
             (0..config.head_dim)
                 .step_by(2)
@@ -427,9 +415,11 @@ impl Decoder12Hz {
             config,
             first_codebook,
             rest_codebooks,
-            semantic_code_lut,
+            codebook_divisor,
+            #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+            graphs: Mutex::new(graph::DecoderGraphs::default()),
             inv_freq,
-            table_cache: Mutex::new(HashMap::new()),
+            table_cache: Mutex::new(TableCache::default()),
             first_output_proj,
             rest_output_proj,
             pre_conv,
@@ -469,7 +459,22 @@ impl Decoder12Hz {
         let first_codes = codes.i((.., 0, ..))?; // [batch, seq]
         let first_codes_flat = first_codes.flatten_all()?;
         // Apply modulo to map the 3072-token codec vocabulary → 2048 codebook.
-        let first_codes_tensor = self.semantic_code_lut.index_select(&first_codes_flat, 0)?;
+        let first_codes_tensor = if device.is_cuda() {
+            // Integer division preserves remainder semantics for all I64 tokens,
+            // including values beyond the talker's 3072-token vocabulary.
+            let quotient = first_codes_flat.broadcast_div(&self.codebook_divisor)?;
+            (&first_codes_flat - quotient.broadcast_mul(&self.codebook_divisor)?)?
+        } else {
+            let values = first_codes_flat.to_vec1::<i64>()?;
+            Tensor::from_vec(
+                values
+                    .into_iter()
+                    .map(|code| code % self.config.codebook_size as i64)
+                    .collect::<Vec<_>>(),
+                first_codes_flat.shape(),
+                device,
+            )?
+        };
         let first_embed = self.first_codebook.index_select(&first_codes_tensor, 0)?;
         let first_embed = first_embed.reshape((batch_size, seq_len, 256))?;
 
@@ -614,45 +619,38 @@ impl Decoder12Hz {
         Ok(hidden)
     }
 
-    /// RoPE tables and sliding-window mask for `frames` codec frames.
-    ///
-    /// They depend only on the frame count, so a decode reuses them instead of
-    /// rebuilding an `O(frames²)` host mask and re-uploading it on every chunk,
-    /// which also made the decoder uncapturable. A CUDA graph that reads these
-    /// tensors must take them as replay parameters: the cache may drop an entry
-    /// while the graph still points at it.
     fn tables(&self, frames: usize) -> Result<Arc<DecoderTables>> {
-        let cache = self
-            .table_cache
+        self.table_cache
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(tables) = cache.get(&frames) {
-            return Ok(tables.clone());
-        }
-        drop(cache);
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(
+                frames,
+                self.config.head_dim,
+                self.config.sliding_window,
+                &self.inv_freq,
+            )
+    }
 
-        let device = self.first_codebook.device();
-        let positions = Tensor::arange(0u32, frames as u32, device)?;
-        let freqs = positions
-            .to_dtype(DType::F32)?
-            .unsqueeze(1)?
-            .matmul(&self.inv_freq.unsqueeze(0)?)?;
-        let cos = freqs.cos()?.repeat((1, 2))?.unsqueeze(0)?.unsqueeze(0)?;
-        let sin = freqs.sin()?.repeat((1, 2))?.unsqueeze(0)?.unsqueeze(0)?;
-        let mask = decoder_attention_mask(frames, self.config.sliding_window, device)?;
-        let tables = Arc::new(DecoderTables { cos, sin, mask });
+    #[cfg(all(
+        test,
+        feature = "cuda",
+        any(target_os = "windows", target_os = "linux")
+    ))]
+    pub(crate) fn recorded_shapes(&self) -> usize {
+        self.graphs.lock().unwrap().recorded_shapes()
+    }
 
-        let mut cache = self
-            .table_cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // Utterances are short and repeat their length, so the cache only grows
-        // when one process decodes many different lengths.
-        if cache.len() >= DECODER_TABLE_CACHE_LIMIT {
-            cache.clear();
+    /// Stateless history decode; graph scratch is copied before releasing its lock.
+    pub(crate) fn decode_streaming(&self, codes: &Tensor) -> Result<Tensor> {
+        #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+        if codes.device().is_cuda() {
+            return self
+                .graphs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .decode(self, codes);
         }
-        cache.insert(frames, tables.clone());
-        Ok(tables)
+        self.decode(codes)
     }
 
     /// Run a single transformer layer
@@ -770,25 +768,6 @@ impl Decoder12Hz {
         let decoder_upsample: usize = self.config.upsample_rates.iter().product();
         pre_upsample * decoder_upsample
     }
-}
-
-fn decoder_attention_mask(
-    frames: usize,
-    window: usize,
-    device: &candle_core::Device,
-) -> Result<Tensor> {
-    anyhow::ensure!(window > 0, "decoder attention window must be positive");
-    let mut values = vec![0.0f32; frames * frames];
-    for query in 0..frames {
-        for key in 0..frames {
-            if key > query || query - key >= window {
-                values[query * frames + key] = f32::NEG_INFINITY;
-            }
-        }
-    }
-    Ok(Tensor::from_vec(values, (frames, frames), device)?
-        .unsqueeze(0)?
-        .unsqueeze(0)?)
 }
 
 #[cfg(test)]
