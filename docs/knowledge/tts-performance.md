@@ -109,7 +109,9 @@ Qwen Metal depthwise 的窗口 matmul 只适用已验证的卷积条件；CUDA �
    结果；有状态 decoder 的预热、快照、恢复与回放必须精确推进一次。
 4. 图内临时分配/释放配对；把捕获输出复制到持久缓冲，再在 end_capture 前释放临时输出。
    AUTO_FREE_ON_LAUNCH 在下一次 launch 前释放遗留分配，不能误认为上次结束时已释放。
-   Vox 已用公开 API 完成，无须先改 allocator 或引入私有 mempool。
+   Vox 已用公开 API 完成，无须先改 allocator 或引入私有 mempool。图在 capture 之后
+   读写的一切都必须**预先分配**：capture 内分配且被主机状态保留的张量（如 Concat
+   缓存增长的 K/V）构成未配对节点，驱动可在实例化或回放时以 INVALID_VALUE 拒绝。
 5. 图依赖的 schedule、权重、状态、流必须活到图销毁之后。LRU eviction 和 steps 切换
    是生命周期测试的一部分；模型字段销毁顺序要保证图先于其引用数据释放。
 6. 输出可能别名 recorder scratch，在下一回放前消费；需要保留就复制。profiling eager

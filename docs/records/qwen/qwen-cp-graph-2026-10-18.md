@@ -98,6 +98,24 @@ talechime-qwen3-tts --lib`，220 passed）。
 
 结果：1 passed（RTX 5070，3.1 s）。
 
+### Concat 变体 capture（关闭试用报告的遗留问题）
+
+`new_kv_caches` 在预分配失败时回退 `Concat`，其 K/V 由 `cat` 增长：最终那对张量
+**在 capture 内分配、并在 capture 结束时仍被缓存持有**，即图节点之外存在主机侧
+保留的 capture 分配。用真模型直接录制该变体（`cuda_concat_cache_capture_matches_eager`）：
+
+- `Replay::record` 在 `end_capture`/实例化阶段被驱动拒绝：
+  `CUDA_ERROR_INVALID_VALUE`；recorder 的 RAII 收尾生效，事后流不在捕获态
+  （`is_capturing` 为 false），设备可继续使用；
+- 即 Concat 变体**无法完成图录制**，不是“录成但只能回放一次”。这与 VoxCPM 记录的
+  未配对分配节点是同一机制（那里表现为延迟到 launch 报错），差别只在驱动把校验
+  放在实例化还是回放。
+
+生产路径因此依赖既有设计：`CodePredictorSession` 的图在 `record` 报错时只发警告
+并对该 session 永久走 eager（预分配失败 → 回退 → 图不可用 → 正确降级），而正常
+CUDA 分配成功时走 PreAlloc，缓存在 capture 之前分配。测试钉住两个半边：拒绝必须
+是 INVALID_VALUE 且流已恢复；若将来驱动接受该图，测试改走逐位对照路径。
+
 ### 端到端产物
 
 ABBA 八进程每个三轮，`codes-{0,1,2}.json`、`full-*.f32le`、`stream-*.f32le`、
@@ -131,6 +149,10 @@ RTF（4.72 s 音频 = 59 帧 × 1920 / 24000）：完整 0.6535 → 0.4049；流
 - 提取后重跑一次三进程探针：与 `final/` 可比的 10 份产物仍逐字节一致，
   full 1.808 s / stream 2.440 s，落在 ABBA graph 区间内；
 - workspace `cargo check`、三 crate clippy（默认与 CUDA feature）、fmt 全过。
+
+注意：ignored 的真 GPU 测试必须 `--test-threads=1` 串行。同一进程内两次
+`Device::new_cuda(0)` 共享同一条 candle 流，并发 `begin_capture` 会互相破坏
+（并行时两个图测试同时失败，串行均通过）。
 
 **未复验项**：本机没有 VoxCPM GGUF 权重，`real_model_replay_noise_schedule_and_lru`
 与 `decoder_tests` 三个真模型测试未运行。对 VoxCPM 的风险限于“浮点 dtype 分支

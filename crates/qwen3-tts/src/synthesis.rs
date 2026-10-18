@@ -1453,6 +1453,116 @@ mod tests {
         Ok(())
     }
 
+    /// Qualifies capture when `new_kv_caches` fell back to concatenation.
+    ///
+    /// CUDA normally takes the pre-allocated path, but a failed allocation
+    /// falls back to `cat`-grown K/V whose final tensors are allocated inside
+    /// the capture and still held by the cache when it ends. Retaining
+    /// capture-time allocations leaves unpaired allocation nodes, and on this
+    /// setup the driver rejects the graph at `end_capture` with
+    /// `CUDA_ERROR_INVALID_VALUE` (the recorder's RAII still restores the
+    /// stream). The session therefore relies on eager fallback, and this test
+    /// pins both halves of that contract: a rejection must be INVALID_VALUE
+    /// with the stream usable again, and a driver that accepts the graph must
+    /// reproduce eager codes exactly.
+    #[test]
+    #[ignore = "requires a local CUDA model; run serially"]
+    #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+    fn cuda_concat_cache_capture_matches_eager() -> Result<()> {
+        use crate::models::KVCache;
+        use anyhow::Context;
+        let model_path = std::env::var("QWEN_CP_TEST_MODEL").context("QWEN_CP_TEST_MODEL")?;
+        anyhow::ensure!(Path::new(&model_path).is_dir(), "local model required");
+        let device = Device::new_cuda(0)?;
+        let Device::Cuda(cuda) = &device else {
+            unreachable!()
+        };
+        let model = Qwen3TTS::from_pretrained(&model_path, device.clone())?;
+        let predictor = &model.code_predictor;
+        let dtype = model.compute_dtype;
+        let dim = predictor.codec_embed_dim();
+        let frame = |seed: usize| -> Result<Tensor> {
+            let values: Vec<f32> = (0..dim)
+                .map(|i| (i as f32 * 0.37 + seed as f32 * 11.0).sin() * 0.5)
+                .collect();
+            Ok(Tensor::from_vec(values, (1, 1, dim), &device)?.to_dtype(dtype)?)
+        };
+        let concat_caches = || {
+            predictor
+                .new_kv_caches()
+                .into_iter()
+                .map(|_| AnyKVCache::Concat(KVCache::new()))
+                .collect::<Vec<_>>()
+        };
+        let mut captured = concat_caches();
+        let mut eager = concat_caches();
+
+        let _guard = cuda.enable_cuda_graph_htod_cache();
+        let (hidden, semantic) = (frame(0)?, frame(64)?);
+        let warmup = predictor.generate_acoustic_codes(&hidden, &semantic, &mut captured)?;
+        // `captured` must outlive `replay`: its retained K/V were allocated
+        // inside the capture and are the addresses every launch rewrites.
+        let record = candle_cuda_graph::Replay::record(
+            cuda,
+            &[&hidden, &semantic],
+            &warmup,
+            vec![],
+            |inputs| {
+                predictor
+                    .generate_acoustic_codes(&inputs[0], &inputs[1], &mut captured)
+                    .map_err(|error| candle_core::Error::Msg(error.to_string()))
+            },
+        );
+        let replay = match record {
+            Ok(replay) => replay,
+            Err(error) => {
+                assert!(
+                    format!("{error:?}").contains("INVALID_VALUE"),
+                    "unexpected capture failure for the concat variant: {error:?}"
+                );
+                // A rejected recording must leave the stream capturable again.
+                anyhow::ensure!(
+                    !candle_cuda_graph::is_capturing(&cuda.cuda_stream())?,
+                    "failed capture left the stream capturing"
+                );
+                return Ok(());
+            }
+        };
+
+        let mut check = |seed: usize| -> Result<bool> {
+            let (hidden, semantic) = (frame(seed)?, frame(seed + 64)?);
+            // Read the eager result before the replay overwrites its scratch.
+            let expected = predictor.generate_acoustic_codes(&hidden, &semantic, &mut eager)?;
+            let expected = expected.to_vec1::<u32>()?;
+            match replay.launch(&[&hidden, &semantic]) {
+                Ok(actual) => {
+                    assert_eq!(
+                        actual.to_vec1::<u32>()?,
+                        expected,
+                        "codes differ for seed {seed}"
+                    );
+                    Ok(true)
+                }
+                Err(error) => {
+                    assert!(
+                        format!("{error:?}").contains("INVALID_VALUE"),
+                        "unexpected replay failure for seed {seed}: {error:?}"
+                    );
+                    Ok(false)
+                }
+            }
+        };
+        assert!(check(0)?, "first launch must reproduce the warmup frame");
+        for seed in 1..8usize {
+            if !check(seed)? {
+                return Ok(());
+            }
+        }
+        // A late repeat of the first frame is where this variant gave up.
+        let _ = check(0)?;
+        Ok(())
+    }
+
     #[test]
     #[ignore = "requires explicit local model, prompt, text and output paths"]
     fn probe_voice_clone_prefill() -> Result<()> {

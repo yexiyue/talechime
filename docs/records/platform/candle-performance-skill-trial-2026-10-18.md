@@ -81,5 +81,10 @@ EOS、短尾块、取消和同模型复用，最后才进入无 profiling 的独
 默认开启，`QWEN_CP_GRAPH=0` 关闭，profiling 强制 eager。
 
 试用时列为「未证明」的两点现已明确：capture 可行且 codes 逐位一致；缓存变体在
-该模型为预分配路径，但 Concat 变体下的 capture **仍未实测**。回放不重跑 Rust 簿记
-成立的依据是“每次回放重写全部 16 个 KV 位置”的不变式，已写入验证阶梯。
+该模型为预分配路径，而 Concat 变体下的 capture 已实测**失败**——其 K/V 在 capture
+内分配并被缓存保留，构成未配对分配节点，驱动在 `end_capture`/实例化即以
+`CUDA_ERROR_INVALID_VALUE` 拒绝（RAII 恢复流）。因此“不声称所有 Concat 图不可
+捕获”应改为“Concat 保留 capture 内分配时不可用；图在 capture 之后读写的一切都
+必须预先分配”。回放不重跑 Rust 簿记成立的依据是“每次回放重写全部 16 个 KV
+位置”的不变式，已写入验证阶梯；ignored 真 GPU 测试须 `--test-threads=1`
+（同进程共享同一条流）。

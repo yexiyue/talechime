@@ -340,6 +340,12 @@ tag `0.11.0`）。
   在再次 launch 之前释放尚未释放的图分配（不是上次 launch 末尾）；本项目仍用
   配平分配和图外常驻输出来明确生命周期。该现象与 candle 无关，
   纯 cudarc 最小复现即可观察到，不必先怀疑 candle 或驱动。
+  **第二个实例（2026-10-18，Qwen CP 图）**：`Concat` 变体 KV 由 `cat` 增长，
+  capture 内分配且被缓存保留到录制结束之后，同样是未配对分配节点；本机驱动
+  更早拒绝——`end_capture`/实例化即返回 `CUDA_ERROR_INVALID_VALUE`，图根本录不成
+  （recorder 的 RAII 仍让流退出捕获态）。推论：图在 capture 之后读写的每个地址
+  都必须在 `begin_capture` 之前分配；判定 capture 是否干净退出用
+  `candle_cuda_graph::is_capturing`，消费者无需直接依赖 cudarc。
 - 图内不要放取消轮询、profiling 同步或任何 host 读回；这些留在图外逐帧检查。
   取消粒度因此从「算子内」变成「每帧」，基准与回归用例的阈值要按新粒度设定。
 - 图必须保活所有外部参数地址，包括各 steps 对应的时间表；只保活输入输出不足以
