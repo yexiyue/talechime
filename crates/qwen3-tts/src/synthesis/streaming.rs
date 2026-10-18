@@ -30,8 +30,8 @@ pub struct StreamingSession<'a> {
     token_count: usize,
     // Pre-built suppression mask (reused every frame)
     suppression_mask: generation::SuppressionMask,
-    // Pre-allocated code predictor KV caches (reused + reset each frame)
-    cp_kv_caches: Vec<AnyKVCache>,
+    // Per-stream acoustic code state: KV caches plus the CUDA frame graph
+    cp_codes: CodePredictorSession<'a>,
 }
 
 impl<'a> StreamingSession<'a> {
@@ -192,7 +192,7 @@ impl<'a> StreamingSession<'a> {
         Qwen3TTS::update_penalty_mask(&mut penalty_mask, first_token_id, vocab_size)?;
 
         let done = config.eos_token_id == Some(first_token_id);
-        let cp_kv_caches = model.code_predictor.new_kv_caches();
+        let cp_codes = CodePredictorSession::new(&model.code_predictor);
 
         Ok(Self {
             model,
@@ -212,7 +212,7 @@ impl<'a> StreamingSession<'a> {
             penalty_mask,
             token_count: 1,
             suppression_mask,
-            cp_kv_caches,
+            cp_codes,
         })
     }
 
@@ -266,11 +266,8 @@ impl<'a> StreamingSession<'a> {
             #[cfg(feature = "profiling")]
             let _cp_span =
                 tracing::info_span!("code_predictor", frame = self.frames_generated).entered();
-            let acoustic_codes_tensor = self.model.code_predictor.generate_acoustic_codes(
-                &self.last_hidden,
-                &semantic_embed,
-                &mut self.cp_kv_caches,
-            )?;
+            let acoustic_codes_tensor =
+                self.cp_codes.generate(&self.last_hidden, &semantic_embed)?;
             #[cfg(feature = "profiling")]
             drop(_cp_span);
 

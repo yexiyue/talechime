@@ -16,6 +16,12 @@ use super::config::Qwen3TTSConfig;
 use super::kv_cache::{AnyKVCache, KVCache, PreAllocKVCache};
 use super::transformer::{DecoderLayer, RoPEType, RotaryEmbedding};
 
+#[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+mod graph;
+mod session;
+
+pub use session::CodePredictorSession;
+
 /// Code predictor configuration
 #[derive(Debug, Clone)]
 pub struct CodePredictorConfig {
@@ -153,6 +159,13 @@ pub struct CodePredictor {
 }
 
 impl CodePredictor {
+    /// Input width of `talker_hidden` and `semantic_embed`: the talker hidden
+    /// size, which differs from `config.hidden_size` when a
+    /// `small_to_mtp_projection` bridges the two.
+    pub fn codec_embed_dim(&self) -> usize {
+        self.config.codec_embed_dim()
+    }
+
     /// Create new code predictor
     pub fn new(config: CodePredictorConfig, vb: VarBuilder) -> Result<Self> {
         let layer_config = config.to_layer_config();

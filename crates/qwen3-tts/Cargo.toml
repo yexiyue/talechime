@@ -12,12 +12,13 @@ name = "qwen3_tts"
 
 [features]
 default = []
-cuda = ["dep:tts-candle-platform", "tts-candle-platform/cuda"]
+cuda = ["dep:candle-cuda-graph", "dep:tts-candle-platform", "tts-candle-platform/cuda"]
 metal = ["dep:tts-candle-platform", "tts-candle-platform/metal"]
 profiling = ["dep:tracing-chrome", "dep:tracing-subscriber"]
 
 [dependencies]
 tts-candle-platform = { workspace = true, optional = true }
+candle-cuda-graph = { workspace = true, optional = true }
 candle-core.workspace = true
 candle-nn.workspace = true
 candle-transformers.workspace = true

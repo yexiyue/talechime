@@ -1,6 +1,6 @@
 //! Model loading and synthesis orchestration; playback belongs to the caller.
 use crate::models::AnyKVCache;
-use crate::models::code_predictor::sum_codebook_embeddings;
+use crate::models::code_predictor::{CodePredictorSession, sum_codebook_embeddings};
 use crate::models::codec::{Decoder12Hz, Encoder12Hz};
 use crate::models::speaker::SpeakerEncoder;
 use crate::models::talker::codec_tokens;
@@ -431,8 +431,9 @@ impl Qwen3TTS {
         let vocab_size = codec_tokens::CODEC_VOCAB_SIZE;
         let mut penalty_mask = Tensor::zeros((1, vocab_size), DType::F32, &self.device)?;
 
-        // Pre-allocate code predictor KV caches (reused + reset each frame)
-        let mut cp_kv_caches = self.code_predictor.new_kv_caches();
+        // Per-generation acoustic code state: KV caches reused every frame,
+        // plus the CUDA frame graph when it is enabled.
+        let mut cp_codes = CodePredictorSession::new(&self.code_predictor);
 
         // Sample first semantic token
         let logits_2d = initial_logits.squeeze(1)?;
@@ -471,11 +472,7 @@ impl Qwen3TTS {
             #[cfg(feature = "profiling")]
             let _cp_span = tracing::info_span!("code_predictor", frame = frame_idx).entered();
 
-            let acoustic_codes_tensor = self.code_predictor.generate_acoustic_codes(
-                &last_hidden,
-                &semantic_embed,
-                &mut cp_kv_caches,
-            )?;
+            let acoustic_codes_tensor = cp_codes.generate(&last_hidden, &semantic_embed)?;
 
             #[cfg(feature = "profiling")]
             drop(_cp_span);
@@ -1398,6 +1395,63 @@ pub const SAMPLES_PER_FRAME: usize = 1920;
 mod tests {
     use super::*;
     use crate::{Qwen3TTSConfig, auto_device, device_info, parse_device};
+
+    /// Qualifies CUDA replay against eager inference with the real model.
+    ///
+    /// Covers the conditions a fixed-frame graph must satisfy: identical codes
+    /// for different hidden states, repeated replay of an earlier frame,
+    /// scratch reuse across frames, and a failed launch that must disable the
+    /// graph without corrupting later frames.
+    #[test]
+    #[ignore = "requires a local CUDA model; run serially"]
+    fn cuda_code_predictor_replay_matches_eager() -> Result<()> {
+        use anyhow::Context;
+        let model_path = std::env::var("QWEN_CP_TEST_MODEL").context("QWEN_CP_TEST_MODEL")?;
+        anyhow::ensure!(Path::new(&model_path).is_dir(), "local model required");
+        let device = Device::new_cuda(0)?;
+        let model = Qwen3TTS::from_pretrained(&model_path, device.clone())?;
+        let predictor = &model.code_predictor;
+        let dtype = model.compute_dtype;
+        let dim = predictor.codec_embed_dim();
+        let frame = |seed: usize| -> Result<Tensor> {
+            let values: Vec<f32> = (0..dim)
+                .map(|i| ((i as f32 * 0.37 + seed as f32 * 11.0).sin()) * 0.5)
+                .collect();
+            Ok(Tensor::from_vec(values, (1, 1, dim), &device)?.to_dtype(dtype)?)
+        };
+
+        let mut eager = CodePredictorSession::new(predictor);
+        let mut replayed = CodePredictorSession::new(predictor);
+        let mut first: Option<Vec<u32>> = None;
+        for seed in 0..8usize {
+            let (hidden, semantic) = (frame(seed)?, frame(seed + 64)?);
+            // Read the eager result before the replay overwrites its scratch.
+            let expected = eager.generate(&hidden, &semantic)?.to_vec1::<u32>()?;
+            let actual = replayed.generate(&hidden, &semantic)?.to_vec1::<u32>()?;
+            assert_eq!(actual, expected, "codes differ for seed {seed}");
+            if seed == 0 {
+                first = Some(expected);
+            }
+        }
+        assert!(replayed.replaying(), "unexpected graph fallback");
+
+        // A late replay of the first frame must not read stale KV state.
+        let (hidden, semantic) = (frame(0)?, frame(64)?);
+        let repeated = replayed.generate(&hidden, &semantic)?.to_vec1::<u32>()?;
+        assert_eq!(repeated, first.expect("first frame recorded"));
+        assert!(replayed.replaying());
+
+        // A failed launch must disable the graph and keep later frames correct.
+        let wrong = Tensor::zeros((1, 1, dim + 1), dtype, &device)?;
+        assert!(replayed.generate(&wrong, &semantic).is_err());
+        assert!(!replayed.replaying());
+        let expected = eager.generate(&hidden, &semantic)?.to_vec1::<u32>()?;
+        assert_eq!(
+            replayed.generate(&hidden, &semantic)?.to_vec1::<u32>()?,
+            expected
+        );
+        Ok(())
+    }
 
     #[test]
     #[ignore = "requires explicit local model, prompt, text and output paths"]
