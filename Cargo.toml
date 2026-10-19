@@ -28,6 +28,9 @@ candle-metal-kernels = "=0.11.0"
 cudarc = { version = "=0.19.10", default-features = false, features = ["std", "driver"] }
 tokenizers = { version = "0.22.2", default-features = false }
 hound = "3.5"
+libc = "0.2"
+rubato = "0.16"
+tts-core = { package = "talechime-core", path = "crates/talechime-core", version = "0.4.1" }
 rustfft = "6.4"
 tracing = "0.1"
 log = "0.4"
@@ -73,10 +76,10 @@ tempfile = "3.27.0"
 # (31f35b147389700ed2a178ee66a91c3cc25cc80d). Patch policy, provenance and the
 # crates.io publishing consequences live in docs/legal/candle/SOURCE.md.
 [patch.crates-io]
-candle-core = { git = "https://github.com/yexiyue/candle", rev = "bafb03db81c3eae48e63ff28d6b30f5a6576ba38", package = "candle-core" }
-candle-nn = { git = "https://github.com/yexiyue/candle", rev = "bafb03db81c3eae48e63ff28d6b30f5a6576ba38", package = "candle-nn" }
-candle-transformers = { git = "https://github.com/yexiyue/candle", rev = "bafb03db81c3eae48e63ff28d6b30f5a6576ba38", package = "candle-transformers" }
-candle-metal-kernels = { git = "https://github.com/yexiyue/candle", rev = "bafb03db81c3eae48e63ff28d6b30f5a6576ba38", package = "candle-metal-kernels" }
+candle-core = { git = "https://github.com/yexiyue/candle", rev = "2266099d92265112ecc0d56ecee1761e3cc2ac00", package = "candle-core" }
+candle-nn = { git = "https://github.com/yexiyue/candle", rev = "2266099d92265112ecc0d56ecee1761e3cc2ac00", package = "candle-nn" }
+candle-transformers = { git = "https://github.com/yexiyue/candle", rev = "2266099d92265112ecc0d56ecee1761e3cc2ac00", package = "candle-transformers" }
+candle-metal-kernels = { git = "https://github.com/yexiyue/candle", rev = "2266099d92265112ecc0d56ecee1761e3cc2ac00", package = "candle-metal-kernels" }
 
 
 [profile.release]

@@ -37,6 +37,13 @@ CosyVoice3 M4 Pro 案例中，默认 BLAS 策略配 Rayon 8 优于其限 BLAS �
 另一次不约束 Rayon 的组合明显变慢。这只支持调查争用，不支持“永远设 8”或
 “BLAS 永远不能限线程”。使用前核对当前 Apple threading API 的适用性。
 
+VoxCPM AudioVAE 的 macOS 回放试验说明，CPU/GPU 统一内存不消除设备边界：应把
+Metal patch 完成、F16→F32、CPU decode 和 PCM 就绪全部放进混合路径的计时。该试验把
+真实 Metal patch 与生产 PCM 一次性落盘，普通 CPU 与 Accelerate CPU 用独立
+`CARGO_TARGET_DIR` 重放；Accelerate 使 CPU F32 时间减少 37.59%，但与 Metal F16 的
+两进程范围仍重叠，未创建 worker 或流水线。串行替代无优势不能排除与剩余 GPU 工作重叠的流水线；需再测 CPU 每帧成本与剩余 GPU 工作，并验证并发资源争用，再考虑
+Rayon 矩阵；不能把 CPU 内部加速等同为端到端协同收益。
+
 ## 数值与结论边界
 
 更换 BLAS 可能改变归约、FMA 与舍入，先按数值变化方案处理。不要用同 token 数、

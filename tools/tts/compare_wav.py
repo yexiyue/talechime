@@ -51,16 +51,25 @@ def compare(baseline, candidate):
     for name, first in sorted(baseline_files.items()):
         second = candidate_files[name]
         same = hashlib.sha256(first.read_bytes()).digest() == hashlib.sha256(second.read_bytes()).digest()
-        row = {"file": name.as_posix(), "identical": same}
+        fmt_a, a = read_float_wav(first)
+        fmt_b, b = read_float_wav(second)
+        if not a or not b:
+            raise ValueError(f"Expected nonempty PCM: {name}")
+        row = {"file": name.as_posix(), "identical": same,
+               "samples_a": len(a), "samples_b": len(b), "format_equal": fmt_a == fmt_b}
         if not same:
-            fmt_a, a = read_float_wav(first)
-            fmt_b, b = read_float_wav(second)
-            row.update(samples_a=len(a), samples_b=len(b), format_equal=fmt_a == fmt_b)
             if len(a) == len(b) and fmt_a == fmt_b:
-                errors = [(x - y) ** 2 for x, y in zip(a, b)]
-                error = sum(errors)
-                signal = sum(x * x for x in a)
-                row.update(max_abs=math.sqrt(max(errors, default=0)), rms=math.sqrt(error / max(1, len(a))),
+                error = signal = total_abs = max_abs = 0.0
+                for first_sample, second_sample in zip(a, b):
+                    difference = first_sample - second_sample
+                    absolute = abs(difference)
+                    error += difference * difference
+                    signal += first_sample * first_sample
+                    total_abs += absolute
+                    max_abs = max(max_abs, absolute)
+                row.update(max_abs=max_abs,
+                           mean_abs=total_abs / max(1, len(a)),
+                           rms=math.sqrt(error / max(1, len(a))),
                            snr_db=10 * math.log10(signal / error) if signal > 0 and error > 0 else None)
         rows.append(row)
     return {"files": len(rows), "identical": sum(row["identical"] for row in rows), "rows": rows}

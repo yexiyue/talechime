@@ -15,13 +15,15 @@ TTS 是经验来源，不是目标项目必须采用的结构。按用户要求�
 读目标仓库规范、当前源码与 Cargo.lock，确认设备、dtype、模型/输入、feature 合并后
 的实际计算路径和完成语义。优先找固定形状重建、重复参考计算、主机往返、小算子
 分派、布局物化和 KV 写入；不要仅凭 GPU 利用率低就判定分派受限。
+另一台设备或另一后端上的结论只是假设：派发受限与带宽受限的占比逐设备不同，
+移植前先在目标设备重建成本模型。
 
 确认比较的是冷启动、prefill、decode、首结果、稳态吞吐还是内存。只加载当前需要的参考：
 
 | 当前问题 | 参考 |
 | --- | --- |
 | 计时、退化、结果一致性、验收设计 | [测量与准确性](references/measurement.md) |
-| Metal 的排序/卷积、小张量与主机同步 | [Metal](references/metal.md) |
+| Metal 的成本模型、thin-M GEMM 与权重布局、排序/卷积、小张量与主机同步 | [Metal](references/metal.md) |
 | macOS CPU BLAS、AMX、线程争用 | [Accelerate/AMX](references/accelerate-amx.md) |
 | CUDA/cuDNN、CUDA Graph、内存与流所有权 | [CUDA](references/cuda.md) |
 | Candle issue/PR、fork、feature 和发布兼容性 | [上游与依赖](references/upstream.md) |

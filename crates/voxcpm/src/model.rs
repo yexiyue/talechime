@@ -78,6 +78,13 @@ pub struct Model {
     codec_dtype: DType,
     timings: Timings,
 }
+
+struct GenerateRequest<'a> {
+    text: &'a str,
+    reference: Option<&'a Reference>,
+    identity: Option<&'a Reference>,
+    options: &'a Options,
+}
 impl Model {
     /// Load the existing two GGUF files from their current model directory.
     pub fn load(directory: &Path, device: &Device) -> Result<Self> {
@@ -383,7 +390,17 @@ impl Model {
         if cancel() {
             return Ok(Outcome::Cancelled);
         }
-        let result = self.generate_inner(text, reference, identity, options, cancel, pcm);
+        let result = self.generate_inner(
+            GenerateRequest {
+                text,
+                reference,
+                identity,
+                options,
+            },
+            cancel,
+            pcm,
+            &mut |_| Ok(()),
+        );
         self.codec.reset();
         if cancel() {
             Ok(Outcome::Cancelled)
@@ -393,13 +410,17 @@ impl Model {
     }
     fn generate_inner(
         &mut self,
-        text: &str,
-        reference: Option<&Reference>,
-        identity: Option<&Reference>,
-        o: &Options,
+        request: GenerateRequest<'_>,
         cancel: &impl Fn() -> bool,
         pcm: &mut impl FnMut(&[f32]) -> Result<()>,
+        patch_capture: &mut impl FnMut(&Tensor) -> Result<()>,
     ) -> Result<Outcome> {
+        let GenerateRequest {
+            text,
+            reference,
+            identity,
+            options: o,
+        } = request;
         if text.trim().is_empty() {
             candle_core::bail!("generation text is empty");
         }
@@ -577,6 +598,7 @@ impl Model {
                     .sample(&mu, &prefix, &initial, o.steps, o.cfg, cancel)
             })?;
             self.timings.cfm += elapsed;
+            patch_capture(&patch)?;
             let (decoded, elapsed) = measure(o.measure_modules, &self.device, || {
                 #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
                 if let Some(graph) = &mut self.decoder_graph
@@ -644,6 +666,9 @@ impl Model {
         Ok(Outcome::Truncated)
     }
 }
+
+#[cfg(all(test, feature = "codec-experiment", target_os = "macos"))]
+mod accelerate_experiment;
 fn quantize_audio_ranges(
     full: &Tensor,
     ranges: &[(usize, usize)],

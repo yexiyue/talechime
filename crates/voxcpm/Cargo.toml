@@ -10,6 +10,11 @@ repository = "https://github.com/yexiyue/talechime"
 [features]
 default = []
 experimental-dual-reference = []
+# Test-only macOS experiment. It does not expose a production API or change
+# the default Metal build. The two features permit separate plain-CPU and
+# Accelerate CPU builds so Cargo feature unification cannot contaminate them.
+codec-experiment = []
+accelerate-experiment = ["codec-experiment", "dep:candle-transformers"]
 cuda = ["dep:candle-cuda-graph", "dep:tts-candle-platform", "tts-candle-platform/cuda"]
 metal = ["dep:tts-candle-platform", "tts-candle-platform/metal"]
 
@@ -22,7 +27,15 @@ serde_json.workspace = true
 tracing.workspace = true
 tokenizers = { workspace = true, features = ["onig"] }
 
+# Feature carrier only for the isolated experiment. A second direct core alias
+# conflicts with Cargo's same-package naming rule in all-features builds.
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-transformers = { workspace = true, features = ["accelerate"], optional = true }
+
 [dev-dependencies]
 anyhow.workspace = true
 hound.workspace = true
+libc.workspace = true
+rubato.workspace = true
+tts-core.workspace = true
 
