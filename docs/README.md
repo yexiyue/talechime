@@ -29,6 +29,11 @@
 Windows CPU / CUDA 的新增调查见 [CosyVoice3 性能记录](records/cosyvoice3/cosyvoice3-windows-performance-2026-10-19.md)：
 设备、原始/转换权重校验、基准入口与被撤回的图/布局候选；区别于 M4 Pro 历史结果。
 
+MacBook Pro M4 Pro 的最新 VoxCPM 记录：[Metal 优化与测量修正](records/voxcpm/voxcpm-metal-performance-2026-10-18.md)、
+[官方 MPS / 原始权重对照](records/voxcpm/voxcpm-official-mps-validation-2026-10-19.md)、
+[Accelerate codec 实验](records/voxcpm/voxcpm-macos-accelerate-codec-experiment-2026-10-19.md)。
+Metal tile 优化已保留；原始权重与 Accelerate 实验不能作为生产提速结论。
+
 ### 实施计划（plans/）
 
 尚未实现或已完成的规划文档，保留演进背景。

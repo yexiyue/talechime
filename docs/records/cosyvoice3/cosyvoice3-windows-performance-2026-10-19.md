@@ -8,6 +8,17 @@
 Mac 已有优化记录见 [2026-10-17 报告](cosyvoice3-performance-2026-10-17.md)。
 实验基于主线 `dfa0291` 与本轮未提交的探针/候选；候选已撤回，最终保留边界见后续节。
 
+合并说明（2026-10-19）：本轮实现提交 `1ebcf45` 已与 Mac 侧主线 `b790eae` 合并。
+工作区 Candle 统一更新至 `2266099d92265112ecc0d56ecee1761e3cc2ac00`；上文环境及下文
+性能数字仍对应测量时的 `bafb03db…`，不将合并后的版本视为已重跑真实模型性能验收。
+Mac 侧结果见 [VoxCPM Metal 报告](../voxcpm/voxcpm-metal-performance-2026-10-18.md)，
+其收益不外推至 Windows CUDA 或 CosyVoice3。
+
+合并后补跑：CosyVoice3 默认 CPU 库测试 36 项、all-targets Clippy 与私有项/examples
+rustdoc（均拒绝警告）、工作区格式检查、VoxCPM Python 工具测试 16 项与 WAV 比较测试
+2 项、skill 结构校验通过。CUDA 真实模型基准与 Mac 实机测试未在合并后重跑；下文
+CUDA 验证记录仍指合并前版本。
+
 ## 官方权重与准备边界
 
 从 Hugging Face `FunAudioLLM/Fun-CosyVoice3-0.5B-2512` 固定 revision
