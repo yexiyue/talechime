@@ -46,6 +46,10 @@ prefill + 14 步），整帧成图后端到端完整合成 -38.0%、流式 -33.3
   连续 view 仍可有 storage offset，按 start_offset 和逻辑字节数复制并校验设备/布局。
 - Candle h2d 参数缓存在 enable_cuda_graph_htod_cache guard 生效期间填充，预热也
   要在 guard 内。首次 capture 只录制不执行，返回真正算过的 warmup，不交付未执行输出。
+- 预热须覆盖 recorder 添加的操作。若模型返回非连续 view，eager 调用可能从未执行
+  输出物化，而 recorder 在 capture 内首次调用 `contiguous`，会缺少布局参数缓存。
+  在 capture 外用真实 warmup 输出先跑相同的输出复制；只多跑一次模型前向未必有用。
+  CosyVoice3 DiT 的转置输出曾触发该问题，共享 recorder 修复后真实权重回放逐位一致。
 - 捕获的临时 alloc/free 应配对。Vox 将图内结果复制进图外输出、在 end_capture 前释放
   临时结果，解决重复 launch 问题；不先假设必须私有 mempool 或修改 Candle allocator。
   CUDA AUTO_FREE_ON_LAUNCH 处理下一 launch 前遗留分配，不是在上一 launch 末尾。

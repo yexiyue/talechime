@@ -161,7 +161,9 @@ def main() -> None:
             "lrelu_slope": 0.1, "audio_limit": 0.99, "conv_pre_look_right": 4,
         },
     }
-    (dst / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
+    (dst / "config.json").write_text(
+        json.dumps(config, indent=2), encoding="utf-8", newline="\n"
+    )
     print("config.json written")
 
 

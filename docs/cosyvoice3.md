@@ -73,3 +73,8 @@ cargo run --release --locked -p talechime --features cosyvoice3-metal \
 
 严格非流式整链数值门禁仍未通过，先前最大波形误差约 0.162；组件及流式对照结果见
 [审查记录](records/cosyvoice3/cosyvoice3-review-2026-10-17.md)。接入后端不代表完全复刻官方、试听验收或 CUDA 实机验收。
+
+Windows Ryzen 7 9700X CPU / RTX 5070 CUDA 的首轮计算库基准与被撤回候选见
+[Windows 性能调查](records/cosyvoice3/cosyvoice3-windows-performance-2026-10-19.md)。
+HF 原始权重摘要与 Mac 记录一致，但本轮 Windows 转换的 HiFT 与现有生产清单摘要
+不同，尚未通过 Engine 资源准备门禁；没有替换清单或将开发计算库测试当作后端验收。

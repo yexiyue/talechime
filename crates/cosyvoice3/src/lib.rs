@@ -26,6 +26,13 @@ pub mod rng;
 pub mod streaming;
 pub mod vocoder;
 
+#[cfg(all(
+    test,
+    feature = "cuda",
+    any(target_os = "windows", target_os = "linux")
+))]
+mod cuda_tests;
+
 pub use config::{
     CfmConfig, CosyVoice3Config, DiTConfig, FlowConfig, HiftConfig, LlmConfig, Qwen2Config,
     SPEECH_TOKEN_SIZE, SPEECH_VOCAB_SIZE, SamplingConfig,

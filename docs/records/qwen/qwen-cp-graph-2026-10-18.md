@@ -1,5 +1,8 @@
 # Qwen CUDA CodePredictor 帧图（2026-10-18）
 
+测试设备：Windows 11 / Ryzen 7 9700X / RTX 5070（约 12 GB 显存），CUDA 13.0。
+下列收益仅属于这台设备，不代表 Mac M4 Pro 的 Metal / CPU Accelerate 性能。
+
 本文的性能数字针对 0.6B Base；后续 1.7B Base 的独立正确性与性能结果见
 [1.7B 验收](qwen17-cuda-acceptance-2026-10-18.md)，不将本表收益直接套到 1.7B。
 

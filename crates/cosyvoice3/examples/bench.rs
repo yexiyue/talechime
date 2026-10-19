@@ -6,9 +6,14 @@
 //! wall-clock span around public library calls on resident models.
 //!
 //! Usage:
-//!   `bench <model-dir> <case-dir> <cpu|metal> <cold|warm|stream|components>`
+//!   `bench <model-dir> <case-dir> <cpu|metal|cuda> <prepare|cold|warm|stream|components>`
 //!   `      [--rounds N] [--threads N] [--seed S] [--out FILE] [--label NAME]`
 //!   `      [--reextract] [--wav-out FILE]`
+//!   `      [--artifact-dir DIR] [--no-stages]`
+//! `--no-stages` measures warm synthesis with only the production model
+//! resident, without the second model used for stage attribution.
+//! `prepare` reads metadata.json and exports native prompt features for a
+//! local benchmark; these are not independent official numeric fixtures.
 //!
 //! `<case-dir>` is an official-reference fixture directory produced by
 //! `tools/tts/cosyvoice3_reference.py` (metadata.json, frontend/llm/flow
@@ -42,6 +47,8 @@ struct Args {
     label: String,
     reextract: bool,
     wav_out: Option<PathBuf>,
+    artifact_dir: Option<PathBuf>,
+    stages: bool,
 }
 
 fn parse_args() -> Result<Args> {
@@ -53,6 +60,8 @@ fn parse_args() -> Result<Args> {
     let mut label = String::new();
     let mut reextract = false;
     let mut wav_out = None;
+    let mut artifact_dir = None;
+    let mut stages = true;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -62,16 +71,22 @@ fn parse_args() -> Result<Args> {
             "--out" => out = Some(PathBuf::from(it.next().context("--out FILE")?)),
             "--label" => label = it.next().context("--label NAME")?,
             "--wav-out" => wav_out = Some(PathBuf::from(it.next().context("--wav-out FILE")?)),
+            "--artifact-dir" => {
+                artifact_dir = Some(PathBuf::from(it.next().context("--artifact-dir DIR")?))
+            }
             "--reextract" => reextract = true,
+            "--no-stages" => stages = false,
             _ => pos.push(a),
         }
     }
     if pos.len() != 4 {
         bail!(
-            "usage: bench <model-dir> <case-dir> <cpu|metal> <cold|warm|stream|components> \
+            "usage: bench <model-dir> <case-dir> <cpu|metal|cuda> <prepare|cold|warm|stream|components> \
              [--rounds N] [--threads N] [--seed S] [--out FILE] [--label NAME] [--reextract] [--wav-out FILE]"
         );
     }
+    anyhow::ensure!((1..=30).contains(&rounds), "rounds must be 1..=30");
+    anyhow::ensure!(threads > 0, "threads must be positive");
     Ok(Args {
         model: PathBuf::from(&pos[0]),
         case: PathBuf::from(&pos[1]),
@@ -84,6 +99,8 @@ fn parse_args() -> Result<Args> {
         label,
         reextract,
         wav_out,
+        artifact_dir,
+        stages,
     })
 }
 
@@ -91,16 +108,14 @@ fn pick_device(name: &str) -> Result<Device> {
     match name {
         "cpu" => Ok(Device::Cpu),
         "metal" => Device::new_metal(0).map_err(anyhow::Error::from),
+        "cuda" => Device::new_cuda(0).map_err(anyhow::Error::from),
         other => bail!("unsupported device {other}"),
     }
 }
 
-/// Metal command buffers are asynchronous; flush them before stopping a
-/// stage timer. CPU needs no barrier.
+/// Finish asynchronous device work before stopping a stage timer.
 fn finish_stage(dev: &Device) -> Result<()> {
-    if matches!(dev, Device::Metal(_)) {
-        dev.synchronize()?;
-    }
+    dev.synchronize()?;
     Ok(())
 }
 
@@ -141,6 +156,61 @@ fn load_case(dir: &Path) -> Result<(String, String, PromptFeatures)> {
     Ok((text, prompt_text, prompt))
 }
 
+fn prepare_case(args: &Args) -> Result<()> {
+    let meta: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(args.case.join("metadata.json"))?)?;
+    let text = meta["text"].as_str().context("missing text")?;
+    let prompt_text = meta["prompt_text"]
+        .as_str()
+        .context("missing prompt_text")?;
+    let wav = meta["prompt_wav"].as_str().context("missing prompt_wav")?;
+    let (samples, rate) = read_wav_mono(Path::new(wav))?;
+    let mut frontend =
+        cosyvoice3::frontend::ort_models::FrontendOnnx::load(&args.model, args.threads)?;
+    let prompt = extract_prompt_features(&mut frontend, &samples, rate, prompt_text)?;
+    let device = &Device::Cpu;
+    let features = std::collections::HashMap::from([
+        (
+            "prompt_speech_token",
+            Tensor::from_slice(
+                &prompt.speech_tokens,
+                (1, prompt.speech_tokens.len()),
+                device,
+            )?,
+        ),
+        (
+            "prompt_speech_feat",
+            Tensor::from_slice(&prompt.mel, (1, prompt.mel_frames, 80), device)?,
+        ),
+        (
+            "prompt_embedding",
+            Tensor::from_slice(&prompt.embedding, (1, 192), device)?,
+        ),
+    ]);
+    candle_core::safetensors::save(&features, args.case.join("frontend.safetensors"))?;
+    let tokenizer = tokenizers::Tokenizer::from_file(args.model.join("tokenizer/tokenizer.json"))
+        .map_err(|e| anyhow::anyhow!("load tokenizer: {e}"))?;
+    let encode = |text: &str| -> Result<Tensor> {
+        let encoded = tokenizer
+            .encode(text, false)
+            .map_err(|e| anyhow::anyhow!("tokenize: {e}"))?;
+        Ok(Tensor::from_slice(
+            encoded.get_ids(),
+            (1, encoded.len()),
+            device,
+        )?)
+    };
+    candle_core::safetensors::save(
+        &std::collections::HashMap::from([
+            ("text_token", encode(text)?),
+            ("prompt_text_token", encode(prompt_text)?),
+        ]),
+        args.case.join("llm.safetensors"),
+    )?;
+    println!("prepared native benchmark inputs (not an official numeric oracle)");
+    Ok(())
+}
+
 fn read_wav_mono(path: &Path) -> Result<(Vec<f32>, u32)> {
     let mut reader = hound::WavReader::open(path)?;
     let spec = reader.spec();
@@ -172,6 +242,17 @@ fn write_wav(path: &Path, samples: &[f32]) -> Result<()> {
         writer.write_sample(*s)?;
     }
     writer.finalize()?;
+    Ok(())
+}
+
+fn export_round(args: &Args, round: usize, samples: &[f32]) -> Result<()> {
+    if let (Some(path), 0) = (&args.wav_out, round) {
+        write_wav(path, samples)?;
+    }
+    if let Some(dir) = &args.artifact_dir {
+        std::fs::create_dir_all(dir)?;
+        write_wav(&dir.join(format!("{}-{round}.wav", args.mode)), samples)?;
+    }
     Ok(())
 }
 
@@ -277,6 +358,7 @@ impl Staged {
         let hit_limit = state.hit_limit();
 
         let token_t = Tensor::from_slice(&tokens, (1, tokens.len()), prompt_feat.device())?;
+        finish_stage(self.flow.device())?;
         let t = Instant::now();
         let mel = self.flow.inference(
             &token_t,
@@ -300,6 +382,7 @@ impl Staged {
             "llm_prefill_seconds": prefill,
             "llm_decode_seconds": decode,
             "llm_tokens": tokens.len(),
+            "speech_tokens": tokens,
             "llm_hit_limit": hit_limit,
             "flow_seconds": flow_s,
             "hift_seconds": hift_s,
@@ -366,6 +449,7 @@ fn components(args: &Args, dev: &Device, report: &mut serde_json::Value) -> Resu
             true,
         )?;
         hift.inference(&m, true)?;
+        finish_stage(dev)?;
     }
 
     let mut flow_rounds = Vec::new();
@@ -414,6 +498,13 @@ fn components(args: &Args, dev: &Device, report: &mut serde_json::Value) -> Resu
 #[cfg(feature = "ort")]
 fn main() -> Result<()> {
     let args = parse_args()?;
+    if args.mode == "prepare" {
+        anyhow::ensure!(
+            args.device == "cpu",
+            "prompt preparation uses the CPU frontend"
+        );
+        return prepare_case(&args);
+    }
     let dev = pick_device(&args.device)?;
     let process_start = Instant::now();
 
@@ -426,14 +517,22 @@ fn main() -> Result<()> {
         "mode": args.mode,
         "rounds": args.rounds,
         "threads": args.threads,
+        "rayon_threads_env": std::env::var("RAYON_NUM_THREADS").ok(),
+        "host_os": std::env::consts::OS,
+        "host_arch": std::env::consts::ARCH,
         "ort_frontend_threads": args.threads,
         "seed": args.seed,
         "reextract": args.reextract,
+        "stage_attribution": args.mode == "warm" && args.stages,
         "started_unix_ms": std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64,
     });
 
     let (text, prompt_text, prompt) = load_case(&args.case)?;
+    report["text"] = text.clone().into();
+    report["prompt_text"] = prompt_text.clone().into();
+    report["model_dir"] = args.model.to_string_lossy().as_ref().into();
+    report["case_dir"] = args.case.to_string_lossy().as_ref().into();
     let meta: serde_json::Value =
         serde_json::from_slice(&std::fs::read(args.case.join("metadata.json"))?)?;
     let prompt_wav = meta["prompt_wav"]
@@ -524,7 +623,10 @@ fn main() -> Result<()> {
             let embedding = front["prompt_embedding"].to_device(&dev)?;
 
             let t = Instant::now();
-            let mut staged = Staged::load(&args.model, &dev)?;
+            let mut staged = args
+                .stages
+                .then(|| Staged::load(&args.model, &dev))
+                .transpose()?;
             let staged_load = t.elapsed().as_secs_f64();
             report["staged_load_seconds"] = staged_load.into();
             report["ready_since_process_start"] = process_start.elapsed().as_secs_f64().into();
@@ -544,16 +646,17 @@ fn main() -> Result<()> {
                 None
             };
 
-            // Warmup both paths (untimed).
-            staged.round(
-                &text_token,
-                &prompt_text_token,
-                &llm_prompt,
-                &flow_prompt,
-                &prompt_feat,
-                &embedding,
-                args.seed,
-            )?;
+            if let Some(staged) = &mut staged {
+                staged.round(
+                    &text_token,
+                    &prompt_text_token,
+                    &llm_prompt,
+                    &flow_prompt,
+                    &prompt_feat,
+                    &embedding,
+                    args.seed,
+                )?;
+            }
             let warm = round_prompt(&mut frontend, wav_args, &prompt_text, &prompt)?;
             cv.synthesize(
                 &text,
@@ -569,15 +672,19 @@ fn main() -> Result<()> {
                 mark(&format!("ROUND_START {i} {}", unix_ms()));
                 let round = (|| -> Result<serde_json::Value> {
                     let request = round_prompt(&mut frontend, wav_args, &prompt_text, &prompt)?;
-                    let stages = staged.round(
-                        &text_token,
-                        &prompt_text_token,
-                        &llm_prompt,
-                        &flow_prompt,
-                        &prompt_feat,
-                        &embedding,
-                        args.seed,
-                    )?;
+                    let stages = if let Some(staged) = &mut staged {
+                        staged.round(
+                            &text_token,
+                            &prompt_text_token,
+                            &llm_prompt,
+                            &flow_prompt,
+                            &prompt_feat,
+                            &embedding,
+                            args.seed,
+                        )?
+                    } else {
+                        json!({})
+                    };
                     // Production-path total on the resident pipeline with
                     // features ready (same inputs, timed separately).
                     let t = Instant::now();
@@ -592,9 +699,7 @@ fn main() -> Result<()> {
                     finish_stage(&dev)?;
                     let synthesize_s = t.elapsed().as_secs_f64();
                     let audio = pcm.len() as f64 / 24000.0;
-                    if let (Some(path), true) = (&args.wav_out, i == 0) {
-                        write_wav(path, &pcm)?;
-                    }
+                    export_round(&args, i, &pcm)?;
                     let mut v = stages;
                     v["extract_seconds"] = request.extract_seconds.into();
                     v["synthesize_seconds"] = synthesize_s.into();
@@ -669,9 +774,7 @@ fn main() -> Result<()> {
                     }
                     let total = request_start.elapsed().as_secs_f64();
                     let first = chunks.first().context("stream produced no chunks")?;
-                    if let (Some(path), true) = (&args.wav_out, i == 0) {
-                        write_wav(path, &all)?;
-                    }
+                    export_round(&args, i, &all)?;
                     Ok(json!({
                         "extract_seconds": request.extract_seconds,
                         "session_start_seconds": session_start,

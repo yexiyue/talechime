@@ -26,6 +26,9 @@
 
 ## 历史记录（records/）
 
+Windows CPU / CUDA 的新增调查见 [CosyVoice3 性能记录](records/cosyvoice3/cosyvoice3-windows-performance-2026-10-19.md)：
+设备、原始/转换权重校验、基准入口与被撤回的图/布局候选；区别于 M4 Pro 历史结果。
+
 ### 实施计划（plans/）
 
 尚未实现或已完成的规划文档，保留演进背景。

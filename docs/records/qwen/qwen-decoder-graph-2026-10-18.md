@@ -1,5 +1,8 @@
 # Qwen 流式 CUDA 解码图与优化审查
 
+测试设备：Windows 11 / Ryzen 7 9700X / RTX 5070（约 12 GB 显存），CUDA；
+下列性能结果不外推到 Mac M4 Pro 的 Metal 或 CPU Accelerate 路径。
+
 ## 范围与设计
 
 实现固定点为 `11ceaba`。本轮承接 `11df568`，审查 CP 图、解码器常量缓存、图 recorder 和测量探针，

@@ -1,5 +1,8 @@
 # Qwen3-TTS 1.7B Base CUDA 独立验收
 
+测试设备：Windows 11 本机，Ryzen 7 9700X / RTX 5070（约 12 GB 显存），CUDA；
+不是 Mac M4 Pro 的 Metal 或 CPU Accelerate 结果。模型 BF16、codec F32，完整协议见下文。
+
 ## 模型、路径与基线
 
 本轮验收对象是 **1.7B Base ICL**，不是 CustomVoice 或 VoiceDesign。此前的

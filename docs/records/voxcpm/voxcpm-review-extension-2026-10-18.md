@@ -1,5 +1,9 @@
 # VoxCPM 优化审查与扩展验收（2026-10-18）
 
+本轮性能实验设备：Windows 11 / Ryzen 7 9700X / RTX 5070（约 12 GB 显存），CUDA。
+MacBook Pro M4 Pro 的历史 Metal 结果另见 [macOS 性能记录](voxcpm-macos-performance.md)，
+不使用本轮 CUDA 收益替代 Mac 实机复测。
+
 接续 [首轮性能对照](voxcpm-performance-comparison-2026-10-18.md)。审查范围为
 `59696d5...c501c41`，依据为已确认的阶段 A–F 与阶段 2 计划。权重、音频和日志
 保存在 Git 忽略的 `target/tmp/voxcpm-opt/`。

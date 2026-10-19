@@ -4,6 +4,25 @@
 失败实验保留在 records；某个模型的收益不作为其他后端的默认收益。优化顺序为：确认
 正确行为、固定测量协议、定位热点、单独验证候选、删除未通过候选、再调整共享边界。
 
+## 当前优先级与测试设备
+
+当前主线为[已有后端双设备性能优化 #5](https://github.com/yexiyue/talechime/issues/5)。
+固定原始音色参考与可选 VoxCPM2 双参考另见[低优先级议题 #4](https://github.com/yexiyue/talechime/issues/4)，
+不因规划记录改变现有库默认。固定参考复用与滚动自链必须分开描述。
+
+| 测试机器 | 硬件与系统来源 | 分开验收的执行路径 |
+| --- | --- | --- |
+| Windows 本机 | Windows 11，Ryzen 7 9700X，RTX 5070（约 12 GB 显存）；2026-10-18 查询驱动 616.56 | CUDA；CPU 或混合分派需另外标明 |
+| MacBook Pro | Apple M4 Pro，12 CPU 核（8P+4E）、16 GPU 核、24 GB 统一内存；已有实测记录为 macOS 26.6.2（25G83） | Metal GPU；CPU Accelerate/BLAS 分开测量 |
+
+Mac 规格来自既有实机报告，此次 Windows 文档更新没有执行 Mac 复测。AMX 属于
+Accelerate 的底层加速机制，不另列为已独立验收的推理设备；启用 Accelerate 不等于
+逐算子确认使用 AMX。新一轮测试重新采集环境，历史驱动/系统版本不代表当前另一台机器。
+
+每个性能表必须注明机器与实际路径，不能只写“本机”或“GPU”。同一机器也不能混算
+Metal、CPU Accelerate 与纯 Rust CPU 的结果；跨设备不累计收益、不承诺逐位一致，
+共享依赖解析或编译通过不能代替对应设备的实机性能验收。
+
 ## 四项设计原则与模块边界
 
 这里采用 KISS、DRY、YAGNI、SOLID 四项原则；SOLID 的五项约束一起用于检查职责与依赖。
@@ -150,22 +169,24 @@ patch 下能编译当作发行可用。确需 fork 独有公开 API 时，受影
 
 ## 已验证实例与拒绝项
 
-| 案例 | 结论与证据范围 |
+| 案例（测试设备 / 路径） | 结论与证据范围 |
 | --- | --- |
-| VoxCPM AudioVAE 图扩展 | CFM-only 0.29465 → 加 decoder 0.21639，正式八进程改善 26.56%，264/264 WAV 一致；桌面 GPU 进程驻留，非完全独占 |
-| VoxCPM LocalEncoder 图 | 约 7.5–7.9%，未达 10% 门槛，删除运行时实现 |
-| VoxCPM 分组 GQA / K transpose view | 小收益或变慢，且改变 PCM/部分 EOS 长度，拒绝；不能说去 contiguous 必然更快 |
-| VoxCPM 静态 KV LM 原型 | primitive 通过但 Q8 BaseLM 真模型严格对照失败；原因未证明，不作为上游缺陷或已完成能力 |
-| Qwen 设备帧缓冲简化 | 严格 PCM/codes 一致，未证明提速；保留理由是数据流更简单 |
-| Qwen 采样边界修复 | 修正 nucleus 同分与累积规则；改变旧输出，属于准确性修复，另建基线 |
-| Qwen CUDA CodePredictor 一次 cat 打包 | 输出严格一致，但 ABBA 初筛完整慢 1.04%、流式快 0.46%，收益不明确，撤回；后续优先评估固定 15 步图 |
-| Qwen CUDA CodePredictor 帧图 | 正式 ABBA 八进程完整 3.0840→1.9113 s（-38.0%，RTF 0.653→0.405）、流式 3.6529→2.4353 s（-33.3%，RTF 0.774→0.516）、首 PCM 0.7688→0.5663 s（-26.3%），区间均不重叠；60 份 codes/PCM/WAV 与 eager 逐字节一致；CUDA 默认开，`QWEN_CP_GRAPH=0` 关闭 |
-| Qwen 12Hz 解码器常量与输入审查 | 修复 CP eager 对照误启图、表缓存按字节限制、旧统计仅取末轮；CUDA 用整数算术取模恢复原 I64 输入范围，避免绑定 Talker 的 3072 词表。表 LRU 最多 4 项/8 MiB，图显式保活常量 |
-| Qwen CUDA 流式解码图 | CP 图两侧开启、同一二进制、ABBA 八进程各 1 预热 + 5 热轮：流式 2.4240→2.1140 s（减少 12.8%，RTF 0.514→0.448），进程均值范围不重叠；240 份产物逐字节一致；完整/首 PCM 无明确变化。图仅缓存最多 4 种 1–64 帧短块，模型内串行回放并复制输出，`QWEN_DECODE_GRAPH=0` 关闭 |
-| Qwen 1.7B Base CUDA 独立验收 | 固定清单权重在 `~/.talechime`，重新编码 2048 维参考；12 进程三配置、各 1 预热＋5 热轮，eager→两图：完整 2.8463→1.8713 s（−34.3%）、流式 3.3973→2.0698 s（−39.1%，RTF 0.498）；解码图相对仅 CP 再减流式 13.8%；360 份产物各类逐字节一致。用户已确认 4.16 s 短句与 17.44 s 旁白/对话流式样本听感无问题；仅限这些 Base 样本，未复测 CustomVoice/VoiceDesign |
-| Qwen CUDA Talker 补齐探针 | 12 组合成 BF16 注意力输入（31→32、35→64、127→128）本机输出逐位一致；不代表真实隐藏态、动态 KV/RoPE 或完整生成等价。生产 Talker 未改动，现有扩展接口不足时才考虑 fork |
+| CosyVoice3 首轮 Windows CPU / RTX 5070 CUDA | 建立准确转写、单实例基线；DiT/MLP 图及组合端到端不足 10%，转置 view 更慢且改变 PCM，均撤回。保留 recorder 输出复制预热修复；HiFT 转换摘要与生产清单不同，未通过资源准备门禁，不能宣称新增整链提速 |
+| VoxCPM AudioVAE 图扩展（Windows / RTX 5070 CUDA） | CFM-only 0.29465 → 加 decoder 0.21639，正式八进程改善 26.56%，264/264 WAV 一致；桌面 GPU 进程驻留，非完全独占 |
+| VoxCPM LocalEncoder 图（Windows / RTX 5070 CUDA） | 约 7.5–7.9%，未达 10% 门槛，删除运行时实现 |
+| VoxCPM 分组 GQA / K transpose view（Windows / RTX 5070 CUDA） | 小收益或变慢，且改变 PCM/部分 EOS 长度，拒绝；不能说去 contiguous 必然更快 |
+| VoxCPM 静态 KV LM 原型（Windows / RTX 5070 CUDA） | primitive 通过但 Q8 BaseLM 真模型严格对照失败；原因未证明，不作为上游缺陷或已完成能力 |
+| Qwen 设备帧缓冲简化（M4 Pro / Metal） | 严格 PCM/codes 一致，未证明提速；保留理由是数据流更简单 |
+| Qwen 采样边界修复（M4 Pro / Metal；Windows CPU 边界复核） | 修正 nucleus 同分与累积规则；改变旧输出，属于准确性修复，另建基线 |
+| Qwen CUDA CodePredictor 一次 cat 打包（Windows / RTX 5070 CUDA） | 输出严格一致，但 ABBA 初筛完整慢 1.04%、流式快 0.46%，收益不明确，撤回；后续优先评估固定 15 步图 |
+| Qwen CUDA CodePredictor 帧图（Windows / RTX 5070 CUDA） | 正式 ABBA 八进程完整 3.0840→1.9113 s（-38.0%，RTF 0.653→0.405）、流式 3.6529→2.4353 s（-33.3%，RTF 0.774→0.516）、首 PCM 0.7688→0.5663 s（-26.3%），区间均不重叠；60 份 codes/PCM/WAV 与 eager 逐字节一致；CUDA 默认开，`QWEN_CP_GRAPH=0` 关闭 |
+| Qwen 12Hz 解码器常量与输入审查（Windows / RTX 5070 CUDA） | 修复 CP eager 对照误启图、表缓存按字节限制、旧统计仅取末轮；CUDA 用整数算术取模恢复原 I64 输入范围，避免绑定 Talker 的 3072 词表。表 LRU 最多 4 项/8 MiB，图显式保活常量 |
+| Qwen CUDA 流式解码图（Windows / RTX 5070 CUDA） | CP 图两侧开启、同一二进制、ABBA 八进程各 1 预热 + 5 热轮：流式 2.4240→2.1140 s（减少 12.8%，RTF 0.514→0.448），进程均值范围不重叠；240 份产物逐字节一致；完整/首 PCM 无明确变化。图仅缓存最多 4 种 1–64 帧短块，模型内串行回放并复制输出，`QWEN_DECODE_GRAPH=0` 关闭 |
+| Qwen 1.7B Base CUDA 独立验收（Windows / RTX 5070 CUDA） | 固定清单权重在 `~/.talechime`，重新编码 2048 维参考；12 进程三配置、各 1 预热＋5 热轮，eager→两图：完整 2.8463→1.8713 s（−34.3%）、流式 3.3973→2.0698 s（−39.1%，RTF 0.498）；解码图相对仅 CP 再减流式 13.8%；360 份产物各类逐字节一致。用户已确认 4.16 s 短句与 17.44 s 旁白/对话流式样本听感无问题；仅限这些 Base 样本，未复测 CustomVoice/VoiceDesign |
+| Qwen CUDA Talker 补齐探针（Windows / RTX 5070 CUDA） | 12 组合成 BF16 注意力输入（31→32、35→64、127→128）本机输出逐位一致；不代表真实隐藏态、动态 KV/RoPE 或完整生成等价。生产 Talker 未改动，现有扩展接口不足时才考虑 fork |
 
 复现细节与人工验收范围见 [VoxCPM 扩展审查](../records/voxcpm/voxcpm-review-extension-2026-10-18.md)、
+[CosyVoice3 Windows 调查](../records/cosyvoice3/cosyvoice3-windows-performance-2026-10-19.md)、
 [Qwen 性能审查](../records/qwen/qwen-performance-review-2026-10-18.md)、
 [Qwen Metal 优化](../records/qwen/qwen-performance-optimization-2026-10-18.md)、
 [Qwen CUDA 调研](../records/qwen/qwen-cuda-performance-2026-10-18.md)、

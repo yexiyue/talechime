@@ -24,6 +24,11 @@ runtime/加载策略；与 Candle 的链接/加载策略一致。不要因此强
 版本的 cudarc。目标 gating 同时应用于 manifest、源码模块与原生测试。
 Windows 保持目标项目约定的 CRT；不通过全局 NODEFAULTLIB 掩盖混用。
 
+转换权重也有来源身份。先校验官方原文件，再独立校验转换产物；原始 checkpoint 相同
+不保证不同平台、Torch 或融合实现导出相同字节。JSON 配置固定 UTF-8/LF，避免 Windows
+换行改变资源摘要；融合张量摘要不同则记录差异并定位，不能修改 manifest 或关闭校验
+来冒充已有验收。开发计算库可单独研究这些产物，但不能宣称生产 prepare 已通过。
+
 ## fork 与发行契约
 
 固定可审计 revision、保留许可与来源、补丁台账、上游关联和删除条件。

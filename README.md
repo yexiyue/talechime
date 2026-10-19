@@ -98,6 +98,13 @@ talechime --backend voxcpm --param steps=32 --param temperature=0.9 --seed 7 cha
 
 ## 与官方实现的性能对比
 
+性能记录涉及两台不同机器：**Windows 11 / Ryzen 7 9700X / RTX 5070（约 12 GB 显存）**，
+以及 **MacBook Pro / M4 Pro（12 核 CPU、16 核 GPU、24 GB 统一内存）**。
+下文分别标注 CUDA、Metal 或 CPU Accelerate 路径，收益不能跨设备叠加。
+当前优先[继续优化已有后端的双设备性能 #5](https://github.com/yexiyue/talechime/issues/5)；
+[固定音色与可选双参考 #4](https://github.com/yexiyue/talechime/issues/4)为低优先级规划，尚未改变库默认。
+环境采集要求及历史结果边界见[性能方法](docs/knowledge/tts-performance.md#当前优先级与测试设备)。
+
 以下数字来自仓库内的真实模型记录，以官方 Python / PyTorch 实现为基线。**RTF = 合成耗时 ÷ 输出音频时长，越低越快**。跨框架即使使用相同 seed，也可能生成不同长度的音频；表中变化是所述测试条件下的观察值，不代表音质、内容完整性或所有设备的速度。
 
 | 模型与条件 | 官方 RTF | Talechime / Rust RTF | 相对官方 | 证据与限制 |

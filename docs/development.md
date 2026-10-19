@@ -5,6 +5,10 @@
 Rust 2024，声明最低 Rust 1.89；当前 stable 验证不等于最低版本实机验收。Linux 安装 `libasound2-dev libssl-dev pkg-config`。CUDA 可选构建需要匹配 Toolkit；显式设备不可用时不能静默替代。ORT 固定 rc.13，Candle core/nn/transformers 固定 0.11.0；保持 Windows 动态 CRT。
 
 TTS 热路径修改先按 [性能优化方法](knowledge/tts-performance.md) 固定基线与输出门禁。
+当前性能主线见[双设备优化 #5](https://github.com/yexiyue/talechime/issues/5)：Windows
+RTX 5070 的 CUDA，与 MacBook Pro M4 Pro 的 Metal / CPU Accelerate 分别实机验收。
+性能报告在结果表旁注明设备和执行路径，不把 Accelerate feature 启用当作逐算子 AMX 验证；
+固定音色与可选 VoxCPM2 双参考见[低优先级规划 #4](https://github.com/yexiyue/talechime/issues/4)。
 Candle core/nn/transformers/metal-kernels 的 fork 来源统一在根 `[patch.crates-io]`，
 CUDA/Metal feature 仍由 `tts-candle-platform` 按 target 路由；详见
 [来源与发布策略](legal/candle/SOURCE.md)。组合启用模型时须检查 feature 合并后的依赖与测试。

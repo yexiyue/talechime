@@ -57,6 +57,9 @@ impl Replay {
             })
             .collect::<Result<Vec<_>>>()?;
         let output = Buffer::new(&stream, device, warmup)?;
+        // Prime the copy kernel's layout parameters too: an operation may
+        // return a strided view that its eager warm-up never materialized.
+        write(&stream, &output, warmup)?;
         let tensors: Vec<_> = inputs.iter().map(|b| b.tensor.clone()).collect();
         stream
             .begin_capture(sys::CUstreamCaptureMode_enum::CU_STREAM_CAPTURE_MODE_RELAXED)
@@ -226,4 +229,33 @@ fn device_slice<'a>(
     };
     let (ptr, sync) = entry;
     Ok((ptr, bytes, sync))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use candle_core::DType;
+
+    #[test]
+    #[ignore = "requires CUDA; run serially"]
+    fn strided_output_copy_is_warmed_before_capture() -> Result<()> {
+        let device = Device::new_cuda(0)?;
+        let Device::Cuda(cuda) = &device else {
+            unreachable!()
+        };
+        let _guard = cuda.enable_cuda_graph_htod_cache();
+        let input = Tensor::arange(0f32, (2 * 52 * 80) as f32, &device)?.reshape((2, 52, 80))?;
+        let warm = input.transpose(1, 2)?;
+        let replay = Replay::record(cuda, &[&input], &warm, vec![], |args| {
+            args[0].transpose(1, 2)
+        })?;
+        for offset in [1.0, 3.0, 1.0] {
+            let input = input.affine(1.0, offset)?;
+            let expected = input.transpose(1, 2)?.flatten_all()?.to_vec1::<f32>()?;
+            let actual = replay.launch(&[&input])?;
+            assert_eq!(actual.dtype(), DType::F32);
+            assert_eq!(actual.flatten_all()?.to_vec1::<f32>()?, expected);
+        }
+        Ok(())
+    }
 }
