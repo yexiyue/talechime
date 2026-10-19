@@ -336,7 +336,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 [[package]]
 name = "candle-core"
 version = "0.11.0"
-source = "git+https://github.com/yexiyue/candle?rev=bafb03db81c3eae48e63ff28d6b30f5a6576ba38#bafb03db81c3eae48e63ff28d6b30f5a6576ba38"
+source = "git+https://github.com/yexiyue/candle?rev=2266099d92265112ecc0d56ecee1761e3cc2ac00#2266099d92265112ecc0d56ecee1761e3cc2ac00"
 dependencies = [
  "accelerate-src",
  "byteorder",
@@ -368,7 +368,7 @@ dependencies = [
 [[package]]
 name = "candle-kernels"
 version = "0.11.0"
-source = "git+https://github.com/yexiyue/candle?rev=bafb03db81c3eae48e63ff28d6b30f5a6576ba38#bafb03db81c3eae48e63ff28d6b30f5a6576ba38"
+source = "git+https://github.com/yexiyue/candle?rev=2266099d92265112ecc0d56ecee1761e3cc2ac00#2266099d92265112ecc0d56ecee1761e3cc2ac00"
 dependencies = [
  "cudaforge",
 ]
@@ -376,7 +376,7 @@ dependencies = [
 [[package]]
 name = "candle-metal-kernels"
 version = "0.11.0"
-source = "git+https://github.com/yexiyue/candle?rev=bafb03db81c3eae48e63ff28d6b30f5a6576ba38#bafb03db81c3eae48e63ff28d6b30f5a6576ba38"
+source = "git+https://github.com/yexiyue/candle?rev=2266099d92265112ecc0d56ecee1761e3cc2ac00#2266099d92265112ecc0d56ecee1761e3cc2ac00"
 dependencies = [
  "block2",
  "half",
@@ -391,8 +391,9 @@ dependencies = [
 [[package]]
 name = "candle-nn"
 version = "0.11.0"
-source = "git+https://github.com/yexiyue/candle?rev=bafb03db81c3eae48e63ff28d6b30f5a6576ba38#bafb03db81c3eae48e63ff28d6b30f5a6576ba38"
+source = "git+https://github.com/yexiyue/candle?rev=2266099d92265112ecc0d56ecee1761e3cc2ac00#2266099d92265112ecc0d56ecee1761e3cc2ac00"
 dependencies = [
+ "accelerate-src",
  "candle-core",
  "candle-metal-kernels",
  "half",
@@ -408,8 +409,9 @@ dependencies = [
 [[package]]
 name = "candle-transformers"
 version = "0.11.0"
-source = "git+https://github.com/yexiyue/candle?rev=bafb03db81c3eae48e63ff28d6b30f5a6576ba38#bafb03db81c3eae48e63ff28d6b30f5a6576ba38"
+source = "git+https://github.com/yexiyue/candle?rev=2266099d92265112ecc0d56ecee1761e3cc2ac00#2266099d92265112ecc0d56ecee1761e3cc2ac00"
 dependencies = [
+ "accelerate-src",
  "byteorder",
  "candle-core",
  "candle-nn",
@@ -426,7 +428,7 @@ dependencies = [
 [[package]]
 name = "candle-ug"
 version = "0.11.0"
-source = "git+https://github.com/yexiyue/candle?rev=bafb03db81c3eae48e63ff28d6b30f5a6576ba38#bafb03db81c3eae48e63ff28d6b30f5a6576ba38"
+source = "git+https://github.com/yexiyue/candle?rev=2266099d92265112ecc0d56ecee1761e3cc2ac00#2266099d92265112ecc0d56ecee1761e3cc2ac00"
 dependencies = [
  "ug",
  "ug-cuda",
@@ -1092,7 +1094,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3039,7 +3041,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3414,7 +3416,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3471,7 +3473,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4170,7 +4172,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4706,9 +4708,13 @@ dependencies = [
  "anyhow",
  "candle-core",
  "candle-nn",
+ "candle-transformers",
  "hound",
+ "libc",
+ "rubato 0.16.2",
  "serde_json",
  "talechime-candle-cuda-graph",
+ "talechime-core",
  "tokenizers",
  "tracing",
  "tts-candle-platform",
@@ -4880,7 +4886,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

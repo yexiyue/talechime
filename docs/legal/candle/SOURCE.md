@@ -8,7 +8,7 @@
 | huggingface/candle | `31f35b147389700ed2a178ee66a91c3cc25cc80d`（上游 tag `0.11.0`，"Bump candle version to 0.11.0 (#3658)"） | Apache-2.0 OR MIT | 全工作区统一的 Candle 计算运行时 |
 | yexiyue/candle（fork） | 分支 `talechime-perf`，基线同上 | Apache-2.0 OR MIT（与上游一致，未改许可） | 承载可上游化的性能补丁 |
 
-工作区固定 fork revision 为 `bafb03db81c3eae48e63ff28d6b30f5a6576ba38`。
+工作区固定 fork revision 为 `2266099d92265112ecc0d56ecee1761e3cc2ac00`。
 `candle-metal-kernels` 也必须 patch：否则平台探测使用 registry 包，而 fork 的
 core/nn 使用 git 子 crate，形成同版本双来源。CUDA kernels 与 candle-ug 已由
 fork 内部路径依赖解析到同一 revision，不另写重复 patch。
@@ -43,12 +43,20 @@ registry 版本解析），因此该回退步骤目前未被触发，保留作�
 
 ## fork 是否真的被用到
 
-截至 2026-10-18，fork 相对上游**没有任何功能性改动**（仅新增 `FORK.md`）。
-每帧 CFM 的 CUDA Graph 只用 candle-core 0.11 / cudarc 0.19 的公开 API 实现，
-未新增也未修改 candle 的 API（见
-`docs/records/voxcpm/voxcpm-performance-comparison-2026-10-18.md` §6.4）。
-因此轨道 B（`publish = false`）尚未触发；`[patch.crates-io]` 目前只是把 candle
-来源固定到可审计的 fork rev 上，改变包的来源身份，不改变上游运行时实现。
+工作区固定 rev `2266099d92265112ecc0d56ecee1761e3cc2ac00` 相对上游有**一个**
+功能性补丁，登记在 fork 的 `FORK.md`：
+
+| 补丁 | 位置 | 性质 | 实测 |
+| --- | --- | --- | --- |
+| skinny-M GEMM 用 32 行 tile | `candle-metal-kernels::mlx_gemm::select_tile_config` | 行为级，不改公开 API | VoxCPM LocDiT `m=22`：21.71 → 18.99 ms/帧（-12.5%），WAV 逐字节一致 |
+
+该补丁来自上游 #3313 引入的 `if m < 16 { return TILE_32_32_16_2_2 }` 守卫：
+`16 <= m <= 32` 时 `ceil(m/32) == ceil(m/64) == 1`，即用 32 行 tile 不增加 M-tile
+数量，却被送进 64 行 tile 多算 32–42 行 padding。修正为 `m <= 32`。
+
+因此轨道 B（`publish = false`）仍**未触发**：`voxcpm` 等 crate 继续以
+`publish = true` 发布，只是下游从 crates.io 安装时会解析 registry 版 Candle，
+拿不到这个补丁的性能收益，直到它被上游合并。
 
 ## 退出条件
 

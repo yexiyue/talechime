@@ -1,6 +1,8 @@
 """Development-only download of pinned original VoxCPM2 weights, with resume/hash checks."""
+import argparse
 import hashlib
 import json
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -24,19 +26,35 @@ def verified(path, entry):
 
 
 def main():
-    ROOT.mkdir(parents=True, exist_ok=True)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=ROOT,
+        help="revision-scoped model directory (defaults to the legacy development cache)",
+    )
+    args = parser.parse_args()
+    root = args.output.resolve()
+    curl = shutil.which("curl")
+    if curl is None:
+        raise RuntimeError("curl is required to download and verify VoxCPM2 weights")
+    root.mkdir(parents=True, exist_ok=True)
     url = f"https://huggingface.co/api/models/openbmb/VoxCPM2/revision/{REVISION}?blobs=true"
     metadata = json.loads(subprocess.check_output([
-        "curl.exe", "--location", "--fail", "--silent", "--show-error", "--retry", "5",
+        curl, "--location", "--fail", "--silent", "--show-error", "--retry", "5",
         "--retry-all-errors", "--connect-timeout", "30", "--max-time", "120", url]))
-    assert metadata["sha"] == REVISION
+    if metadata.get("sha") != REVISION:
+        raise RuntimeError(f"model revision mismatch: expected {REVISION}")
     manifest = {"repository": "openbmb/VoxCPM2", "revision": REVISION,
                 "license": "Apache-2.0", "files": []}
     for entry in sorted(metadata["siblings"], key=lambda item: item["size"]):
         name = entry["rfilename"]
         if name == ".gitattributes":
             continue
-        path = ROOT / name
+        path = root / name
+        if path.resolve().parent != root and root not in path.resolve().parents:
+            raise RuntimeError(f"invalid model path from metadata: {name}")
+        path.parent.mkdir(parents=True, exist_ok=True)
         if verified(path, entry):
             print(f"verified {name}", flush=True)
             manifest["files"].append({"file": name, "size": entry["size"], "sha256": digest(path)})
@@ -48,7 +66,7 @@ def main():
                     if partial.exists() and partial.stat().st_size >= entry["size"]:
                         partial.unlink()
                     result = subprocess.run([
-                        "curl.exe", "--location", "--fail", "--silent", "--show-error",
+                        curl, "--location", "--fail", "--silent", "--show-error",
                         "--http1.1", "--connect-timeout", "30", "--max-time", "1800",
                         "--speed-time", "30", "--speed-limit", "1024", "--continue-at", "-",
                         "--output", str(partial),
@@ -65,8 +83,8 @@ def main():
                     raise
                 print(f"retry {name}: {error}", flush=True)
                 time.sleep(2)
-    (ROOT / "source-manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    print(ROOT, flush=True)
+    (root / "source-manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    print(root, flush=True)
 
 
 if __name__ == "__main__":

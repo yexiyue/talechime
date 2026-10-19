@@ -22,6 +22,16 @@ fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&output)?;
     let text = std::fs::read_to_string(&args[4])?;
     let segments = tts_core::text::preprocess_text(&text, 180);
+    anyhow::ensure!(!segments.is_empty(), "corpus contains no spoken segments");
+    std::fs::write(
+        output.join("segments.json"),
+        serde_json::to_vec_pretty(
+            &segments
+                .iter()
+                .map(|segment| serde_json::json!({"text": segment.text}))
+                .collect::<Vec<_>>(),
+        )?,
+    )?;
     let start = Instant::now();
     let precision = std::env::var("VOXCPM_BENCH_PRECISION").unwrap_or_else(|_| "q8".into());
     let mut model = match precision.as_str() {
@@ -102,7 +112,13 @@ fn main() -> anyhow::Result<()> {
                 "segment {} did not reach EOS: {status:?}",
                 i + 1
             );
+            anyhow::ensure!(
+                !samples.is_empty() && samples.iter().all(|sample| sample.is_finite()),
+                "segment {} produced empty or nonfinite PCM",
+                i + 1
+            );
             count += samples.len();
+            let sample_count = samples.len();
             let filename = format!("{:03}.wav", i + 1);
             let mut writer = hound::WavWriter::create(
                 directory.join(&filename),
@@ -117,7 +133,7 @@ fn main() -> anyhow::Result<()> {
                 writer.write_sample(v)?;
             }
             writer.finalize()?;
-            index.push(serde_json::json!({"file":filename,"text":segment.text}));
+            index.push(serde_json::json!({"file":filename,"text":segment.text,"samples":sample_count,"outcome":"eos"}));
         }
         device.synchronize()?;
         let elapsed = started.elapsed();
