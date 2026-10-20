@@ -22,8 +22,16 @@ rodio.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+tracing.workspace = true
 unicode-normalization.workspace = true
 sha2.workspace = true
 ferrous-opencc.workspace = true
 chinese-number.workspace = true
 rand = "0.9"
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "text_performance"
+harness = false

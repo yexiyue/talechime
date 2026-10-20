@@ -1,0 +1,53 @@
+name: Performance contracts
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contracts:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux audio dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libssl-dev pkg-config cmake ninja-build
+      - run: cargo test --locked -p xtask
+      - run: cargo clippy --locked -p xtask --all-targets -- -D warnings
+      - run: cargo test --locked -p talechime-backends --no-default-features --features performance-tools --lib --example performance_probe
+      - run: cargo bench --locked -p talechime-core --bench text_performance -- --test
+      - run: cargo doc --locked --no-deps -p xtask -p talechime-core -p talechime-backends --no-default-features --features talechime-backends/performance-tools
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - name: Windows synthetic end-to-end evidence
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo xtask perf build --probe performance_probe --output target/perf/ci-build.json
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo xtask perf fixture-job --build target/perf/ci-build.json --output target/perf/ci-input
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $env:TALECHIME_PERF_PROBE_BUILD = (Resolve-Path target/perf/ci-build.json).Path
+          cargo test --locked -p xtask --test cancellation_cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $env:PATH = ''
+          $commands = @(
+            @('run', '--job', 'target/perf/ci-input/job.json', '--output', 'target/perf/ci-run'),
+            @('resume', '--job', 'target/perf/ci-input/job.json', '--output', 'target/perf/ci-run'),
+            @('overhead', '--job', 'target/perf/ci-input/job.json', '--output', 'target/perf/ci-overhead'),
+            @('report', '--run', 'target/perf/ci-run', '--output', 'target/perf/ci-report'),
+            @('pack', '--report', 'target/perf/ci-report', '--output', 'target/perf/ci-report.zip')
+          )
+          foreach ($arguments in $commands) {
+            & target/debug/xtask.exe perf @arguments
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }

@@ -191,6 +191,8 @@ impl Backend for CandleBackend {
                 .as_ref()
                 .expect("live inference owner")
                 .send(runtime::Request {
+                    #[cfg(feature = "performance-tools")]
+                    perf: crate::performance::OwnerContext::capture(),
                     #[cfg(feature = "experimental-moss-reference-anchor")]
                     reference_anchor: self.reference_anchor,
                     context: context.cloned(),

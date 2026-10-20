@@ -1,5 +1,7 @@
 # 开发与验证
 
+Rust 性能开发入口、Windows 任务复用及 Mac 接续边界见 [性能工具](performance-harness.md)。
+
 ## 工具链
 
 Rust 2024，声明最低 Rust 1.89；当前 stable 验证不等于最低版本实机验收。Linux 安装 `libasound2-dev libssl-dev pkg-config`。CUDA 可选构建需要匹配 Toolkit；显式设备不可用时不能静默替代。ORT 固定 rc.13，Candle core/nn/transformers 固定 0.11.0；保持 Windows 动态 CRT。

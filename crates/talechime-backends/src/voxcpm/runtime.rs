@@ -5,6 +5,8 @@ use tts_core::backend::{AudioChunk, BackendError, Pcm};
 use tts_protocol::Device;
 use voxcpm::{Model, Options, Outcome};
 pub(super) struct Request {
+    #[cfg(feature = "performance-tools")]
+    pub(crate) perf: crate::performance::OwnerContext,
     #[cfg(feature = "experimental-dual-reference")]
     pub dual_reference: bool,
     pub context: Option<tts_core::SpeechContext>,
@@ -50,13 +52,15 @@ pub(super) fn run(
     }
     let mut cache = Cache::default();
     while let Some(request) = jobs.blocking_recv() {
+        #[cfg(feature = "performance-tools")]
+        let _owner_context = request.perf.enter();
         if request.audio.is_closed() {
             continue;
         }
         if let Err(error) = generate(
             &mut model, variant, &device, &mut cache, &directory, &request,
         ) {
-            let _ = request.audio.blocking_send(Err(error));
+            let _ = crate::observation::send_audio(&request.audio, Err(error));
         }
     }
 }
@@ -128,11 +132,7 @@ fn generate(
             }
         };
         let waiting = std::time::Instant::now();
-        if request
-            .audio
-            .blocking_send(Ok(AudioChunk::Pcm(pcm)))
-            .is_ok()
-        {
+        if crate::observation::send_audio(&request.audio, Ok(AudioChunk::Pcm(pcm))).is_ok() {
             emitted = true;
             audio_ms += u64::from(duration);
         }
@@ -183,7 +183,7 @@ fn generate(
                 channel_wait.as_millis()
             );
         }
-        let _ = request.audio.blocking_send(Ok(AudioChunk::End));
+        let _ = crate::observation::send_audio(&request.audio, Ok(AudioChunk::End));
     }
     Ok(())
 }

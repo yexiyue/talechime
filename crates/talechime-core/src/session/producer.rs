@@ -1,5 +1,6 @@
 //! Serial synthesis, duration learning and boundary processing ahead of playback.
 use super::*;
+use tracing::Instrument;
 pub(super) enum Item {
     Verification(crate::verification::VerificationReport),
     Start(TextRange),
@@ -40,7 +41,8 @@ pub(super) fn spawn(
         _completed: completed.map(Completion),
     };
     let (tx, rx) = mpsc::channel(1);
-    let task = AbortOnDrop(tokio::task::spawn_local(async move {
+    let parent = tracing::Span::current();
+    let future = async move {
         let lifetime = lifetime;
         let backend = &lifetime.backend;
         let source_text = &lifetime.text;
@@ -258,7 +260,8 @@ pub(super) fn spawn(
                 let _ = tx.send(Err(error)).await;
             }
         }
-    }));
+    };
+    let task = AbortOnDrop(tokio::task::spawn_local(future.instrument(parent)));
     (task, rx)
 }
 

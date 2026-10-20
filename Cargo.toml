@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/candle-cuda-graph", "crates/cosyvoice3", "crates/qwen3-asr", "crates/moss-tts", "crates/talechime", "crates/talechime-backends", "crates/talechime-core", "crates/talechime-protocol", "crates/indextts", "crates/omnivoice", "crates/qwen3-tts", "crates/tts-candle-platform", "crates/voxcpm"]
+members = ["xtask", "crates/candle-cuda-graph", "crates/cosyvoice3", "crates/qwen3-asr", "crates/moss-tts", "crates/talechime", "crates/talechime-backends", "crates/talechime-core", "crates/talechime-protocol", "crates/indextts", "crates/omnivoice", "crates/qwen3-tts", "crates/tts-candle-platform", "crates/voxcpm"]
 default-members = ["crates/talechime"]
 resolver = "3"
 
@@ -31,6 +31,10 @@ rubato = "0.16"
 tts-core = { package = "talechime-core", path = "crates/talechime-core", version = "0.4.1" }
 rustfft = "6.4"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
+metrics = "0.24.6"
+criterion = { version = "0.7", default-features = false }
+zip = { version = "8.6", default-features = false }
 log = "0.4"
 # API 21 leaves device selection to the application instead of enabling ORT's auto EP policy.
 # Native prebuilt libraries still use the latest ONNX Runtime 1.28.

@@ -147,6 +147,8 @@ impl Backend for IndexBackend {
                 .as_ref()
                 .ok_or_else(|| BackendError::Synthesis("IndexTTS owner closed".into()))?
                 .send(runtime::Request {
+                    #[cfg(feature = "performance-tools")]
+                    perf: crate::performance::OwnerContext::capture(),
                     text: request.text.into(),
                     voice: request.voice.into(),
                     language: language.into(),

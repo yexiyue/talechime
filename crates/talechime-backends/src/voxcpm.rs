@@ -167,6 +167,8 @@ impl Backend for VoxBackend {
                 .as_ref()
                 .expect("live inference thread")
                 .send(runtime::Request {
+                    #[cfg(feature = "performance-tools")]
+                    perf: crate::performance::OwnerContext::capture(),
                     #[cfg(feature = "experimental-dual-reference")]
                     dual_reference: self.dual_reference,
                     context: context.cloned(),

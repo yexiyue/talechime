@@ -67,6 +67,8 @@ pub async fn prepare(root: &Path, progress: mpsc::Sender<Event>) -> anyhow::Resu
     .await
 }
 struct Request {
+    #[cfg(feature = "performance-tools")]
+    pub(crate) perf: crate::performance::OwnerContext,
     tokens: Vec<i32>,
     none_tokens: Vec<i32>,
     context: Option<tts_core::SpeechContext>,
@@ -119,6 +121,8 @@ impl NanoBackend {
                     return;
                 }
                 while let Some(job) = jobs.blocking_recv() {
+                    #[cfg(feature = "performance-tools")]
+                    let _owner_context = job.perf.enter();
                     if job.audio.is_closed() {
                         continue;
                     }
@@ -216,6 +220,8 @@ impl NanoBackend {
             .as_ref()
             .expect("live Nano owner")
             .send(Request {
+                #[cfg(feature = "performance-tools")]
+                perf: crate::performance::OwnerContext::capture(),
                 tokens,
                 none_tokens,
                 context: context.cloned(),
@@ -441,10 +447,16 @@ fn send_audio(
     mut chunk: Result<AudioChunk, BackendError>,
     cancelled: &impl Fn() -> bool,
 ) -> anyhow::Result<()> {
+    #[cfg(feature = "performance-tools")]
+    let observation = crate::observation::SendObservation::new(&chunk);
     loop {
         anyhow::ensure!(!cancelled(), "Nano cancelled");
         match sender.try_send(chunk) {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                #[cfg(feature = "performance-tools")]
+                observation.complete(true);
+                return Ok(());
+            }
             Err(mpsc::error::TrySendError::Closed(_)) => anyhow::bail!("Nano stream closed"),
             Err(mpsc::error::TrySendError::Full(value)) => {
                 chunk = value;
@@ -509,6 +521,8 @@ mod tests {
             (samples, ended)
         });
         let job = Request {
+            #[cfg(feature = "performance-tools")]
+            perf: crate::performance::OwnerContext::capture(),
             tokens,
             none_tokens: vec![],
             context: None,

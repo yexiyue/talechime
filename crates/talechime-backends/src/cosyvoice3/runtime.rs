@@ -9,6 +9,8 @@ use tts_core::backend::{AudioChunk, BackendError, Pcm};
 use tts_protocol::Device;
 
 pub(super) struct Request {
+    #[cfg(feature = "performance-tools")]
+    pub(crate) perf: crate::performance::OwnerContext,
     pub text: String,
     pub voice: String,
     pub seed: u64,
@@ -69,12 +71,16 @@ pub(super) fn run(
                 ..Default::default()
             };
             let mut session = pipeline.start_stream(&request.text, &prompt, &sampling)?;
-            runtime.block_on(deliver(&request.audio, || Ok(session.next_pcm()?)))
+            let delivery = deliver(&request.audio, || Ok(session.next_pcm()?));
+            #[cfg(feature = "performance-tools")]
+            let delivery = tracing::Instrument::instrument(delivery, request.perf.span());
+            runtime.block_on(delivery)
         })();
         if let Err(error) = result {
-            let _ = request
-                .audio
-                .blocking_send(Err(BackendError::Synthesis(error.to_string())));
+            let _ = crate::observation::send_audio(
+                &request.audio,
+                Err(BackendError::Synthesis(error.to_string())),
+            );
         }
     }
 }
@@ -86,10 +92,19 @@ async fn deliver(
     mut next: impl FnMut() -> anyhow::Result<Option<::cosyvoice3::StreamChunk>>,
 ) -> anyhow::Result<()> {
     loop {
+        #[cfg(feature = "performance-tools")]
+        let waiting = std::time::Instant::now();
         let permit = match audio.reserve().await {
             Ok(permit) => permit,
             Err(_) => return Ok(()),
         };
+        #[cfg(feature = "performance-tools")]
+        {
+            let seconds = waiting.elapsed().as_secs_f64();
+            metrics::histogram!("talechime.channel_wait_seconds","stage"=>"owner_reserve")
+                .record(seconds);
+            tracing::info!(target:"talechime_perf",event="channel_wait",seconds);
+        }
         let chunk = next()?
             .ok_or_else(|| anyhow::anyhow!("CosyVoice3 stream ended without a final block"))?;
         anyhow::ensure!(
@@ -102,7 +117,11 @@ async fn deliver(
             channels: 1,
         };
         pcm.duration_ms()?;
+        #[cfg(feature = "performance-tools")]
+        tracing::info!(target:"talechime_perf",event="owner_pcm_ready");
         permit.send(Ok(AudioChunk::Pcm(pcm)));
+        #[cfg(feature = "performance-tools")]
+        tracing::info!(target:"talechime_perf",event="adapter_channel_enqueue");
         if chunk.final_chunk {
             let _ = audio.send(Ok(AudioChunk::End)).await;
             return Ok(());

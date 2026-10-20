@@ -7,6 +7,8 @@ use tts_core::backend::{AudioChunk, BackendError, Pcm};
 use tts_protocol::{Device, Event};
 
 pub(super) struct Request {
+    #[cfg(feature = "performance-tools")]
+    pub(crate) perf: crate::performance::OwnerContext,
     pub(super) context: Option<tts_core::SpeechContext>,
     pub(super) text: String,
     pub(super) voice: String,
@@ -40,6 +42,8 @@ pub(super) fn run(
     let mut active_device = device;
     let mut prompts = std::collections::HashMap::new();
     while let Some(request) = jobs.blocking_recv() {
+        #[cfg(feature = "performance-tools")]
+        let _owner_context = request.perf.enter();
         if request.audio.is_closed() {
             continue;
         }
@@ -48,7 +52,7 @@ pub(super) fn run(
                 && recovery.is_some()
                 && active_device != Device::Cpu
                 && matches!(error, BackendError::Synthesis(_));
-            let _ = request.audio.blocking_send(Err(error));
+            let _ = crate::observation::send_audio(&request.audio, Err(error));
             if recover {
                 match load(&directory, Device::Cpu) {
                     Ok(cpu) => {
@@ -198,7 +202,7 @@ fn generate(
                 return Ok(());
             }
             validate_completion(stream.is_done(), emitted)?;
-            let _ = request.audio.blocking_send(Ok(AudioChunk::End));
+            let _ = crate::observation::send_audio(&request.audio, Ok(AudioChunk::End));
             return Ok(());
         };
         let pcm = Pcm {
@@ -211,7 +215,7 @@ fn generate(
         chunk_index += 1;
         emitted = true;
         let waiting = std::time::Instant::now();
-        let sent = request.audio.blocking_send(Ok(AudioChunk::Pcm(pcm)));
+        let sent = crate::observation::send_audio(&request.audio, Ok(AudioChunk::Pcm(pcm)));
         if diagnostics {
             eprintln!(
                 "qwen chunk={chunk_index} generation_ms={generation_ms} audio_ms={duration_ms} channel_wait_ms={} rtf={:.3}",

@@ -491,7 +491,7 @@ impl Runtime {
             if pending.len() >= 16 * 3 {
                 let pcm = self.audio(&pending, &mut codec_state, &mapping)?;
                 stats.audio_seconds += pcm.duration_ms()? as f64 / 1000.0;
-                if tx.blocking_send(Ok(AudioChunk::Pcm(pcm))).is_err() {
+                if crate::observation::send_audio(tx, Ok(AudioChunk::Pcm(pcm))).is_err() {
                     return Ok(GenerationEnd::Cancelled);
                 }
                 pending.clear();
@@ -513,11 +513,11 @@ impl Runtime {
         if !pending.is_empty() && !tx.is_closed() {
             let pcm = self.audio(&pending, &mut codec_state, &mapping)?;
             stats.audio_seconds += pcm.duration_ms()? as f64 / 1000.0;
-            if tx.blocking_send(Ok(AudioChunk::Pcm(pcm))).is_err() {
+            if crate::observation::send_audio(tx, Ok(AudioChunk::Pcm(pcm))).is_err() {
                 return Ok(GenerationEnd::Cancelled);
             }
         }
-        if tx.blocking_send(Ok(AudioChunk::End)).is_err() {
+        if crate::observation::send_audio(tx, Ok(AudioChunk::End)).is_err() {
             return Ok(GenerationEnd::Cancelled);
         }
         Ok(GenerationEnd::Eos)

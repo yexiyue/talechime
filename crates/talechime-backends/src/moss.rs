@@ -51,6 +51,8 @@ pub fn capabilities(directory: &std::path::Path) -> anyhow::Result<Capabilities>
 }
 enum Work {
     Generate {
+        #[cfg(feature = "performance-tools")]
+        perf: crate::performance::OwnerContext,
         tokens: Vec<i32>,
         none_tokens: Vec<i32>,
         context: Option<tts_core::SpeechContext>,
@@ -156,6 +158,8 @@ impl MossBackend {
                 while let Some(job) = jobs.blocking_recv() {
                     match job {
                         Work::Generate {
+                            #[cfg(feature = "performance-tools")]
+                            perf,
                             tokens,
                             none_tokens,
                             context,
@@ -164,6 +168,8 @@ impl MossBackend {
                             audio,
                             report,
                         } => {
+                            #[cfg(feature = "performance-tools")]
+                            let _owner_context = perf.enter();
                             use diagnostics::{GenerationEnd, GenerationReport, GenerationStats};
                             let token_count = tokens.len();
                             let mut stats = GenerationStats::default();
@@ -180,7 +186,7 @@ impl MossBackend {
                                     generated_frames: stats.frames, audio_seconds: stats.audio_seconds, end, error: error.clone() });
                             }
                             if let Some(error) = error {
-                                let _ = audio.blocking_send(Err(BackendError::Synthesis(error.clone())));
+                                let _ = crate::observation::send_audio(&audio, Err(BackendError::Synthesis(error.clone())));
                                 if end == GenerationEnd::InferenceFailure
                                     && let Some(progress) = &recovery && current_device != tts_protocol::Device::Cpu {
                                     match runtime::Runtime::load_on(&directory, || false, tts_protocol::Device::Cpu) {
@@ -318,6 +324,8 @@ impl MossBackend {
         self.owner
             .sender()?
             .send(Work::Generate {
+                #[cfg(feature = "performance-tools")]
+                perf: crate::performance::OwnerContext::capture(),
                 tokens,
                 none_tokens,
                 context: context.cloned(),

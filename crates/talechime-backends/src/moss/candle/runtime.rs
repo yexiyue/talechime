@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use tokio::sync::{mpsc, oneshot};
 use tts_core::backend::{AudioChunk, BackendError, Pcm};
 pub(super) struct Request {
+    #[cfg(feature = "performance-tools")]
+    pub(crate) perf: crate::performance::OwnerContext,
     #[cfg(feature = "experimental-moss-reference-anchor")]
     pub reference_anchor: bool,
     pub context: Option<tts_core::SpeechContext>,
@@ -68,6 +70,8 @@ pub(super) fn run(
         return;
     }
     while let Some(request) = jobs.blocking_recv() {
+        #[cfg(feature = "performance-tools")]
+        let _owner_context = request.perf.enter();
         if request.audio.is_closed() {
             continue;
         }
@@ -75,9 +79,10 @@ pub(super) fn run(
         if let Err(error) = result
             && !request.audio.is_closed()
         {
-            let _ = request
-                .audio
-                .blocking_send(Err(BackendError::Synthesis(error.to_string())));
+            let _ = crate::observation::send_audio(
+                &request.audio,
+                Err(BackendError::Synthesis(error.to_string())),
+            );
         }
     }
 }
@@ -161,9 +166,7 @@ fn generate(
         delivered && !request.audio.is_closed(),
         "empty or cancelled generation"
     );
-    request
-        .audio
-        .blocking_send(Ok(AudioChunk::End))
+    crate::observation::send_audio(&request.audio, Ok(AudioChunk::End))
         .map_err(|_| anyhow::anyhow!("generation cancelled"))?;
     Ok(())
 }
@@ -180,8 +183,7 @@ fn deliver(
     };
     pcm.duration_ms()?;
     anyhow::ensure!(!audio.is_closed(), "generation cancelled");
-    audio
-        .blocking_send(Ok(AudioChunk::Pcm(pcm)))
+    crate::observation::send_audio(audio, Ok(AudioChunk::Pcm(pcm)))
         .map_err(|_| anyhow::anyhow!("generation cancelled"))
 }
 #[derive(serde::Serialize, serde::Deserialize)]

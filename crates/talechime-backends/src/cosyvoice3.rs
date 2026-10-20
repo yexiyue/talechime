@@ -119,6 +119,8 @@ impl Backend for CosyBackend {
                 .as_ref()
                 .ok_or_else(|| BackendError::Synthesis("CosyVoice3 owner closed".into()))?
                 .send(runtime::Request {
+                    #[cfg(feature = "performance-tools")]
+                    perf: crate::performance::OwnerContext::capture(),
                     text: request.text.into(),
                     voice: request.voice.into(),
                     seed: request.seed,

@@ -8,6 +8,7 @@ description = "Native model adapters for Talechime"
 repository = "https://github.com/yexiyue/talechime"
 
 [features]
+performance-tools = ["dep:tracing", "dep:metrics"]
 indextts = ["dep:indextts", "dep:candle-core", "dep:hound", "dep:rubato"]
 indextts-metal = ["indextts", "indextts/metal", "tts-candle-platform/metal"]
 indextts-cuda-cudnn = ["indextts", "indextts/cuda-cudnn"]
@@ -39,6 +40,8 @@ ort-cuda = ["dep:ort", "ort/cuda"]
 directml-probe = ["moss", "ort/directml", "dep:windows"]
 
 [dependencies]
+tracing = { workspace = true, optional = true }
+metrics = { workspace = true, optional = true }
 indextts = { workspace = true, optional = true }
 cosyvoice3 = { workspace = true, optional = true }
 tts-candle-platform.workspace = true
@@ -92,7 +95,17 @@ required-features = ["qwen"]
 
 
 [dev-dependencies]
+tracing-subscriber.workspace = true
 candle-core.workspace = true
+hound.workspace = true
+
+[[example]]
+name = "performance_probe"
+required-features = ["performance-tools"]
+
+[[example]]
+name = "performance_catalog"
+required-features = ["performance-tools"]
 
 [[example]]
 name = "native_probe"

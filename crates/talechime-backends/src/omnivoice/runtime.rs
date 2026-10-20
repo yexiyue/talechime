@@ -15,6 +15,8 @@ use tts_core::backend::{AudioChunk, BackendError, Pcm};
 use tts_protocol::Device;
 
 pub(super) struct Request {
+    #[cfg(feature = "performance-tools")]
+    pub(crate) perf: crate::performance::OwnerContext,
     context: Option<tts_core::SpeechContext>,
     text: String,
     voice: String,
@@ -35,6 +37,8 @@ impl Request {
         style: Option<String>,
     ) -> Self {
         Self {
+            #[cfg(feature = "performance-tools")]
+            perf: crate::performance::OwnerContext::capture(),
             context: context.cloned(),
             text: text.into(),
             voice: voice.into(),
@@ -74,6 +78,8 @@ pub(super) fn run(
         return;
     }
     while let Some(request) = jobs.blocking_recv() {
+        #[cfg(feature = "performance-tools")]
+        let _owner_context = request.perf.enter();
         if request.audio.is_closed() {
             continue;
         }
@@ -84,15 +90,16 @@ pub(super) fn run(
         if let Err(error) = pipeline.set_seed(request.seed)
             && !request.audio.is_closed()
         {
-            let _ = request
-                .audio
-                .blocking_send(Err(BackendError::Synthesis(error.to_string())));
+            let _ = crate::observation::send_audio(
+                &request.audio,
+                Err(BackendError::Synthesis(error.to_string())),
+            );
             continue;
         }
         if let Err(error) = generate(&pipeline, &directory, &request)
             && !request.audio.is_closed()
         {
-            let _ = request.audio.blocking_send(Err(error));
+            let _ = crate::observation::send_audio(&request.audio, Err(error));
         }
     }
 }
@@ -201,12 +208,8 @@ fn generate(pipeline: &Pipeline, directory: &Path, request: &Request) -> Result<
             started.elapsed().as_millis()
         );
     }
-    if request
-        .audio
-        .blocking_send(Ok(AudioChunk::Pcm(pcm)))
-        .is_ok()
-    {
-        let _ = request.audio.blocking_send(Ok(AudioChunk::End));
+    if crate::observation::send_audio(&request.audio, Ok(AudioChunk::Pcm(pcm))).is_ok() {
+        let _ = crate::observation::send_audio(&request.audio, Ok(AudioChunk::End));
     }
     Ok(())
 }

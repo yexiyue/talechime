@@ -21,8 +21,19 @@ pub mod devices;
 pub mod indextts;
 #[cfg(feature = "moss")]
 pub mod moss;
+#[cfg(any(
+    feature = "moss",
+    feature = "qwen",
+    feature = "voxcpm",
+    feature = "omnivoice",
+    feature = "cosyvoice3",
+    feature = "indextts"
+))]
+mod observation;
 #[cfg(feature = "omnivoice")]
 pub mod omnivoice;
+#[cfg(feature = "performance-tools")]
+pub mod performance;
 #[cfg(feature = "qwen")]
 pub mod qwen;
 #[cfg(any(
@@ -41,6 +52,7 @@ pub mod reference;
     feature = "cosyvoice3",
     feature = "omnivoice",
     feature = "asr",
+    feature = "performance-tools",
 ))]
 mod resources;
 #[cfg(feature = "voxcpm")]

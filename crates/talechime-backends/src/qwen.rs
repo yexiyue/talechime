@@ -247,6 +247,8 @@ impl Backend for QwenBackend {
                 .as_ref()
                 .expect("inference thread exists while the backend is alive")
                 .send(Request {
+                    #[cfg(feature = "performance-tools")]
+                    perf: crate::performance::OwnerContext::capture(),
                     text,
                     voice: voice.into(),
                     context: context.cloned(),

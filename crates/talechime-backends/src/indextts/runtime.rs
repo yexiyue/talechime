@@ -4,6 +4,8 @@ use tts_core::backend::{AudioChunk, BackendError, Pcm};
 use tts_protocol::Device;
 
 pub(super) struct Request {
+    #[cfg(feature = "performance-tools")]
+    pub(crate) perf: crate::performance::OwnerContext,
     pub text: String,
     pub voice: String,
     pub language: String,
@@ -44,13 +46,15 @@ pub(super) fn run(
         return;
     }
     while let Some(request) = jobs.blocking_recv() {
+        #[cfg(feature = "performance-tools")]
+        let _owner_context = request.perf.enter();
         if request.audio.is_closed() {
             continue;
         }
         if let Err(error) = generate(&mut model, &directory, &request)
             && !request.audio.is_closed()
         {
-            let _ = request.audio.blocking_send(Err(error));
+            let _ = crate::observation::send_audio(&request.audio, Err(error));
         }
     }
 }
@@ -104,10 +108,8 @@ fn generate(
         channels: 1,
     };
     pcm.duration_ms()?;
-    request
-        .audio
-        .blocking_send(Ok(AudioChunk::Pcm(pcm)))
+    crate::observation::send_audio(&request.audio, Ok(AudioChunk::Pcm(pcm)))
         .map_err(|_| BackendError::Synthesis("IndexTTS receiver closed".into()))?;
-    let _ = request.audio.blocking_send(Ok(AudioChunk::End));
+    let _ = crate::observation::send_audio(&request.audio, Ok(AudioChunk::End));
     Ok(())
 }
