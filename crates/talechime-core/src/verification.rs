@@ -8,8 +8,8 @@ use std::{
     cell::RefCell, collections::VecDeque, future::Future, pin::Pin, rc::Rc, sync::Arc,
     time::Duration,
 };
-use tts_protocol::TextRange;
-pub use tts_protocol::{
+use talechime_protocol::TextRange;
+pub use talechime_protocol::{
     DifferenceKind, ReadbackDifference, ReadbackEvidence, RecognizerIdentity, VerificationOptions,
     VerificationPolicy, VerificationReport, VerificationVerdict,
 };
@@ -228,7 +228,7 @@ impl Verifier {
             ));
         }
         let audio_hash = audio_hash(pcm);
-        let key = tts_protocol::text_hash(
+        let key = talechime_protocol::text_hash(
             &serde_json::to_string(&(
                 request.source.hash(),
                 request.range,

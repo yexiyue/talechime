@@ -1,6 +1,6 @@
 use super::*;
-use tts_backends::devices::calibration;
-use tts_protocol::Device;
+use talechime_backends::devices::calibration;
+use talechime_protocol::Device;
 pub(super) async fn prepare(
     resources: &Resources,
     config: &Config,
@@ -164,7 +164,7 @@ pub(super) async fn prepare(
     {
         drop(backend);
         backend = Rc::new(
-            tts_backends::moss::MossBackend::load_with_recovery(
+            talechime_backends::moss::MossBackend::load_with_recovery(
                 resources.root().join("moss"),
                 selected,
                 Some(progress.clone()),
@@ -176,8 +176,8 @@ pub(super) async fn prepare(
     if config.tts_device == Device::Auto && selected != Device::Cpu && config.backend == "qwen" {
         drop(backend);
         backend = Rc::new(
-            tts_backends::qwen::QwenBackend::load_with_recovery(
-                tts_backends::qwen::models::Model::parse(config.model.as_deref())?
+            talechime_backends::qwen::QwenBackend::load_with_recovery(
+                talechime_backends::qwen::models::Model::parse(config.model.as_deref())?
                     .directory(resources.root()),
                 selected,
                 Some(progress.clone()),
@@ -192,40 +192,40 @@ pub(super) fn tts_revision(config: &Config) -> &'static str {
     let backend = config.backend.as_str();
     #[cfg(feature = "indextts")]
     if backend == "indextts" {
-        return tts_backends::indextts::resources::REVISION;
+        return talechime_backends::indextts::resources::REVISION;
     }
     #[cfg(feature = "cosyvoice3")]
     if backend == "cosyvoice3" {
-        return tts_backends::cosyvoice3::resources::REVISION;
+        return talechime_backends::cosyvoice3::resources::REVISION;
     }
     #[cfg(feature = "voxcpm")]
     if backend == "voxcpm" {
-        return tts_backends::voxcpm::models::Model::parse(config.model.as_deref())
+        return talechime_backends::voxcpm::models::Model::parse(config.model.as_deref())
             .map_or("unknown", |model| model.calibration_revision());
     }
     #[cfg(feature = "omnivoice")]
     if backend == "omnivoice" {
-        return tts_backends::omnivoice::resources::REVISION;
+        return talechime_backends::omnivoice::resources::REVISION;
     }
     #[cfg(feature = "moss-nano-candle")]
     if backend == "moss" && config.model.as_deref().is_none_or(|id| id == "nano-candle") {
-        return tts_backends::moss::nano::REVISION;
+        return talechime_backends::moss::nano::REVISION;
     }
     #[cfg(feature = "moss-candle")]
     if backend == "moss"
         && let Some(model) = config.model.as_deref().filter(|id| *id != "nano")
     {
-        return tts_backends::moss::candle::Mode::parse(model)
+        return talechime_backends::moss::candle::Mode::parse(model)
             .expect("validated model")
             .revision();
     }
     #[cfg(feature = "moss")]
     if backend == "moss" {
-        return tts_backends::moss::resources::REVISION;
+        return talechime_backends::moss::resources::REVISION;
     }
     #[cfg(feature = "qwen")]
     if backend == "qwen" {
-        return tts_backends::qwen::models::Model::parse(config.model.as_deref())
+        return talechime_backends::qwen::models::Model::parse(config.model.as_deref())
             .expect("validated model")
             .revision();
     }
@@ -243,13 +243,19 @@ mod nano_revision_tests {
             model: None,
             ..Default::default()
         };
-        assert_eq!(tts_revision(&config), tts_backends::moss::nano::REVISION);
+        assert_eq!(
+            tts_revision(&config),
+            talechime_backends::moss::nano::REVISION
+        );
         config.model = Some("nano-candle".into());
-        assert_eq!(tts_revision(&config), tts_backends::moss::nano::REVISION);
+        assert_eq!(
+            tts_revision(&config),
+            talechime_backends::moss::nano::REVISION
+        );
         config.model = Some("nano".into());
         assert_eq!(
             tts_revision(&config),
-            tts_backends::moss::resources::REVISION
+            talechime_backends::moss::resources::REVISION
         );
     }
 }

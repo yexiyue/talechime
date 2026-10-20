@@ -6,7 +6,7 @@ use std::{
     rc::{Rc, Weak},
     sync::Arc,
 };
-use tts_core::SynthesisStream;
+use talechime_core::SynthesisStream;
 
 /// Model preparation is explicit and independent of playback/config persistence.
 #[derive(Debug, Clone)]
@@ -153,8 +153,8 @@ impl Engine {
                 "backend, resource path and concrete device are required",
             ));
         }
-        let registry =
-            tts_backends::Registry::new(Some(options.resources)).map_err(EngineError::Prepare)?;
+        let registry = talechime_backends::Registry::new(Some(options.resources))
+            .map_err(EngineError::Prepare)?;
         crate::model_preparation::with_progress(
             |tx| {
                 registry.prepare_model_on(

@@ -1,6 +1,6 @@
 //! Explicit real-weight codec warmup comparison, without Python or user audio.
 use talechime_backends::moss::MossBackend;
-use tts_core::{SpeechContext, backend::Pcm};
+use talechime_core::{SpeechContext, backend::Pcm};
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().collect();
@@ -16,8 +16,8 @@ async fn main() -> anyhow::Result<()> {
     let mut ended = false;
     while let Some(chunk) = stream.recv().await {
         match chunk? {
-            tts_core::backend::AudioChunk::Pcm(pcm) => audio.samples.extend(pcm.samples),
-            tts_core::backend::AudioChunk::End => {
+            talechime_core::backend::AudioChunk::Pcm(pcm) => audio.samples.extend(pcm.samples),
+            talechime_core::backend::AudioChunk::End => {
                 ended = true;
                 break;
             }

@@ -2,8 +2,8 @@
 use serde::Deserialize;
 use std::{path::Path, rc::Rc, sync::Arc, time::Instant};
 use talechime_backends::asr;
-use tts_core::{SourceSnapshot, backend::Pcm, verification::*};
-use tts_protocol::{SourceId, TextRange};
+use talechime_core::{SourceSnapshot, backend::Pcm, verification::*};
+use talechime_protocol::{SourceId, TextRange};
 #[derive(Deserialize)]
 struct Case {
     id: String,
@@ -67,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
                 chapter: case.id.clone(),
             },
             case.text.clone(),
-            &tts_protocol::text_hash(&case.text),
+            &talechime_protocol::text_hash(&case.text),
         )?;
         let pcm = Pcm {
             samples,
@@ -76,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
         };
         // Inject the independently recorded transcripts to exercise production comparison without another model run.
         let report = if let (Ok(a), Ok(b)) = (&qwen, &sense) {
-            struct Recorded(RecognizerIdentity, tts_core::verification::Transcript);
+            struct Recorded(RecognizerIdentity, talechime_core::verification::Transcript);
             impl Recognizer for Recorded {
                 fn identity(&self) -> RecognizerIdentity {
                     self.0.clone()

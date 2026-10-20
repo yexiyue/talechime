@@ -39,7 +39,7 @@ pub fn process(pid: u32, interval_ms: u64) -> BTreeMap<String, Reading> {
             Ok(counters)
         }
     };
-    match read() {
+    let process_readings: BTreeMap<String, Reading> = match read() {
         Ok(counters) => [
             ("rss_bytes", counters.WorkingSetSize),
             ("os_peak_working_set_bytes", counters.PeakWorkingSetSize),
@@ -75,7 +75,117 @@ pub fn process(pid: u32, interval_ms: u64) -> BTreeMap<String, Reading> {
                 )
             })
             .collect(),
+    };
+    let mut process_readings = process_readings;
+    let available = system_available_private_bytes().map_err(|error| {
+        "Windows commit limit/current total/page size unavailable: ".to_owned() + &error.to_string()
+    });
+    process_readings.insert(
+        "system_available_private_bytes".into(),
+        match available {
+            Ok(bytes) => Reading {
+                value: Some(bytes as f64),
+                unit: "bytes".into(),
+                scope: "system".into(),
+                source: "Windows K32GetPerformanceInfo commit pages".into(),
+                interval_ms: Some(interval_ms),
+                status: "available".into(),
+                reason: None,
+            },
+            Err(reason) => missing(
+                "system",
+                "Windows K32GetPerformanceInfo",
+                reason,
+                interval_ms,
+            ),
+        },
+    );
+    process_readings
+}
+
+#[cfg(windows)]
+fn system_available_private_bytes() -> anyhow::Result<u64> {
+    use windows::Win32::System::ProcessStatus::{K32GetPerformanceInfo, PERFORMANCE_INFORMATION};
+    use windows::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
+    let mut performance = PERFORMANCE_INFORMATION {
+        cb: size_of::<PERFORMANCE_INFORMATION>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: Typed output buffer with its required byte size.
+    unsafe {
+        K32GetPerformanceInfo(&mut performance, performance.cb)
+            .ok()
+            .map_err(|error| anyhow::anyhow!(error.message().to_string()))?;
+        let mut system = SYSTEM_INFO::default();
+        GetSystemInfo(&mut system);
+        let available_pages = performance
+            .CommitLimit
+            .checked_sub(performance.CommitTotal)
+            .ok_or_else(|| anyhow::anyhow!("commit total exceeds commit limit"))?;
+        u64::try_from(available_pages)?
+            .checked_mul(system.dwPageSize as u64)
+            .ok_or_else(|| anyhow::anyhow!("commit byte count overflow"))
     }
+}
+
+#[derive(Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GpuProcess {
+    pub pid: u64,
+    pub process_name: String,
+    pub used_gpu_memory_bytes: Option<u64>,
+}
+
+#[derive(Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CompetingGpuProcesses {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub processes: Vec<GpuProcess>,
+}
+
+pub fn parse_gpu_processes(text: &str) -> anyhow::Result<Vec<GpuProcess>> {
+    let mut result = Vec::new();
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let fields: Vec<_> = line.split(',').map(str::trim).collect();
+        anyhow::ensure!(
+            fields.len() == 3,
+            "unexpected nvidia-smi compute-process CSV schema"
+        );
+        let pid = fields[0].parse::<u64>()?;
+        anyhow::ensure!(!fields[1].is_empty(), "compute-process name missing");
+        let used = if fields[2].eq_ignore_ascii_case("[n/a]") {
+            None
+        } else {
+            let value = fields[2].parse::<f64>()?;
+            anyhow::ensure!(
+                value.is_finite() && value >= 0.0,
+                "invalid compute-process GPU memory"
+            );
+            Some((value * 1024.0 * 1024.0) as u64)
+        };
+        result.push(GpuProcess {
+            pid,
+            process_name: fields[1].into(),
+            used_gpu_memory_bytes: used,
+        });
+    }
+    Ok(result)
+}
+
+pub fn gpu_processes() -> Result<CompetingGpuProcesses, String> {
+    let mut command = Command::new("nvidia-smi");
+    command.args([
+        "--query-compute-apps=pid,process_name,used_gpu_memory",
+        "--format=csv,noheader,nounits",
+    ]);
+    capture(&mut command, Duration::from_secs(2))
+        .and_then(|bytes| parse_gpu_processes(std::str::from_utf8(&bytes)?))
+        .map(|processes| CompetingGpuProcesses {
+            status: "available".into(),
+            reason: None,
+            processes,
+        })
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
@@ -174,7 +284,35 @@ mod tests {
         let readings = process(std::process::id(), 500);
         assert!(readings["rss_bytes"].value.is_some_and(|n| n > 0.0));
         assert!(readings["os_peak_working_set_bytes"].value >= readings["rss_bytes"].value);
+        assert!(
+            readings["system_available_private_bytes"]
+                .value
+                .is_some_and(|n| n > 0.0)
+        );
         assert!(process(u32::MAX, 500)["rss_bytes"].value.is_none());
+    }
+
+    #[test]
+    fn competing_gpu_processes_keep_names_and_unsupported_memory_null() -> anyhow::Result<()> {
+        let processes = parse_gpu_processes("123, model.exe, 100\n456, tool.exe, [N/A]")?;
+        assert_eq!(
+            processes,
+            vec![
+                GpuProcess {
+                    pid: 123,
+                    process_name: "model.exe".into(),
+                    used_gpu_memory_bytes: Some(100 * 1024 * 1024),
+                },
+                GpuProcess {
+                    pid: 456,
+                    process_name: "tool.exe".into(),
+                    used_gpu_memory_bytes: None,
+                },
+            ]
+        );
+        assert!(parse_gpu_processes("not a csv").is_err());
+        assert!(parse_gpu_processes("123, missing.exe").is_err());
+        Ok(())
     }
 }
 

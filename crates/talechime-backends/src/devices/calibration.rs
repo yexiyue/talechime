@@ -4,8 +4,8 @@ use std::{
     path::{Path, PathBuf},
     time::Instant,
 };
-use tts_core::backend::{AudioChunk, Backend};
-use tts_protocol::Device;
+use talechime_core::backend::{AudioChunk, Backend};
+use talechime_protocol::Device;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Measurements {
@@ -136,9 +136,9 @@ pub async fn synthesis(backend: &dyn Backend, voice: &str) -> anyhow::Result<Mea
     for i in 0..8 {
         let start = Instant::now();
         let text = "你好，欢迎使用听书功能。今天我们一起阅读一个故事。";
-        let params = tts_core::params::GenerationParams::new();
+        let params = talechime_core::params::GenerationParams::new();
         let mut stream = backend
-            .stream(tts_core::backend::SegmentRequest {
+            .stream(talechime_core::backend::SegmentRequest {
                 text,
                 voice,
                 style: None,
@@ -150,7 +150,7 @@ pub async fn synthesis(backend: &dyn Backend, voice: &str) -> anyhow::Result<Mea
             .await?;
         let mut first = None;
         let mut ended = false;
-        let mut silence = tts_core::audio::BoundarySilence::default();
+        let mut silence = talechime_core::audio::BoundarySilence::default();
         while let Some(chunk) = stream.recv().await {
             match chunk? {
                 AudioChunk::Pcm(pcm) => {

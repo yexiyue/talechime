@@ -1,8 +1,8 @@
 //! Model-owned replay of stateless history decoding, serialized with scratch copies.
 use super::Decoder12Hz;
+use crate::cuda_graph::replay::Replay;
 use anyhow::Result;
 use candle_core::{DType, Device, Tensor};
-use candle_cuda_graph::Replay;
 use std::collections::VecDeque;
 
 const MAX_ENTRIES: usize = 4;
@@ -80,7 +80,7 @@ impl DecoderGraphs {
                 self.disabled = true;
                 self.entries.clear();
                 anyhow::ensure!(
-                    !candle_cuda_graph::is_capturing(&device.cuda_stream())?,
+                    !crate::cuda_graph::replay::is_capturing(&device.cuda_stream())?,
                     "decoder capture left the stream active"
                 );
                 tracing::warn!(%error, "qwen decoder capture unavailable; using eager inference");

@@ -1,4 +1,8 @@
-# MOSS Candle computation
+# talechime-moss-tts
+
+The Cargo package is `talechime-moss-tts`; the Rust import is `talechime_moss_tts`.
+Select GPU features for the target platform: CUDA on Windows/Linux, Metal on
+macOS. Do not enable both through `--all-features`.
 
 > Legacy `tools/tts` scripts mentioned here were removed on 2026-10-20. Retrieve historical scripts from Git revision `e591c94`; their paths below describe provenance or historical reproduction, not current executable entry points.
 
@@ -26,7 +30,7 @@ spoken coverage. See [验收记录](../../docs/records/moss/moss-candle-acceptan
 ## Experimental probe
 
 ```text
-cargo run -p moss-tts --release --features cuda --example local_probe -- MODEL_DIR CODEC_DIR OUTPUT.wav "你好，欢迎收听今天的故事。" cuda
+cargo run -p talechime-moss-tts --release --features cuda --example local_probe -- MODEL_DIR CODEC_DIR OUTPUT.wav "你好，欢迎收听今天的故事。" cuda
 ```
 
 The probe writes a WAV and RVQ token JSON without opening an audio device.

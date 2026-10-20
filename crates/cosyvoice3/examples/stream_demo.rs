@@ -7,12 +7,12 @@
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
-use cosyvoice3::{
+use std::path::Path;
+use std::time::{Duration, Instant};
+use talechime_cosyvoice3::{
     CausalHiFtGenerator, CausalMaskedDiffWithDiT, CosyVoice3Config, CosyVoice3Lm, DiT,
     SamplingConfig, StreamingTts,
 };
-use std::path::Path;
-use std::time::{Duration, Instant};
 
 fn load_weights(path: &Path, dev: &Device) -> Result<VarBuilder<'static>> {
     Ok(unsafe { VarBuilder::from_mmaped_safetensors(&[path], DType::F32, dev)? })
@@ -161,8 +161,8 @@ enum ProducerExit {
 /// Reserve queue capacity before any inference. Dropping a receiver before
 /// the first poll avoids even model construction; errors never become EOF.
 async fn produce_chunks(
-    tx: tokio::sync::mpsc::Sender<cosyvoice3::StreamChunk>,
-    mut next: impl FnMut() -> Result<Option<cosyvoice3::StreamChunk>>,
+    tx: tokio::sync::mpsc::Sender<talechime_cosyvoice3::StreamChunk>,
+    mut next: impl FnMut() -> Result<Option<talechime_cosyvoice3::StreamChunk>>,
 ) -> Result<ProducerExit> {
     let mut sent = 0;
     loop {
@@ -191,7 +191,7 @@ fn spawn_producer(
     model: std::path::PathBuf,
     parts: std::rc::Rc<Parts>,
     dev: std::rc::Rc<Device>,
-    tx: tokio::sync::mpsc::Sender<cosyvoice3::StreamChunk>,
+    tx: tokio::sync::mpsc::Sender<talechime_cosyvoice3::StreamChunk>,
     seed: u64,
 ) -> tokio::task::JoinHandle<Result<ProducerExit>> {
     tokio::task::spawn_local(async move {
@@ -299,7 +299,7 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cosyvoice3::StreamChunk;
+    use talechime_cosyvoice3::StreamChunk;
 
     fn chunk(final_chunk: bool, hit_token_limit: bool) -> StreamChunk {
         StreamChunk {

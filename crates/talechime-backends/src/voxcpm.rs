@@ -6,23 +6,23 @@ pub mod params;
 pub mod resources;
 mod runtime;
 use std::path::{Path, PathBuf};
+use talechime_core::backend::{Backend, BackendError, Segmentation, Streaming};
+use talechime_protocol::{Capabilities, Device};
 use tokio::sync::{mpsc, oneshot};
-use tts_core::backend::{Backend, BackendError, Segmentation, Streaming};
-use tts_protocol::{Capabilities, Device};
 pub const MODEL: &str = "2b-q8_0";
 /// Invalidate native-engine performance calibration without changing model resources.
 pub const CALIBRATION_REVISION: &str = "169f64d8b98bbaab1761e4ca3a83e6af653456cc-candle-v1";
 pub fn directory(root: &Path) -> PathBuf {
     models::Model::Q8.directory(root)
 }
-pub fn voice_store(directory: &Path) -> anyhow::Result<tts_core::voices::VoiceStore> {
+pub fn voice_store(directory: &Path) -> anyhow::Result<talechime_core::voices::VoiceStore> {
     voice_store_for(directory, models::Model::Q8)
 }
 pub fn voice_store_for(
     directory: &Path,
     model: models::Model,
-) -> anyhow::Result<tts_core::voices::VoiceStore> {
-    tts_core::voices::VoiceStore::new(directory, "voxcpm", model.id(), model.revision())
+) -> anyhow::Result<talechime_core::voices::VoiceStore> {
+    talechime_core::voices::VoiceStore::new(directory, "voxcpm", model.id(), model.revision())
 }
 pub fn capabilities(directory: &Path) -> anyhow::Result<Capabilities> {
     capabilities_for(directory, models::Model::Q8)
@@ -68,7 +68,8 @@ pub fn available_devices() -> Vec<Device> {
             Device::Cpu => true,
             Device::Cuda => runtime::candle_device(*device).is_ok(),
             Device::Metal => {
-                tts_candle_platform::metal_is_available() && runtime::candle_device(*device).is_ok()
+                crate::devices::metal::metal_is_available()
+                    && runtime::candle_device(*device).is_ok()
             }
             _ => false,
         })
@@ -145,7 +146,7 @@ impl Backend for VoxBackend {
     fn capabilities(&self) -> Capabilities {
         self.caps.clone()
     }
-    fn stream<'a>(&'a self, request: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
             request.reject_unsupported(self.caps.style, self.caps.continuation)?;
             #[cfg(feature = "experimental-dual-reference")]
@@ -183,7 +184,7 @@ impl Backend for VoxBackend {
         })
     }
     fn segments<'a>(&'a self, source: &'a str) -> Segmentation<'a> {
-        Box::pin(async move { Ok(tts_core::text::preprocess_text(source, 180)) })
+        Box::pin(async move { Ok(talechime_core::text::preprocess_text(source, 180)) })
     }
 }
 

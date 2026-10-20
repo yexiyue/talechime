@@ -1,7 +1,7 @@
 //! Declared Qwen generation parameters and their typed builder.
-use qwen3_tts::{Language, SynthesisOptions};
-use tts_core::params::GenerationParams;
-use tts_protocol::{ParamKind, ParamValue, ParameterSpec};
+use talechime_core::params::GenerationParams;
+use talechime_protocol::{ParamKind, ParamValue, ParameterSpec};
+use talechime_qwen3_tts::{Language, SynthesisOptions};
 
 /// Codec frames advance at 12.5 Hz; MAX_FRAMES (375) equals 30 seconds.
 const FRAME_HZ: f64 = 12.5;
@@ -139,7 +139,7 @@ pub(super) struct Resolved {
 pub(super) fn resolve(
     params: &GenerationParams,
     seed: u64,
-) -> Result<Resolved, tts_core::backend::BackendError> {
+) -> Result<Resolved, talechime_core::backend::BackendError> {
     let float = |name: &str, fallback: f64| {
         params
             .get(name)
@@ -149,7 +149,7 @@ pub(super) fn resolve(
     let language = match params.get("language") {
         Some(ParamValue::Text(name)) if !name.eq_ignore_ascii_case("auto") => {
             Some(name.parse::<Language>().map_err(|error| {
-                tts_core::backend::BackendError::Unsupported(format!(
+                talechime_core::backend::BackendError::Unsupported(format!(
                     "unknown Qwen language parameter: {error}"
                 ))
             })?)

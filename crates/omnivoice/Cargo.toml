@@ -1,14 +1,14 @@
 [package]
-name="omnivoice"
+name = "talechime-omnivoice"
 version="0.1.0"
 edition="2024"
 license="Apache-2.0"
 description="Native Candle OmniVoice inference for Talechime"
 repository="https://github.com/yexiyue/talechime"
+
 [dependencies]
-tts-candle-platform = { workspace = true, optional = true }
+candle-nn.workspace = true
 candle-core.workspace=true
-candle-nn.workspace=true
 candle-transformers.workspace=true
 half="2.4.1"
 hound.workspace=true
@@ -24,8 +24,8 @@ rand="0.9"
 unicode-general-category="1.1.0"
 [features]
 default=[]
-cuda=["dep:tts-candle-platform","tts-candle-platform/cuda"]
-metal=["dep:tts-candle-platform","tts-candle-platform/metal"]
+cuda = ["candle-transformers/cuda"]
+metal = ["candle-nn/metal"]
 
 [dev-dependencies]
 tempfile.workspace=true

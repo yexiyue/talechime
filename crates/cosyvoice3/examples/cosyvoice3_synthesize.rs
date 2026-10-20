@@ -2,8 +2,8 @@
 //! Usage: `cosyvoice3_synthesize <converted-model> <reference-fixtures> [metal]`
 use anyhow::{Context, Result};
 use candle_core::{DType, Device};
-use cosyvoice3::{Mode, PromptFeatures, SamplingConfig, pipeline::CosyVoice3};
 use std::{path::Path, time::Instant};
+use talechime_cosyvoice3::{Mode, PromptFeatures, SamplingConfig, pipeline::CosyVoice3};
 fn main() -> Result<()> {
     let args = std::env::args().collect::<Vec<_>>();
     let model = Path::new(args.get(1).context("missing converted model dir")?);

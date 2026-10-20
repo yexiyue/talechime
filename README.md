@@ -131,6 +131,11 @@ CosyVoice3 的 Rust Metal 没有对应的官方 MPS 实现可作同设备对照�
 
 ## 接入应用
 
+对外 Rust 包统一使用 `talechime` 品牌：模型库包括 `talechime-moss-tts`、
+`talechime-qwen3-tts`、`talechime-qwen3-asr`、`talechime-voxcpm`、
+`talechime-omnivoice`、`talechime-cosyvoice3` 和 `talechime-indextts`。
+源码目录保留短名，Rust 导入名统一使用 `talechime_` 前缀；GPU 平台配置及图回放作为内部实现维护，不单独发布辅助包。
+
 Rust 应用可直接使用 `talechime::Engine` 的 `prepare`、`synthesize`、`synthesize_pcm` 和 `listen`。直接合成无需播放器或检查点；朗读计划可在同一模型内切换音色。无模型示例：
 
 ```sh

@@ -3,7 +3,7 @@ use std::{
     fs::File,
     path::{Path, PathBuf},
 };
-use tts_protocol::{Capabilities, Config, ConfigPatch};
+use talechime_protocol::{Capabilities, Config, ConfigPatch};
 
 /// Loading, validation and update errors never replace user data with defaults.
 #[derive(Debug, thiserror::Error)]
@@ -198,7 +198,7 @@ mod tests {
         let defaults = Config {
             backend: "kokoro".into(),
             voice: "Zf001".into(),
-            tts_device: tts_protocol::Device::Cpu,
+            tts_device: talechime_protocol::Device::Cpu,
             ..Default::default()
         };
         let store = ConfigStore::new(&path).with_defaults(defaults.clone());
@@ -233,7 +233,7 @@ mod tests {
         let existing = store.load().unwrap();
         assert_eq!(existing.model, None);
         assert_eq!(existing.voice, "serena");
-        assert_eq!(existing.tts_device, tts_protocol::Device::Cpu);
+        assert_eq!(existing.tts_device, talechime_protocol::Device::Cpu);
         assert_eq!(std::fs::read_to_string(path).unwrap(), original);
     }
     #[test]

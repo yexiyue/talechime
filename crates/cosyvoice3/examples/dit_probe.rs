@@ -4,8 +4,8 @@
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
-use cosyvoice3::{CosyVoice3Config, DiT};
 use std::path::Path;
+use talechime_cosyvoice3::{CosyVoice3Config, DiT};
 
 fn load_weights(path: &Path, dtype: DType, dev: &Device) -> Result<VarBuilder<'static>> {
     Ok(unsafe { VarBuilder::from_mmaped_safetensors(&[path], dtype, dev)? })

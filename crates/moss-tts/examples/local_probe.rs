@@ -1,7 +1,7 @@
 //! Experimental real-model verification without playback or Python runtime.
 use candle_core::{DType, Device};
-use moss_tts::{Model, codec::AudioCodec};
 use std::{path::PathBuf, time::Instant};
+use talechime_moss_tts::{Model, codec::AudioCodec};
 fn main() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().collect();
     anyhow::ensure!(
@@ -66,7 +66,7 @@ fn main() -> anyhow::Result<()> {
             serde_json::to_vec(reference)?,
         )?;
     }
-    let mut request = moss_tts::Generation::new(&args[4]);
+    let mut request = talechime_moss_tts::Generation::new(&args[4]);
     request.reference = reference.as_deref();
     let instruction = std::env::var("MOSS_INSTRUCTION").ok();
     request.instruction = instruction.as_deref();

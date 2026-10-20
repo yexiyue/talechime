@@ -1,7 +1,7 @@
 //! Standalone Candle migration probe; never changes production engine selection.
 use candle_core::{Device, Result};
 use std::{path::Path, time::Instant};
-use voxcpm::{Model, Options, SAMPLE_RATE};
+use talechime_voxcpm::{Model, Options, SAMPLE_RATE};
 fn main() -> anyhow::Result<()> {
     let a: Vec<_> = std::env::args().collect();
     anyhow::ensure!(

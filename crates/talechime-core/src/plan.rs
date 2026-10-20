@@ -2,7 +2,7 @@
 #![deny(missing_docs)]
 
 use std::{collections::BTreeSet, sync::Arc};
-use tts_protocol::{Capabilities, SourceId, TextRange, text_hash};
+use talechime_protocol::{Capabilities, SourceId, TextRange, text_hash};
 
 use crate::config::{ConfigError, validate_style, validate_voice};
 

@@ -3,9 +3,9 @@
 //! Usage: `f0_probe <model-dir> <fixture-dir-with-official_stages>`
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Tensor};
-use cosyvoice3::CosyVoice3Config;
-use cosyvoice3::vocoder::f0_predictor::CausalConvRnnF0Predictor;
 use std::path::Path;
+use talechime_cosyvoice3::CosyVoice3Config;
+use talechime_cosyvoice3::vocoder::f0_predictor::CausalConvRnnF0Predictor;
 
 fn stats(a: &Tensor, b: &Tensor) -> Result<(f32, f32)> {
     anyhow::ensure!(
@@ -69,7 +69,7 @@ fn main() -> Result<()> {
     // conv0 f64 cross-check against torch
     if let Ok(c) = candle_core::safetensors::load(dir.join("conv0_f64.safetensors"), &Device::Cpu) {
         use candle_core::Module;
-        use cosyvoice3::vocoder::causal_conv::{CausalConv1d, CausalType};
+        use talechime_cosyvoice3::vocoder::causal_conv::{CausalConv1d, CausalType};
         let conv = CausalConv1d::new(
             in_ch,
             512,

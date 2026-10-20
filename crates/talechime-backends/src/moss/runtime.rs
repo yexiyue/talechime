@@ -10,12 +10,12 @@ use ort::{
 use rand::Rng;
 use serde_json::Value;
 use std::{collections::HashMap, path::Path};
-use tts_core::backend::{AudioChunk, Pcm};
+use talechime_core::backend::{AudioChunk, Pcm};
 
 type Feeds = HashMap<String, DynValue>;
 #[derive(Clone, Copy)]
 pub(super) struct ContinuationInput<'a> {
-    pub(super) context: &'a tts_core::SpeechContext,
+    pub(super) context: &'a talechime_core::SpeechContext,
     pub(super) none_tokens: &'a [i32],
 }
 /// Output placement is separate from the product's persisted device choices.
@@ -121,7 +121,7 @@ fn global_cache(outputs: Feeds) -> Feeds {
 fn session(
     path: &Path,
     cancelled: &impl Fn() -> bool,
-    device: tts_protocol::Device,
+    device: talechime_protocol::Device,
     cache: &Path,
 ) -> anyhow::Result<Session> {
     anyhow::ensure!(!cancelled(), "model loading cancelled");
@@ -143,12 +143,12 @@ impl Runtime {
     pub(super) fn load_on(
         directory: &Path,
         cancelled: impl Fn() -> bool,
-        device: tts_protocol::Device,
+        device: talechime_protocol::Device,
     ) -> anyhow::Result<Self> {
         let cache = directory.join("coreml-cache");
         Self::load_sessions(
             directory,
-            if device == tts_protocol::Device::Cuda {
+            if device == talechime_protocol::Device::Cuda {
                 Placement::Cuda
             } else {
                 Placement::Host
@@ -329,7 +329,7 @@ impl Runtime {
     }
     pub(super) fn check_continuation_codec(
         &mut self,
-        context: &tts_core::SpeechContext,
+        context: &talechime_core::SpeechContext,
     ) -> anyhow::Result<super::diagnostics::CodecContinuationReport> {
         let codes = self.encode_context(context)?;
         let prefix = codes.iter().flatten().copied().collect::<Vec<_>>();
@@ -366,7 +366,7 @@ impl Runtime {
     }
     fn encode_context(
         &mut self,
-        context: &tts_core::SpeechContext,
+        context: &talechime_core::SpeechContext,
     ) -> anyhow::Result<Vec<Vec<i32>>> {
         let pcm = context.pcm();
         anyhow::ensure!(
@@ -390,7 +390,7 @@ impl Runtime {
         voice: &str,
         seed: Option<u64>,
         prefix: Option<ContinuationInput<'_>>,
-        tx: &tokio::sync::mpsc::Sender<Result<AudioChunk, tts_core::backend::BackendError>>,
+        tx: &tokio::sync::mpsc::Sender<Result<AudioChunk, talechime_core::backend::BackendError>>,
         stats: &mut GenerationStats,
     ) -> anyhow::Result<GenerationEnd> {
         let codes = if let Some(prefix) = prefix {

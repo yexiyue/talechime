@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     fn keys_separate_every_generation_input() {
-        let caps: tts_protocol::Capabilities = serde_json::from_value(serde_json::json!({
+        let caps: talechime_protocol::Capabilities = serde_json::from_value(serde_json::json!({
             "backend": "moss",
             "voices": ["A"],
             "default_voice": "A",
@@ -204,13 +204,13 @@ mod tests {
         let build = |style: Option<&str>| {
             let mut plan = SpeechPlan::new(
                 SourceSnapshot::new(
-                    tts_protocol::SourceId {
+                    talechime_protocol::SourceId {
                         namespace: "t".into(),
                         book: "b".into(),
                         chapter: "c".into(),
                     },
                     "正文",
-                    &tts_protocol::text_hash("正文"),
+                    &talechime_protocol::text_hash("正文"),
                 )
                 .unwrap(),
                 VoiceSnapshot::new(

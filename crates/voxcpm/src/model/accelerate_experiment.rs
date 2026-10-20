@@ -347,7 +347,7 @@ fn capture(
     metal.synchronize()?;
     let reference_ms = reference_load.elapsed().as_millis();
     let text = fs::read_to_string(corpus)?;
-    let segments = tts_core::text::preprocess_text(&text, 180);
+    let segments = talechime_core::text::preprocess_text(&text, 180);
     ensure!(!segments.is_empty(), "corpus produced no spoken segments");
 
     let capture_started = Instant::now();

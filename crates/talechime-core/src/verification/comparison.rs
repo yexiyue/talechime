@@ -156,13 +156,13 @@ mod tests {
     use super::*;
     fn differences(source: &str, spoken: &str, observed: &str) -> Vec<ReadbackDifference> {
         let snapshot = SourceSnapshot::new(
-            tts_protocol::SourceId {
+            talechime_protocol::SourceId {
                 namespace: "test".into(),
                 book: "".into(),
                 chapter: "".into(),
             },
             source,
-            &tts_protocol::text_hash(source),
+            &talechime_protocol::text_hash(source),
         )
         .unwrap();
         compare(

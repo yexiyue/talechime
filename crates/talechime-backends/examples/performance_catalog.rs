@@ -1,5 +1,5 @@
 //! Offline catalogue for developer tooling. Never prepares or migrates resources.
-use tts_core::paths::AppPaths;
+use talechime_core::paths::AppPaths;
 
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args_os().skip(1);

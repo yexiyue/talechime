@@ -15,18 +15,18 @@ use std::{
     },
     time::Duration,
 };
+use talechime_protocol::{Config, EndReason, ErrorInfo, Event, SessionState, TextRange};
 use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore, mpsc},
     task::JoinHandle,
 };
-use tts_protocol::{Config, EndReason, ErrorInfo, Event, SessionState, TextRange};
 
 /// Advanced core single-voice input, independent of the JSON Lines transport.
 /// Public hosts should usually construct an Engine plan instead.
 #[derive(Debug, Clone)]
 pub struct StartRequest {
     /// Host-owned immutable source identity.
-    pub source: tts_protocol::SourceId,
+    pub source: talechime_protocol::SourceId,
     /// Exact full source without speech normalization.
     pub text: String,
     /// SHA-256 checked by the plan constructor.
@@ -111,7 +111,7 @@ impl Drop for WriteGuard {
 fn native_speed(params: &crate::params::GenerationParams) -> f32 {
     params
         .get("speed")
-        .and_then(tts_protocol::ParamValue::as_f64)
+        .and_then(talechime_protocol::ParamValue::as_f64)
         .unwrap_or(1.0) as f32
 }
 
@@ -221,7 +221,7 @@ impl SessionManager {
                 resume_byte: request.resume_byte,
                 restore_checkpoint: request.restore_checkpoint,
                 continuation: true,
-                continuation_boundary: tts_protocol::ContinuationBoundary::Paragraph,
+                continuation_boundary: talechime_protocol::ContinuationBoundary::Paragraph,
                 continuation_span: None,
                 params: Default::default(),
                 cache: None,
@@ -278,7 +278,7 @@ impl SessionManager {
             && params.get("speed").is_none()
             && caps.parameters.iter().any(|spec| spec.name == "speed")
         {
-            params.insert("speed", tts_protocol::ParamValue::from(options.speed));
+            params.insert("speed", talechime_protocol::ParamValue::from(options.speed));
             params
                 .validate(&caps.parameters)
                 .map_err(SessionError::Invalid)?;
@@ -779,7 +779,7 @@ mod tests {
         backend::{AudioChunk, Streaming},
         text::preprocess_text,
     };
-    use tts_protocol::{Capabilities, SourceId, text_hash};
+    use talechime_protocol::{Capabilities, SourceId, text_hash};
 
     struct FakeBackend {
         calls: Cell<usize>,

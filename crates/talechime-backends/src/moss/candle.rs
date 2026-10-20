@@ -4,9 +4,9 @@ pub mod params;
 pub mod resources;
 mod runtime;
 use std::path::{Path, PathBuf};
+use talechime_core::backend::{Backend, BackendError, Segmentation, Streaming};
+use talechime_protocol::{Capabilities, Device};
 use tokio::sync::{mpsc, oneshot};
-use tts_core::backend::{Backend, BackendError, Segmentation, Streaming};
-use tts_protocol::{Capabilities, Device};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -45,8 +45,11 @@ impl Mode {
         }
     }
 }
-pub fn voice_store(directory: &Path, mode: Mode) -> anyhow::Result<tts_core::voices::VoiceStore> {
-    tts_core::voices::VoiceStore::new(directory, "moss", mode.id(), mode.revision())
+pub fn voice_store(
+    directory: &Path,
+    mode: Mode,
+) -> anyhow::Result<talechime_core::voices::VoiceStore> {
+    talechime_core::voices::VoiceStore::new(directory, "moss", mode.id(), mode.revision())
 }
 pub fn capabilities(root: &Path, mode: Mode) -> anyhow::Result<Capabilities> {
     let mut caps = Capabilities {
@@ -90,7 +93,7 @@ pub fn available_devices() -> Vec<Device> {
     compiled_devices()
         .into_iter()
         .filter(|device| {
-            (*device != Device::Metal || tts_candle_platform::metal_is_available())
+            (*device != Device::Metal || crate::devices::metal::metal_is_available())
                 && runtime::device(*device).is_ok()
         })
         .collect()
@@ -166,7 +169,7 @@ impl Backend for CandleBackend {
     fn capabilities(&self) -> Capabilities {
         self.caps.clone()
     }
-    fn stream<'a>(&'a self, request: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
             request.reject_unsupported(self.caps.style, self.caps.continuation)?;
             #[cfg(feature = "experimental-moss-reference-anchor")]
@@ -208,7 +211,7 @@ impl Backend for CandleBackend {
         })
     }
     fn segments<'a>(&'a self, source: &'a str) -> Segmentation<'a> {
-        Box::pin(async move { Ok(tts_core::text::preprocess_text(source, 160)) })
+        Box::pin(async move { Ok(talechime_core::text::preprocess_text(source, 160)) })
     }
 }
 
@@ -235,10 +238,10 @@ mod tests {
                 .cache_identity
                 .ends_with("-experimental-reference-anchor-v1")
         );
-        let params = tts_core::params::GenerationParams::new();
+        let params = talechime_core::params::GenerationParams::new();
         assert!(matches!(
             realtime
-                .stream(tts_core::backend::SegmentRequest {
+                .stream(talechime_core::backend::SegmentRequest {
                     text: "测试",
                     voice: "narrator",
                     style: None,

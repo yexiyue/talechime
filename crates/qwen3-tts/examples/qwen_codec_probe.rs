@@ -2,9 +2,9 @@
 //! Development-only audition; does not change the streaming implementation.
 use anyhow::{Context, ensure};
 use candle_core::DType;
-use qwen3_tts::{AudioBuffer, Qwen3TTS, VoiceClonePrompt};
 use serde_json::json;
 use std::{fs, path::Path, time::Instant};
+use talechime_qwen3_tts::{AudioBuffer, Qwen3TTS, VoiceClonePrompt};
 
 fn main() -> anyhow::Result<()> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -18,8 +18,8 @@ fn main() -> anyhow::Result<()> {
         args.len() == 5,
         "usage: MODEL PROMPT CODES DEVICE OUTPUT_DIR [--benchmark N]"
     );
-    let _profiling = qwen3_tts::profiling::init();
-    let model = Qwen3TTS::from_pretrained(&args[0], qwen3_tts::parse_device(&args[3])?)?;
+    let _profiling = talechime_qwen3_tts::profiling::init();
+    let model = Qwen3TTS::from_pretrained(&args[0], talechime_qwen3_tts::parse_device(&args[3])?)?;
     let prompt = VoiceClonePrompt::load(Path::new(&args[1]), model.device())?;
     let generated: Vec<Vec<u32>> = serde_json::from_slice(&fs::read(&args[2])?)?;
     ensure!(!generated.is_empty(), "empty generated codes");

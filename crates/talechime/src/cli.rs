@@ -5,9 +5,9 @@ use crossterm::{
 };
 use futures::StreamExt;
 use std::{future::Future, io::IsTerminal, path::PathBuf, pin::Pin};
+use talechime_core::{checkpoint::CheckpointStore, config::ConfigStore, session::SessionEvent};
+use talechime_protocol::{EndReason, Event, SourceId, text_hash};
 use tokio::sync::mpsc;
-use tts_core::{checkpoint::CheckpointStore, config::ConfigStore, session::SessionEvent};
-use tts_protocol::{EndReason, Event, SourceId, text_hash};
 
 /// Keep acknowledgements in the event loop so reliable events cannot block them.
 struct PendingControl {
@@ -48,21 +48,21 @@ pub struct CliOptions {
     pub after_chapter: bool,
     pub no_continuation: bool,
     /// Chain-reset policy override; plan-file policy applies when absent.
-    pub continuation_boundary: Option<tts_protocol::ContinuationBoundary>,
+    pub continuation_boundary: Option<talechime_protocol::ContinuationBoundary>,
     /// Chained seconds before re-anchoring; plan-file value applies when absent.
     pub continuation_span: Option<u64>,
     /// CLI generation parameters; applied on top of plan-file values.
-    pub params: Vec<(String, tts_protocol::ParamValue)>,
+    pub params: Vec<(String, talechime_protocol::ParamValue)>,
     /// Pins sampling for a reproducible run; overrides a plan-file seed.
     pub seed: Option<u64>,
-    pub verification: tts_protocol::VerificationOptions,
+    pub verification: talechime_protocol::VerificationOptions,
     pub report_file: Option<PathBuf>,
 }
 
 fn generation_settings(
-    plan_params: &std::collections::BTreeMap<String, tts_protocol::ParamValue>,
+    plan_params: &std::collections::BTreeMap<String, talechime_protocol::ParamValue>,
     plan_seed: Option<u64>,
-    overrides: &[(String, tts_protocol::ParamValue)],
+    overrides: &[(String, talechime_protocol::ParamValue)],
     seed: Option<u64>,
 ) -> (talechime::GenerationParams, talechime::SeedPolicy) {
     let mut params = talechime::GenerationParams::new();
@@ -119,13 +119,13 @@ pub async fn run(
         let mut data = Vec::new();
         tokio::fs::File::open(&path)
             .await?
-            .take((tts_protocol::MAX_MESSAGE_BYTES + 1) as u64)
+            .take((talechime_protocol::MAX_MESSAGE_BYTES + 1) as u64)
             .read_to_end(&mut data)
             .await?;
-        if data.len() > tts_protocol::MAX_MESSAGE_BYTES {
+        if data.len() > talechime_protocol::MAX_MESSAGE_BYTES {
             anyhow::bail!("plan file exceeds transport limit");
         }
-        let input: tts_protocol::PlanRequest = serde_json::from_slice(&data)?;
+        let input: talechime_protocol::PlanRequest = serde_json::from_slice(&data)?;
         if input.text != text || !input.sealed {
             anyhow::bail!("CLI requires a sealed plan with the exact file text");
         }
@@ -183,8 +183,8 @@ pub async fn run(
                 .parameters,
         )
         .map_err(anyhow::Error::msg)?;
-    tts_core::verification::validate_options(&verification)?;
-    let readback = verification.policy != tts_protocol::VerificationPolicy::Off;
+    talechime_core::verification::validate_options(&verification)?;
+    let readback = verification.policy != talechime_protocol::VerificationPolicy::Off;
     #[cfg(not(feature = "asr"))]
     if readback {
         anyhow::bail!("readback requires the asr build feature");
@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn plan_generation_settings_survive_and_cli_values_override_them() {
-        use tts_protocol::ParamValue;
+        use talechime_protocol::ParamValue;
         let plan = [
             ("steps".to_owned(), ParamValue::Int(16)),
             ("cfg".to_owned(), ParamValue::Float(1.5)),

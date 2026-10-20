@@ -1,6 +1,7 @@
 # 开发与验证
 
-Rust 性能开发入口、Windows 任务复用及 Mac 接续边界见 [性能工具](performance-harness.md)。
+Rust 性能开发入口、Windows 资源准备命令、任务复用及 Mac 接续边界见
+[性能工具](performance-harness.md)。
 
 ## 工具链
 
@@ -12,7 +13,7 @@ RTX 5070 的 CUDA，与 MacBook Pro M4 Pro 的 Metal / CPU Accelerate 分别实�
 性能报告在结果表旁注明设备和执行路径，不把 Accelerate feature 启用当作逐算子 AMX 验证；
 固定音色与可选 VoxCPM2 双参考见[低优先级规划 #4](https://github.com/yexiyue/talechime/issues/4)。
 Candle core/nn/transformers/metal-kernels 的 fork 来源统一在根 `[patch.crates-io]`，
-CUDA/Metal feature 仍由 `tts-candle-platform` 按 target 路由；详见
+CUDA/Metal feature 由各模型 manifest 直接启用，Metal 探测保留在 backends 内部；详见
 [来源与发布策略](legal/candle/SOURCE.md)。组合启用模型时须检查 feature 合并后的依赖与测试。
 
 ```bash
@@ -29,7 +30,8 @@ cargo test --locked --workspace --features talechime/qwen,talechime/voxcpm,talec
 cargo build --locked -p talechime --bins
 ```
 
-完整 all-features 检查需要相应平台工具链；CUDA 与 Metal 编译分别在原生 CI 中检查。普通测试不下载大模型；真实模型测试使用显式环境变量，保留历史 `TRNOVEL_*` 变量以兼容已有验收脚本。旧 `tools/` 脚本已删除；性能工具使用 Rust `cargo xtask perf`。历史对照和转换脚本可从 Git revision `e591c94` 取回，不是当前工具依赖。
+GPU feature 必须按目标平台显式选择，不能用 `--all-features` 同时启用 CUDA 和 Metal；
+移除 platform 辅助包后，Cargo 不再自动过滤异平台 GPU feature。CUDA 与 Metal 编译分别在原生 CI 中检查。普通测试不下载大模型；真实模型测试使用显式环境变量，保留历史 `TRNOVEL_*` 变量以兼容已有验收脚本。历史 `tools/` 脚本已删除；性能工具使用 Rust `cargo xtask perf`。历史对照和转换脚本可从 Git revision `e591c94` 取回，不是当前运行时依赖。
 
 ## 编译 feature 分层
 
@@ -63,8 +65,10 @@ Cargo 会统一同一计算库的 feature，可能使依赖同时拥有多个加
 协议 v7 使用 `talechime-protocol 0.3.0`（新增加法字段 `PlanRequest.continuation_boundary`
 与 `continuation_span`，缺省值保持 0.2.0 行为；旧宿主发出的计划仍被接受），不兼容已发布
 的 0.1.0 / 协议 v5。
-Qwen 计算库使用 `talechime-qwen3-tts` / `talechime-qwen3-asr`，避免占用其他作者的包名；
-Rust 导入名不变。旧 `voxcpm-sys` 开发对照已退役，历史复现见[来源与许可证归档](legal/retired-voxcpm-native/README.md)。
+所有对外模型计算库统一使用 `talechime-` 前缀，包括 MOSS、VoxCPM、OmniVoice、CosyVoice3、IndexTTS 和 Qwen；
+Rust 导入名统一使用 `talechime_` 前缀，依赖键与包名一致；目录保留短名。旧裸名包保留历史版本，新版本使用品牌包名。
+`tts-candle-platform` 与 `talechime-candle-cuda-graph` 已移除；GPU feature、Metal 探测及 CUDA recorder
+分别由模型 manifest、backends 内部模块和模型私有模块承担，不再进入发布依赖链。旧 `voxcpm-sys` 开发对照已退役，历史复现见[来源与许可证归档](legal/retired-voxcpm-native/README.md)。
 
 发布失败后只重跑原提交的工作流；脚本查询同版本并核验 `.cargo_vcs_info.json` 的提交和包目录。
 已从该提交发布的包跳过；来自可验证祖先提交的版本，仅在该包目录与根 `Cargo.toml`

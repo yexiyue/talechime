@@ -1,6 +1,6 @@
 //! Export the exact adapter stream; model files must already be verified locally.
 use std::{path::PathBuf, rc::Rc, time::Instant};
-use tts_core::backend::{AudioChunk, Backend};
+use talechime_core::backend::{AudioChunk, Backend};
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     tokio::task::LocalSet::new().run_until(run()).await
@@ -18,9 +18,9 @@ async fn run() -> anyhow::Result<()> {
         args[5].clone()
     };
     let device = match args[4].as_str() {
-        "cpu" => tts_protocol::Device::Cpu,
-        "cuda" => tts_protocol::Device::Cuda,
-        "metal" => tts_protocol::Device::Metal,
+        "cpu" => talechime_protocol::Device::Cpu,
+        "cuda" => talechime_protocol::Device::Cuda,
+        "metal" => talechime_protocol::Device::Metal,
         _ => anyhow::bail!("invalid device"),
     };
     let load = || async {
@@ -67,9 +67,9 @@ async fn run() -> anyhow::Result<()> {
     let backend = load().await?;
     let load_ms = started.elapsed().as_millis();
     if std::env::var_os("NOVEL_TTS_PROBE_CANCEL").is_some() {
-        let params = tts_core::params::GenerationParams::new();
+        let params = talechime_core::params::GenerationParams::new();
         let mut stream = backend
-            .stream(tts_core::backend::SegmentRequest {
+            .stream(talechime_core::backend::SegmentRequest {
                 text: &text,
                 voice: &args[6],
                 style: None,
@@ -85,9 +85,9 @@ async fn run() -> anyhow::Result<()> {
         drop(stream);
     }
     if std::env::var_os("NOVEL_TTS_PROBE_CANCEL_EARLY").is_some() {
-        let params = tts_core::params::GenerationParams::new();
+        let params = talechime_core::params::GenerationParams::new();
         let stream = backend
-            .stream(tts_core::backend::SegmentRequest {
+            .stream(talechime_core::backend::SegmentRequest {
                 text: &text,
                 voice: &args[6],
                 style: None,
@@ -109,10 +109,10 @@ async fn run() -> anyhow::Result<()> {
     for segment in &segments {
         let offset = audio
             .as_ref()
-            .map_or(0, |pcm: &tts_core::backend::Pcm| pcm.samples.len());
-        let params = tts_core::params::GenerationParams::new();
+            .map_or(0, |pcm: &talechime_core::backend::Pcm| pcm.samples.len());
+        let params = talechime_core::params::GenerationParams::new();
         let mut stream = backend
-            .stream(tts_core::backend::SegmentRequest {
+            .stream(talechime_core::backend::SegmentRequest {
                 text: &segment.text,
                 voice: &args[6],
                 style: style.as_deref(),
@@ -128,7 +128,7 @@ async fn run() -> anyhow::Result<()> {
                     pcm.duration_ms()?;
                     first.get_or_insert_with(|| started.elapsed().as_millis());
                     if let Some(samples) = &mut audio {
-                        let samples: &mut tts_core::backend::Pcm = samples;
+                        let samples: &mut talechime_core::backend::Pcm = samples;
                         anyhow::ensure!(
                             samples.sample_rate == pcm.sample_rate
                                 && samples.channels == pcm.channels,
@@ -187,9 +187,9 @@ async fn run() -> anyhow::Result<()> {
         serde_json::json!({"backend":args[1],"device":format!("{device:?}"),"load_ms":load_ms,"first_pcm_ms":first,"generate_ms":generate_ms,"audio_seconds":duration,"segments":segments.len(),"rtf":generate_ms as f64 / 1000.0 / duration,"eos":true})
     );
     if std::env::var_os("NOVEL_TTS_PROBE_DROP_EARLY").is_some() {
-        let params = tts_core::params::GenerationParams::new();
+        let params = talechime_core::params::GenerationParams::new();
         let stream = backend
-            .stream(tts_core::backend::SegmentRequest {
+            .stream(talechime_core::backend::SegmentRequest {
                 text: &text,
                 voice: &args[6],
                 style: None,

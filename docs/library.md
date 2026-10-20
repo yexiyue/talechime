@@ -131,7 +131,7 @@ cargo run --locked -p talechime --example host_thread
 
 ```rust,ignore
 let mut params = talechime::GenerationParams::new();
-params.insert("steps", tts_protocol::ParamValue::Int(32));
+params.insert("steps", talechime_protocol::ParamValue::Int(32));
 let options = talechime::PlanSessionOptions {
     params,
     seed: talechime::SeedPolicy::Pinned(7), // 默认 Auto：每次尝试独立随机

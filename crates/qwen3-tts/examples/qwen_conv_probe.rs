@@ -1,9 +1,9 @@
 //! Development-only microbenchmark for 12Hz decoder convolution geometries.
 use anyhow::{Context, ensure};
 use candle_core::{Device, Tensor};
-use qwen3_tts::{models::codec, parse_device};
 use serde_json::json;
 use std::{fs, path::Path, time::Instant};
+use talechime_qwen3_tts::{models::codec, parse_device};
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();

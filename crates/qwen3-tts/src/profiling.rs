@@ -26,7 +26,7 @@ pub struct ProfilingGuard;
 /// # Example
 ///
 /// ```rust,ignore
-/// let _guard = qwen3_tts::profiling::init();
+/// let _guard = talechime_qwen3_tts::profiling::init();
 /// // ... run workload ...
 /// // trace.json is written when _guard is dropped
 /// ```

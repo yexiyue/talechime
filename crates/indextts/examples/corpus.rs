@@ -5,7 +5,7 @@
 //! acceptance probe layout.
 //!
 //! ```sh
-//! cargo run --release -p indextts --features cuda --example corpus -- \
+//! cargo run --release -p talechime-indextts --features cuda --example corpus -- \
 //!     --dir <converted-dir> --reference <spk.wav> \
 //!     --corpus crates/voxcpm/tests/fixtures/acceptance-corpus.txt \
 //!     --out-dir target/tts-integration/indextts --rounds 2 --seed 7 --device cuda
@@ -58,12 +58,12 @@ fn main() -> Result<()> {
     anyhow::ensure!(args.rounds > 0, "rounds must be positive");
 
     let t0 = Instant::now();
-    let mut model = indextts::Model::load(&args.dir, &device)
+    let mut model = talechime_indextts::Model::load(&args.dir, &device)
         .with_context(|| format!("load model from {}", args.dir.display()))?;
     let load_secs = t0.elapsed().as_secs_f64();
 
-    let (pcm, sr) = indextts::dsp::load_wav_mono(&args.reference)?;
-    let reference = indextts::Reference::from_pcm(&pcm, sr)?;
+    let (pcm, sr) = talechime_indextts::dsp::load_wav_mono(&args.reference)?;
+    let reference = talechime_indextts::Reference::from_pcm(&pcm, sr)?;
     model.prepare_reference(&reference)?;
 
     std::fs::create_dir_all(&args.out_dir)?;
@@ -87,7 +87,7 @@ fn main() -> Result<()> {
     let mut round_entries = Vec::new();
     for round in 0..args.rounds {
         for (seg_idx, text) in segments.iter().enumerate() {
-            let options = indextts::Options {
+            let options = talechime_indextts::Options {
                 seed: args.seed.map(|s| s + round as u64 * 1000 + seg_idx as u64),
                 text_normalization: !args.no_text_normalization,
                 decode_on_cpu: args.decode_on_cpu,
@@ -124,7 +124,7 @@ fn main() -> Result<()> {
             let rms = (outcome.samples.iter().map(|v| v * v).sum::<f32>()
                 / outcome.samples.len().max(1) as f32)
                 .sqrt()
-                / indextts::PCM16_MAX;
+                / talechime_indextts::PCM16_MAX;
             let zc = outcome
                 .samples
                 .windows(2)

@@ -3,8 +3,8 @@
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Tensor};
 use candle_nn::{Module, VarBuilder};
-use cosyvoice3::vocoder::source_module::SineGen2;
 use std::path::Path;
+use talechime_cosyvoice3::vocoder::source_module::SineGen2;
 mod common;
 
 fn main() -> Result<()> {

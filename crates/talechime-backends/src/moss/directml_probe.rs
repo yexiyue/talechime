@@ -11,7 +11,7 @@ use std::{
     thread,
     time::Instant,
 };
-use tts_core::backend::{AudioChunk, BackendError};
+use talechime_core::backend::{AudioChunk, BackendError};
 use windows::Win32::Graphics::{
     Direct3D::D3D_FEATURE_LEVEL_11_0,
     Direct3D12::{D3D12CreateDevice, ID3D12Device},
@@ -196,7 +196,7 @@ impl Engine {
     fn generate(
         &self,
         tokens: Vec<i32>,
-    ) -> anyhow::Result<(tts_core::backend::AudioStream, Completion)> {
+    ) -> anyhow::Result<(talechime_core::backend::AudioStream, Completion)> {
         let (audio, rx) = tokio::sync::mpsc::channel(1);
         let (reply, result) = mpsc::channel();
         self.requests

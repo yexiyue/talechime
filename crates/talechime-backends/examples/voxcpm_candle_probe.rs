@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
     time::Instant,
 };
-use voxcpm::{Model, Options, Outcome, SAMPLE_RATE};
+use talechime_voxcpm::{Model, Options, Outcome, SAMPLE_RATE};
 fn main() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().collect();
     anyhow::ensure!(
@@ -21,7 +21,7 @@ fn main() -> anyhow::Result<()> {
     let output = PathBuf::from(&args[3]);
     std::fs::create_dir_all(&output)?;
     let text = std::fs::read_to_string(&args[4])?;
-    let segments = tts_core::text::preprocess_text(&text, 180);
+    let segments = talechime_core::text::preprocess_text(&text, 180);
     anyhow::ensure!(!segments.is_empty(), "corpus contains no spoken segments");
     std::fs::write(
         output.join("segments.json"),

@@ -1,31 +1,31 @@
 use super::{Mode, resources, voice_store};
 use candle_core::{DType, Device};
-use moss_tts::{Generation, Model, codec::AudioCodec};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
+use talechime_core::backend::{AudioChunk, BackendError, Pcm};
+use talechime_moss_tts::{Generation, Model, codec::AudioCodec};
 use tokio::sync::{mpsc, oneshot};
-use tts_core::backend::{AudioChunk, BackendError, Pcm};
 pub(super) struct Request {
     #[cfg(feature = "performance-tools")]
     pub(crate) perf: crate::performance::OwnerContext,
     #[cfg(feature = "experimental-moss-reference-anchor")]
     pub reference_anchor: bool,
-    pub context: Option<tts_core::SpeechContext>,
+    pub context: Option<talechime_core::SpeechContext>,
     pub text: String,
     pub voice: String,
     pub seed: u64,
     pub resolved: super::params::Resolved,
     pub audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
 }
-pub(super) fn device(selected: tts_protocol::Device) -> anyhow::Result<Device> {
+pub(super) fn device(selected: talechime_protocol::Device) -> anyhow::Result<Device> {
     match selected {
         #[cfg(all(
             feature = "moss-candle-cuda",
             any(target_os = "windows", target_os = "linux")
         ))]
-        tts_protocol::Device::Cuda => Ok(Device::new_cuda(0)?),
+        talechime_protocol::Device::Cuda => Ok(Device::new_cuda(0)?),
         #[cfg(all(feature = "moss-candle-metal", target_os = "macos"))]
-        tts_protocol::Device::Metal => Ok(Device::new_metal(0)?),
+        talechime_protocol::Device::Metal => Ok(Device::new_metal(0)?),
         _ => {
             anyhow::bail!("MOSS Candle production adapter currently requires a compiled GPU device")
         }
@@ -41,7 +41,7 @@ pub(super) fn model_dtype(device: &Device) -> DType {
 pub(super) fn run(
     root: PathBuf,
     mode: Mode,
-    selected: tts_protocol::Device,
+    selected: talechime_protocol::Device,
     mut jobs: mpsc::Receiver<Request>,
     ready: oneshot::Sender<Result<(), BackendError>>,
 ) {
@@ -135,7 +135,7 @@ fn generate(
             .context
             .as_ref()
             .zip(continuation.as_deref())
-            .map(|(context, codes)| moss_tts::Continuation {
+            .map(|(context, codes)| talechime_moss_tts::Continuation {
                 text: context.text(),
                 codes,
             });

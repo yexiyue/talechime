@@ -1,5 +1,5 @@
 use sentencepiece_rs::SentencePieceProcessor;
-use tts_core::{
+use talechime_core::{
     backend::BackendError,
     text::{TextSegment, is_decoration_line, is_non_spoken_line, sanitize_for_speech},
 };
@@ -64,7 +64,7 @@ pub(super) fn normalize(text: &str) -> String {
 pub(super) fn segments_with_estimate(
     text: &str,
     tokenizer: &SentencePieceProcessor,
-    estimate: &tts_core::text::duration::DurationEstimator,
+    estimate: &talechime_core::text::duration::DurationEstimator,
 ) -> Result<Vec<TextSegment>, BackendError> {
     split_estimate(
         text,
@@ -88,14 +88,14 @@ fn split(
 fn split_estimate(
     text: &str,
     count: impl Fn(&str) -> Result<usize, BackendError>,
-    estimate: &tts_core::text::duration::DurationEstimator,
+    estimate: &talechime_core::text::duration::DurationEstimator,
 ) -> Result<Vec<TextSegment>, BackendError> {
     split_limit(text, count, estimate, false)
 }
 pub(super) fn first_segment(
     text: &str,
     tokenizer: &SentencePieceProcessor,
-    estimate: &tts_core::text::duration::DurationEstimator,
+    estimate: &talechime_core::text::duration::DurationEstimator,
 ) -> Result<Option<TextSegment>, BackendError> {
     Ok(split_limit(
         text,
@@ -117,11 +117,12 @@ fn is_closer(c: char) -> bool {
 
 /// Whitespace-only lines, decorations and titles delimit synthesis context.
 fn hard_line(line: &str) -> bool {
-    is_non_spoken_line(line) || tts_core::text::is_heading_line(line)
+    is_non_spoken_line(line) || talechime_core::text::is_heading_line(line)
 }
 
 pub(super) fn paragraph_end(segment: &str, remaining: &str) -> bool {
-    if remaining.lines().all(is_non_spoken_line) || tts_core::text::is_heading_line(segment.trim())
+    if remaining.lines().all(is_non_spoken_line)
+        || talechime_core::text::is_heading_line(segment.trim())
     {
         return true;
     }
@@ -141,7 +142,7 @@ pub(super) fn paragraph_end(segment: &str, remaining: &str) -> bool {
 fn context_end(text: &str, start: usize) -> usize {
     let mut offset = start;
     for (index, line) in text[start..].split_inclusive('\n').enumerate() {
-        if index == 0 && tts_core::text::is_heading_line(line) {
+        if index == 0 && talechime_core::text::is_heading_line(line) {
             return offset + line.len();
         }
         if index > 0 && hard_line(line) {
@@ -155,7 +156,7 @@ fn context_end(text: &str, start: usize) -> usize {
 fn split_limit(
     text: &str,
     count: impl Fn(&str) -> Result<usize, BackendError>,
-    estimate: &tts_core::text::duration::DurationEstimator,
+    estimate: &talechime_core::text::duration::DurationEstimator,
     first: bool,
 ) -> Result<Vec<TextSegment>, BackendError> {
     const MAX_TOKENS: usize = 50;
@@ -297,7 +298,7 @@ mod tests {
             normalize("hello\nmy friend today"),
             "        Hello my friend today."
         );
-        assert!(!tts_core::text::is_heading_line("第一回合开始了。"));
+        assert!(!talechime_core::text::is_heading_line("第一回合开始了。"));
     }
     #[test]
     fn target_prefers_previous_complete_sentence_before_ceiling() {
@@ -320,7 +321,7 @@ mod tests {
         let source = format!("“{}。”\n接下来的句子。", "中".repeat(32));
         let pieces = split(&source, |_| Ok(1)).unwrap();
         assert!(pieces[0].text.ends_with("。”"));
-        let estimate = tts_core::text::duration::DurationEstimator::default();
+        let estimate = talechime_core::text::duration::DurationEstimator::default();
         let text = "中文".repeat(120);
         for piece in split(&text, |_| Ok(1)).unwrap() {
             assert!(estimate.seconds(&piece.text) <= 12.0);

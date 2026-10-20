@@ -1,6 +1,6 @@
 //! Offline synthesis probe, using the same PCM stream as the worker.
 use std::{path::PathBuf, time::Instant};
-use tts_core::backend::{AudioChunk, Backend};
+use talechime_core::backend::{AudioChunk, Backend};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
@@ -14,9 +14,9 @@ async fn main() -> anyhow::Result<()> {
             .ok_or_else(|| anyhow::anyhow!("output WAV required"))?,
     );
     let device = match args.next().as_deref().unwrap_or("cpu") {
-        "cpu" => tts_protocol::Device::Cpu,
-        "cuda" => tts_protocol::Device::Cuda,
-        "metal" => tts_protocol::Device::Metal,
+        "cpu" => talechime_protocol::Device::Cpu,
+        "cuda" => talechime_protocol::Device::Cuda,
+        "metal" => talechime_protocol::Device::Metal,
         other => anyhow::bail!("unsupported probe device {other}"),
     };
     let text = args.next().unwrap_or_else(|| "你好，欢迎收听。".into());
@@ -26,9 +26,9 @@ async fn main() -> anyhow::Result<()> {
     let backend = talechime_backends::qwen::QwenBackend::load_on(directory, device).await?;
     let load_ms = started.elapsed().as_millis();
     if std::env::var("NOVEL_TTS_PROBE_CANCEL").is_ok() {
-        let params = tts_core::params::GenerationParams::new();
+        let params = talechime_core::params::GenerationParams::new();
         let mut cancelled = backend
-            .stream(tts_core::backend::SegmentRequest {
+            .stream(talechime_core::backend::SegmentRequest {
                 text: &text,
                 voice: &voice,
                 style: None,
@@ -50,9 +50,9 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("cancel_receiver_ms={}", cancelled_at.elapsed().as_millis());
     }
     let started = Instant::now();
-    let params = tts_core::params::GenerationParams::new();
+    let params = talechime_core::params::GenerationParams::new();
     let mut stream = backend
-        .stream(tts_core::backend::SegmentRequest {
+        .stream(talechime_core::backend::SegmentRequest {
             text: &text,
             voice: &voice,
             style: style.as_deref(),

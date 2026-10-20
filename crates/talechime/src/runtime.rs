@@ -3,13 +3,13 @@ use crate::resources::Resources;
 #[cfg(test)]
 use std::rc::Rc;
 use std::time::Duration;
-use tokio::{sync::mpsc, task::JoinHandle};
-use tts_core::{
+use talechime_core::{
     checkpoint::CheckpointStore,
     config::{ConfigError, ConfigStore},
     session::SessionEvent,
 };
-use tts_protocol::{Command, ErrorInfo, Event, Request, SessionState};
+use talechime_protocol::{Command, ErrorInfo, Event, Request, SessionState};
+use tokio::{sync::mpsc, task::JoinHandle};
 
 type Preparation = JoinHandle<anyhow::Result<crate::preparation::PreparedModels>>;
 
@@ -35,7 +35,7 @@ impl Response {
 }
 
 pub struct Worker {
-    pub(crate) legacy_migration: Option<tts_core::migration::LegacyMigration>,
+    pub(crate) legacy_migration: Option<talechime_core::migration::LegacyMigration>,
     migration_copy: Option<crate::migration::CopyWork>,
     readback_models: bool,
     store: ConfigStore,
@@ -76,7 +76,7 @@ impl Worker {
     #[cfg(test)]
     pub fn attach_test(
         &mut self,
-        backend: Rc<dyn tts_core::backend::Backend>,
+        backend: Rc<dyn talechime_core::backend::Backend>,
         player: Rc<dyn talechime::Playback>,
     ) {
         self.manager = Some(
@@ -89,7 +89,7 @@ impl Worker {
             .unwrap(),
         );
     }
-    pub fn catalog(&self) -> anyhow::Result<Vec<tts_protocol::Capabilities>> {
+    pub fn catalog(&self) -> anyhow::Result<Vec<talechime_protocol::Capabilities>> {
         self.resources.catalog()
     }
     #[cfg(any(
@@ -105,7 +105,7 @@ impl Worker {
         Ok(self.resources.device_status_for(
             &config.backend,
             config.model.as_deref(),
-            tts_protocol::Device::Auto,
+            talechime_protocol::Device::Auto,
             Some("resources not prepared".into()),
         ))
     }
@@ -451,7 +451,7 @@ impl Worker {
                     manager.control.stop().await
                 } else {
                     Err(talechime::EngineError::Session(
-                        tts_core::session::SessionError::Invalid("stale session".into()),
+                        talechime_core::session::SessionError::Invalid("stale session".into()),
                     ))
                 }
             }
@@ -499,16 +499,16 @@ impl Drop for Worker {
 mod tests {
     use super::*;
     use std::{cell::Cell, rc::Rc, sync::Arc};
-    use tts_core::{
+    use talechime_core::{
         backend::{Backend, BackendError, Pcm, Streaming},
         player::Playback,
     };
-    struct SilentBackend(tts_protocol::Capabilities);
+    struct SilentBackend(talechime_protocol::Capabilities);
     impl Backend for SilentBackend {
-        fn capabilities(&self) -> tts_protocol::Capabilities {
+        fn capabilities(&self) -> talechime_protocol::Capabilities {
             self.0.clone()
         }
-        fn stream<'a>(&'a self, _: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
+        fn stream<'a>(&'a self, _: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
             Box::pin(async { Err(BackendError::Synthesis("not used".into())) })
         }
     }
@@ -561,17 +561,17 @@ mod tests {
         );
         let response = worker
             .command(&Request {
-                protocol_version: tts_protocol::PROTOCOL_VERSION,
+                protocol_version: talechime_protocol::PROTOCOL_VERSION,
                 request_id: "device".into(),
                 session_id: None,
-                command: Command::UpdateConfig(tts_protocol::ConfigPatch {
-                    tts_device: Some(tts_protocol::Device::Cpu),
+                command: Command::UpdateConfig(talechime_protocol::ConfigPatch {
+                    tts_device: Some(talechime_protocol::Device::Cpu),
                     ..Default::default()
                 }),
             })
             .await;
         assert!(
-            matches!(response.event, Event::ConfigChanged(config) if config.tts_device == tts_protocol::Device::Cpu)
+            matches!(response.event, Event::ConfigChanged(config) if config.tts_device == talechime_protocol::Device::Cpu)
         );
         assert!(worker.manager.is_none());
         assert_eq!(worker.resource_state, SessionState::Idle);
@@ -590,9 +590,9 @@ mod tests {
 
         let root = tempfile::tempdir().unwrap();
         let resources = Resources::new(Some(root.path().join("models"))).unwrap();
-        let defaults = tts_protocol::Config {
+        let defaults = talechime_protocol::Config {
             model: Some("nano".into()),
-            tts_device: tts_protocol::Device::Cpu,
+            tts_device: talechime_protocol::Device::Cpu,
             ..Default::default()
         };
         let store = ConfigStore::new(root.path().join("config.json")).with_defaults(defaults);
@@ -622,10 +622,10 @@ mod tests {
         );
         let response = worker
             .command(&Request {
-                protocol_version: tts_protocol::PROTOCOL_VERSION,
+                protocol_version: talechime_protocol::PROTOCOL_VERSION,
                 request_id: "model".into(),
                 session_id: None,
-                command: Command::UpdateConfig(tts_protocol::ConfigPatch {
+                command: Command::UpdateConfig(talechime_protocol::ConfigPatch {
                     expected_revision: old.revision,
                     model: Some("local-1.7b".into()),
                     voice: Some("narrator".into()),
@@ -648,7 +648,9 @@ mod tests {
 mod plan_tests {
     use super::*;
     use crate::fixture::{Fixture, Mode, Player};
-    use tts_protocol::{PlanPlayback, PlanRequest, SourceId, TextRange, VoiceSpan, text_hash};
+    use talechime_protocol::{
+        PlanPlayback, PlanRequest, SourceId, TextRange, VoiceSpan, text_hash,
+    };
 
     fn input(sealed: bool, playback: PlanPlayback) -> PlanRequest {
         PlanRequest {
@@ -689,12 +691,13 @@ mod plan_tests {
     async fn send(worker: &mut Worker, id: Option<&str>, command: Command) -> Response {
         // Exercise the actual JSON DTO boundary before application dispatch.
         let request = Request {
-            protocol_version: tts_protocol::PROTOCOL_VERSION,
+            protocol_version: talechime_protocol::PROTOCOL_VERSION,
             request_id: "test".into(),
             session_id: id.map(str::to_owned),
             command,
         };
-        let request = tts_protocol::decode(&tts_protocol::encode(&request).unwrap()).unwrap();
+        let request =
+            talechime_protocol::decode(&talechime_protocol::encode(&request).unwrap()).unwrap();
         worker.command(&request).await
     }
     fn make(
@@ -721,7 +724,7 @@ mod plan_tests {
         );
         (worker, receiver)
     }
-    async fn snapshot(worker: &mut Worker, id: &str) -> tts_protocol::PlanProgressSnapshot {
+    async fn snapshot(worker: &mut Worker, id: &str) -> talechime_protocol::PlanProgressSnapshot {
         let response = send(worker, Some(id), Command::GetProgress).await;
         if let Event::Progress(progress) = response.event {
             progress
@@ -741,7 +744,7 @@ mod plan_tests {
                     if matches!(
                         event.event,
                         Event::SessionEnded {
-                            reason: tts_protocol::EndReason::Completed,
+                            reason: talechime_protocol::EndReason::Completed,
                             ..
                         }
                     ) {
@@ -924,7 +927,7 @@ mod plan_tests {
             let response = send(
                 &mut worker,
                 None,
-                Command::UpdateConfig(tts_protocol::ConfigPatch {
+                Command::UpdateConfig(talechime_protocol::ConfigPatch {
                     voice: Some("Weiguo".into()),
                     ..Default::default()
                 }),
@@ -954,7 +957,7 @@ mod plan_tests {
                 Command::Start(Box::new(input(false, PlanPlayback::Streaming))),
             )
             .await;
-            let oversized = vec![span(0, 3, "A"); tts_protocol::MAX_PLAN_BATCH_SPANS + 1];
+            let oversized = vec![span(0, 3, "A"); talechime_protocol::MAX_PLAN_BATCH_SPANS + 1];
             assert!(matches!(
                 send(
                     &mut worker,
@@ -988,7 +991,7 @@ mod plan_tests {
             })
             .await
             .unwrap();
-            assert_eq!(reason, tts_protocol::EndReason::Failed);
+            assert_eq!(reason, talechime_protocol::EndReason::Failed);
             assert!(matches!(
                 send(&mut worker, Some("open"), Command::Seal).await.event,
                 Event::Error(_)

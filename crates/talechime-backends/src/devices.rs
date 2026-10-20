@@ -1,12 +1,22 @@
 //! Provider selection is explicit; registration never implies measured acceleration.
 pub mod calibration;
+#[cfg(any(
+    feature = "moss-nano-candle-metal",
+    feature = "moss-candle",
+    feature = "qwen",
+    feature = "voxcpm",
+    feature = "omnivoice",
+    feature = "cosyvoice3",
+    feature = "indextts",
+))]
+pub(crate) mod metal;
 #[cfg(any(feature = "ort-coreml", feature = "ort-cuda"))]
 use ort::ep::ExecutionProvider;
 #[cfg(feature = "moss")]
 use ort::session::Session;
 #[cfg(feature = "moss")]
 use std::path::Path;
-use tts_protocol::{Device, Event};
+use talechime_protocol::{Device, Event};
 
 pub fn compiled() -> Vec<Device> {
     vec![

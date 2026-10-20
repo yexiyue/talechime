@@ -1,9 +1,9 @@
 //! Compare independent official fixtures; no implicit model downloads.
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Tensor};
-use cosyvoice3::frontend::audio::{KaldiFbank, MatchaMel, WhisperMel, resample};
-use cosyvoice3::{CosyVoice3Lm, DiT, DiTConfig, LlmConfig};
 use std::path::Path;
+use talechime_cosyvoice3::frontend::audio::{KaldiFbank, MatchaMel, WhisperMel, resample};
+use talechime_cosyvoice3::{CosyVoice3Lm, DiT, DiTConfig, LlmConfig};
 
 mod common;
 use candle_nn::VarBuilder;
@@ -67,7 +67,7 @@ fn main() -> Result<()> {
         check!(
             &name,
             Tensor::from_vec(
-                cosyvoice3::rng::TorchCpuRng::new(0).randn_vec(n),
+                talechime_cosyvoice3::rng::TorchCpuRng::new(0).randn_vec(n),
                 n,
                 &Device::Cpu
             ),
@@ -128,7 +128,7 @@ fn main() -> Result<()> {
             2e-4
         );
     }
-    let f0 = cosyvoice3::vocoder::f0_predictor::CausalConvRnnF0Predictor::new(
+    let f0 = talechime_cosyvoice3::vocoder::f0_predictor::CausalConvRnnF0Predictor::new(
         80,
         16,
         weights(&dir.join("small-f0.safetensors"), DType::F64)?,

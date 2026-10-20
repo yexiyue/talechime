@@ -4,7 +4,7 @@ use std::{
     io::{BufRead, BufReader, Write},
     process::{Child, ChildStdin, ChildStdout, Command as ProcessCommand, Stdio},
 };
-use tts_protocol::{Command, ConfigPatch, Event, Message, PROTOCOL_VERSION, Request, encode};
+use talechime_protocol::{Command, ConfigPatch, Event, Message, PROTOCOL_VERSION, Request, encode};
 
 struct Worker {
     child: Child,
@@ -18,7 +18,7 @@ impl Worker {
         #[cfg(all(not(feature = "moss"), feature = "qwen"))]
         std::fs::write(
             directory.path().join("config.json"),
-            serde_json::to_vec(&tts_protocol::Config {
+            serde_json::to_vec(&talechime_protocol::Config {
                 backend: "qwen".into(),
                 voice: "uncle_fu".into(),
                 ..Default::default()
@@ -189,7 +189,7 @@ fn qwen_selection_and_voice_listing_do_not_load_models() {
         Command::UpdateConfig(ConfigPatch {
             backend: Some("qwen".into()),
             voice: Some("uncle_fu".into()),
-            tts_device: Some(tts_protocol::Device::Cpu),
+            tts_device: Some(talechime_protocol::Device::Cpu),
             ..Default::default()
         }),
     );
@@ -198,7 +198,7 @@ fn qwen_selection_and_voice_listing_do_not_load_models() {
         "coreml",
         Command::UpdateConfig(ConfigPatch {
             expected_revision: 1,
-            tts_device: Some(tts_protocol::Device::Coreml),
+            tts_device: Some(talechime_protocol::Device::Coreml),
             ..Default::default()
         }),
     );
@@ -248,6 +248,8 @@ fn backend_directory_and_switch_are_lightweight() {
             "omnivoice",
             #[cfg(feature = "cosyvoice3")]
             "cosyvoice3",
+            #[cfg(feature = "indextts")]
+            "indextts",
             #[cfg(feature = "qwen")]
             "qwen"
         ]
@@ -256,7 +258,7 @@ fn backend_directory_and_switch_are_lightweight() {
     for caps in &catalog {
         let supported = match (caps.backend.as_str(), caps.model.as_deref()) {
             ("qwen", Some("0.6b-base" | "1.7b-base")) => true,
-            ("qwen" | "cosyvoice3", _) => false,
+            ("qwen" | "cosyvoice3" | "indextts", _) => false,
             ("moss" | "voxcpm" | "omnivoice", _) => true,
             _ => panic!("unexpected model in catalog"),
         };
@@ -292,7 +294,7 @@ fn backend_directory_and_switch_are_lightweight() {
                 expected_revision: revision,
                 backend: Some(backend.into()),
                 voice: Some(voice.into()),
-                tts_device: Some(tts_protocol::Device::Cpu),
+                tts_device: Some(talechime_protocol::Device::Cpu),
                 ..Default::default()
             }),
         );
@@ -304,7 +306,7 @@ fn backend_directory_and_switch_are_lightweight() {
                 .send(&format!("state-{revision}"), Command::GetStatus)
                 .event,
             Event::SessionState {
-                state: tts_protocol::SessionState::Idle
+                state: talechime_protocol::SessionState::Idle
             }
         ));
     }
@@ -339,14 +341,14 @@ fn cli_rejects_open_or_mismatched_plan_before_model_preparation() {
     ] {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("chapter.txt"), "甲").unwrap();
-        let plan = tts_protocol::PlanRequest {
-            source: tts_protocol::SourceId {
+        let plan = talechime_protocol::PlanRequest {
+            source: talechime_protocol::SourceId {
                 namespace: "test".into(),
                 book: "book".into(),
                 chapter: "chapter".into(),
             },
             text: text.into(),
-            text_hash: tts_protocol::text_hash(text),
+            text_hash: talechime_protocol::text_hash(text),
             backend: "moss".into(),
             model: if cfg!(feature = "moss-nano-candle") {
                 Some("nano-candle".into())
@@ -357,8 +359,8 @@ fn cli_rejects_open_or_mismatched_plan_before_model_preparation() {
             },
             voices: vec!["Weiguo".into()],
             spans: if sealed {
-                vec![tts_protocol::VoiceSpan {
-                    range: tts_protocol::TextRange { start: 0, end: 3 },
+                vec![talechime_protocol::VoiceSpan {
+                    range: talechime_protocol::TextRange { start: 0, end: 3 },
                     voice: "Weiguo".into(),
                     style: None,
                 }]
@@ -366,7 +368,7 @@ fn cli_rejects_open_or_mismatched_plan_before_model_preparation() {
                 vec![]
             },
             sealed,
-            playback: tts_protocol::PlanPlayback::Streaming,
+            playback: talechime_protocol::PlanPlayback::Streaming,
             resume_byte: Some(resume_byte),
             restore_checkpoint: false,
             continuation: true,
@@ -422,7 +424,7 @@ fn default_home_migration_keeps_hello_lightweight_and_legacy_voices_visible() {
     std::fs::create_dir_all(&models).unwrap();
     let fake_weights = std::fs::File::create(models.join("fake.bin")).unwrap();
     fake_weights.set_len(32 * 1024 * 1024).unwrap();
-    tts_backends::moss::voices::VoiceStore::new(&home.path().join(".novel-tts/moss"))
+    talechime_backends::moss::voices::VoiceStore::new(&home.path().join(".novel-tts/moss"))
         .save(
             "custom:reader".into(),
             "Legacy Reader".into(),

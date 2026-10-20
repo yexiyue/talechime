@@ -579,7 +579,7 @@ impl Qwen3TTS {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use qwen3_tts::{Qwen3TTS, Speaker, Language, SynthesisOptions};
+    /// use talechime_qwen3_tts::{Qwen3TTS, Speaker, Language, SynthesisOptions};
     ///
     /// let audio = model.synthesize_with_voice(
     ///     "Hello, world!",
@@ -846,7 +846,7 @@ impl Qwen3TTS {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use qwen3_tts::{Qwen3TTS, Speaker, Language, SynthesisOptions};
+    /// use talechime_qwen3_tts::{Qwen3TTS, Speaker, Language, SynthesisOptions};
     ///
     /// let options = SynthesisOptions::default();
     /// for chunk in model.synthesize_streaming("Hello!", Speaker::Ryan, Language::English, options)? {
@@ -1506,7 +1506,7 @@ mod tests {
         let warmup = predictor.generate_acoustic_codes(&hidden, &semantic, &mut captured)?;
         // `captured` must outlive `replay`: its retained K/V were allocated
         // inside the capture and are the addresses every launch rewrites.
-        let record = candle_cuda_graph::Replay::record(
+        let record = crate::cuda_graph::replay::Replay::record(
             cuda,
             &[&hidden, &semantic],
             &warmup,
@@ -1526,7 +1526,7 @@ mod tests {
                 );
                 // A rejected recording must leave the stream capturable again.
                 anyhow::ensure!(
-                    !candle_cuda_graph::is_capturing(&cuda.cuda_stream())?,
+                    !crate::cuda_graph::replay::is_capturing(&cuda.cuda_stream())?,
                     "failed capture left the stream capturing"
                 );
                 return Ok(());

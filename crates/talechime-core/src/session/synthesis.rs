@@ -69,7 +69,7 @@ pub struct SynthesisOptions {
     /// Previous complete segment conditioning, where supported.
     pub continuation: bool,
     /// Source structure that resets the continuation chain.
-    pub continuation_boundary: tts_protocol::ContinuationBoundary,
+    pub continuation_boundary: talechime_protocol::ContinuationBoundary,
     /// Chained seconds before the reference re-anchors; `None` uses default.
     pub continuation_span: Option<u64>,
     /// Generation parameters validated against the prepared model's catalog.
@@ -83,7 +83,7 @@ impl Default for SynthesisOptions {
     fn default() -> Self {
         Self {
             continuation: true,
-            continuation_boundary: tts_protocol::ContinuationBoundary::Paragraph,
+            continuation_boundary: talechime_protocol::ContinuationBoundary::Paragraph,
             continuation_span: None,
             params: crate::params::GenerationParams::default(),
             seed: crate::params::SeedPolicy::default(),
@@ -179,13 +179,13 @@ impl SynthesisStream {
             vec![voice.into()],
         )?;
         let source = SourceSnapshot::new(
-            tts_protocol::SourceId {
+            talechime_protocol::SourceId {
                 namespace: "synthesis".into(),
                 book: String::new(),
                 chapter: String::new(),
             },
             text.clone(),
-            &tts_protocol::text_hash(&text),
+            &talechime_protocol::text_hash(&text),
         )?;
         let plan =
             SpeechPlan::single_voice(source, voices, PlaybackPolicy::Streaming, voice, style)?;

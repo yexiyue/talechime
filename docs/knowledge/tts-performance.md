@@ -45,16 +45,18 @@ flowchart TD
     Model --> Local[模型私有优化：图缓存、状态、算子]
     Model --> Candle[Candle 统一版本与来源]
     Local --> Candle
-    Platform[tts-candle-platform：target feature 与 Metal 探测] --> Candle
+    Adapter --> Probe[内部 Metal 探测]
+    Model --> Features[模型 manifest 的 GPU feature]
+    Features --> Candle
 ```
 
 Qwen 的 `synthesis/streaming/decoder.rs` 保留有限 codes 历史，并事务式交付新 PCM；
 VoxCPM 的 `cuda_graph/decoder.rs` 回放 AudioVAE 的卷积历史和 overlap。它们不是相同的
 状态模型，不合并。固定缓冲 recorder（录制、输入覆盖、输出回拷、流与缓冲生命周期）
-已由第二个真实使用者促成提取到 `crates/candle-cuda-graph`，只做设备机制；模型级
-缓存键、状态保活、取消与失败策略仍归各模型的私有模块（Vox CFM/decoder、Qwen
-`code_predictor/graph.rs`）。`tts-candle-platform` 继续只承担 target feature，
-不承担推理，也不吞并 recorder。
+现分别保留在 Qwen 与 VoxCPM 的私有 `cuda_graph/replay.rs`，不单独发布辅助 crate。
+这两份底层实现具有共同来源，修改时须检查另一份；模型级缓存键、状态保活、取消与失败策略
+仍归各模型的私有模块（Vox CFM/decoder、Qwen `code_predictor/graph.rs`）。
+GPU feature 由模型 manifest 直接启用并按目标平台选择，Metal 探测归 backends 内部模块。
 
 ## 基线与官方对照
 

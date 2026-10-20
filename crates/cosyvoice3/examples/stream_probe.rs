@@ -6,11 +6,11 @@
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
-use cosyvoice3::{
-    CausalHiFtGenerator, CausalMaskedDiffWithDiT, CosyVoice3Config, DiT, TokenStreamDecoder,
-};
 use std::path::Path;
 use std::time::Instant;
+use talechime_cosyvoice3::{
+    CausalHiFtGenerator, CausalMaskedDiffWithDiT, CosyVoice3Config, DiT, TokenStreamDecoder,
+};
 
 fn load_weights(path: &Path, dev: &Device) -> Result<VarBuilder<'static>> {
     Ok(unsafe { VarBuilder::from_mmaped_safetensors(&[path], DType::F32, dev)? })

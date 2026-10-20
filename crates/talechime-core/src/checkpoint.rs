@@ -1,7 +1,7 @@
 //! Independent, versioned listening checkpoints, never reader progress.
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tts_protocol::{SourceId, text_hash};
+use talechime_protocol::{SourceId, text_hash};
 
 /// A last durable playback boundary for one immutable source snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

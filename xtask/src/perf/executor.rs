@@ -160,11 +160,13 @@ pub fn execute(
             let mut bytes = 0usize;
             if let Some(interval) = budget.sample_interval_ms {
                 while !stopped.load(Ordering::Acquire) {
-                    let mut readings = super::sampling::process(pid, interval);
-                    if budget.device_sampling {
-                        readings.extend(super::sampling::gpu(interval));
-                    }
-                    let mut line = serde_json::to_vec(&serde_json::json!({"offset_seconds":start.elapsed().as_secs_f64(),"clock":"parent_spawn_complete","readings":readings}))?;
+                    let frame = sample_frame(
+                        pid,
+                        interval,
+                        budget.device_sampling,
+                        start.elapsed().as_secs_f64(),
+                    )?;
+                    let mut line = serde_json::to_vec(&frame)?;
                     line.push(b'\n');
                     bytes += line.len();
                     if bytes as u64 > budget.log_bytes {
@@ -184,6 +186,7 @@ pub fn execute(
             log.sync_all()?;
             Ok(())
         });
+
         let stdout = scope.spawn(|| {
             let result = events(outgoing, stdout, attempt_id, budget);
             if result.is_err() {
@@ -281,6 +284,70 @@ pub fn execute(
     result
 }
 
+#[cfg(any(test, windows, target_os = "macos"))]
+fn sample_frame(
+    pid: u32,
+    interval_ms: u64,
+    device_sampling: bool,
+    offset_seconds: f64,
+) -> anyhow::Result<serde_json::Value> {
+    let mut readings = super::sampling::process(pid, interval_ms);
+    let competition = device_sampling.then(super::sampling::gpu_processes);
+    if device_sampling {
+        readings.extend(super::sampling::gpu(interval_ms));
+        if let Some(competition) = &competition {
+            readings.insert(
+                "competing_gpu_processes".into(),
+                competing_processes(competition, interval_ms),
+            );
+        }
+    }
+    let mut frame = serde_json::json!({
+        "offset_seconds": offset_seconds,
+        "clock": "parent_spawn_complete",
+        "readings": readings,
+    });
+    if let Some(competition) = &competition {
+        frame["competing_gpu_processes"] = match competition {
+            Ok(value) => serde_json::to_value(value)?,
+            Err(reason) => serde_json::json!({
+                "status": "unavailable",
+                "reason": reason,
+                "processes": []
+            }),
+        };
+    }
+    Ok(frame)
+}
+
+#[cfg(any(test, windows, target_os = "macos"))]
+fn competing_processes(
+    competition: &Result<super::sampling::CompetingGpuProcesses, String>,
+    interval: u64,
+) -> super::evidence::Reading {
+    let (status, reason, value) = match competition {
+        Ok(competition) => {
+            let value =
+                (competition.status == "available").then_some(competition.processes.len() as f64);
+            (
+                competition.status.as_str(),
+                competition.reason.as_ref(),
+                value,
+            )
+        }
+        Err(reason) => ("unavailable", Some(reason), None),
+    };
+    super::evidence::Reading {
+        value,
+        unit: "processes".into(),
+        scope: "whole_device_compute_apps".into(),
+        source: "nvidia-smi --query-compute-apps".into(),
+        interval_ms: Some(interval),
+        status: status.into(),
+        reason: reason.cloned(),
+    }
+}
+
 #[cfg(not(any(windows, target_os = "macos")))]
 pub fn execute(
     _command: &mut Command,
@@ -307,5 +374,38 @@ mod tests {
         assert!(log.is_empty());
         assert!(events(&b""[..], &mut log, "attempt", budget).is_err());
         assert!(diagnostic(&[0; 100][..], Vec::new(), 10).is_err());
+    }
+    #[test]
+    fn competition_samples_preserve_unavailable_reasons_and_scope() -> anyhow::Result<()> {
+        let value = super::super::sampling::CompetingGpuProcesses {
+            status: "unavailable".into(),
+            reason: Some("fixture provider unavailable".into()),
+            processes: vec![],
+        };
+        let reading = competing_processes(&Ok(value), 500);
+        reading.validate()?;
+        assert_eq!(reading.value, None);
+        assert_eq!(
+            reading.reason.as_deref(),
+            Some("fixture provider unavailable")
+        );
+        assert_eq!(reading.scope, "whole_device_compute_apps");
+        let reading = competing_processes(&Err("collector missing".into()), 500);
+        reading.validate()?;
+        assert_eq!(reading.status, "unavailable");
+        Ok(())
+    }
+    #[test]
+    fn sampling_frame_keeps_numeric_reading_and_process_details_separate() -> anyhow::Result<()> {
+        let frame = sample_frame(std::process::id(), 500, false, 1.25)?;
+        assert_eq!(frame["offset_seconds"], 1.25);
+        assert!(frame["competing_gpu_processes"].is_null());
+        assert!(frame["readings"]["rss_bytes"].is_object());
+        let reading: super::super::evidence::Reading =
+            serde_json::from_value(frame["readings"]["rss_bytes"].clone())?;
+        reading.validate()?;
+        assert_eq!(reading.unit, "bytes");
+        assert_eq!(reading.scope, "process");
+        Ok(())
     }
 }

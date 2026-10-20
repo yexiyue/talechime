@@ -570,7 +570,7 @@ mod tests {
     }
 
     /// Real-weights smoke test. Run with e.g.
-    /// `INDEXTTS_CONVERTED_DIR=<dir> cargo test -p indextts --lib -- --ignored gpt_real`
+    /// `INDEXTTS_CONVERTED_DIR=<dir> cargo test -p talechime-indextts --lib -- --ignored gpt_real`
     /// where `<dir>` contains `gpt.safetensors` (see `weights.rs`). The
     /// `inference_speech` half additionally requires the `gpt2` backbone
     /// and the generation loop to be implemented.

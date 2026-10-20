@@ -39,7 +39,7 @@ CustomVoice 提供九种预置音色，默认福叔 `uncle_fu`；1.7B 支持朗�
 
 Qwen 分段独立于 MOSS 的 token 预算：真实段落和标题建立硬边界；合并软换行，在 180 UTF-8 字节内优先切完整句末、分句、单词和字符边界。原文不修改，装饰线跳过，正文运算符保留。
 
-CPU、可选 CUDA（Windows/Linux，`qwen-cuda`）和 Metal（macOS，`qwen-metal`）由 Qwen 自己的设备目录报告。`ort-cuda` 仅用于 MOSS Nano，不能为 Qwen 提供 CUDA。`tts-candle-platform` 按目标平台启用同一套 Candle 0.11.0 的 GPU 依赖，Windows 的 all-features 不会编入 Objective-C Metal。CUDA feature 仍需 Toolkit。Auto 使用同一完整链路校准门槛；运行错误仅在 Auto 模式重建 CPU 供下次显式播放，不重放失败片段。
+CPU、可选 CUDA（Windows/Linux，`qwen-cuda`）和 Metal（macOS，`qwen-metal`）由 Qwen 自己的设备目录报告。`ort-cuda` 仅用于 MOSS Nano，不能为 Qwen 提供 CUDA。各模型 manifest 直接启用同一套 Candle 0.11.0 的 GPU feature；Metal 探测位于内部 `devices/metal.rs`。GPU feature 必须按平台选择，不使用同时启用 CUDA 与 Metal 的 `--all-features`。CUDA feature 仍需 Toolkit。Auto 使用同一完整链路校准门槛；运行错误仅在 Auto 模式重建 CPU 供下次显式播放，不重放失败片段。
 
 流式 codec 的边界连续性需要人工试听，EOS 也不能证明逐字覆盖。当前各模型实测与待验收项见 [验收记录](../../docs/records/tts-core/tts-model-tiers-acceptance.md)。
 

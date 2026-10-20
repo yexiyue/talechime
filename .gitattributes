@@ -8,3 +8,7 @@
 crates/talechime-core/tests/fixtures/narration.txt text eol=lf
 crates/talechime-protocol/tests/fixtures/narration.txt text eol=lf
 *.png binary
+
+# Pinned third-party asset hashes must survive Windows checkouts.
+docs/legal/echarts/echarts-6.0.0.min.js text eol=lf
+docs/legal/echarts/LICENSE text eol=lf

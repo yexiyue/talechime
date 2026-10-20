@@ -6,6 +6,10 @@
 
 # 工具链 / 工程
 
+当前发布边界（2026-10-20）：模型包统一使用 `talechime-` 前缀；platform 与 CUDA graph 辅助 crate 已移除。
+GPU feature 由模型 manifest 直接启用，Metal 探测位于 backends 内部，recorder 位于 Qwen/VoxCPM 私有模块。
+下文旧实验中出现的辅助 crate 路径属于当时结构，不是当前发布依赖。
+
 跨后端优化的当前方法见 [TTS 性能优化方法](tts-performance.md)，包括测量与准确性门禁、
 模块边界、CUDA Graph 生命周期和失败实验。下方带日期的条目保留历史环境，
 实际版本与来源以根 Cargo.toml/Cargo.lock 及 [Candle 声明](../legal/candle/SOURCE.md) 为准。
@@ -143,7 +147,7 @@ Qwen 推理源码位于 `crates/qwen3-tts`，来自 TrevorS/qwen3-tts-rs revisio
 
 **正确做法**：
 - `qwen` 是 CPU 后端；`qwen-cuda` 同时启用 Qwen 和三套 Candle CUDA 算子；`metal` 启用 Candle core/nn 的 Metal 算子，仅在 macOS 构建。`ort-cuda` 独立用于 MOSS/对齐器，不保留旧 `cuda` 别名。
-- GPU feature 经 `tts-candle-platform` 按 target 路由，同一 Candle 0.11.0 同时服务 Qwen 和 Omni。Windows/Linux 的 CUDA 依赖和 macOS Metal 依赖分别生效；Windows all-features 不会编入 Objective-C。CUDA 构建仍需 Toolkit，通用 CI/lefthook 使用 CPU feature 集合，平台 GPU CI 单独启用。
+- GPU feature 由模型 manifest 直接启用，同一 Candle 0.11.0 同时服务 Qwen 和 Omni。Windows/Linux 选择 CUDA，macOS 选择 Metal；不再依靠 platform 辅助包过滤异平台 feature，因此不使用跨平台 all-features。CUDA 构建仍需 Toolkit，通用 CI/lefthook 使用 CPU feature 集合，平台 GPU CI 单独启用。
 - `device.rs` 统一设备创建；显式 CUDA 使用 `Device::new_cuda`，避免 `cuda_if_available` 静默返回 CPU。Registry 继续按后端提供编译/可用设备，对齐器使用自己的 ORT provider。
 - CUDA 编译需要 Toolkit/`nvcc`；驱动提供的 `nvidia-smi` 不代替 Toolkit。RTX 5070 的 CC 为 12.0，使用支持 Blackwell 的 Toolkit；无 GPU 构建机显式设置 `CUDA_COMPUTE_CAP`。
 - tokenizers 仅启用推理用 `onig`，不启用训练用 `esaxx_fast`。上游 esaxx-rs 的 `.static_crt(true)` 与 ORT 的 `/MD` 在 Windows 导致 LNK2038/LNK2005；从依赖 feature 源头移除 C++ 加速，不使用 `/NODEFAULTLIB` 或全局 `/MD` workaround。
@@ -208,7 +212,7 @@ RTX 5070 的硬件算力；其他设备不能照搬。生产 Candle 推理不依
 
 Omni tokenizer 权重为 BOSON/Higgs/Llama 条款，不能跟生成器一起标为 Apache；`crates/omnivoice/LICENSE.Higgs-Audio` 保存原始许可。
 
-**相关文件**：`crates/tts-candle-platform/`、`.github/workflows/qwen-cuda.yml`；旧 build.rs 见[退役对照恢复说明](../legal/retired-voxcpm-native/README.md)。
+**相关文件**：各模型 `Cargo.toml`、`crates/talechime-backends/src/devices/metal.rs`、`.github/workflows/qwen-cuda.yml`；旧 build.rs 见[退役对照恢复说明](../legal/retired-voxcpm-native/README.md)。
 
 ### MOSS 统一 Candle 试用
 
@@ -371,7 +375,7 @@ tag `0.11.0`）。
 - 固定缓冲 recorder 在第二个真实使用者（Qwen CodePredictor 帧图）出现后提取到
   `crates/candle-cuda-graph`（`talechime-candle-cuda-graph`）。它只做设备机制：
   capture/replay、输入覆盖、输出回拷、缓冲与流生命周期；模型策略留在
-  `voxcpm::cuda_graph` 与 `qwen3_tts::models::code_predictor::graph`。该 crate 依赖
+  `talechime_voxcpm::cuda_graph` 与 `talechime_qwen3_tts::models::code_predictor::graph`。该 crate 依赖
   Candle 的 `cuda` feature（而非自己挑 cudarc 库加载模式，与 `tts-candle-platform`
   同一约定），支持整数 storage slice 以录制 U32 token 输出，并导出 `is_capturing`
   供测试断言 capture 已干净退出——因此两个模型 crate 都不再直接依赖 cudarc。

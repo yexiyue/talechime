@@ -8,9 +8,9 @@ mod text;
 use runtime::Request;
 
 use std::path::PathBuf;
+use talechime_core::backend::{Backend, BackendError, Segmentation, Streaming};
+use talechime_protocol::{Capabilities, Device};
 use tokio::sync::{mpsc, oneshot};
-use tts_core::backend::{Backend, BackendError, Segmentation, Streaming};
-use tts_protocol::{Capabilities, Device};
 
 const VOICES: [&str; 9] = [
     "uncle_fu", "serena", "vivian", "ryan", "aiden", "ono_anna", "sohee", "eric", "dylan",
@@ -65,10 +65,10 @@ pub fn model_capabilities(model: models::Model) -> Capabilities {
 pub fn voice_store(
     directory: &std::path::Path,
     model: models::Model,
-) -> anyhow::Result<tts_core::voices::VoiceStore> {
-    tts_core::voices::VoiceStore::new(directory, "qwen", model.id(), model.revision())
+) -> anyhow::Result<talechime_core::voices::VoiceStore> {
+    talechime_core::voices::VoiceStore::new(directory, "qwen", model.id(), model.revision())
 }
-pub fn validate_reference(audio: &qwen3_tts::AudioBuffer) -> anyhow::Result<()> {
+pub fn validate_reference(audio: &talechime_qwen3_tts::AudioBuffer) -> anyhow::Result<()> {
     anyhow::ensure!(
         audio.sample_rate >= 8000
             && audio.sample_rate <= 192000
@@ -88,7 +88,7 @@ pub fn validate_reference(audio: &qwen3_tts::AudioBuffer) -> anyhow::Result<()> 
     Ok(())
 }
 pub fn validate_wav(path: &std::path::Path) -> anyhow::Result<()> {
-    validate_reference(&qwen3_tts::AudioBuffer::load(path)?)
+    validate_reference(&talechime_qwen3_tts::AudioBuffer::load(path)?)
 }
 pub fn capabilities_at(
     directory: &std::path::Path,
@@ -110,6 +110,7 @@ pub fn catalog(root: &std::path::Path) -> anyhow::Result<Vec<Capabilities>> {
         models::Model::Custom17,
         models::Model::Base06,
         models::Model::Base17,
+        models::Model::Design17,
     ]
     .into_iter()
     .map(|model| capabilities_at(&model.directory(root), model))
@@ -129,7 +130,7 @@ pub fn available_devices() -> Vec<Device> {
     compiled_devices()
         .into_iter()
         .filter(|device| {
-            (*device != Device::Metal || tts_candle_platform::metal_is_available())
+            (*device != Device::Metal || crate::devices::metal::metal_is_available())
                 && runtime::device(*device).is_ok()
         })
         .collect()
@@ -149,7 +150,7 @@ impl QwenBackend {
     pub async fn load_with_recovery(
         directory: PathBuf,
         device: Device,
-        recovery: Option<mpsc::Sender<tts_protocol::Event>>,
+        recovery: Option<mpsc::Sender<talechime_protocol::Event>>,
     ) -> Result<Self, BackendError> {
         let model = models::Model::detect(&directory)
             .map_err(|e| BackendError::Initialize(e.to_string()))?;
@@ -206,7 +207,7 @@ impl Backend for QwenBackend {
         capabilities_at(&self.directory, self.model)
             .unwrap_or_else(|_| model_capabilities(self.model))
     }
-    fn stream<'a>(&'a self, request: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
             let (text, voice, style, context) =
                 (request.text, request.voice, request.style, request.context);
@@ -268,7 +269,7 @@ impl Backend for QwenBackend {
     }
     fn paragraph_end(&self, segment: &str, remaining: &str) -> bool {
         remaining.trim().is_empty()
-            || tts_core::text::is_heading_line(segment.trim())
+            || talechime_core::text::is_heading_line(segment.trim())
             || remaining.starts_with('\n') && segment.ends_with('\n')
     }
 }
@@ -285,9 +286,9 @@ impl Drop for QwenBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use qwen3_tts::Speaker;
     use runtime::validate_completion;
-    use tts_core::backend::AudioChunk;
+    use talechime_core::backend::AudioChunk;
+    use talechime_qwen3_tts::Speaker;
     #[test]
     fn continuation_is_only_exposed_for_base_with_imported_voices() {
         for model in [
@@ -339,11 +340,11 @@ mod tests {
         assert!(validate_completion(true, false).is_err());
     }
     fn request<'a>(
-        params: &'a tts_core::params::GenerationParams,
+        params: &'a talechime_core::params::GenerationParams,
         text: &'a str,
         voice: &'a str,
-    ) -> tts_core::backend::SegmentRequest<'a> {
-        tts_core::backend::SegmentRequest {
+    ) -> talechime_core::backend::SegmentRequest<'a> {
+        talechime_core::backend::SegmentRequest {
             text,
             voice,
             style: None,
@@ -360,14 +361,14 @@ mod tests {
         let backend = QwenBackend::load_on(directory.into(), Device::Cpu)
             .await
             .unwrap();
-        let params = tts_core::params::GenerationParams::new();
+        let params = talechime_core::params::GenerationParams::new();
         assert!(
             backend
                 .stream(request(&params, "hello", "invalid"))
                 .await
                 .is_err()
         );
-        let params = tts_core::params::GenerationParams::new();
+        let params = talechime_core::params::GenerationParams::new();
         let mut stream = backend
             .stream(request(&params, "你好。", "uncle_fu"))
             .await
@@ -379,7 +380,7 @@ mod tests {
         assert_eq!(pcm.sample_rate, 24000);
         pcm.duration_ms().unwrap();
         drop(stream);
-        let params = tts_core::params::GenerationParams::new();
+        let params = talechime_core::params::GenerationParams::new();
         let mut stream = backend
             .stream(request(&params, "谢谢。", "uncle_fu"))
             .await

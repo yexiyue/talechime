@@ -1,6 +1,6 @@
 //! Developer-only observations; normal builds retain the original channel behavior.
+use talechime_core::backend::{AudioChunk, BackendError};
 use tokio::sync::mpsc;
-use tts_core::backend::{AudioChunk, BackendError};
 
 #[inline]
 pub(crate) fn send_audio(

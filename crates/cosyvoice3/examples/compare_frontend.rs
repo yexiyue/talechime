@@ -19,12 +19,17 @@ fn main() -> anyhow::Result<()> {
         .chunks_exact(spec.channels as usize)
         .map(|frame| frame.iter().sum::<f32>() / f32::from(spec.channels))
         .collect::<Vec<_>>();
-    let mut frontend = cosyvoice3::frontend::ort_models::FrontendOnnx::load(model, 1)?;
-    let prompt =
-        cosyvoice3::pipeline::extract_prompt_features(&mut frontend, &mono, spec.sample_rate, "")?;
+    let mut frontend = talechime_cosyvoice3::frontend::ort_models::FrontendOnnx::load(model, 1)?;
+    let prompt = talechime_cosyvoice3::pipeline::extract_prompt_features(
+        &mut frontend,
+        &mono,
+        spec.sample_rate,
+        "",
+    )?;
     let audio = Tensor::from_slice(&mono, mono.len(), &Device::Cpu)?;
-    let audio16 = cosyvoice3::frontend::audio::resample(&audio, spec.sample_rate as usize, 16000)?;
-    let fbank = cosyvoice3::frontend::audio::KaldiFbank::new().forward(&audio16)?;
+    let audio16 =
+        talechime_cosyvoice3::frontend::audio::resample(&audio, spec.sample_rate as usize, 16000)?;
+    let fbank = talechime_cosyvoice3::frontend::audio::KaldiFbank::new().forward(&audio16)?;
     let embedding = Tensor::from_slice(&prompt.embedding, (1, 192), &Device::Cpu)?;
     candle_core::safetensors::save(
         &std::collections::HashMap::from([

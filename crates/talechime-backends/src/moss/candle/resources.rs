@@ -1,8 +1,8 @@
 use super::Mode;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use talechime_protocol::Event;
 use tokio::sync::mpsc;
-use tts_protocol::Event;
 pub const CODEC_REVISION: &str = "3cd226ba2947efa357ef453bcad111b6eafba782";
 pub const DESIGN_REVISION: &str = "97521ec2b6f3ec5026ac1f5751f8fc302d82c2d4";
 pub fn codec_directory(root: &Path) -> PathBuf {
@@ -32,8 +32,8 @@ async fn manifest(
 }
 pub async fn prepare(root: &Path, mode: Mode, progress: mpsc::Sender<Event>) -> anyhow::Result<()> {
     let json = match mode {
-        Mode::Local => moss_tts::manifests::LOCAL,
-        Mode::Realtime => moss_tts::manifests::REALTIME,
+        Mode::Local => talechime_moss_tts::manifests::LOCAL,
+        Mode::Realtime => talechime_moss_tts::manifests::REALTIME,
     };
     manifest(&mode.directory(root), mode.id(), json, progress.clone()).await?;
     codec(root, progress).await
@@ -42,7 +42,7 @@ async fn codec(root: &Path, progress: mpsc::Sender<Event>) -> anyhow::Result<()>
     manifest(
         &codec_directory(root),
         "codec",
-        moss_tts::manifests::CODEC,
+        talechime_moss_tts::manifests::CODEC,
         progress,
     )
     .await
@@ -51,7 +51,7 @@ pub async fn prepare_design(root: &Path, progress: mpsc::Sender<Event>) -> anyho
     manifest(
         &design_directory(root),
         "voice-design-1.7b",
-        moss_tts::manifests::VOICE_DESIGN,
+        talechime_moss_tts::manifests::VOICE_DESIGN,
         progress.clone(),
     )
     .await?;

@@ -291,14 +291,19 @@ fn cuda_graph_headroom_probe() -> Result<()> {
     let guard = cuda.enable_cuda_graph_htod_cache();
     let mut warmup_caches = warm_caches()?;
     let warmup = talker_step(&mut warmup_caches, offset)?;
-    let talker_record =
-        candle_cuda_graph::Replay::record(cuda, &[&step_input], &warmup, vec![], |inputs| {
+    let talker_record = crate::cuda_graph::replay::Replay::record(
+        cuda,
+        &[&step_input],
+        &warmup,
+        vec![],
+        |inputs| {
             model
                 .talker
                 .generate_step_with_embed(&inputs[0], &mut capture_caches, offset)
                 .map(|(_, logits)| logits)
                 .map_err(|error| candle_core::Error::Msg(error.to_string()))
-        });
+        },
+    );
     drop(guard);
     let talker_replay = match talker_record {
         Ok(replay) => replay,
@@ -350,7 +355,7 @@ fn cuda_graph_headroom_probe() -> Result<()> {
         let guard = cuda.enable_cuda_graph_htod_cache();
         let warmup = decode_eager()?;
         let decode_record =
-            candle_cuda_graph::Replay::record(cuda, &[&codes], &warmup, vec![], |inputs| {
+            crate::cuda_graph::replay::Replay::record(cuda, &[&codes], &warmup, vec![], |inputs| {
                 model
                     .decoder
                     .decode(&inputs[0])

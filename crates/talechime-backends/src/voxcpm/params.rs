@@ -1,7 +1,7 @@
 //! Declared VoxCPM generation parameters and their typed builder.
-use tts_core::params::GenerationParams;
-use tts_protocol::{ParamKind, ParamValue, ParameterSpec};
-use voxcpm::Options;
+use talechime_core::params::GenerationParams;
+use talechime_protocol::{ParamKind, ParamValue, ParameterSpec};
+use talechime_voxcpm::Options;
 
 /// One latent frame covers 2560 samples at 48 kHz (18.75 Hz).
 const FRAME_HZ: f64 = 48_000.0 / 2560.0;

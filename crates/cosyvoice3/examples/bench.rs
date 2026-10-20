@@ -25,15 +25,15 @@
 use anyhow::{Context, Result, bail};
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
-use cosyvoice3::config::SamplingConfig;
-use cosyvoice3::flow::{CausalMaskedDiffWithDiT, DiT};
-use cosyvoice3::llm::CosyVoice3Lm;
-use cosyvoice3::pipeline::{CosyVoice3, PromptFeatures, extract_prompt_features};
-use cosyvoice3::vocoder::CausalHiFtGenerator;
 use serde_json::json;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+use talechime_cosyvoice3::config::SamplingConfig;
+use talechime_cosyvoice3::flow::{CausalMaskedDiffWithDiT, DiT};
+use talechime_cosyvoice3::llm::CosyVoice3Lm;
+use talechime_cosyvoice3::pipeline::{CosyVoice3, PromptFeatures, extract_prompt_features};
+use talechime_cosyvoice3::vocoder::CausalHiFtGenerator;
 
 struct Args {
     model: PathBuf,
@@ -166,7 +166,7 @@ fn prepare_case(args: &Args) -> Result<()> {
     let wav = meta["prompt_wav"].as_str().context("missing prompt_wav")?;
     let (samples, rate) = read_wav_mono(Path::new(wav))?;
     let mut frontend =
-        cosyvoice3::frontend::ort_models::FrontendOnnx::load(&args.model, args.threads)?;
+        talechime_cosyvoice3::frontend::ort_models::FrontendOnnx::load(&args.model, args.threads)?;
     let prompt = extract_prompt_features(&mut frontend, &samples, rate, prompt_text)?;
     let device = &Device::Cpu;
     let features = std::collections::HashMap::from([
@@ -265,7 +265,7 @@ struct RoundPrompt {
 }
 
 fn round_prompt(
-    frontend: &mut Option<cosyvoice3::frontend::ort_models::FrontendOnnx>,
+    frontend: &mut Option<talechime_cosyvoice3::frontend::ort_models::FrontendOnnx>,
     wav: Option<(&[f32], u32)>,
     prompt_text: &str,
     fixture: &PromptFeatures,
@@ -299,12 +299,12 @@ struct Staged {
     llm: CosyVoice3Lm,
     flow: CausalMaskedDiffWithDiT,
     hift: CausalHiFtGenerator,
-    cfg: cosyvoice3::CosyVoice3Config,
+    cfg: talechime_cosyvoice3::CosyVoice3Config,
 }
 
 impl Staged {
     fn load(model: &Path, dev: &Device) -> Result<Self> {
-        let cfg = cosyvoice3::CosyVoice3Config::from_model_dir(model)?;
+        let cfg = talechime_cosyvoice3::CosyVoice3Config::from_model_dir(model)?;
         let vb = |name: &str| -> Result<VarBuilder<'static>> {
             Ok(unsafe {
                 VarBuilder::from_mmaped_safetensors(&[model.join(name)], DType::F32, dev)?
@@ -411,7 +411,7 @@ fn components(args: &Args, dev: &Device, report: &mut serde_json::Value) -> Resu
     let flow_fx = load(args.case.join("flow.safetensors"))?;
     let hift_fx = load(args.case.join("hift.safetensors"))?;
 
-    let cfg = cosyvoice3::CosyVoice3Config::from_model_dir(&args.model)?;
+    let cfg = talechime_cosyvoice3::CosyVoice3Config::from_model_dir(&args.model)?;
     let flow_vb = unsafe {
         VarBuilder::from_mmaped_safetensors(
             &[args.model.join("flow.safetensors")],
@@ -550,7 +550,10 @@ fn main() -> Result<()> {
     let mut frontend = None;
     if args.reextract {
         let t = Instant::now();
-        let f = cosyvoice3::frontend::ort_models::FrontendOnnx::load(&args.model, args.threads)?;
+        let f = talechime_cosyvoice3::frontend::ort_models::FrontendOnnx::load(
+            &args.model,
+            args.threads,
+        )?;
         frontend = Some(f);
         report["frontend_load_seconds"] = t.elapsed().as_secs_f64().into();
     }
@@ -574,7 +577,7 @@ fn main() -> Result<()> {
             let pcm = cv.synthesize(
                 &text,
                 &request.features,
-                cosyvoice3::Mode::ZeroShot,
+                talechime_cosyvoice3::Mode::ZeroShot,
                 None,
                 &sampling,
                 1.0,
@@ -661,7 +664,7 @@ fn main() -> Result<()> {
             cv.synthesize(
                 &text,
                 &warm.features,
-                cosyvoice3::Mode::ZeroShot,
+                talechime_cosyvoice3::Mode::ZeroShot,
                 None,
                 &sampling,
                 1.0,
@@ -691,7 +694,7 @@ fn main() -> Result<()> {
                     let pcm = cv.synthesize(
                         &text,
                         &request.features,
-                        cosyvoice3::Mode::ZeroShot,
+                        talechime_cosyvoice3::Mode::ZeroShot,
                         None,
                         &sampling,
                         1.0,

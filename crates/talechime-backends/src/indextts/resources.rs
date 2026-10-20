@@ -1,7 +1,7 @@
 //! Check converted local weights before starting the owner thread.
 use std::path::Path;
+use talechime_protocol::Event;
 use tokio::sync::mpsc;
-use tts_protocol::Event;
 
 /// Pinned upstream checkpoint plus the local conversion layout.
 pub const REVISION: &str = "c39ce5ba-candle-v1";

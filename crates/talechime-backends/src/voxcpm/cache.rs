@@ -3,7 +3,7 @@ use candle_core::{DType, Device, Tensor};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::Path;
-use voxcpm::{Model, Reference};
+use talechime_voxcpm::{Model, Reference};
 const FILE: &str = "candle-reference-v1.json";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Identity {

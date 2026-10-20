@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
-use tts_protocol::{Capabilities, Config};
+use talechime_protocol::{Capabilities, Config};
 
 /// Copy-only migration from the retired worker's locations under one home.
 #[derive(Debug, Clone)]
@@ -423,7 +423,7 @@ fn validate_checkpoint(path: &Path) -> std::io::Result<()> {
     let checkpoint: crate::checkpoint::Checkpoint = serde_json::from_slice(&bytes)?;
     let expected = format!(
         "{}.json",
-        tts_protocol::text_hash(&serde_json::to_string(&checkpoint.source)?)
+        talechime_protocol::text_hash(&serde_json::to_string(&checkpoint.source)?)
     );
     if checkpoint.schema_version != 1
         || checkpoint.text_hash.len() != 64
@@ -585,7 +585,7 @@ mod tests {
         std::fs::write(source.join("model"), b"fake weight").unwrap();
         let checkpoint = home.path().join(".novel/tts/checkpoints");
         std::fs::create_dir_all(&checkpoint).unwrap();
-        let source_id = tts_protocol::SourceId {
+        let source_id = talechime_protocol::SourceId {
             namespace: "reader".into(),
             book: "书".into(),
             chapter: "章".into(),
@@ -595,7 +595,7 @@ mod tests {
             .unwrap();
         let name = format!(
             "{}.json",
-            tts_protocol::text_hash(&serde_json::to_string(&source_id).unwrap())
+            talechime_protocol::text_hash(&serde_json::to_string(&source_id).unwrap())
         );
         let original = std::fs::read(checkpoint.join(&name)).unwrap();
         let migration = LegacyMigration::from_home(home.path());

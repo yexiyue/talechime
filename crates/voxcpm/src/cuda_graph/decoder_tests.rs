@@ -10,9 +10,9 @@
 //! persistent state buffers and state updates recorded into the graph first.
 
 use super::decoder::DecoderGraph;
+use crate::cuda_graph::replay::Replay;
 use crate::{codec::Codec, weights::Weights};
 use candle_core::{DType, Device, Result, Tensor};
-use candle_cuda_graph::Replay;
 use std::path::PathBuf;
 
 fn frame(seed: usize, device: &Device) -> Result<Tensor> {

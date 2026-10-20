@@ -1,7 +1,7 @@
 //! Synthesis boundary with model-independent PCM and capabilities.
 
 use std::{future::Future, pin::Pin};
-use tts_protocol::Capabilities;
+use talechime_protocol::Capabilities;
 
 /// Backend failures do not expose inference-library types to consumers.
 #[derive(Debug, thiserror::Error)]

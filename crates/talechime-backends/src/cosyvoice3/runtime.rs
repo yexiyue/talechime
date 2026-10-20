@@ -1,12 +1,12 @@
-use ::cosyvoice3::{
+use std::path::PathBuf;
+use talechime_core::backend::{AudioChunk, BackendError, Pcm};
+use talechime_cosyvoice3::{
     DEFAULT_PROMPT_PREFIX, SamplingConfig,
     frontend::ort_models::FrontendOnnx,
     pipeline::{CosyVoice3, extract_prompt_features},
 };
-use std::path::PathBuf;
+use talechime_protocol::Device;
 use tokio::sync::{mpsc, oneshot};
-use tts_core::backend::{AudioChunk, BackendError, Pcm};
-use tts_protocol::Device;
 
 pub(super) struct Request {
     #[cfg(feature = "performance-tools")]
@@ -89,7 +89,7 @@ pub(super) fn run(
 /// exhaustion or a token budget limit never publishes successful End.
 async fn deliver(
     audio: &mpsc::Sender<Result<AudioChunk, BackendError>>,
-    mut next: impl FnMut() -> anyhow::Result<Option<::cosyvoice3::StreamChunk>>,
+    mut next: impl FnMut() -> anyhow::Result<Option<talechime_cosyvoice3::StreamChunk>>,
 ) -> anyhow::Result<()> {
     loop {
         #[cfg(feature = "performance-tools")]
@@ -132,7 +132,7 @@ async fn deliver(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ::cosyvoice3::StreamChunk;
+    use talechime_cosyvoice3::StreamChunk;
     fn chunk(final_chunk: bool) -> StreamChunk {
         StreamChunk {
             samples: vec![0.1; 240],

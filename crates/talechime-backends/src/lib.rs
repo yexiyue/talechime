@@ -65,8 +65,8 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
 };
-use tts_core::backend::Backend;
-use tts_protocol::{Capabilities, Event};
+use talechime_core::backend::Backend;
+use talechime_protocol::{Capabilities, Event};
 
 #[derive(Clone)]
 pub struct Registry {
@@ -75,11 +75,40 @@ pub struct Registry {
 impl Registry {
     pub fn new(root: Option<PathBuf>) -> anyhow::Result<Self> {
         Ok(Self {
-            root: root.map_or_else(tts_core::download::get_cache_dir, Ok)?,
+            root: root.map_or_else(talechime_core::download::get_cache_dir, Ok)?,
         })
     }
     pub fn root(&self) -> &Path {
         &self.root
+    }
+    pub fn feature_exists(feature: &str) -> bool {
+        matches!(
+            feature,
+            "moss"
+                | "moss-candle"
+                | "moss-candle-cuda"
+                | "moss-candle-metal"
+                | "moss-nano-candle"
+                | "moss-nano-candle-cuda"
+                | "moss-nano-candle-metal"
+                | "qwen"
+                | "qwen-cuda"
+                | "qwen-metal"
+                | "voxcpm"
+                | "voxcpm-cuda"
+                | "voxcpm-metal"
+                | "omnivoice"
+                | "omnivoice-cuda"
+                | "omnivoice-metal"
+                | "cosyvoice3"
+                | "cosyvoice3-cuda"
+                | "cosyvoice3-metal"
+                | "indextts"
+                | "indextts-cuda-cudnn"
+                | "indextts-metal"
+                | "ort-cuda"
+                | "ort-coreml"
+        )
     }
     #[cfg(any(
         feature = "moss",
@@ -89,7 +118,7 @@ impl Registry {
         feature = "indextts",
         feature = "omnivoice",
     ))]
-    fn devices_for(&self, backend: &str, available: bool) -> Vec<tts_protocol::Device> {
+    fn devices_for(&self, backend: &str, available: bool) -> Vec<talechime_protocol::Device> {
         let _ = available;
         match backend {
             #[cfg(feature = "indextts")]
@@ -159,7 +188,7 @@ impl Registry {
         feature = "indextts",
         feature = "omnivoice",
     ))]
-    pub fn compiled_devices(&self, backend: &str) -> Vec<tts_protocol::Device> {
+    pub fn compiled_devices(&self, backend: &str) -> Vec<talechime_protocol::Device> {
         self.devices_for(backend, false)
     }
     #[cfg(any(
@@ -170,7 +199,7 @@ impl Registry {
         feature = "indextts",
         feature = "omnivoice",
     ))]
-    pub fn available_devices(&self, backend: &str) -> Vec<tts_protocol::Device> {
+    pub fn available_devices(&self, backend: &str) -> Vec<talechime_protocol::Device> {
         self.devices_for(backend, true)
     }
     #[cfg(any(
@@ -184,7 +213,7 @@ impl Registry {
     pub fn device_status(
         &self,
         backend: &str,
-        selected: tts_protocol::Device,
+        selected: talechime_protocol::Device,
         reason: Option<String>,
     ) -> Event {
         Event::DeviceStatus {
@@ -207,7 +236,7 @@ impl Registry {
         &self,
         backend: &str,
         model: Option<&str>,
-    ) -> Vec<tts_protocol::Device> {
+    ) -> Vec<talechime_protocol::Device> {
         #[cfg(feature = "voxcpm")]
         if backend == "voxcpm" {
             return voxcpm::models::Model::parse(model)
@@ -240,7 +269,7 @@ impl Registry {
         &self,
         backend: &str,
         model: Option<&str>,
-    ) -> Vec<tts_protocol::Device> {
+    ) -> Vec<talechime_protocol::Device> {
         #[cfg(feature = "voxcpm")]
         if backend == "voxcpm" {
             let compiled = self.compiled_devices_for(backend, model);
@@ -276,7 +305,7 @@ impl Registry {
         &self,
         backend: &str,
         model: Option<&str>,
-        selected: tts_protocol::Device,
+        selected: talechime_protocol::Device,
         reason: Option<String>,
     ) -> Event {
         Event::DeviceStatus {
@@ -350,15 +379,16 @@ impl Registry {
             })
     }
     /// Resolve defaults only for a new settings file; existing users retain their choices.
-    pub fn default_config(&self) -> anyhow::Result<tts_protocol::Config> {
+    pub fn default_config(&self) -> anyhow::Result<talechime_protocol::Config> {
         let catalog = self.catalog()?;
         #[cfg(feature = "qwen")]
-        if let Some(device) = qwen::available_devices()
-            .iter()
-            .copied()
-            .find(|d| matches!(d, tts_protocol::Device::Cuda | tts_protocol::Device::Metal))
-        {
-            return Ok(tts_protocol::Config {
+        if let Some(device) = qwen::available_devices().iter().copied().find(|d| {
+            matches!(
+                d,
+                talechime_protocol::Device::Cuda | talechime_protocol::Device::Metal
+            )
+        }) {
+            return Ok(talechime_protocol::Config {
                 backend: "qwen".into(),
                 model: Some(qwen::models::Model::Custom17.id().into()),
                 voice: qwen::capabilities().default_voice,
@@ -373,11 +403,11 @@ impl Registry {
                     .as_deref()
                     .is_none_or(|id| id == "nano" || id == "nano-candle")
         }) {
-            return Ok(tts_protocol::Config {
+            return Ok(talechime_protocol::Config {
                 backend: caps.backend.clone(),
                 model: caps.model.clone(),
                 voice: caps.default_voice.clone(),
-                tts_device: tts_protocol::Device::Cpu,
+                tts_device: talechime_protocol::Device::Cpu,
                 ..Default::default()
             });
         }
@@ -390,14 +420,14 @@ impl Registry {
         id: &str,
         progress: tokio::sync::mpsc::Sender<Event>,
     ) -> anyhow::Result<Rc<dyn Backend>> {
-        self.prepare_on(id, progress, tts_protocol::Device::Cpu)
+        self.prepare_on(id, progress, talechime_protocol::Device::Cpu)
             .await
     }
     pub async fn prepare_on(
         &self,
         id: &str,
         progress: tokio::sync::mpsc::Sender<Event>,
-        device: tts_protocol::Device,
+        device: talechime_protocol::Device,
     ) -> anyhow::Result<Rc<dyn Backend>> {
         self.prepare_model_on(id, None, progress, device).await
     }
@@ -406,7 +436,7 @@ impl Registry {
         id: &str,
         model: Option<&str>,
         progress: tokio::sync::mpsc::Sender<Event>,
-        device: tts_protocol::Device,
+        device: talechime_protocol::Device,
     ) -> anyhow::Result<Rc<dyn Backend>> {
         self.capabilities_for(id, model)?;
         let _ = (&progress, device);

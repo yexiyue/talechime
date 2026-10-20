@@ -9,7 +9,7 @@ on:
       - 'crates/cosyvoice3/**'
       - 'crates/moss-tts/**'
       - 'crates/voxcpm/**'
-      - 'crates/tts-candle-platform/**'
+      - 'crates/indextts/**'
       - 'crates/talechime-backends/**'
       - 'crates/talechime/**'
       - 'Cargo.toml'

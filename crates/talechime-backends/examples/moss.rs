@@ -1,6 +1,6 @@
 //! Real CPU smoke test without opening an audio device.
 use talechime_backends::moss::MossBackend;
-use tts_core::backend::{AudioChunk, Backend};
+use talechime_core::backend::{AudioChunk, Backend};
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     eprintln!("ONNX Runtime: {:?}", ort::info());
@@ -19,9 +19,9 @@ async fn main() -> anyhow::Result<()> {
     };
     let voice = args.next().unwrap_or_else(|| "Weiguo".into());
     let device = match args.next().as_deref() {
-        Some("coreml") => tts_protocol::Device::Coreml,
-        Some("cuda") => tts_protocol::Device::Cuda,
-        _ => tts_protocol::Device::Cpu,
+        Some("coreml") => talechime_protocol::Device::Coreml,
+        Some("cuda") => talechime_protocol::Device::Cuda,
+        _ => talechime_protocol::Device::Cpu,
     };
     let started = std::time::Instant::now();
     let backend = MossBackend::load_on(directory.into(), device).await?;

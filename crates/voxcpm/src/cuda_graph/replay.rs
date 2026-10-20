@@ -1,10 +1,12 @@
-//! Fixed-buffer CUDA recording, independent of the operation being recorded.
+//! Private CUDA recorder, copied from Talechime’s former shared graph crate.
+//! Kept local until upstream Candle provides a suitable replacement; preserve
+//! buffer ownership and graph-before-buffer destruction when replacing it.
 use candle_core::cuda_backend::{CudaDevice, CudaStorageSlice};
 use candle_core::{CudaStorage, Device, Result, Storage, Tensor};
 use cudarc::driver::{CudaGraph, CudaStream, DevicePtr, SyncOnDrop, sys};
 use std::sync::Arc;
 
-pub fn driver_error(error: cudarc::driver::DriverError) -> candle_core::Error {
+fn driver_error(error: cudarc::driver::DriverError) -> candle_core::Error {
     candle_core::Error::Msg(format!("cuda driver: {error:?}"))
 }
 
@@ -12,7 +14,8 @@ pub fn driver_error(error: cudarc::driver::DriverError) -> candle_core::Error {
 ///
 /// A recording that ends inside capture leaves the stream in a capturing
 /// state, which silently invalidates every later capture on it.
-pub fn is_capturing(stream: &CudaStream) -> Result<bool> {
+#[cfg(test)]
+pub(crate) fn is_capturing(stream: &CudaStream) -> Result<bool> {
     Ok(stream.capture_status().map_err(driver_error)?
         != sys::CUstreamCaptureStatus_enum::CU_STREAM_CAPTURE_STATUS_NONE)
 }
@@ -25,7 +28,7 @@ struct Buffer {
 
 /// Output is borrowed scratch: consume it on the same stream before replaying.
 /// The graph is destroyed before any buffers or captured parameters are dropped.
-pub struct Replay {
+pub(crate) struct Replay {
     graph: CudaGraph,
     stream: Arc<CudaStream>,
     output: Buffer,
@@ -40,7 +43,7 @@ impl Replay {
     /// its value is both the output buffer's shape and this frame's result,
     /// because recording does not execute. `parameters` are tensors the graph
     /// reads that the caller would otherwise drop.
-    pub fn record(
+    pub(crate) fn record(
         device: &CudaDevice,
         inputs: &[&Tensor],
         warmup: &Tensor,
@@ -89,7 +92,7 @@ impl Replay {
     /// Overwrites the persistent inputs and re-executes the recorded kernels.
     ///
     /// Returns the output buffer; it stays valid until the next launch.
-    pub fn launch(&self, inputs: &[&Tensor]) -> Result<Tensor> {
+    pub(crate) fn launch(&self, inputs: &[&Tensor]) -> Result<Tensor> {
         if inputs.len() != self.inputs.len() {
             candle_core::bail!("cuda graph input count changed");
         }
@@ -153,7 +156,7 @@ impl Buffer {
 }
 
 /// Overwrites a persistent tensor with values produced this frame.
-pub fn copy_into(stream: &CudaStream, destination: &Tensor, source: &Tensor) -> Result<()> {
+pub(crate) fn copy_into(stream: &CudaStream, destination: &Tensor, source: &Tensor) -> Result<()> {
     write(stream, &Buffer::from_tensor(stream, destination)?, source)
 }
 

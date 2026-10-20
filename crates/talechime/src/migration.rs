@@ -4,12 +4,12 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use tts_core::migration::LegacyMigration;
-use tts_protocol::{Config, Event};
+use talechime_core::migration::LegacyMigration;
+use talechime_protocol::{Config, Event};
 
 pub fn startup(migration: &LegacyMigration, resources: &Resources) {
     #[cfg(feature = "moss")]
-    let coded_revision = Some(tts_backends::moss::resources::REVISION);
+    let coded_revision = Some(talechime_backends::moss::resources::REVISION);
     #[cfg(not(feature = "moss"))]
     let coded_revision = None;
     warn(migration.voices(coded_revision));
@@ -103,7 +103,7 @@ pub async fn resources(
     match tokio::task::spawn_blocking(move || {
         let _closed = closed;
         #[cfg(feature = "moss")]
-        let coded_revision = Some(tts_backends::moss::resources::REVISION);
+        let coded_revision = Some(talechime_backends::moss::resources::REVISION);
         #[cfg(not(feature = "moss"))]
         let coded_revision = None;
         warn(migration.prepare_voices(coded_revision, &work.cancelled));

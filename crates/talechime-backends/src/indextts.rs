@@ -3,9 +3,9 @@ pub mod resources;
 mod runtime;
 
 use std::path::{Path, PathBuf};
+use talechime_core::backend::{Backend, BackendError, Streaming};
+use talechime_protocol::{Capabilities, Device, ParamKind, ParamValue, ParameterSpec};
 use tokio::sync::{mpsc, oneshot};
-use tts_core::backend::{Backend, BackendError, Streaming};
-use tts_protocol::{Capabilities, Device, ParamKind, ParamValue, ParameterSpec};
 
 pub const MODEL: &str = "2.5";
 
@@ -15,8 +15,8 @@ pub fn directory(root: &Path) -> PathBuf {
         .join(resources::REVISION)
 }
 
-pub fn voice_store(directory: &Path) -> anyhow::Result<tts_core::voices::VoiceStore> {
-    tts_core::voices::VoiceStore::new(directory, "indextts", MODEL, resources::REVISION)
+pub fn voice_store(directory: &Path) -> anyhow::Result<talechime_core::voices::VoiceStore> {
+    talechime_core::voices::VoiceStore::new(directory, "indextts", MODEL, resources::REVISION)
 }
 
 pub fn capabilities(directory: &Path) -> anyhow::Result<Capabilities> {
@@ -66,7 +66,7 @@ pub fn available_devices() -> Vec<Device> {
     compiled_devices()
         .into_iter()
         .filter(|device| {
-            (*device != Device::Metal || tts_candle_platform::metal_is_available())
+            (*device != Device::Metal || crate::devices::metal::metal_is_available())
                 && runtime::candle_device(*device).is_ok()
         })
         .collect()
@@ -119,7 +119,7 @@ impl Backend for IndexBackend {
         self.caps.clone()
     }
 
-    fn stream<'a>(&'a self, request: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
             request.reject_unsupported(false, false)?;
             request

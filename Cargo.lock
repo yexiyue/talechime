@@ -688,23 +688,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cosyvoice3"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "candle-core",
- "candle-nn",
- "candle-transformers",
- "hound",
- "ort",
- "serde",
- "serde_json",
- "tokenizers",
- "tokio",
- "tts-candle-platform",
-]
-
-[[package]]
 name = "cpal"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2000,23 +1983,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "indextts"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "candle-core",
- "candle-nn",
- "clap",
- "hound",
- "rand 0.9.5",
- "regex",
- "rustfft",
- "serde",
- "serde_json",
- "tts-candle-platform",
-]
-
-[[package]]
 name = "ipnet"
 version = "2.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2375,23 +2341,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "moss-tts"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "candle-core",
- "candle-nn",
- "candle-transformers",
- "hound",
- "rand 0.9.5",
- "serde",
- "serde_json",
- "tempfile",
- "tokenizers",
- "tts-candle-platform",
-]
-
-[[package]]
 name = "multiversion_no_op"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2711,29 +2660,6 @@ dependencies = [
  "objc2",
  "objc2-core-foundation",
  "objc2-foundation",
-]
-
-[[package]]
-name = "omnivoice"
-version = "0.1.0"
-dependencies = [
- "candle-core",
- "candle-nn",
- "candle-transformers",
- "half",
- "hound",
- "rand 0.9.5",
- "regex",
- "safetensors 0.7.0",
- "serde",
- "serde_json",
- "strsim",
- "symphonia",
- "tempfile",
- "thiserror 2.0.21",
- "tokenizers",
- "tts-candle-platform",
- "unicode-general-category",
 ]
 
 [[package]]
@@ -3369,7 +3295,9 @@ checksum = "16a1cfa75cc186dd73d5818e510e042e40927bccc9c236b061cea97e1eb08029"
 dependencies = [
  "base64 0.23.1",
  "bytes",
+ "futures-channel",
  "futures-core",
+ "futures-util",
  "http",
  "http-body",
  "http-body-util",
@@ -4154,14 +4082,11 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "candle-core",
- "cosyvoice3",
+ "candle-metal-kernels",
  "dirs",
  "hound",
- "indextts",
  "kaldi-fbank",
  "metrics",
- "moss-tts",
- "omnivoice",
  "ort",
  "rand 0.9.5",
  "rubato 0.16.2",
@@ -4170,25 +4095,19 @@ dependencies = [
  "serde_json",
  "sha2",
  "talechime-core",
+ "talechime-cosyvoice3",
+ "talechime-indextts",
+ "talechime-moss-tts",
+ "talechime-omnivoice",
  "talechime-protocol",
  "talechime-qwen3-asr",
  "talechime-qwen3-tts",
+ "talechime-voxcpm",
  "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
- "tts-candle-platform",
- "voxcpm",
  "windows",
-]
-
-[[package]]
-name = "talechime-candle-cuda-graph"
-version = "0.1.0"
-dependencies = [
- "candle-core",
- "cudarc 0.19.10",
- "tracing",
 ]
 
 [[package]]
@@ -4214,6 +4133,76 @@ dependencies = [
  "tokio-util",
  "tracing",
  "unicode-normalization",
+]
+
+[[package]]
+name = "talechime-cosyvoice3"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "candle-core",
+ "candle-nn",
+ "candle-transformers",
+ "hound",
+ "ort",
+ "serde",
+ "serde_json",
+ "tokenizers",
+ "tokio",
+]
+
+[[package]]
+name = "talechime-indextts"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "candle-core",
+ "candle-nn",
+ "clap",
+ "hound",
+ "rand 0.9.5",
+ "regex",
+ "rustfft",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "talechime-moss-tts"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "candle-core",
+ "candle-nn",
+ "candle-transformers",
+ "hound",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokenizers",
+]
+
+[[package]]
+name = "talechime-omnivoice"
+version = "0.1.0"
+dependencies = [
+ "candle-core",
+ "candle-nn",
+ "candle-transformers",
+ "half",
+ "hound",
+ "rand 0.9.5",
+ "regex",
+ "safetensors 0.7.0",
+ "serde",
+ "serde_json",
+ "strsim",
+ "symphonia",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokenizers",
+ "unicode-general-category",
 ]
 
 [[package]]
@@ -4252,6 +4241,7 @@ dependencies = [
  "candle-core",
  "candle-nn",
  "candle-transformers",
+ "cudarc 0.19.10",
  "hound",
  "num-complex",
  "num-traits",
@@ -4261,14 +4251,30 @@ dependencies = [
  "safetensors 0.7.0",
  "serde",
  "serde_json",
- "talechime-candle-cuda-graph",
  "tempfile",
  "thiserror 2.0.21",
  "tokenizers",
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
- "tts-candle-platform",
+]
+
+[[package]]
+name = "talechime-voxcpm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "candle-core",
+ "candle-nn",
+ "candle-transformers",
+ "cudarc 0.19.10",
+ "hound",
+ "libc",
+ "rubato 0.16.2",
+ "serde_json",
+ "talechime-core",
+ "tokenizers",
+ "tracing",
 ]
 
 [[package]]
@@ -4604,16 +4610,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
-name = "tts-candle-platform"
-version = "0.1.0"
-dependencies = [
- "candle-core",
- "candle-metal-kernels",
- "candle-nn",
- "candle-transformers",
-]
-
-[[package]]
 name = "typed-path"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4818,25 +4814,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "voxcpm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "candle-core",
- "candle-nn",
- "candle-transformers",
- "hound",
- "libc",
- "rubato 0.16.2",
- "serde_json",
- "talechime-candle-cuda-graph",
- "talechime-core",
- "tokenizers",
- "tracing",
- "tts-candle-platform",
 ]
 
 [[package]]
@@ -5227,9 +5204,11 @@ dependencies = [
  "anyhow",
  "clap",
  "libc",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",
+ "talechime-backends",
  "tempfile",
  "windows",
  "zip",

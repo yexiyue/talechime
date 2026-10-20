@@ -1,21 +1,19 @@
 [workspace]
-members = ["xtask", "crates/candle-cuda-graph", "crates/cosyvoice3", "crates/qwen3-asr", "crates/moss-tts", "crates/talechime", "crates/talechime-backends", "crates/talechime-core", "crates/talechime-protocol", "crates/indextts", "crates/omnivoice", "crates/qwen3-tts", "crates/tts-candle-platform", "crates/voxcpm"]
+members = ["xtask", "crates/cosyvoice3", "crates/qwen3-asr", "crates/moss-tts", "crates/talechime", "crates/talechime-backends", "crates/talechime-core", "crates/talechime-protocol", "crates/indextts", "crates/omnivoice", "crates/qwen3-tts", "crates/voxcpm"]
 default-members = ["crates/talechime"]
 resolver = "3"
 
 [workspace.dependencies]
-cosyvoice3 = { path = "crates/cosyvoice3", version = "0.1.0", default-features = false }
-candle-cuda-graph = { package = "talechime-candle-cuda-graph", path = "crates/candle-cuda-graph", version = "0.1.0" }
+talechime-cosyvoice3 = { path = "crates/cosyvoice3", version = "0.1.0", default-features = false }
 clap = { version = "4.6", features = ["derive"] }
 crossterm = { version = "0.29.0", features = ["event-stream"] }
 windows = { version = "0.54.0", default-features = false }
-moss-tts = { path = "crates/moss-tts", version = "0.1.0", default-features = false }
-omnivoice = { path = "crates/omnivoice", version = "0.1.0", default-features = false }
-voxcpm = { path = "crates/voxcpm", version = "0.1.0", default-features = false }
-indextts = { path = "crates/indextts", version = "0.1.0", default-features = false }
-tts-candle-platform = { path = "crates/tts-candle-platform", version = "0.1.0" }
-qwen3-asr = { package = "talechime-qwen3-asr", path = "crates/qwen3-asr", version = "0.1.0", default-features = false }
-qwen3-tts = { package = "talechime-qwen3-tts", path = "crates/qwen3-tts", version = "0.3.0", default-features = false }
+talechime-moss-tts = { path = "crates/moss-tts", version = "0.1.0", default-features = false }
+talechime-omnivoice = { path = "crates/omnivoice", version = "0.1.0", default-features = false }
+talechime-voxcpm = { path = "crates/voxcpm", version = "0.1.0", default-features = false }
+talechime-indextts = { path = "crates/indextts", version = "0.1.0", default-features = false }
+talechime-qwen3-asr = { path = "crates/qwen3-asr", version = "0.1.0", default-features = false }
+talechime-qwen3-tts = { path = "crates/qwen3-tts", version = "0.3.0", default-features = false }
 candle-core = "=0.11.0"
 candle-nn = "=0.11.0"
 candle-transformers = "=0.11.0"
@@ -28,7 +26,7 @@ tokenizers = { version = "0.22.2", default-features = false }
 hound = "3.5"
 libc = "0.2"
 rubato = "0.16"
-tts-core = { package = "talechime-core", path = "crates/talechime-core", version = "0.4.1" }
+talechime-core = { path = "crates/talechime-core", version = "0.4.1" }
 rustfft = "6.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }

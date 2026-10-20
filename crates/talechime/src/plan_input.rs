@@ -2,7 +2,7 @@
 use talechime::{
     Capabilities, PlaybackPolicy, SourceSnapshot, SpeechPlan, SpeechSpan, VoiceSnapshot,
 };
-use tts_protocol::{MAX_PLAN_BATCH_SPANS, MAX_PLAN_SPANS, PlanRequest, VoiceSpan};
+use talechime_protocol::{MAX_PLAN_BATCH_SPANS, MAX_PLAN_SPANS, PlanRequest, VoiceSpan};
 
 pub fn spans(input: &[VoiceSpan]) -> Vec<SpeechSpan> {
     input
@@ -14,7 +14,7 @@ pub fn spans(input: &[VoiceSpan]) -> Vec<SpeechSpan> {
 pub fn build(input: &PlanRequest, caps: &Capabilities) -> anyhow::Result<SpeechPlan> {
     if input.voices.len() > 256
         || input.spans.len() > MAX_PLAN_SPANS
-        || input.text.len() > tts_protocol::MAX_MESSAGE_BYTES
+        || input.text.len() > talechime_protocol::MAX_MESSAGE_BYTES
     {
         anyhow::bail!("plan transport limits exceeded");
     }
@@ -26,8 +26,8 @@ pub fn build(input: &PlanRequest, caps: &Capabilities) -> anyhow::Result<SpeechP
         input.voices.clone(),
     )?;
     let policy = match input.playback {
-        tts_protocol::PlanPlayback::Streaming => PlaybackPolicy::Streaming,
-        tts_protocol::PlanPlayback::AfterChapterReady => PlaybackPolicy::AfterChapterReady,
+        talechime_protocol::PlanPlayback::Streaming => PlaybackPolicy::Streaming,
+        talechime_protocol::PlanPlayback::AfterChapterReady => PlaybackPolicy::AfterChapterReady,
     };
     let mut plan = SpeechPlan::new(source, voices, policy);
     if !input.spans.is_empty() {
@@ -55,12 +55,12 @@ pub fn generation(input: &PlanRequest) -> (talechime::GenerationParams, talechim
     (params, talechime::SeedPolicy::from(input.seed))
 }
 
-pub fn progress(input: talechime::PlanProgress) -> tts_protocol::PlanProgressSnapshot {
-    tts_protocol::PlanProgressSnapshot {
+pub fn progress(input: talechime::PlanProgress) -> talechime_protocol::PlanProgressSnapshot {
+    talechime_protocol::PlanProgressSnapshot {
         input_state: match input.input_state {
-            talechime::PlanState::Open => tts_protocol::PlanInputState::Open,
-            talechime::PlanState::Sealed => tts_protocol::PlanInputState::Sealed,
-            talechime::PlanState::Failed => tts_protocol::PlanInputState::Failed,
+            talechime::PlanState::Open => talechime_protocol::PlanInputState::Open,
+            talechime::PlanState::Sealed => talechime_protocol::PlanInputState::Sealed,
+            talechime::PlanState::Failed => talechime_protocol::PlanInputState::Failed,
         },
         accepted_end: input.accepted_end,
         generated_end: input.generated_end,

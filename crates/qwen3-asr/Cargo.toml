@@ -7,9 +7,6 @@ license = "MIT"
 description = "Native Qwen3-ASR inference for Talechime"
 repository = "https://github.com/yexiyue/talechime"
 
-[lib]
-name = "qwen3_asr"
-
 [features]
 default = []
 

@@ -5,9 +5,9 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use talechime_core::backend::{AudioChunk, Backend, BackendError, Pcm, Segmentation, Streaming};
+use talechime_protocol::{Capabilities, Device, Event};
 use tokio::sync::{mpsc, oneshot};
-use tts_core::backend::{AudioChunk, Backend, BackendError, Pcm, Segmentation, Streaming};
-use tts_protocol::{Capabilities, Device, Event};
 pub const REVISION: &str = "44502f80dbf9743528fa921cc544d662c685ebec";
 pub fn directory(root: &Path) -> PathBuf {
     root.join("moss/models/nano-candle").join(REVISION)
@@ -38,7 +38,7 @@ fn device(device: Device) -> anyhow::Result<CandleDevice> {
         #[cfg(all(feature = "moss-nano-candle-metal", target_os = "macos"))]
         Device::Metal => {
             anyhow::ensure!(
-                tts_candle_platform::metal_is_available(),
+                crate::devices::metal::metal_is_available(),
                 "Metal device unavailable"
             );
             CandleDevice::new_metal(0)?
@@ -71,7 +71,7 @@ struct Request {
     pub(crate) perf: crate::performance::OwnerContext,
     tokens: Vec<i32>,
     none_tokens: Vec<i32>,
-    context: Option<tts_core::SpeechContext>,
+    context: Option<talechime_core::SpeechContext>,
     voice: String,
     seed: u64,
     audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
@@ -82,7 +82,7 @@ pub struct NanoBackend {
     tokenizer: Option<Arc<SentencePieceProcessor>>,
     caps: Capabilities,
     cache_identity: String,
-    estimate: std::cell::RefCell<(String, tts_core::text::duration::DurationEstimator)>,
+    estimate: std::cell::RefCell<(String, talechime_core::text::duration::DurationEstimator)>,
 }
 impl NanoBackend {
     pub async fn load_on(root: PathBuf, selected: Device) -> Result<Self, BackendError> {
@@ -101,10 +101,13 @@ impl NanoBackend {
                 let load = || -> anyhow::Result<_> {
                     let device = device(selected)?;
                     let dir = directory(&root);
-                    let model = moss_tts::nano::Nano::load(&dir.join("tts"), &device)?;
+                    let model = talechime_moss_tts::nano::Nano::load(&dir.join("tts"), &device)?;
                     anyhow::ensure!(!ready.is_closed(), "Nano loading cancelled");
-                    let codec =
-                        moss_tts::codec::AudioCodec::load(&dir.join("codec"), &device, DType::F32)?;
+                    let codec = talechime_moss_tts::codec::AudioCodec::load(
+                        &dir.join("codec"),
+                        &device,
+                        DType::F32,
+                    )?;
                     let tokenizer = Arc::new(SentencePieceProcessor::open(
                         dir.join("tts/tokenizer.model"),
                     )?);
@@ -176,7 +179,7 @@ impl NanoBackend {
         text: &str,
         voice: &str,
         seed: u64,
-    ) -> Result<tts_core::backend::AudioStream, BackendError> {
+    ) -> Result<talechime_core::backend::AudioStream, BackendError> {
         self.stream_seeded_with_context(text, voice, seed, None)
             .await
     }
@@ -185,8 +188,8 @@ impl NanoBackend {
         text: &str,
         voice: &str,
         seed: u64,
-        context: Option<&tts_core::SpeechContext>,
-    ) -> Result<tts_core::backend::AudioStream, BackendError> {
+        context: Option<&talechime_core::SpeechContext>,
+    ) -> Result<talechime_core::backend::AudioStream, BackendError> {
         let text = super::text::normalize(text);
         if text.is_empty() || !self.caps.voices.iter().any(|v| v == voice) {
             return Err(BackendError::Unsupported(
@@ -249,7 +252,7 @@ impl Backend for NanoBackend {
     fn capabilities(&self) -> Capabilities {
         self.caps.clone()
     }
-    fn stream<'a>(&'a self, request: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
             request.reject_unsupported(self.caps.style, self.caps.continuation)?;
             self.stream_seeded_with_context(
@@ -280,7 +283,7 @@ impl Backend for NanoBackend {
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
-                    Output = Result<Option<tts_core::text::TextSegment>, BackendError>,
+                    Output = Result<Option<talechime_core::text::TextSegment>, BackendError>,
                 > + 'a,
         >,
     > {
@@ -304,8 +307,8 @@ impl Backend for NanoBackend {
 }
 fn generate(
     root: &Path,
-    model: &mut moss_tts::nano::Nano,
-    codec: &mut moss_tts::codec::AudioCodec,
+    model: &mut talechime_moss_tts::nano::Nano,
+    codec: &mut talechime_moss_tts::codec::AudioCodec,
     job: &Request,
     owner_closed: &impl Fn() -> bool,
 ) -> anyhow::Result<()> {
@@ -348,7 +351,7 @@ fn generate(
         }
     }
     let mut pending = Vec::new();
-    let send = |codec: &mut moss_tts::codec::AudioCodec,
+    let send = |codec: &mut talechime_moss_tts::codec::AudioCodec,
                 pending: &mut Vec<Vec<u32>>|
      -> anyhow::Result<()> {
         let samples = codec.decode(pending, &cancelled)?;
@@ -477,8 +480,9 @@ mod tests {
         let root = PathBuf::from(root);
         let dir = directory(&root);
         let device = CandleDevice::Cpu;
-        let mut model = moss_tts::nano::Nano::load(&dir.join("tts"), &device)?;
-        let mut codec = moss_tts::codec::AudioCodec::load(&dir.join("codec"), &device, DType::F32)?;
+        let mut model = talechime_moss_tts::nano::Nano::load(&dir.join("tts"), &device)?;
+        let mut codec =
+            talechime_moss_tts::codec::AudioCodec::load(&dir.join("codec"), &device, DType::F32)?;
         let tokenizer = SentencePieceProcessor::open(dir.join("tts/tokenizer.model"))?;
         let tokens: Vec<i32> = tokenizer
             .encode_to_ids(&super::super::text::normalize("陆鸣喃喃。"))?

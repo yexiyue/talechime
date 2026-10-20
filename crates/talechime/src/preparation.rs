@@ -1,9 +1,9 @@
 //! Composition and calibration belong to the program, not the model-free core.
 use crate::resources::Resources;
 use std::rc::Rc;
+use talechime_core::backend::Backend;
+use talechime_protocol::{Config, Event};
 use tokio::sync::mpsc;
-use tts_core::backend::Backend;
-use tts_protocol::{Config, Event};
 #[cfg(any(
     feature = "moss",
     feature = "qwen",
@@ -23,12 +23,12 @@ mod synthesis;
     feature = "omnivoice",
 ))]
 pub fn validate_device(
-    device: tts_protocol::Device,
+    device: talechime_protocol::Device,
     backend: &str,
     model: Option<&str>,
     resources: &Resources,
 ) -> anyhow::Result<()> {
-    if device == tts_protocol::Device::Auto {
+    if device == talechime_protocol::Device::Auto {
         return Ok(());
     }
     let available = resources.available_devices_for(backend, model);
@@ -104,8 +104,8 @@ pub async fn prepare_models(
     #[cfg(feature = "asr")]
     let verifier = if readback {
         Some(
-            tts_backends::asr::prepare(
-                &tts_backends::asr::ReadbackModelOptions::new(directory),
+            talechime_backends::asr::prepare(
+                &talechime_backends::asr::ReadbackModelOptions::new(directory),
                 progress,
             )
             .await?,

@@ -5,8 +5,8 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
 };
-use tts_core::verification::{Recognizer, Verifier};
-use tts_protocol::{Event, RecognizerIdentity};
+use talechime_core::verification::{Recognizer, Verifier};
+use talechime_protocol::{Event, RecognizerIdentity};
 
 pub const QWEN_REVISION: &str = "7f1569a48a89f3e3f4dc3a5c9d28bddd903bc76c";
 pub const SENSEVOICE_REVISION: &str = "2365baeacb507f821a0c8120fcee3d484dba7a07";

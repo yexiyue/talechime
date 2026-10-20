@@ -24,6 +24,8 @@ pub struct Conditions {
     pub conditioning_sha256: String,
     pub parameters: BTreeMap<String, String>,
     pub mode: String,
+    /// Why first PCM has the observed latency: native streaming or whole segment.
+    pub delivery_boundary: String,
     pub observation: String,
     pub timing_contract: String,
     #[serde(default)]
@@ -43,6 +45,7 @@ impl Conditions {
             ("precision", &self.precision),
             ("backend", &self.backend),
             ("model", &self.model),
+            ("delivery_boundary", &self.delivery_boundary),
             ("timing_contract", &self.timing_contract),
         ] {
             ensure!(
@@ -137,6 +140,8 @@ pub struct Round {
     pub synthesis_seconds: Option<f64>,
     pub audio_seconds: Option<f64>,
     pub first_pcm_seconds: Option<f64>,
+    #[serde(default)]
+    pub delivery_boundary: Option<String>,
     pub output_sha256: Option<String>,
     pub observations: Vec<Observation>,
     pub artifacts: Vec<Artifact>,
@@ -186,6 +191,12 @@ impl Round {
                     && first >= 0.0
                     && self.synthesis_seconds.is_some_and(|total| first <= total),
                 "invalid first PCM boundary"
+            );
+            ensure!(
+                self.delivery_boundary
+                    .as_ref()
+                    .is_some_and(|boundary| !boundary.is_empty()),
+                "successful first PCM requires a delivery boundary"
             );
         }
         for observation in &self.observations {
@@ -376,6 +387,7 @@ mod tests {
             synthesis_seconds: Some(3.0),
             audio_seconds: Some(6.0),
             first_pcm_seconds: Some(1.0),
+            delivery_boundary: Some("native_streaming_first_pcm".into()),
             output_sha256: Some("a".repeat(64)),
             observations: vec![],
             artifacts: vec![],

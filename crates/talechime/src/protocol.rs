@@ -3,12 +3,12 @@ use std::{
     io::{BufReader, BufWriter, Write},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::{mpsc, oneshot};
-use tts_core::{checkpoint::CheckpointStore, config::ConfigStore, session::SessionEvent};
-use tts_protocol::{
+use talechime_core::{checkpoint::CheckpointStore, config::ConfigStore, session::SessionEvent};
+use talechime_protocol::{
     Command, ErrorInfo, Event, Message, PROTOCOL_VERSION, Request, RequestTracker, decode, encode,
     read_frame,
 };
+use tokio::sync::{mpsc, oneshot};
 
 struct Output {
     instance: String,
@@ -83,7 +83,7 @@ pub async fn run(
     checkpoints: CheckpointStore,
     resources: Resources,
     readback_models: bool,
-    migration: Option<tts_core::migration::LegacyMigration>,
+    migration: Option<talechime_core::migration::LegacyMigration>,
 ) -> anyhow::Result<()> {
     let (input_tx, mut input) = mpsc::channel(8);
     // A dedicated stdin thread can end with the process even if a broken parent
@@ -138,10 +138,10 @@ async fn serve(
     store: ConfigStore,
     checkpoints: CheckpointStore,
     resources: Resources,
-    input: &mut mpsc::Receiver<Result<Option<Vec<u8>>, tts_protocol::ProtocolError>>,
+    input: &mut mpsc::Receiver<Result<Option<Vec<u8>>, talechime_protocol::ProtocolError>>,
     messages: mpsc::Sender<Message>,
     readback_models: bool,
-    migration: Option<tts_core::migration::LegacyMigration>,
+    migration: Option<talechime_core::migration::LegacyMigration>,
 ) -> anyhow::Result<()> {
     let (events, session_events) = mpsc::channel::<SessionEvent>(64);
     let (progress, model_events) = mpsc::channel::<Event>(16);
@@ -155,7 +155,7 @@ async fn serve_worker(
     mut worker: Worker,
     mut session_events: mpsc::Receiver<SessionEvent>,
     mut model_events: mpsc::Receiver<Event>,
-    input: &mut mpsc::Receiver<Result<Option<Vec<u8>>, tts_protocol::ProtocolError>>,
+    input: &mut mpsc::Receiver<Result<Option<Vec<u8>>, talechime_protocol::ProtocolError>>,
     messages: mpsc::Sender<Message>,
 ) -> anyhow::Result<()> {
     let mut output = Output {
@@ -268,7 +268,7 @@ async fn serve_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tts_protocol::{EndReason, SessionState};
+    use talechime_protocol::{EndReason, SessionState};
 
     #[tokio::test]
     async fn command_lifecycle_events_drain_a_full_queue_before_response() {
@@ -335,7 +335,7 @@ mod plan_tests {
     use super::*;
     use crate::fixture::{Fixture, Player};
     use std::rc::Rc;
-    use tts_protocol::{
+    use talechime_protocol::{
         EndReason, PlanPlayback, PlanRequest, SourceId, TextRange, VoiceSpan, text_hash,
     };
 
@@ -372,7 +372,7 @@ mod plan_tests {
                         responses.insert(id.clone());
                         match id.as_str() {
                             "early"|"invalid" => assert!(matches!(message.event,Event::Error(_))),
-                            "progress" => assert!(matches!(message.event,Event::Progress(ref p) if p.accepted_end==3 && p.input_state==tts_protocol::PlanInputState::Open)),
+                            "progress" => assert!(matches!(message.event,Event::Progress(ref p) if p.accepted_end==3 && p.input_state==talechime_protocol::PlanInputState::Open)),
                             _ => {},
                         }
                     }

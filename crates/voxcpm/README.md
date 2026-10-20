@@ -1,4 +1,8 @@
-# VoxCPM2 Candle
+# talechime-voxcpm
+
+The Cargo package is `talechime-voxcpm`; the Rust import is `talechime_voxcpm`.
+Select GPU features for the target platform: CUDA on Windows/Linux, Metal on
+macOS. Do not enable both through `--all-features`.
 
 > Legacy `tools/tts` scripts mentioned here were removed on 2026-10-20. Retrieve historical scripts from Git revision `e591c94`; their paths below describe provenance or historical reproduction, not current executable entry points.
 
@@ -63,8 +67,8 @@ a comparison of complete inference paths, not of file containers alone.
 ## Reproducible validation
 
 ```text
-cargo test -p voxcpm --lib
-cargo build -p voxcpm --features cuda --example voxcpm_probe --release -j 2
+cargo test -p talechime-voxcpm --lib
+cargo build -p talechime-voxcpm --features cuda --example voxcpm_probe --release -j 2
 target/release/examples/voxcpm_probe MODEL_DIRECTORY cuda OUTPUT.wav "Chinese text"
 
 cargo build -p talechime-backends --no-default-features --features voxcpm-cuda,voxcpm/cuda --example voxcpm_candle_probe --release -j 2

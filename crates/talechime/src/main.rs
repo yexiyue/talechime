@@ -70,7 +70,7 @@ struct Args {
     #[arg(long)]
     style: Option<String>,
     #[arg(long, value_parser = parse_device)]
-    tts_device: Option<tts_protocol::Device>,
+    tts_device: Option<talechime_protocol::Device>,
     /// File to read. Interactive controls: space=pause/resume, s=stop, q=exit.
     #[arg(required_unless_present = "protocol", conflicts_with = "protocol")]
     file: Option<PathBuf>,
@@ -93,7 +93,7 @@ struct Args {
         value_parser = parse_continuation_boundary,
         conflicts_with = "protocol"
     )]
-    continuation_boundary: Option<tts_protocol::ContinuationBoundary>,
+    continuation_boundary: Option<talechime_protocol::ContinuationBoundary>,
     /// Chained seconds before the voice re-anchors (default 45).
     #[arg(long, conflicts_with = "protocol")]
     continuation_span: Option<u64>,
@@ -102,7 +102,7 @@ struct Args {
     restart: bool,
     /// Generation parameter for the prepared model, repeatable (name=value).
     #[arg(long, value_parser = parse_param)]
-    param: Vec<(String, tts_protocol::ParamValue)>,
+    param: Vec<(String, talechime_protocol::ParamValue)>,
     /// Pin sampling for a reproducible run; default draws fresh randomness.
     #[arg(long)]
     seed: Option<u64>,
@@ -117,13 +117,15 @@ struct Args {
     checkpoint_dir: Option<PathBuf>,
 }
 
-fn parse_continuation_boundary(raw: &str) -> Result<tts_protocol::ContinuationBoundary, String> {
-    serde_json::from_value::<tts_protocol::ContinuationBoundary>(serde_json::json!(raw))
+fn parse_continuation_boundary(
+    raw: &str,
+) -> Result<talechime_protocol::ContinuationBoundary, String> {
+    serde_json::from_value::<talechime_protocol::ContinuationBoundary>(serde_json::json!(raw))
         .map_err(|_| format!("expected paragraph, scene or none, got {raw}"))
 }
 
 /// Parse name=value where the value is an int, float or quoted-by-shape text.
-fn parse_param(raw: &str) -> Result<(String, tts_protocol::ParamValue), String> {
+fn parse_param(raw: &str) -> Result<(String, talechime_protocol::ParamValue), String> {
     let (name, value) = raw
         .split_once('=')
         .ok_or_else(|| format!("expected name=value, got {raw}"))?;
@@ -131,11 +133,11 @@ fn parse_param(raw: &str) -> Result<(String, tts_protocol::ParamValue), String> 
         return Err("parameter name must not be empty".into());
     }
     let value = if let Ok(int) = value.parse::<i64>() {
-        tts_protocol::ParamValue::Int(int)
+        talechime_protocol::ParamValue::Int(int)
     } else if let Ok(float) = value.parse::<f64>() {
-        tts_protocol::ParamValue::Float(float)
+        talechime_protocol::ParamValue::Float(float)
     } else {
-        tts_protocol::ParamValue::Text(value.to_owned())
+        talechime_protocol::ParamValue::Text(value.to_owned())
     };
     Ok((name.to_owned(), value))
 }
@@ -145,12 +147,12 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let legacy_migration =
         if args.config.is_none() && args.checkpoint_dir.is_none() && args.model_dir.is_none() {
-            let paths = tts_core::paths::AppPaths::user_default()?;
+            let paths = talechime_core::paths::AppPaths::user_default()?;
             let home = paths
                 .root()
                 .parent()
                 .ok_or_else(|| anyhow::anyhow!("application home unavailable"))?;
-            let migration = tts_core::migration::LegacyMigration::from_home(home);
+            let migration = talechime_core::migration::LegacyMigration::from_home(home);
             migration::startup(&migration, &resources::Resources::new(None)?);
             Some(migration)
         } else {
@@ -175,12 +177,12 @@ async fn main() -> anyhow::Result<()> {
         return talechime::run_local(verify::run(text, audio, report, resources.root())).await;
     }
     let config = match args.config {
-        Some(path) => tts_core::config::ConfigStore::new(path),
-        None => tts_core::config::ConfigStore::user_default()?,
+        Some(path) => talechime_core::config::ConfigStore::new(path),
+        None => talechime_core::config::ConfigStore::user_default()?,
     };
     let checkpoints = match args.checkpoint_dir {
-        Some(path) => tts_core::checkpoint::CheckpointStore::new(path),
-        None => tts_core::checkpoint::CheckpointStore::user_default()?,
+        Some(path) => talechime_core::checkpoint::CheckpointStore::new(path),
+        None => talechime_core::checkpoint::CheckpointStore::user_default()?,
     };
     let resources = resources::Resources::new(args.model_dir)?;
     let config = if config.path().exists() {
@@ -189,7 +191,7 @@ async fn main() -> anyhow::Result<()> {
         let defaults = match args.backend.as_deref() {
             Some(backend) => {
                 let caps = resources.capabilities_for(backend, args.model.as_deref())?;
-                tts_protocol::Config {
+                talechime_protocol::Config {
                     backend: caps.backend,
                     model: caps.model,
                     voice: caps.default_voice,
@@ -225,7 +227,7 @@ async fn main() -> anyhow::Result<()> {
             args.backend
                 .as_ref()
                 .filter(|id| *id != &current.backend)
-                .map(|_| tts_protocol::Device::Auto)
+                .map(|_| talechime_protocol::Device::Auto)
         });
         #[cfg(any(
             feature = "moss",
@@ -244,7 +246,7 @@ async fn main() -> anyhow::Result<()> {
             )?;
         }
         config.update(
-            &tts_protocol::ConfigPatch {
+            &talechime_protocol::ConfigPatch {
                 expected_revision: current.revision,
                 backend: args.backend.clone(),
                 model: args.model.clone(),
@@ -300,11 +302,13 @@ async fn main() -> anyhow::Result<()> {
                     continuation_span: args.continuation_span,
                     params: args.param,
                     seed: args.seed,
-                    verification: tts_protocol::VerificationOptions {
+                    verification: talechime_protocol::VerificationOptions {
                         policy: match args.verify {
-                            VerifyMode::Off => tts_protocol::VerificationPolicy::Off,
-                            VerifyMode::Report => tts_protocol::VerificationPolicy::ReportOnly,
-                            VerifyMode::Gate => tts_protocol::VerificationPolicy::Gate {
+                            VerifyMode::Off => talechime_protocol::VerificationPolicy::Off,
+                            VerifyMode::Report => {
+                                talechime_protocol::VerificationPolicy::ReportOnly
+                            }
+                            VerifyMode::Gate => talechime_protocol::VerificationPolicy::Gate {
                                 max_retries: 1,
                                 strict_suspect: false,
                             },
@@ -320,13 +324,13 @@ async fn main() -> anyhow::Result<()> {
     .await
 }
 
-fn parse_device(value: &str) -> Result<tts_protocol::Device, String> {
+fn parse_device(value: &str) -> Result<talechime_protocol::Device, String> {
     match value {
-        "auto" => Ok(tts_protocol::Device::Auto),
-        "cpu" => Ok(tts_protocol::Device::Cpu),
-        "coreml" => Ok(tts_protocol::Device::Coreml),
-        "metal" => Ok(tts_protocol::Device::Metal),
-        "cuda" => Ok(tts_protocol::Device::Cuda),
+        "auto" => Ok(talechime_protocol::Device::Auto),
+        "cpu" => Ok(talechime_protocol::Device::Cpu),
+        "coreml" => Ok(talechime_protocol::Device::Coreml),
+        "metal" => Ok(talechime_protocol::Device::Metal),
+        "cuda" => Ok(talechime_protocol::Device::Cuda),
         _ => Err("expected auto/cpu/coreml/cuda/metal".into()),
     }
 }
@@ -352,14 +356,14 @@ mod argument_tests {
         assert_eq!(
             args.param,
             vec![
-                ("steps".to_string(), tts_protocol::ParamValue::Int(32)),
+                ("steps".to_string(), talechime_protocol::ParamValue::Int(32)),
                 (
                     "temperature".to_string(),
-                    tts_protocol::ParamValue::Float(0.8)
+                    talechime_protocol::ParamValue::Float(0.8)
                 ),
                 (
                     "language".to_string(),
-                    tts_protocol::ParamValue::Text("english".into())
+                    talechime_protocol::ParamValue::Text("english".into())
                 ),
             ]
         );

@@ -1,7 +1,7 @@
 //! Declared OmniVoice generation parameters and their typed builder.
-use ::omnivoice::contracts::GenerationConfig;
-use tts_core::params::GenerationParams;
-use tts_protocol::{ParamKind, ParamValue, ParameterSpec};
+use talechime_core::params::GenerationParams;
+use talechime_omnivoice::contracts::GenerationConfig;
+use talechime_protocol::{ParamKind, ParamValue, ParameterSpec};
 
 pub(super) fn catalog() -> Vec<ParameterSpec> {
     vec![
@@ -93,11 +93,11 @@ pub(super) struct Resolved {
 /// degrading to the prompt's "None" slot.
 pub(super) fn resolve(
     params: &GenerationParams,
-) -> Result<Resolved, tts_core::backend::BackendError> {
+) -> Result<Resolved, talechime_core::backend::BackendError> {
     let language = match params.get("language") {
-        Some(ParamValue::Text(name)) => ::omnivoice::frontend::resolve_language(Some(name))
+        Some(ParamValue::Text(name)) => talechime_omnivoice::frontend::resolve_language(Some(name))
             .ok_or_else(|| {
-                tts_core::backend::BackendError::Unsupported(format!(
+                talechime_core::backend::BackendError::Unsupported(format!(
                     "unknown OmniVoice language parameter '{name}'"
                 ))
             })?,

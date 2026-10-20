@@ -34,6 +34,9 @@ pub struct Case {
     pub math_backend: String,
     pub status: String,
     pub reason: String,
+    /// Companion model measured outside the public narration matrix.
+    #[serde(default)]
+    pub auxiliary: bool,
 }
 
 impl Platform {
@@ -50,7 +53,7 @@ impl Plan {
     pub fn apply_catalog(&mut self, catalog: &super::prepare::Catalog) -> anyhow::Result<()> {
         catalog.validate()?;
         for case in &mut self.cases {
-            if case.status == "not_applicable" {
+            if case.status == "not_applicable" || case.auxiliary {
                 continue;
             }
             let entry = catalog
@@ -123,10 +126,31 @@ impl Plan {
                         .into(),
                         status: status.into(),
                         reason: reason.into(),
+                        auxiliary: false,
                     });
                 }
             }
         }
+        let (auxiliary_status, auxiliary_reason) = if platform == Platform::Macos {
+            (
+                "not_applicable",
+                "MOSS VoiceGenerator is a Windows CUDA auxiliary baseline; Mac is not exposed",
+            )
+        } else {
+            (
+                "unverified",
+                "auxiliary voice generation requires moss-candle-cuda and real-device verification",
+            )
+        };
+        cases.push(Case {
+            backend: "moss".into(),
+            model: "VoiceGenerator".into(),
+            device: "cuda".into(),
+            math_backend: "bf16".into(),
+            status: auxiliary_status.into(),
+            reason: auxiliary_reason.into(),
+            auxiliary: true,
+        });
         Ok(Self {
             schema: VERSION.into(),
             platform,
@@ -176,6 +200,10 @@ impl Plan {
                 "unknown case status"
             );
             ensure!(!case.reason.is_empty(), "case requires evidence or reason");
+            ensure!(
+                !case.auxiliary || (case.model == "VoiceGenerator" && case.device == "cuda"),
+                "only the CUDA MOSS VoiceGenerator may be auxiliary"
+            );
         }
         Ok(())
     }
@@ -188,7 +216,7 @@ mod tests {
     fn windows_matrix_keeps_all_combinations_without_claiming_readiness() -> anyhow::Result<()> {
         let plan = Plan::new(Platform::Windows, "fixture".into())?;
         plan.validate()?;
-        assert_eq!(plan.cases.len(), 28);
+        assert_eq!(plan.cases.len(), 29);
         assert_eq!(
             plan.cases
                 .iter()
@@ -201,15 +229,45 @@ mod tests {
                 .iter()
                 .filter(|c| c.status == "unverified")
                 .count(),
-            25
+            26
         );
+        let auxiliary = plan
+            .cases
+            .iter()
+            .filter(|case| case.auxiliary)
+            .collect::<Vec<_>>();
+        assert_eq!(auxiliary.len(), 1);
+        assert_eq!(auxiliary[0].backend, "moss");
+        assert_eq!(auxiliary[0].model, "VoiceGenerator");
+        assert_eq!(auxiliary[0].device, "cuda");
+        assert_eq!(auxiliary[0].math_backend, "bf16");
+        assert!(auxiliary[0].reason.contains("moss-candle-cuda"));
+        let features = [
+            "moss-nano-candle-cuda",
+            "moss-candle-cuda",
+            "moss",
+            "qwen",
+            "qwen-cuda",
+            "voxcpm",
+            "voxcpm-cuda",
+            "omnivoice",
+            "omnivoice-cuda",
+            "cosyvoice3",
+            "cosyvoice3-cuda",
+            "indextts",
+            "indextts-cuda-cudnn",
+            "ort-cuda",
+        ];
+        for feature in features {
+            assert!(talechime_backends::Registry::feature_exists(feature));
+        }
         Ok(())
     }
     #[test]
     fn mac_plan_keeps_models_unverified_and_unknown_schema_is_rejected() -> anyhow::Result<()> {
         let mut plan = Plan::new(Platform::Macos, "mac-fixture".into())?;
         plan.validate()?;
-        assert_eq!(plan.cases.len(), 28);
+        assert_eq!(plan.cases.len(), 29);
         assert!(
             plan.cases
                 .iter()
@@ -244,7 +302,7 @@ mod tests {
         plan.apply_catalog(&catalog)?;
         let mut mac = Plan::new(Platform::Macos, "mac-fixture".into())?;
         mac.apply_catalog(&catalog)?;
-        assert_eq!(mac.cases.len(), 28);
+        assert_eq!(mac.cases.len(), 29);
         assert_eq!(
             mac.cases
                 .iter()
@@ -252,7 +310,7 @@ mod tests {
                 .count(),
             24
         );
-        assert_eq!(plan.cases.len(), 28);
+        assert_eq!(plan.cases.len(), 29);
         assert_eq!(
             plan.cases
                 .iter()
@@ -260,6 +318,12 @@ mod tests {
                 .count(),
             25
         );
+        let auxiliary = plan
+            .cases
+            .iter()
+            .find(|case| case.auxiliary)
+            .expect("auxiliary voice generation must remain visible");
+        assert_eq!(auxiliary.status, "unverified");
         Ok(())
     }
 }

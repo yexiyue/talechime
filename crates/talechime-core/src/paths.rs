@@ -57,7 +57,7 @@ mod tests {
             home.path().join(".talechime/checkpoints")
         );
         ConfigStore::new(paths.config()).load().unwrap();
-        let source = tts_protocol::SourceId {
+        let source = talechime_protocol::SourceId {
             namespace: "cli".into(),
             book: "book.txt".into(),
             chapter: "file".into(),

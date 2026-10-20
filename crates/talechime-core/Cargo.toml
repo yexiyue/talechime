@@ -15,7 +15,7 @@ dirs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
-tts-protocol = { package = "talechime-protocol", path = "../talechime-protocol", version = "0.3.0" }
+talechime-protocol = { path = "../talechime-protocol", version = "0.3.0" }
 regex.workspace = true
 reqwest.workspace = true
 rodio.workspace = true

@@ -1,8 +1,8 @@
 //! VoiceDesign creates one reference recording; Base is used for subsequent narration.
 use super::{MAX_FRAMES, runtime};
-use qwen3_tts::{AudioBuffer, Language, SynthesisOptions};
 use std::path::PathBuf;
-use tts_protocol::Device;
+use talechime_protocol::Device;
+use talechime_qwen3_tts::{AudioBuffer, Language, SynthesisOptions};
 
 pub async fn reference(
     directory: PathBuf,

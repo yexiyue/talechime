@@ -2,10 +2,10 @@
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
-use cosyvoice3::{
+use std::{path::Path, time::Instant};
+use talechime_cosyvoice3::{
     CausalHiFtGenerator, CausalMaskedDiffWithDiT, CosyVoice3Config, CosyVoice3Lm, DiT,
 };
-use std::{path::Path, time::Instant};
 mod common;
 use common::compare;
 
@@ -97,7 +97,7 @@ fn main() -> Result<()> {
     let vb = load_weights(&model.join("flow.safetensors"), &dev)?;
     if let Some(expected) = f.get("time_embed") {
         use candle_core::Module;
-        let time = cosyvoice3::flow::embeddings::TimestepEmbedding::new(
+        let time = talechime_cosyvoice3::flow::embeddings::TimestepEmbedding::new(
             cfg.flow.dit.dim,
             vb.pp("dit.time_embed"),
         )?
@@ -108,7 +108,7 @@ fn main() -> Result<()> {
             expected,
             1e-4
         );
-        let embed = cosyvoice3::flow::embeddings::InputEmbedding::new(
+        let embed = talechime_cosyvoice3::flow::embeddings::InputEmbedding::new(
             80,
             80,
             cfg.flow.dit.dim,

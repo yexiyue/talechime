@@ -9,7 +9,7 @@ use std::{io::Read, path::Path};
     feature = "omnivoice",
     feature = "asr"
 ))]
-use tts_protocol::Event;
+use talechime_protocol::Event;
 
 #[derive(Deserialize)]
 pub(crate) struct Resource {
@@ -64,7 +64,7 @@ pub(crate) async fn prepare(
         let tx = progress.clone();
         let download_name = name.clone();
         let size = resource.size;
-        tts_core::download::download_from_url(&resource.url, &path, move |downloaded, _| {
+        talechime_core::download::download_from_url(&resource.url, &path, move |downloaded, _| {
             let _ = tx.try_send(Event::ModelProgress {
                 resource: download_name.clone(),
                 downloaded,

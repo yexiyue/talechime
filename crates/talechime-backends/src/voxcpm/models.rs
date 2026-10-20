@@ -46,10 +46,10 @@ impl Model {
             .join(self.id())
             .join(self.revision())
     }
-    pub fn compiled_devices(self) -> Vec<tts_protocol::Device> {
+    pub fn compiled_devices(self) -> Vec<talechime_protocol::Device> {
         super::compiled_devices()
             .into_iter()
-            .filter(|device| self == Self::Q8 || *device == tts_protocol::Device::Cuda)
+            .filter(|device| self == Self::Q8 || *device == talechime_protocol::Device::Cuda)
             .collect()
     }
     pub(crate) fn manifest(self) -> &'static str {
@@ -70,14 +70,14 @@ impl Model {
         directory: &Path,
         device: &Device,
         cancel: &impl Fn() -> bool,
-    ) -> candle_core::Result<voxcpm::Model> {
+    ) -> candle_core::Result<talechime_voxcpm::Model> {
         match self {
-            Self::Q8 => voxcpm::Model::load_with_cancel(directory, device, cancel),
+            Self::Q8 => talechime_voxcpm::Model::load_with_cancel(directory, device, cancel),
             Self::OriginalBf16 => {
                 if !device.is_cuda() {
                     candle_core::bail!("experimental VoxCPM2 BF16 requires CUDA");
                 }
-                voxcpm::Model::load_original(directory, device, DType::BF16, cancel)
+                talechime_voxcpm::Model::load_original(directory, device, DType::BF16, cancel)
             }
         }
     }
@@ -97,7 +97,7 @@ mod tests {
         assert!(
             !Model::OriginalBf16
                 .compiled_devices()
-                .contains(&tts_protocol::Device::Cpu)
+                .contains(&talechime_protocol::Device::Cpu)
         );
         assert!(
             Model::OriginalBf16

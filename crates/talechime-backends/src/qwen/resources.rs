@@ -1,4 +1,4 @@
-use tts_protocol::Event;
+use talechime_protocol::Event;
 pub const REVISION: &str = "85e237c12c027371202489a0ec509ded67b5e4b5";
 pub async fn prepare(
     directory: &std::path::Path,

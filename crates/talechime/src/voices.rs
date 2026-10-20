@@ -34,7 +34,7 @@ pub enum VoiceCommand {
 pub async fn run(
     command: VoiceCommand,
     resources: Resources,
-    config: &tts_protocol::Config,
+    config: &talechime_protocol::Config,
 ) -> anyhow::Result<()> {
     let backend = config.backend.as_str();
     if matches!(command, VoiceCommand::List) {
@@ -72,7 +72,7 @@ pub async fn run(
                 let text = text.ok_or_else(|| {
                     anyhow::anyhow!("{backend} cloning requires --text matching the reference WAV")
                 })?;
-                let reference = tts_backends::reference::load(&wav, rate)?;
+                let reference = talechime_backends::reference::load(&wav, rate)?;
                 anyhow::ensure!(
                     backend != "indextts" || reference.len() <= 15 * rate as usize,
                     "IndexTTS reference must be at most 15 seconds"
@@ -96,12 +96,12 @@ pub async fn run(
                 text,
                 description,
             } => {
-                let device = if config.tts_device == tts_protocol::Device::Auto {
+                let device = if config.tts_device == talechime_protocol::Device::Auto {
                     resources
                         .available_devices_for(backend, config.model.as_deref())
                         .into_iter()
-                        .find(|d| *d != tts_protocol::Device::Cpu)
-                        .unwrap_or(tts_protocol::Device::Cpu)
+                        .find(|d| *d != talechime_protocol::Device::Cpu)
+                        .unwrap_or(talechime_protocol::Device::Cpu)
                 } else {
                     config.tts_device
                 };
@@ -115,7 +115,7 @@ pub async fn run(
                 let (progress, mut updates) = tokio::sync::mpsc::channel(16);
                 let logger = tokio::task::spawn_local(async move {
                     while let Some(event) = updates.recv().await {
-                        if let tts_protocol::Event::ModelProgress {
+                        if let talechime_protocol::Event::ModelProgress {
                             resource,
                             downloaded,
                             total,
@@ -129,12 +129,12 @@ pub async fn run(
                     match backend {
                         #[cfg(feature = "moss-candle")]
                         "moss" => {
-                            tts_backends::moss::candle::resources::prepare_design(
+                            talechime_backends::moss::candle::resources::prepare_design(
                                 resources.root(),
                                 progress,
                             )
                             .await?;
-                            tts_backends::moss::candle::design::reference(
+                            talechime_backends::moss::candle::design::reference(
                                 resources.root().into(),
                                 device,
                                 text.clone(),
@@ -145,10 +145,11 @@ pub async fn run(
                         }
                         #[cfg(feature = "omnivoice")]
                         "omnivoice" => {
-                            let directory = tts_backends::omnivoice::directory(resources.root());
-                            tts_backends::omnivoice::resources::prepare(&directory, progress)
+                            let directory =
+                                talechime_backends::omnivoice::directory(resources.root());
+                            talechime_backends::omnivoice::resources::prepare(&directory, progress)
                                 .await?;
-                            tts_backends::omnivoice::design::reference(
+                            talechime_backends::omnivoice::design::reference(
                                 directory,
                                 device,
                                 text.clone(),
@@ -159,15 +160,15 @@ pub async fn run(
                         }
                         #[cfg(feature = "voxcpm")]
                         "voxcpm" => {
-                            let model = tts_backends::voxcpm::models::Model::parse(
+                            let model = talechime_backends::voxcpm::models::Model::parse(
                                 config.model.as_deref(),
                             )?;
                             let directory = model.directory(resources.root());
-                            tts_backends::voxcpm::resources::prepare_model(
+                            talechime_backends::voxcpm::resources::prepare_model(
                                 &directory, model, progress,
                             )
                             .await?;
-                            tts_backends::voxcpm::design::reference_model(
+                            talechime_backends::voxcpm::design::reference_model(
                                 directory,
                                 model,
                                 device,
@@ -179,7 +180,7 @@ pub async fn run(
                         }
                         _ => anyhow::bail!("{backend} does not support voice design"),
                     }
-                    tts_backends::reference::load(output.path(), rate)?;
+                    talechime_backends::reference::load(output.path(), rate)?;
                     store.import(
                         &format!("custom:{}", id.trim_start_matches("custom:")),
                         &name,
@@ -202,7 +203,7 @@ pub async fn run(
     }
     #[cfg(feature = "qwen")]
     if backend == "qwen" {
-        use tts_backends::qwen::{models::Model, validate_wav, voice_store};
+        use talechime_backends::qwen::{models::Model, validate_wav, voice_store};
         if let VoiceCommand::Design {
             id,
             name,
@@ -212,22 +213,22 @@ pub async fn run(
         {
             let design = Model::Design17;
             let directory = design.directory(resources.root());
-            let device = if config.tts_device == tts_protocol::Device::Auto {
-                tts_backends::qwen::available_devices()
+            let device = if config.tts_device == talechime_protocol::Device::Auto {
+                talechime_backends::qwen::available_devices()
                     .into_iter()
-                    .find(|d| *d != tts_protocol::Device::Cpu)
-                    .unwrap_or(tts_protocol::Device::Cpu)
+                    .find(|d| *d != talechime_protocol::Device::Cpu)
+                    .unwrap_or(talechime_protocol::Device::Cpu)
             } else {
                 config.tts_device
             };
             anyhow::ensure!(
-                tts_backends::qwen::available_devices().contains(&device),
+                talechime_backends::qwen::available_devices().contains(&device),
                 "requested design device is unavailable"
             );
             let (progress, mut updates) = tokio::sync::mpsc::channel(16);
             let logger = tokio::task::spawn_local(async move {
                 while let Some(event) = updates.recv().await {
-                    if let tts_protocol::Event::ModelProgress {
+                    if let talechime_protocol::Event::ModelProgress {
                         resource,
                         downloaded,
                         total,
@@ -239,8 +240,9 @@ pub async fn run(
             });
             let output = tempfile::NamedTempFile::new()?;
             let result = async {
-                tts_backends::qwen::resources::prepare_model(&directory, design, progress).await?;
-                tts_backends::qwen::design::reference(
+                talechime_backends::qwen::resources::prepare_model(&directory, design, progress)
+                    .await?;
+                talechime_backends::qwen::design::reference(
                     directory,
                     device,
                     text.clone(),
@@ -316,14 +318,16 @@ pub async fn run(
             VoiceCommand::Design { .. } => {
                 anyhow::bail!("voice design is not supported by {backend}")
             }
-            VoiceCommand::Remove { id } => tts_backends::moss::voices::VoiceStore::new(&directory)
-                .remove(&format!("custom:{}", id.trim_start_matches("custom:")))?,
+            VoiceCommand::Remove { id } => {
+                talechime_backends::moss::voices::VoiceStore::new(&directory)
+                    .remove(&format!("custom:{}", id.trim_start_matches("custom:")))?
+            }
             VoiceCommand::Import { id, name, wav, .. } => {
                 let id = format!("custom:{}", id.trim_start_matches("custom:"));
                 let (progress, mut rx) = tokio::sync::mpsc::channel(16);
                 let logger = tokio::task::spawn_local(async move {
                     while let Some(event) = rx.recv().await {
-                        if let tts_protocol::Event::ModelProgress {
+                        if let talechime_protocol::Event::ModelProgress {
                             resource,
                             downloaded,
                             total,
@@ -334,8 +338,8 @@ pub async fn run(
                     }
                 });
                 let result = async {
-                    tts_backends::moss::resources::prepare(&directory, progress).await?;
-                    let backend = tts_backends::moss::MossBackend::load(directory).await?;
+                    talechime_backends::moss::resources::prepare(&directory, progress).await?;
+                    let backend = talechime_backends::moss::MossBackend::load(directory).await?;
                     backend.import_voice(id.clone(), name, wav).await
                 }
                 .await;
@@ -361,21 +365,21 @@ pub async fn run(
 ))]
 fn shared_store(
     resources: &Resources,
-    config: &tts_protocol::Config,
-) -> anyhow::Result<Option<(tts_core::voices::VoiceStore, u32)>> {
+    config: &talechime_protocol::Config,
+) -> anyhow::Result<Option<(talechime_core::voices::VoiceStore, u32)>> {
     Ok(match config.backend.as_str() {
         #[cfg(feature = "indextts")]
         "indextts" => Some((
-            tts_backends::indextts::voice_store(&tts_backends::indextts::directory(
+            talechime_backends::indextts::voice_store(&talechime_backends::indextts::directory(
                 resources.root(),
             ))?,
             22_050,
         )),
         #[cfg(feature = "cosyvoice3")]
         "cosyvoice3" => Some((
-            tts_backends::cosyvoice3::voice_store(&tts_backends::cosyvoice3::directory(
-                resources.root(),
-            ))?,
+            talechime_backends::cosyvoice3::voice_store(
+                &talechime_backends::cosyvoice3::directory(resources.root()),
+            )?,
             24000,
         )),
         #[cfg(feature = "moss-candle")]
@@ -385,25 +389,31 @@ fn shared_store(
                 .as_deref()
                 .is_some_and(|id| id != "nano" && id != "nano-candle") =>
         {
-            let mode = tts_backends::moss::candle::Mode::parse(
+            let mode = talechime_backends::moss::candle::Mode::parse(
                 config.model.as_deref().expect("matched model"),
             )?;
             Some((
-                tts_backends::moss::candle::voice_store(&mode.directory(resources.root()), mode)?,
+                talechime_backends::moss::candle::voice_store(
+                    &mode.directory(resources.root()),
+                    mode,
+                )?,
                 24000,
             ))
         }
         #[cfg(feature = "voxcpm")]
         "voxcpm" => {
-            let model = tts_backends::voxcpm::models::Model::parse(config.model.as_deref())?;
+            let model = talechime_backends::voxcpm::models::Model::parse(config.model.as_deref())?;
             Some((
-                tts_backends::voxcpm::voice_store_for(&model.directory(resources.root()), model)?,
+                talechime_backends::voxcpm::voice_store_for(
+                    &model.directory(resources.root()),
+                    model,
+                )?,
                 16000,
             ))
         }
         #[cfg(feature = "omnivoice")]
         "omnivoice" => Some((
-            tts_backends::omnivoice::voice_store(&tts_backends::omnivoice::directory(
+            talechime_backends::omnivoice::voice_store(&talechime_backends::omnivoice::directory(
                 resources.root(),
             ))?,
             24000,

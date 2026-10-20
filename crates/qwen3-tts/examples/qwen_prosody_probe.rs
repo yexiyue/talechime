@@ -1,8 +1,8 @@
 //! Generate full utterances with explicit seeds/temperature for listening checks.
 use anyhow::{Context, ensure};
-use qwen3_tts::{Language, Qwen3TTS, SynthesisOptions, VoiceClonePrompt};
 use serde_json::json;
 use std::{fs, path::Path};
+use talechime_qwen3_tts::{Language, Qwen3TTS, SynthesisOptions, VoiceClonePrompt};
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -23,7 +23,7 @@ fn main() -> anyhow::Result<()> {
         .collect::<anyhow::Result<Vec<_>>>()?;
     let directory = Path::new(&args[4]);
     fs::create_dir_all(directory)?;
-    let model = Qwen3TTS::from_pretrained(&args[0], qwen3_tts::parse_device(&args[3])?)?;
+    let model = Qwen3TTS::from_pretrained(&args[0], talechime_qwen3_tts::parse_device(&args[3])?)?;
     let prompt = VoiceClonePrompt::load(Path::new(&args[1]), model.device())?;
     let mut records = Vec::new();
     for seed in seeds {

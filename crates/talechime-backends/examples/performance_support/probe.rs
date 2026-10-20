@@ -7,8 +7,8 @@ use std::{
     rc::Rc,
     time::Instant,
 };
+use talechime_core::{SynthesisOptions, SynthesisState, SynthesisStream, backend::Backend};
 use tracing::Instrument;
-use tts_core::{SynthesisOptions, SynthesisState, SynthesisStream, backend::Backend};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -18,14 +18,14 @@ struct Request {
     resources_root: PathBuf,
     backend: String,
     model: String,
-    device: tts_protocol::Device,
+    device: talechime_protocol::Device,
     corpus: PathBuf,
     corpus_sha256: String,
     voice: String,
     style: Option<String>,
     continuation: bool,
     seed: u64,
-    params: std::collections::BTreeMap<String, tts_protocol::ParamValue>,
+    params: std::collections::BTreeMap<String, talechime_protocol::ParamValue>,
     warmup_rounds: u32,
     hot_rounds: u32,
     max_pcm_bytes: usize,
@@ -166,7 +166,7 @@ async fn run(
         ensure!(
             request.backend == "fixture"
                 && request.model == "deterministic"
-                && request.device == tts_protocol::Device::Cpu,
+                && request.device == talechime_protocol::Device::Cpu,
             "fixture cannot impersonate a real model or GPU"
         );
         serde_json::json!({"verification":"synthetic_fixture"})
@@ -199,7 +199,8 @@ async fn run(
     parameters(request)
         .validate(&caps.parameters)
         .map_err(anyhow::Error::msg)?;
-    events.send("prepared", serde_json::json!({"verify_seconds":verify_seconds,"load_seconds":load_seconds,"resource_receipt":receipt,"capabilities":caps,"reference_prepare_seconds":null,"reference_prepare_reason":"included in load or lazy first request; backend-specific separation unavailable"}))?;
+    let reference_warmup_seconds = prepare_reference(request, backend.clone()).await?;
+    events.send("prepared", serde_json::json!({"verify_seconds":verify_seconds,"load_seconds":load_seconds,"resource_receipt":receipt,"capabilities":caps,"reference_prepare_seconds":null,"reference_prepare_reason":"reference preparation cannot be isolated from load or synthesis; optional short synthesis is separately reported","reference_warmup_seconds":reference_warmup_seconds}))?;
     for index in 0..request.warmup_rounds + request.hot_rounds {
         let span = tracing::info_span!(target:"talechime_perf","perf_round",round=index);
         let round = round(
@@ -219,6 +220,50 @@ async fn run(
     Ok(())
 }
 
+/// A single untimed short synthesis populates reproducibly keyed reference caches.
+/// Its full cost is reported separately; it is not a pure reference-encoding metric.
+async fn prepare_reference(
+    request: &Request,
+    backend: Rc<dyn Backend>,
+) -> anyhow::Result<Option<f64>> {
+    if backend.cache_identity().is_none() {
+        return Ok(None);
+    }
+    let started = Instant::now();
+    let mut stream = SynthesisStream::start_with_options(
+        backend,
+        SHORT_CORPUS,
+        &request.voice,
+        request.style.clone(),
+        None,
+        SynthesisOptions {
+            continuation: request.continuation,
+            params: parameters(request),
+            seed: talechime_core::SeedPolicy::Pinned(request.seed),
+            ..Default::default()
+        },
+    )?;
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(request.request_timeout_seconds),
+        async {
+            let mut received = false;
+            while let Some(block) = stream.recv().await {
+                block?.pcm().duration_ms()?;
+                received = true;
+            }
+            ensure!(
+                received && stream.state() == SynthesisState::Completed,
+                "reference warmup did not complete with valid PCM"
+            );
+            Ok::<(), anyhow::Error>(())
+        },
+    )
+    .await;
+    stream.cancel().await;
+    result.map_err(|_| RequestTimeout)??;
+    Ok(Some(started.elapsed().as_secs_f64()))
+}
+
 async fn round(
     request: &Request,
     output: &Path,
@@ -233,14 +278,23 @@ async fn round(
     } else {
         "hot"
     };
+    let delivery_boundary = {
+        let caps = backend.capabilities();
+        if caps.native_streaming {
+            "native_streaming_first_pcm"
+        } else {
+            "segment_delivery_first_pcm"
+        }
+    };
     metrics::counter!("talechime.requests","stage"=>stage).increment(1);
-    let started = Instant::now();
-    let offset = telemetry.offset_at(started);
+    let expected_ranges = expected_ranges(backend.as_ref(), text).await?;
     let backend = Rc::new(crate::observed::Observed {
         inner: backend,
         parent,
         calls: std::cell::Cell::new(0),
     });
+    let started = Instant::now();
+    let offset = telemetry.offset_at(started);
     let mut stream = SynthesisStream::start_with_options(
         backend,
         text.to_owned(),
@@ -250,7 +304,7 @@ async fn round(
         SynthesisOptions {
             continuation: request.continuation,
             params: parameters(request),
-            seed: tts_core::SeedPolicy::Pinned(request.seed),
+            seed: talechime_core::SeedPolicy::Pinned(request.seed),
             ..Default::default()
         },
     )?;
@@ -259,7 +313,7 @@ async fn round(
     let mut first = None;
     let mut observations = Vec::new();
     let mut chunks = Vec::new();
-    let mut segments: Vec<(tts_protocol::TextRange, usize, usize)> = Vec::new();
+    let mut segments: Vec<(talechime_protocol::TextRange, usize, usize)> = Vec::new();
     let deadline = tokio::time::Instant::now()
         + std::time::Duration::from_secs(request.request_timeout_seconds);
     let completion = async {
@@ -312,6 +366,18 @@ async fn round(
         ensure!(
             stream.state() == SynthesisState::Completed,
             "generation did not complete normally"
+        );
+        let actual_ranges = segments
+            .iter()
+            .map(|(range, _, _)| *range)
+            .collect::<Vec<_>>();
+        ensure!(
+            actual_ranges == expected_ranges,
+            "consumer ranges differ from production segmentation"
+        );
+        ensure!(
+            first.is_some_and(|first| first > 0.0),
+            "first PCM boundary was not observed"
         );
         Ok::<(), anyhow::Error>(())
     }
@@ -397,7 +463,7 @@ async fn round(
     std::fs::write(output.join(&ranges_name), &ranges_bytes)?;
     artifacts.push(serde_json::json!({"path":ranges_name,"sha256":hash(&ranges_bytes),"bytes":ranges_bytes.len(),"kind":"source_ranges","derived_from":null}));
     Ok(
-        serde_json::json!({"index":index,"warmup":index<request.warmup_rounds,"outcome":"success","synthesis_seconds":elapsed,"audio_seconds":audio_seconds,"first_pcm_seconds":first,"output_sha256":format!("{:x}",pcm_hash.finalize()),"observations":observations,"artifacts":artifacts}),
+        serde_json::json!({"index":index,"warmup":index<request.warmup_rounds,"outcome":"success","synthesis_seconds":elapsed,"audio_seconds":audio_seconds,"first_pcm_seconds":first,"delivery_boundary":delivery_boundary,"output_sha256":format!("{:x}",pcm_hash.finalize()),"observations":observations,"artifacts":artifacts}),
     )
 }
 
@@ -446,25 +512,57 @@ fn write_wav(
     Ok(())
 }
 
-fn parameters(request: &Request) -> tts_core::params::GenerationParams {
-    let mut params = tts_core::params::GenerationParams::new();
+fn parameters(request: &Request) -> talechime_core::params::GenerationParams {
+    let mut params = talechime_core::params::GenerationParams::new();
     for (name, value) in &request.params {
         params.insert(name, value.clone());
     }
     params
 }
 
+const SHORT_CORPUS: &str = "你好，欢迎使用叙铃。";
+
+async fn expected_ranges(
+    backend: &dyn Backend,
+    text: &str,
+) -> anyhow::Result<Vec<talechime_protocol::TextRange>> {
+    let mut ranges = Vec::new();
+    let mut source = text;
+    while let Some(segment) = backend
+        .next_segment(source)
+        .await
+        .map_err(anyhow::Error::msg)?
+    {
+        let offset = source.as_ptr() as usize - text.as_ptr() as usize;
+        let range = talechime_protocol::TextRange {
+            start: offset + segment.start,
+            end: offset + segment.end,
+        };
+        anyhow::ensure!(
+            range.start < range.end && range.end <= text.len() && range.is_valid(text),
+            "backend produced an invalid production range"
+        );
+        ranges.push(range);
+        source = &text[range.end..];
+    }
+    anyhow::ensure!(
+        !ranges.is_empty(),
+        "production segmentation produced no synthesis segments"
+    );
+    Ok(ranges)
+}
+
 struct Fixture;
 impl Backend for Fixture {
-    fn capabilities(&self) -> tts_protocol::Capabilities {
-        tts_protocol::Capabilities {
+    fn capabilities(&self) -> talechime_protocol::Capabilities {
+        talechime_protocol::Capabilities {
             backend: "fixture".into(),
             model: Some("deterministic".into()),
             voices: vec!["fixture".into()],
             default_voice: "fixture".into(),
             model_name: "Deterministic performance fixture".into(),
             voice_names: Default::default(),
-            compiled_devices: vec![tts_protocol::Device::Cpu],
+            compiled_devices: vec![talechime_protocol::Device::Cpu],
             native_streaming: true,
             style: false,
             cloning: false,
@@ -475,8 +573,8 @@ impl Backend for Fixture {
     }
     fn stream<'a>(
         &'a self,
-        _request: tts_core::backend::SegmentRequest<'a>,
-    ) -> tts_core::backend::Streaming<'a> {
+        _request: talechime_core::backend::SegmentRequest<'a>,
+    ) -> talechime_core::backend::Streaming<'a> {
         Box::pin(async {
             let (tx, rx) = tokio::sync::mpsc::channel(1);
             let span = tracing::Span::current();
@@ -487,8 +585,8 @@ impl Backend for Fixture {
                     metrics::counter!("talechime.chunks","stage"=>"fixture_owner").increment(1);
                     let waiting=Instant::now();
                     let sent=tx
-                        .send(Ok(tts_core::backend::AudioChunk::Pcm(
-                            tts_core::backend::Pcm {
+                        .send(Ok(talechime_core::backend::AudioChunk::Pcm(
+                            talechime_core::backend::Pcm {
                                 samples: vec![0.125; 2400],
                                 sample_rate: 24000,
                                 channels: 1,
@@ -503,7 +601,7 @@ impl Backend for Fixture {
                     }
                     tracing::info!(target:"talechime_perf",event="adapter_channel_enqueue");
                 }
-                let _ = tx.send(Ok(tts_core::backend::AudioChunk::End)).await;
+                let _ = tx.send(Ok(talechime_core::backend::AudioChunk::End)).await;
             }.instrument(span));
             Ok(rx)
         })
@@ -531,13 +629,13 @@ mod tests {
         closed: Arc<AtomicBool>,
     }
     impl Backend for Controlled {
-        fn capabilities(&self) -> tts_protocol::Capabilities {
+        fn capabilities(&self) -> talechime_protocol::Capabilities {
             Fixture.capabilities()
         }
         fn stream<'a>(
             &'a self,
-            _request: tts_core::backend::SegmentRequest<'a>,
-        ) -> tts_core::backend::Streaming<'a> {
+            _request: talechime_core::backend::SegmentRequest<'a>,
+        ) -> talechime_core::backend::Streaming<'a> {
             let ending = self.ending;
             let closed = self.closed.clone();
             Box::pin(async move {
@@ -557,8 +655,8 @@ mod tests {
                         vec![0.125; 8]
                     };
                     if tx
-                        .send(Ok(tts_core::backend::AudioChunk::Pcm(
-                            tts_core::backend::Pcm {
+                        .send(Ok(talechime_core::backend::AudioChunk::Pcm(
+                            talechime_core::backend::Pcm {
                                 samples,
                                 sample_rate: 24000,
                                 channels: 1,
@@ -571,11 +669,11 @@ mod tests {
                     }
                     match ending {
                         Ending::Success | Ending::NonFinite => {
-                            let _ = tx.send(Ok(tts_core::backend::AudioChunk::End)).await;
+                            let _ = tx.send(Ok(talechime_core::backend::AudioChunk::End)).await;
                         }
                         Ending::Error => {
                             let _ = tx
-                                .send(Err(tts_core::backend::BackendError::Synthesis(
+                                .send(Err(talechime_core::backend::BackendError::Synthesis(
                                     "injected".into(),
                                 )))
                                 .await;
@@ -587,6 +685,80 @@ mod tests {
                 Ok(rx)
             })
         }
+    }
+    struct Cached {
+        inner: Controlled,
+        calls: std::cell::Cell<u32>,
+    }
+    impl Backend for Cached {
+        fn capabilities(&self) -> talechime_protocol::Capabilities {
+            self.inner.capabilities()
+        }
+        fn cache_identity(&self) -> Option<String> {
+            Some("fixture-cache".into())
+        }
+        fn stream<'a>(
+            &'a self,
+            request: talechime_core::backend::SegmentRequest<'a>,
+        ) -> talechime_core::backend::Streaming<'a> {
+            self.calls.set(self.calls.get() + 1);
+            self.inner.stream(request)
+        }
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn reference_preparation_is_separate_and_not_repeated_in_timed_rounds()
+    -> anyhow::Result<()> {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let backend = Rc::new(Cached {
+                    inner: Controlled {
+                        ending: Ending::Success,
+                        closed: Arc::new(AtomicBool::new(false)),
+                    },
+                    calls: std::cell::Cell::new(0),
+                });
+                let request = request();
+                let preparation = prepare_reference(&request, backend.clone()).await?;
+                assert!(preparation.is_some_and(|seconds| seconds > 0.0));
+                assert_eq!(backend.calls.get(), 1);
+                let telemetry = crate::telemetry::Telemetry::install("off")?;
+                let output = tempfile::tempdir()?;
+                for index in 0..2 {
+                    round(
+                        &request,
+                        output.path(),
+                        "fixture.",
+                        backend.clone(),
+                        index,
+                        &telemetry,
+                        tracing::Span::none(),
+                    )
+                    .await?;
+                }
+                assert_eq!(
+                    backend.calls.get(),
+                    3,
+                    "only one synthesis per measured round"
+                );
+                let closed = Arc::new(AtomicBool::new(false));
+                let hung = Rc::new(Cached {
+                    inner: Controlled {
+                        ending: Ending::Hang,
+                        closed: closed.clone(),
+                    },
+                    calls: std::cell::Cell::new(0),
+                });
+                let error = prepare_reference(&request, hung).await.unwrap_err();
+                assert!(error.downcast_ref::<RequestTimeout>().is_some());
+                tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                    while !closed.load(Ordering::Acquire) {
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await?;
+                Ok::<(), anyhow::Error>(())
+            })
+            .await
     }
     fn request() -> Request {
         serde_json::from_value(serde_json::json!({"schema":"talechime/performance-request/1","attempt_id":"fixture","resources_root":"not_used","backend":"fixture","model":"deterministic","device":"cpu","corpus":"not_used","corpus_sha256":hash(b"fixture."),"voice":"fixture","style":null,"continuation":false,"seed":42,"params":{},"warmup_rounds":1,"hot_rounds":1,"max_pcm_bytes":1024,"fixture":true,"request_timeout_seconds":1,"observation_mode":"off"})).unwrap()
@@ -686,6 +858,45 @@ mod tests {
                         .any(|a| a["kind"] == "audio_pcm16"
                             && a["derived_from"] == "round-0-full-f32.wav")
                 );
+                Ok::<(), anyhow::Error>(())
+            })
+            .await
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn multi_segment_success_preserves_production_ranges_and_finite_pcm() -> anyhow::Result<()>
+    {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let telemetry = crate::telemetry::Telemetry::install("off")?;
+                let output = tempfile::tempdir()?;
+                let text = format!("{SHORT_CORPUS}\n{SHORT_CORPUS}");
+                let result = round(
+                    &request(),
+                    output.path(),
+                    &text,
+                    Rc::new(Controlled {
+                        ending: Ending::Success,
+                        closed: Arc::new(AtomicBool::new(false)),
+                    }),
+                    0,
+                    &telemetry,
+                    tracing::Span::none(),
+                )
+                .await?;
+                let ranges = result["artifacts"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|artifact| artifact["kind"] == "source_ranges")
+                    .count();
+                assert_eq!(ranges, 1);
+                let ranges: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+                    output.path().join("round-0-ranges.json"),
+                )?)?;
+                assert_eq!(ranges["segments"].as_array().unwrap().len(), 2);
+                assert_eq!(ranges["segments"][0]["range"]["start"], 0);
+                assert_eq!(ranges["segments"][1]["range"]["end"], text.as_bytes().len());
+                assert!(result["output_sha256"].as_str().unwrap().len() == 64);
                 Ok::<(), anyhow::Error>(())
             })
             .await

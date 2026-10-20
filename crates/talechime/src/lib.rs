@@ -32,7 +32,7 @@ mod voice_import;
 
 pub use engine::{Engine, EngineError, ModelOptions, PcmStream, run_local};
 pub use listening::{Listening, ListeningHandle, ListeningOptions, ListeningSession};
-pub use tts_core::{
+pub use talechime_core::{
     CancellationHandle, ChapterCacheOptions, DEFAULT_MAX_BYTES, GenerationParams, PlanError,
     PlanProgress, PlanSessionOptions, PlanState, Playback, PlaybackPolicy, SeedPolicy,
     SourceSnapshot, SpeechAudio, SpeechContext, SpeechPlan, SpeechSpan, StagingError,
@@ -40,13 +40,13 @@ pub use tts_core::{
     backend::{AudioChunk, Backend, BackendError, Pcm, SegmentRequest, Segmentation, Streaming},
     session::{SessionError, SessionEvent},
 };
-pub use tts_protocol::{
+pub use talechime_protocol::{
     Capabilities, Device, EndReason, Event, ParamKind, ParamValue, ParameterSpec, SessionState,
     SourceId, TextRange, text_hash,
 };
 pub use voice_import::{VoiceImportError, import_reference_voice, list_voices};
 
-pub use tts_core::verification::{
+pub use talechime_core::verification::{
     DifferenceKind, ReadbackAudio, ReadbackDifference, ReadbackEvidence, ReadbackRequest,
     Recognition, RecognitionRequest, Recognizer, RecognizerIdentity, VerificationError,
     VerificationOptions, VerificationPolicy, VerificationReport, VerificationVerdict, Verifier,
@@ -54,21 +54,25 @@ pub use tts_core::verification::{
 
 /// Typed per-model generation parameter builders; available with each backend feature.
 #[cfg(feature = "moss-candle")]
-pub use tts_backends::moss::candle::params::MossParams;
+pub use talechime_backends::moss::candle::params::MossParams;
 #[cfg(feature = "omnivoice")]
-pub use tts_backends::omnivoice::params::OmniVoiceParams;
+pub use talechime_backends::omnivoice::params::OmniVoiceParams;
 #[cfg(feature = "qwen")]
-pub use tts_backends::qwen::params::QwenParams;
+pub use talechime_backends::qwen::params::QwenParams;
 #[cfg(feature = "voxcpm")]
-pub use tts_backends::voxcpm::params::VoxCpmParams;
+pub use talechime_backends::voxcpm::params::VoxCpmParams;
 
 #[cfg(feature = "asr")]
-pub use tts_backends::asr::ReadbackModelOptions;
+pub use talechime_backends::asr::ReadbackModelOptions;
 /// Explicitly prepare the selected native CPU ASR group and drain progress concurrently.
 #[cfg(feature = "asr")]
 pub async fn prepare_readback(
     options: ReadbackModelOptions,
     progress: impl FnMut(Event),
 ) -> Result<std::rc::Rc<Verifier>, EngineError> {
-    model_preparation::with_progress(|tx| tts_backends::asr::prepare(&options, tx), progress).await
+    model_preparation::with_progress(
+        |tx| talechime_backends::asr::prepare(&options, tx),
+        progress,
+    )
+    .await
 }

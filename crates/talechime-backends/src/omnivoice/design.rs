@@ -1,6 +1,6 @@
 //! Create one tagged reference; subsequent narration uses its cached clone prompt.
 use std::{path::PathBuf, sync::Arc};
-use tts_protocol::Device;
+use talechime_protocol::Device;
 pub async fn reference(
     directory: PathBuf,
     device: Device,
@@ -24,8 +24,8 @@ pub async fn reference(
         .name("omni-voice-design".into())
         .spawn(move || {
             let generated = (|| -> anyhow::Result<()> {
-                let pipeline = ::omnivoice::pipeline::Pipeline::from_options(
-                    ::omnivoice::runtime::RuntimeOptions::new(directory)
+                let pipeline = talechime_omnivoice::pipeline::Pipeline::from_options(
+                    talechime_omnivoice::runtime::RuntimeOptions::new(directory)
                         .with_device(
                             super::runtime::options_device(device)
                                 .ok_or_else(|| anyhow::anyhow!("unsupported Omni device"))?,
@@ -34,20 +34,21 @@ pub async fn reference(
                 )?;
                 let signal = completed.clone();
                 pipeline.set_cancellation_probe(Some(
-                    ::omnivoice::stage0_model::CancellationProbe(Arc::new(move || {
+                    talechime_omnivoice::stage0_model::CancellationProbe(Arc::new(move || {
                         signal.is_closed()
                     })),
                 ));
-                let request = ::omnivoice::contracts::GenerationRequest::new_text_only(text)
-                    .with_language("zh")
-                    .with_instruct(description);
+                let request =
+                    talechime_omnivoice::contracts::GenerationRequest::new_text_only(text)
+                        .with_language("zh")
+                        .with_instruct(description);
                 let mut generated = pipeline.generate(&request)?;
                 anyhow::ensure!(
                     !completed.is_closed() && generated.len() == 1,
                     "voice design cancelled or returned an invalid batch"
                 );
                 let audio = generated.remove(0);
-                let pcm = tts_core::backend::Pcm {
+                let pcm = talechime_core::backend::Pcm {
                     samples: audio.samples,
                     sample_rate: audio.sample_rate,
                     channels: 1,

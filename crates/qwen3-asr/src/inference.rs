@@ -35,7 +35,7 @@ pub(crate) const TOK_ASSISTANT: i64 = 77091; // "assistant"
 /// you need to override:
 ///
 /// ```
-/// # use qwen3_asr::TranscribeOptions;
+/// # use talechime_qwen3_asr::TranscribeOptions;
 /// let mut opts = TranscribeOptions::default();
 /// opts.language = Some("english".into());
 /// ```

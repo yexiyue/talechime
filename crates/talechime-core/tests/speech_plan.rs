@@ -1,7 +1,7 @@
 use talechime_core::{
     PlanError, PlanState, PlaybackPolicy, SourceSnapshot, SpeechPlan, SpeechSpan, VoiceSnapshot,
 };
-use tts_protocol::{Capabilities, SourceId, TextRange, text_hash};
+use talechime_protocol::{Capabilities, SourceId, TextRange, text_hash};
 
 fn capabilities(style: bool) -> Capabilities {
     Capabilities {

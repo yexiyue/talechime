@@ -1,6 +1,6 @@
 //! Declared MOSS Local/Realtime generation parameters and their typed builder.
-use tts_core::params::GenerationParams;
-use tts_protocol::{ParamKind, ParamValue, ParameterSpec};
+use talechime_core::params::GenerationParams;
+use talechime_protocol::{ParamKind, ParamValue, ParameterSpec};
 
 /// The pinned codec emits 1920 samples per frame at 24 kHz (12.5 Hz).
 const FRAME_HZ: f64 = 24_000.0 / 1920.0;

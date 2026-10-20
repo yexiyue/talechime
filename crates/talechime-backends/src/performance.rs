@@ -120,15 +120,15 @@ pub fn verify(registry: &crate::Registry, backend: &str, model: &str) -> anyhow:
             "local-1.7b" | "realtime-1.7b" => {
                 let mode = crate::moss::candle::Mode::parse(model)?;
                 let json = if model == "local-1.7b" {
-                    moss_tts::manifests::LOCAL
+                    talechime_moss_tts::manifests::LOCAL
                 } else {
-                    moss_tts::manifests::REALTIME
+                    talechime_moss_tts::manifests::REALTIME
                 };
                 let mut files = manifest(root, &mode.directory(root), json)?;
                 files.extend(manifest(
                     root,
                     &crate::moss::candle::resources::codec_directory(root),
-                    moss_tts::manifests::CODEC,
+                    talechime_moss_tts::manifests::CODEC,
                 )?);
                 files
             }
@@ -157,8 +157,8 @@ pub async fn load(
     registry: &crate::Registry,
     backend: &str,
     model: &str,
-    device: tts_protocol::Device,
-) -> anyhow::Result<std::rc::Rc<dyn tts_core::backend::Backend>> {
+    device: talechime_protocol::Device,
+) -> anyhow::Result<std::rc::Rc<dyn talechime_core::backend::Backend>> {
     registry.capabilities_for(backend, Some(model))?;
     #[cfg(any(
         feature = "qwen",
@@ -183,7 +183,7 @@ pub async fn load(
         );
     }
     let root = registry.root();
-    let loaded: Option<std::rc::Rc<dyn tts_core::backend::Backend>> = match backend {
+    let loaded: Option<std::rc::Rc<dyn talechime_core::backend::Backend>> = match backend {
         #[cfg(feature = "qwen")]
         "qwen" => Some(std::rc::Rc::new(
             crate::qwen::QwenBackend::load_on(

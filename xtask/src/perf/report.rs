@@ -1,7 +1,7 @@
 //! Portable offline evidence report, built entirely in Rust.
 use super::{
     evidence::{VERSION, contained, digest, file_digest, publish_bytes, publish_json, read_json},
-    records::{Artifact, Attempt},
+    records::{Artifact, Attempt, Conditions},
     statistics::{Metric, summarize},
 };
 use anyhow::{Context, ensure};
@@ -9,12 +9,25 @@ use serde::{Deserialize, Serialize};
 use std::io::BufRead;
 use std::{collections::BTreeMap, path::Path};
 
+const ECHARTS_VERSION: &str = "6.0.0";
+const ECHARTS_SHA256: &str = "baa8dfe7e1d9336b98e8986ba7e20ea15e7cdbea1ef42a59d59478632fa45a1d";
+const ECHARTS_LICENSE_SHA256: &str =
+    "634293835b43a6dd2094fa39182a3d9a6b9ca43b7fdb9ac354e8037af2a3093a";
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
     pub schema: String,
     pub artifacts: Vec<Artifact>,
     pub listening_acceptance: String,
+}
+
+#[derive(Serialize)]
+struct ChartPoint {
+    case: String,
+    metric: &'static str,
+    value: Option<f64>,
+    unit: &'static str,
 }
 
 fn escape(text: &str) -> String {
@@ -142,7 +155,143 @@ fn resource_table(path: &Path) -> anyhow::Result<String> {
     Ok(html)
 }
 
+fn resource_metrics(
+    run: &Path,
+    attempts: &[Attempt],
+    metric: &str,
+    scope: &str,
+) -> anyhow::Result<BTreeMap<String, Option<f64>>> {
+    let mut samples = Vec::new();
+    for attempt in attempts {
+        let path = run
+            .join("attempts")
+            .join(&attempt.attempt_id)
+            .join("resource-samples.jsonl");
+        if !path.is_file() {
+            samples.push(BTreeMap::new());
+            continue;
+        }
+        let reader = std::io::BufReader::new(std::fs::File::open(path)?);
+        let mut maxima: BTreeMap<String, Option<f64>> = BTreeMap::new();
+        for line in reader.lines() {
+            let sample: serde_json::Value = serde_json::from_str(&line?)?;
+            for (name, reading) in sample["readings"]
+                .as_object()
+                .context("invalid resource sample")?
+            {
+                if name != metric
+                    && !(scope == "whole_device"
+                        && name
+                            .split_once(':')
+                            .is_some_and(|(_, suffix)| suffix == metric))
+                {
+                    continue;
+                }
+                let reading: super::evidence::Reading = serde_json::from_value(reading.clone())?;
+                reading.validate()?;
+                if reading.scope == scope {
+                    let maximum = maxima.entry(name.clone()).or_default();
+                    if let Some(value) = reading.value {
+                        *maximum = Some(maximum.map_or(value, |previous| previous.max(value)));
+                    }
+                }
+            }
+        }
+        samples.push(maxima);
+    }
+    let mut names: std::collections::BTreeSet<_> = samples
+        .iter()
+        .flat_map(|sample| sample.keys().cloned())
+        .collect();
+    if names.is_empty() {
+        names.insert(metric.to_owned());
+    }
+    Ok(names
+        .into_iter()
+        .map(|name| {
+            let value = samples
+                .iter()
+                .map(|sample| sample.get(&name).copied().flatten())
+                .collect::<Option<Vec<_>>>()
+                .and_then(|values| values.into_iter().reduce(f64::max));
+            (name, value)
+        })
+        .collect())
+}
+
+fn copy_echarts(output: &Path, library_root: &Path) -> anyhow::Result<()> {
+    let script_name = format!("echarts-{ECHARTS_VERSION}.min.js");
+    let library_root = library_root.canonicalize()?;
+    let script = library_root.join(&script_name);
+    let license = library_root.join("LICENSE");
+    let script_destination = contained(output, Path::new(&script_name))?;
+    let license_destination = contained(output, Path::new("echarts-LICENSE"))?;
+    for (source, expected, destination) in [
+        (&script, ECHARTS_SHA256, script_destination),
+        (&license, ECHARTS_LICENSE_SHA256, license_destination),
+    ] {
+        ensure!(source.is_file(), "bundled ECharts asset missing");
+        let digest = file_digest(source)
+            .with_context(|| format!("hash bundled ECharts asset {}", source.display()))?;
+        ensure!(
+            digest == expected,
+            "bundled ECharts identity changed: {} {} != {}",
+            source.display(),
+            digest,
+            expected
+        );
+        std::fs::copy(source, &destination)
+            .with_context(|| format!("copy {}", destination.display()))?;
+        ensure!(
+            file_digest(&destination)? == expected,
+            "ECharts copy changed"
+        );
+    }
+    Ok(())
+}
+
+fn planned_chart_label(planned: &serde_json::Value) -> String {
+    [
+        planned["backend"].as_str().unwrap_or("unknown backend"),
+        planned["model"].as_str().unwrap_or("unknown model"),
+        planned["device"].as_str().unwrap_or("unknown device"),
+    ]
+    .join(" / ")
+}
+
+fn planned_matches(planned: &serde_json::Value, platform: &str, conditions: &Conditions) -> bool {
+    planned["backend"].as_str() == Some(conditions.backend.as_str())
+        && planned["model"].as_str() == Some(conditions.model.as_str())
+        && planned["device"].as_str() == Some(conditions.provider.as_str())
+        && conditions.os.split('-').next() == Some(platform)
+}
+
+fn chart_label(case: &str, conditions: &Conditions) -> String {
+    format!(
+        "{} / {} / {} / {} / {case}",
+        conditions.backend, conditions.model, conditions.provider, conditions.mode
+    )
+}
+
+fn chart_json(rows: &[ChartPoint]) -> anyhow::Result<String> {
+    Ok(serde_json::to_string(rows)
+        .context("serialize chart data")?
+        .replace('<', "\\u003c"))
+}
+
+fn mean_if_complete(values: &[Option<f64>]) -> Option<f64> {
+    if values.is_empty() || values.iter().any(Option::is_none) {
+        return None;
+    }
+    let sum = values.iter().filter_map(|value| *value).sum::<f64>();
+    Some(sum / values.len() as f64)
+}
+
 pub fn report(run: &Path, results: &Path, output: &Path) -> anyhow::Result<()> {
+    let library_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("docs/legal/echarts");
     ensure!(!output.exists(), "report output already exists");
     let run = run.canonicalize()?;
     let results = contained(&run, results)?;
@@ -172,16 +321,35 @@ pub fn report(run: &Path, results: &Path, output: &Path) -> anyhow::Result<()> {
     let mut csv_output = String::from(
         "case,platform,provider,metric,mean_of_process_means,successful_hot_rounds,expected_hot_rounds,complete\n",
     );
-    let mut charts = Vec::new();
+    let mut chart_rows = Vec::new();
     let mut copied: BTreeMap<String, String> = BTreeMap::new();
     let mut all_results = Vec::new();
+    let planned_cases = run_info["plan"]["cases"]
+        .as_array()
+        .context("planned cases missing")?
+        .clone();
+    let platform = run_info["plan"]["platform"].as_str().unwrap_or("");
+    for planned in &planned_cases {
+        let label = planned_chart_label(planned);
+        let attempted = groups
+            .values()
+            .flatten()
+            .any(|attempt| planned_matches(planned, platform, &attempt.conditions));
+        if !attempted {
+            for metric in ["RTF", "First PCM"] {
+                chart_rows.push(ChartPoint {
+                    case: label.clone(),
+                    metric,
+                    value: None,
+                    unit: if metric == "RTF" { "ratio" } else { "seconds" },
+                });
+            }
+        }
+    }
     for (case, mut processes) in groups {
         processes.sort_by_key(|a| a.process_index);
         let first = &processes[0];
-        let label = format!(
-            "{} / {} / {}",
-            first.conditions.backend, first.conditions.model, first.conditions.provider
-        );
+        let label = chart_label(&case, &first.conditions);
         details.push_str(&format!(
             "<section><h2>{}</h2><p>{} · {} · listening_acceptance=pending</p>",
             escape(&case),
@@ -189,6 +357,8 @@ pub fn report(run: &Path, results: &Path, output: &Path) -> anyhow::Result<()> {
             escape(&first.conditions.os)
         ));
         let mut representative = None;
+        let mut load_values = Vec::new();
+        let mut reference_values = Vec::new();
         for metric in [
             Metric::Rtf,
             Metric::SynthesisSeconds,
@@ -224,7 +394,12 @@ pub fn report(run: &Path, results: &Path, output: &Path) -> anyhow::Result<()> {
                 summary.complete
             ));
             if metric == Metric::Rtf {
-                charts.push((label.clone(), summary.mean_of_process_means));
+                chart_rows.push(ChartPoint {
+                    case: label.clone(),
+                    metric: "RTF",
+                    value: summary.mean_of_process_means,
+                    unit: "ratio",
+                });
             }
         }
         for attempt in &processes {
@@ -260,6 +435,8 @@ pub fn report(run: &Path, results: &Path, output: &Path) -> anyhow::Result<()> {
                 if asset.kind == "preparation" {
                     let preparation: serde_json::Value =
                         read_json(&contained(&attempt_dir, &asset.path)?)?;
+                    load_values.push(preparation["load_seconds"].as_f64());
+                    reference_values.push(preparation["reference_prepare_seconds"].as_f64());
                     for phase in [
                         "verify_seconds",
                         "load_seconds",
@@ -342,28 +519,48 @@ pub fn report(run: &Path, results: &Path, output: &Path) -> anyhow::Result<()> {
         if let Some(audio) = representative {
             details.push_str(&format!("<p>Representative: first successful process / first successful hot round</p><audio controls preload=\"none\" src=\"{audio}\"></audio>"));
         }
+        chart_rows.push(ChartPoint {
+            case: label.clone(),
+            metric: "Load",
+            value: mean_if_complete(&load_values),
+            unit: "seconds",
+        });
+        chart_rows.push(ChartPoint {
+            case: label.clone(),
+            metric: "Reference preparation",
+            value: mean_if_complete(&reference_values),
+            unit: "seconds",
+        });
+        chart_rows.push(ChartPoint {
+            case: label.clone(),
+            metric: "First PCM",
+            value: summarize(&processes, expected, Metric::FirstPcmSeconds)?.mean_of_process_means,
+            unit: "seconds",
+        });
+        for (reading, scope, metric) in [
+            ("rss_bytes", "process", "RSS peak"),
+            (
+                "device_vram_bytes",
+                "whole_device",
+                "Whole-device VRAM peak",
+            ),
+        ] {
+            for (name, value) in resource_metrics(&run, &processes, reading, scope)? {
+                chart_rows.push(ChartPoint {
+                    case: if scope == "whole_device" {
+                        format!("{label} / {name} / whole_device")
+                    } else {
+                        label.clone()
+                    },
+                    metric,
+                    value,
+                    unit: "bytes",
+                });
+            }
+        }
         details.push_str("</section>");
         all_results.extend(processes);
     }
-    let max = charts.iter().filter_map(|(_, v)| *v).fold(1.0f64, f64::max);
-    let mut svg = format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 800 {}\" role=\"img\" aria-label=\"RTF mean of process means, lower is faster\">",
-        charts.len() * 48 + 40
-    );
-    for (index, (label, value)) in charts.iter().enumerate() {
-        let y = index * 48 + 24;
-        svg.push_str(&format!(
-            "<text x=\"0\" y=\"{y}\" font-size=\"13\">{}</text>",
-            escape(label)
-        ));
-        if let Some(value) = value {
-            svg.push_str(&format!("<rect x=\"400\" y=\"{}\" width=\"{}\" height=\"18\" fill=\"#196b5c\"/><text x=\"710\" y=\"{y}\" font-size=\"12\">{value:.4}</text>",y-14,value/max*290.0));
-        } else {
-            svg.push_str(&format!("<text x=\"400\" y=\"{y}\">unavailable</text>"));
-        }
-    }
-    let realtime_x = 400.0 + 290.0 / max;
-    svg.push_str(&format!("<path d=\"M {realtime_x} 0 V {}\" stroke=\"#b76525\" stroke-dasharray=\"4 4\"/><text x=\"400\" y=\"{}\">Dashed line: RTF 1.0</text></svg>",charts.len()*48+10,charts.len()*48+34));
     let matrix = serde_json::to_string_pretty(&run_info["plan"]["cases"])?;
     let profiles = run.join("profiles");
     if profiles.is_dir() {
@@ -398,12 +595,45 @@ pub fn report(run: &Path, results: &Path, output: &Path) -> anyhow::Result<()> {
             details.push_str(&format!("<p>External native profile: <a href=\"{relative}\">{}</a> · <a href=\"{provenance}\">declared version/invocation</a>. Native timing requires tool review.</p>", escape(&receipt.tool)));
         }
     }
+    let script_name = format!("echarts-{ECHARTS_VERSION}.min.js");
+    let chart_script = r#"<script>
+const rows=CHART_DATA_JSON;
+const groups=[
+  {id:'chart-rtf',metrics:['RTF'],title:'RTF (lower is faster)',markLine:1},
+  {id:'chart-first-pcm',metrics:['First PCM'],title:'First PCM'},
+  {id:'chart-load',metrics:['Load','Reference preparation'],title:'Model load / reference preparation'},
+  {id:'chart-memory',metrics:['RSS peak','Whole-device VRAM peak'],title:'Sampled memory peaks (distinct scopes)'}
+];
+function points(metric){return rows.filter(row=>row.metric===metric);}
+function cases(datasets){return [...new Set(datasets.flat().map(point=>point.case))];}
+for(const group of groups){
+  const datasets=group.metrics.map(points);
+  echarts.init(document.getElementById(group.id)).setOption({
+    title:{text:group.title,left:8},
+    tooltip:{trigger:'axis'},
+    grid:{left:180,right:60,bottom:50},
+    dataZoom:[{type:'inside'},{type:'slider'}],
+    legend:group.metrics.length>1?{}:undefined,
+    xAxis:{type:'value',name:datasets.flat()[0]?.unit ?? 'unavailable'},
+    yAxis:{type:'category',data:cases(datasets)},
+    series:datasets.map((data,index)=>({
+      type:'bar',name:group.metrics[index],data:data.map(point=>[point.value,point.case]),
+      connectNulls:true,itemStyle:{color:index===0?'#196b5c':'#b76525'},
+      ...(group.markLine?{markLine:{symbol:'none',lineStyle:{type:'dashed'},data:[{xAxis:group.markLine}]}}:{})
+    }))
+  });
+}
+</script>"#
+        .replace(
+            "CHART_DATA_JSON",
+            &chart_json(&chart_rows)?,
+        );
     let html = format!(
-        "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Talechime performance evidence</title><style>body{{font:16px/1.6 system-ui,sans-serif;max-width:1100px;margin:40px auto;padding:0 20px;color:#1c302c;background:#fafbf9}}table{{border-collapse:collapse;width:100%;font-size:14px}}th,td{{padding:10px;text-align:left;border-bottom:1px solid #ccd5d1}}section{{margin:40px 0}}pre{{white-space:pre-wrap;overflow-wrap:anywhere}}audio{{width:100%;max-width:600px}}a{{color:#125e50}}summary{{cursor:pointer}}img{{width:100%;height:auto}}</style><main><h1>Talechime performance evidence</h1><p>Generation evidence · listening_acceptance=pending. Synthetic fixture results are not production model baselines. Platforms and providers remain separate; speed does not establish content or quality equivalence.</p><p><a href=\"results.json\">Raw rounds</a> · <a href=\"results.csv\">CSV</a> · <a href=\"corpus.txt\">Corpus snapshot</a></p><img src=\"rtf.svg\" alt=\"RTF by case\"><div style=\"overflow-x:auto\"><table><thead><tr><th>Case</th><th>Execution</th><th>Metric</th><th>Mean</th><th>Hot coverage</th><th>State</th></tr></thead><tbody>{table}</tbody></table></div>{details}<details><summary>Frozen matrix (including deferred, missing and not applicable rows)</summary><pre>{}</pre></details></main></html>",
+        "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Talechime performance evidence</title><style>body{{font:16px/1.6 system-ui,sans-serif;max-width:1200px;margin:40px auto;padding:0 20px;color:#1c302c;background:#fafbf9}}table{{border-collapse:collapse;width:100%;font-size:14px}}th,td{{padding:10px;text-align:left;border-bottom:1px solid #ccd5d1}}section{{margin:40px 0}}pre{{white-space:pre-wrap;overflow-wrap:anywhere}}audio{{width:100%;max-width:600px}}a{{color:#125e50}}summary{{cursor:pointer}}.charts{{display:grid;grid-template-columns:repeat(auto-fit,minmax(520px,1fr));gap:24px}}.chart{{height:360px;background:#fff;border:1px solid #ccd5d1}}</style><main><h1>Talechime performance evidence</h1><p>Generation evidence · listening_acceptance=pending. Synthetic fixture results are not production model baselines. Platforms and providers remain separate; speed does not establish content or quality equivalence.</p><p><a href=\"results.json\">Raw rounds</a> · <a href=\"results.csv\">CSV</a> · <a href=\"corpus.txt\">Corpus snapshot</a> · <a href=\"echarts-LICENSE\">ECharts license</a></p><div class=\"charts\"><div id=\"chart-rtf\" class=\"chart\" aria-label=\"RTF by case\"></div><div id=\"chart-first-pcm\" class=\"chart\" aria-label=\"First PCM by case\"></div><div id=\"chart-load\" class=\"chart\" aria-label=\"Load and reference cost\"></div><div id=\"chart-memory\" class=\"chart\" aria-label=\"RSS and whole-device VRAM peaks\"></div></div><div style=\"overflow-x:auto\"><table><thead><tr><th>Case</th><th>Execution</th><th>Metric</th><th>Mean</th><th>Hot coverage</th><th>State</th></tr></thead><tbody>{table}</tbody></table></div>{details}<details><summary>Frozen matrix (including deferred, missing and not applicable rows)</summary><pre>{}</pre></details></main><script src=\"{script_name}\"></script>{chart_script}",
         escape(&matrix)
     );
+    copy_echarts(&output, &library_root)?;
     publish_bytes(&output.join("index.html"), html.as_bytes())?;
-    publish_bytes(&output.join("rtf.svg"), svg.as_bytes())?;
     publish_json(&output.join("results.json"), &all_results)?;
     publish_bytes(&output.join("results.csv"), csv_output.as_bytes())?;
     let corpus = run.join("corpus.txt");
@@ -417,7 +647,8 @@ pub fn report(run: &Path, results: &Path, output: &Path) -> anyhow::Result<()> {
     publish_bytes(&output.join("corpus.txt"), &corpus_bytes)?;
     for (path, kind) in [
         ("index.html", "report"),
-        ("rtf.svg", "chart"),
+        (&script_name, "chart_library"),
+        ("echarts-LICENSE", "chart_license"),
         ("results.json", "raw_results"),
         ("results.csv", "table"),
         ("corpus.txt", "source_snapshot"),
@@ -437,7 +668,8 @@ pub fn verify_report(root: &Path) -> anyhow::Result<Manifest> {
         let name = artifact.path.to_string_lossy();
         let approved = match artifact.kind.as_str() {
             "report" => name == "index.html",
-            "chart" => name == "rtf.svg",
+            "chart_library" => name == format!("echarts-{ECHARTS_VERSION}.min.js"),
+            "chart_license" => name == "echarts-LICENSE",
             "raw_results" => name == "results.json",
             "table" => name == "results.csv",
             "source_snapshot" => name == "corpus.txt",
@@ -464,6 +696,91 @@ mod tests {
     fn labels_are_escaped_and_csv_quotes_are_preserved() {
         assert_eq!(escape("<script>\"&'"), "&lt;script&gt;&quot;&amp;&#39;");
         assert_eq!(csv("a,\"b\""), "\"a,\"\"b\"\"\"");
+    }
+
+    #[test]
+    fn chart_data_cannot_close_script_and_cases_keep_distinct_conditions() -> anyhow::Result<()> {
+        let attempts = super::super::test_support::attempts(&[1.0]);
+        let mut conditions = attempts[0].conditions.clone();
+        conditions.model = "</script><script>alert('x')</script>".into();
+        let first = chart_label("short-case", &conditions);
+        let second = chart_label("multi-case", &conditions);
+        assert_ne!(first, second);
+        conditions.mode = "continuation".into();
+        assert_ne!(first, chart_label("short-case", &conditions));
+        let json = chart_json(&[ChartPoint {
+            case: first.clone(),
+            metric: "RTF",
+            value: Some(1.0),
+            unit: "ratio",
+        }])?;
+        assert!(!json.contains('<'));
+        assert!(json.contains("\\u003c/script>"));
+        let decoded: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(decoded[0]["case"], first);
+        Ok(())
+    }
+
+    #[test]
+    fn planned_coverage_matches_model_device_and_platform_without_case_ids() {
+        let attempts = super::super::test_support::attempts(&[1.0]);
+        let conditions = &attempts[0].conditions;
+        let mut planned =
+            serde_json::json!({"backend":"fixture", "model":"deterministic", "device":"cpu"});
+        assert!(planned_matches(&planned, "windows", conditions));
+        assert!(!planned_matches(&planned, "macos", conditions));
+        for field in ["backend", "model", "device"] {
+            let previous = planned[field].clone();
+            planned[field] = "different".into();
+            assert!(!planned_matches(&planned, "windows", conditions));
+            planned[field] = previous;
+        }
+    }
+
+    #[test]
+    fn memory_charts_keep_rss_separate_and_retain_every_gpu() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let attempts = super::super::test_support::attempts(&[1.0, 2.0]);
+        let reading = |value: Option<f64>, scope: &str| {
+            serde_json::json!({
+                "value":value, "unit":"bytes", "scope":scope, "source":"fixture", "interval_ms":500,
+                "status":if value.is_some() { "available" } else { "unavailable" },
+                "reason":if value.is_none() { Some("unsupported") } else { None },
+            })
+        };
+        for (index, attempt) in attempts.iter().enumerate() {
+            let directory = root.path().join("attempts").join(&attempt.attempt_id);
+            std::fs::create_dir_all(&directory)?;
+            let sample = serde_json::json!({"readings":{
+                "os_peak_rss_bytes":reading(None, "process"),
+                "rss_bytes":reading(Some(100.0 + index as f64), "process"),
+                "GPU-A:device_vram_bytes":reading(Some(200.0 + index as f64), "whole_device"),
+                "GPU-B:device_vram_bytes":reading(Some(500.0), "whole_device"),
+                "GPU-C:device_vram_bytes":reading(None, "whole_device"),
+            }});
+            publish_bytes(
+                &directory.join("resource-samples.jsonl"),
+                format!("{sample}\n").as_bytes(),
+            )?;
+        }
+        let rss = resource_metrics(root.path(), &attempts, "rss_bytes", "process")?;
+        assert_eq!(rss, BTreeMap::from([("rss_bytes".into(), Some(101.0))]));
+        let gpu = resource_metrics(root.path(), &attempts, "device_vram_bytes", "whole_device")?;
+        assert_eq!(gpu.len(), 3);
+        assert_eq!(gpu["GPU-A:device_vram_bytes"], Some(201.0));
+        assert_eq!(gpu["GPU-B:device_vram_bytes"], Some(500.0));
+        assert_eq!(gpu["GPU-C:device_vram_bytes"], None);
+        std::fs::remove_file(
+            root.path()
+                .join("attempts")
+                .join(&attempts[1].attempt_id)
+                .join("resource-samples.jsonl"),
+        )?;
+        assert!(
+            resource_metrics(root.path(), &attempts, "rss_bytes", "process")?["rss_bytes"]
+                .is_none()
+        );
+        Ok(())
     }
 
     #[test]
@@ -499,7 +816,10 @@ mod tests {
         publish_bytes(&run.join("corpus.txt"), b"corpus")?;
         publish_json(
             &run.join("run.json"),
-            &serde_json::json!({"schema":VERSION,"plan":{"processes":3,"cases":[]}}),
+            &serde_json::json!({"schema":VERSION,"plan":{"platform":"windows","processes":3,"cases":[
+                {"backend":"fixture","model":"deterministic","device":"cpu"},
+                {"backend":"fixture","model":"deterministic","device":"cuda"}
+            ]}}),
         )?;
         publish_json(&run.join("results.json"), &attempts)?;
         let output = root.path().join("report");
@@ -508,6 +828,34 @@ mod tests {
         let html = std::fs::read_to_string(output.join("index.html"))?;
         assert!(html.contains("incomplete") && html.contains("2/3") && html.contains("failure"));
         assert!(html.contains("listening_acceptance=pending"));
+        assert!(html.contains("echarts.init(document.getElementById(group.id))"));
+        assert!(html.contains("markLine"));
+        let chart_data = html
+            .split("const rows=")
+            .nth(1)
+            .unwrap()
+            .split(";\nconst groups=")
+            .next()
+            .unwrap();
+        let points: Vec<serde_json::Value> = serde_json::from_str(chart_data)?;
+        let rtf = points
+            .iter()
+            .filter(|point| point["metric"] == "RTF")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rtf.len(),
+            2,
+            "only the unattempted CUDA row and measured CPU case remain"
+        );
+        assert!(
+            rtf.iter()
+                .any(|point| point["case"] == "fixture / deterministic / cuda"
+                    && point["value"].is_null())
+        );
+        assert!(rtf.iter().any(
+            |point| point["case"].as_str().unwrap().contains("fixture-case")
+                && point["value"].is_number()
+        ));
         let raw: Vec<Attempt> = read_json(&output.join("results.json"))?;
         assert!(raw[2].rounds[1].first_pcm_seconds.is_none());
         Ok(())

@@ -5,11 +5,11 @@
 //! KV addresses. The graph covers the whole loop; the talker step, semantic
 //! sampling, EOS and PCM stay outside it.
 use super::CodePredictor;
+use crate::cuda_graph::replay::Replay;
 use crate::models::kv_cache::AnyKVCache;
 use anyhow::{Error, Result};
 use candle_core::cuda_backend::CudaDevice;
 use candle_core::{Device, Tensor};
-use candle_cuda_graph::Replay;
 
 /// One captured frame per generation, over caches owned by the caller.
 ///

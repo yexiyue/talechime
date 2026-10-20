@@ -46,7 +46,7 @@ pub fn load(path: &Path, target_rate: u32) -> anyhow::Result<Vec<f32>> {
 }
 
 /// Convert immutable generated PCM without file or voice-cache writes.
-pub fn mono(pcm: &tts_core::backend::Pcm, target_rate: u32) -> anyhow::Result<Vec<f32>> {
+pub fn mono(pcm: &talechime_core::backend::Pcm, target_rate: u32) -> anyhow::Result<Vec<f32>> {
     pcm.duration_ms()?;
     let samples = pcm
         .samples

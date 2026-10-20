@@ -1,7 +1,7 @@
 //! Verified local conversion of the pinned Fun-CosyVoice3 checkpoint.
 use std::path::Path;
+use talechime_protocol::Event;
 use tokio::sync::mpsc;
-use tts_protocol::Event;
 
 /// Model revision plus the conversion format (including f64 F0 weights).
 pub const REVISION: &str = "2512-candle-f64-v1";

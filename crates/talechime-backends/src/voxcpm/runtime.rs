@@ -1,15 +1,15 @@
 use super::cache::Cache;
 use std::path::PathBuf;
+use talechime_core::backend::{AudioChunk, BackendError, Pcm};
+use talechime_protocol::Device;
+use talechime_voxcpm::{Model, Options, Outcome};
 use tokio::sync::{mpsc, oneshot};
-use tts_core::backend::{AudioChunk, BackendError, Pcm};
-use tts_protocol::Device;
-use voxcpm::{Model, Options, Outcome};
 pub(super) struct Request {
     #[cfg(feature = "performance-tools")]
     pub(crate) perf: crate::performance::OwnerContext,
     #[cfg(feature = "experimental-dual-reference")]
     pub dual_reference: bool,
-    pub context: Option<tts_core::SpeechContext>,
+    pub context: Option<talechime_core::SpeechContext>,
     pub text: String,
     pub voice: String,
     pub options: Options,
@@ -143,7 +143,7 @@ fn generate(
     let result = if let Some(identity) = &identity {
         model.generate_dual(
             &request.text,
-            voxcpm::DualReference {
+            talechime_voxcpm::DualReference {
                 identity,
                 continuation: reference.as_ref(),
             },

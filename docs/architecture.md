@@ -2,14 +2,15 @@
 
 Talechime 拥有语音合成和播放；章节获取、阅读界面、角色识别及角色音色绑定由使用方拥有。
 
-推理优化保留在模型库内；`tts-candle-platform` 统一目标平台 feature 与设备探测，
-不拥有模型状态或采样策略。Qwen 的 codes 历史解码与 VoxCPM 的有状态图回放各自封装，
+推理优化及 GPU feature 保留在模型库内；Metal 设备探测归适配器内部模块。
+不再单独发布平台和 CUDA graph 辅助包。Qwen 的 codes 历史解码与 VoxCPM 的有状态图回放各自封装，
 不将两种状态生命周期合并。共享边界与验证规则见 [TTS 性能优化方法](knowledge/tts-performance.md)。
 
 Qwen 12Hz 历史解码没有跨调用内部状态，CUDA 流式图可以由模型持有，按短块帧数
 有界缓存；锁覆盖回放与输出复制，图保活常量且先于权重销毁。模型算术、常量缓存、
 图策略分别放在 `decoder_12hz.rs`、私有 `tables.rs`、`graph.rs`；有请求 KV 的
-CodePredictor 图继续归 session。设备录制机制复用 `candle-cuda-graph`，不进入宿主层。
+CodePredictor 图继续归 session。设备录制机制分别内联于两个模型的私有 `cuda_graph/replay.rs`，不进入宿主层；
+待上游能力满足缓冲及生命周期要求并通过验收后，再替换内部实现。
 
 ```mermaid
 flowchart TD
@@ -28,7 +29,7 @@ flowchart TD
 - `crates/talechime-protocol`：协议 v7、配置、能力、来源身份与 UTF-8 范围，不链接音频和模型。
 - `crates/talechime-core`：Backend / Playback 接口、会话、背压、音频预算、实际播放进度、配置和检查点。
 - `crates/talechime-backends`：Registry、资源清单、参考音频、设备与具体模型适配。
-- `crates/{qwen3-tts,moss-tts,voxcpm,omnivoice,cosyvoice3,indextts,tts-candle-platform}`：模型计算及平台路由。
+- `crates/{qwen3-tts,moss-tts,voxcpm,omnivoice,cosyvoice3,indextts}`：模型计算；发布包名统一加 `talechime-` 前缀，目录保留短名，Rust 导入名统一使用 `talechime_` 前缀。
 - VoxCPM 原生 C++ 开发对照已退役；生产适配器使用 Candle，[归档来源](legal/retired-voxcpm-native/README.md)保留旧源码恢复说明。
 
 ## 所有权与故障边界

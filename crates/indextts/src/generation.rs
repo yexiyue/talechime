@@ -1149,7 +1149,7 @@ mod tests {
     }
 
     /// Real-weights oracle. Run with
-    /// `INDEXTTS_CONVERTED_DIR=<dir> cargo test -p indextts --lib -- --ignored generation_real`
+    /// `INDEXTTS_CONVERTED_DIR=<dir> cargo test -p talechime-indextts --lib -- --ignored generation_real`
     /// where `<dir>` contains `gpt.safetensors` (keys `gpt.h.*`,
     /// `mel_embedding.weight`, `mel_pos_embedding.emb.weight`,
     /// `final_norm.*`, `mel_head.*`).

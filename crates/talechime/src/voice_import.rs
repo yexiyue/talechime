@@ -65,16 +65,17 @@ pub fn import_reference_voice(
         "qwen" => {
             #[cfg(feature = "qwen")]
             {
-                let model = tts_backends::qwen::models::Model::parse(options.model.as_deref())
-                    .map_err(fail)?;
+                let model =
+                    talechime_backends::qwen::models::Model::parse(options.model.as_deref())
+                        .map_err(fail)?;
                 if !model.is_base() {
                     return Err(VoiceImportError {
                         message: "qwen reference voices require model 0.6b-base or 1.7b-base"
                             .into(),
                     });
                 }
-                tts_backends::qwen::validate_wav(wav).map_err(fail)?;
-                let store = tts_backends::qwen::voice_store(
+                talechime_backends::qwen::validate_wav(wav).map_err(fail)?;
+                let store = talechime_backends::qwen::voice_store(
                     &model.directory(options.resources.as_path()),
                     model,
                 )
@@ -90,10 +91,11 @@ pub fn import_reference_voice(
         "voxcpm" => {
             #[cfg(feature = "voxcpm")]
             {
-                let model = tts_backends::voxcpm::models::Model::parse(options.model.as_deref())
-                    .map_err(fail)?;
-                tts_backends::reference::load(wav, 16000).map_err(fail)?;
-                let store = tts_backends::voxcpm::voice_store_for(
+                let model =
+                    talechime_backends::voxcpm::models::Model::parse(options.model.as_deref())
+                        .map_err(fail)?;
+                talechime_backends::reference::load(wav, 16000).map_err(fail)?;
+                let store = talechime_backends::voxcpm::voice_store_for(
                     &model.directory(options.resources.as_path()),
                     model,
                 )
@@ -109,9 +111,9 @@ pub fn import_reference_voice(
         "omnivoice" => {
             #[cfg(feature = "omnivoice")]
             {
-                tts_backends::reference::load(wav, 24000).map_err(fail)?;
-                let store = tts_backends::omnivoice::voice_store(
-                    &tts_backends::omnivoice::directory(options.resources.as_path()),
+                talechime_backends::reference::load(wav, 24000).map_err(fail)?;
+                let store = talechime_backends::omnivoice::voice_store(
+                    &talechime_backends::omnivoice::directory(options.resources.as_path()),
                 )
                 .map_err(fail)?;
                 store
@@ -130,14 +132,14 @@ pub fn import_reference_voice(
                         message: "IndexTTS model must be 2.5".into(),
                     });
                 }
-                let reference = tts_backends::reference::load(wav, 22_050).map_err(fail)?;
+                let reference = talechime_backends::reference::load(wav, 22_050).map_err(fail)?;
                 if reference.len() > 15 * 22_050 {
                     return Err(VoiceImportError {
                         message: "IndexTTS reference must be at most 15 seconds".into(),
                     });
                 }
-                let store = tts_backends::indextts::voice_store(
-                    &tts_backends::indextts::directory(options.resources.as_path()),
+                let store = talechime_backends::indextts::voice_store(
+                    &talechime_backends::indextts::directory(options.resources.as_path()),
                 )
                 .map_err(fail)?;
                 store
@@ -154,7 +156,8 @@ pub fn import_reference_voice(
 
 /// List installed voice ids and display names without loading model weights.
 pub fn list_voices(options: &ModelOptions) -> Result<Vec<(String, String)>, VoiceImportError> {
-    let registry = tts_backends::Registry::new(Some(options.resources.clone())).map_err(fail)?;
+    let registry =
+        talechime_backends::Registry::new(Some(options.resources.clone())).map_err(fail)?;
     let caps = registry
         .capabilities_for(&options.backend, options.model.as_deref())
         .map_err(fail)?;

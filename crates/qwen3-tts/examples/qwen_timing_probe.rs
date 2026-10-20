@@ -2,9 +2,9 @@
 //! Round zero warms both paths; WAV/raw F32 exports happen outside timing.
 use anyhow::{Context, ensure};
 use candle_core::{DType, Device, Tensor};
-use qwen3_tts::{AudioBuffer, Language, Qwen3TTS, SynthesisOptions, VoiceClonePrompt};
 use serde_json::{Value, json};
 use std::{fs, path::Path, time::Instant};
+use talechime_qwen3_tts::{AudioBuffer, Language, Qwen3TTS, SynthesisOptions, VoiceClonePrompt};
 
 const LOGIT_LENGTH: usize = 3072;
 const READBACK_SAMPLE_COUNT: usize = 32;
@@ -38,8 +38,8 @@ fn main() -> anyhow::Result<()> {
     );
     let directory = Path::new(&args[4]);
     fs::create_dir_all(directory)?;
-    let _profiling = qwen3_tts::profiling::init();
-    let model = Qwen3TTS::from_pretrained(&args[0], qwen3_tts::parse_device(&args[3])?)?;
+    let _profiling = talechime_qwen3_tts::profiling::init();
+    let model = Qwen3TTS::from_pretrained(&args[0], talechime_qwen3_tts::parse_device(&args[3])?)?;
     let prompt = VoiceClonePrompt::load(Path::new(&args[1]), model.device())?;
     let options = SynthesisOptions {
         seed: Some(42),

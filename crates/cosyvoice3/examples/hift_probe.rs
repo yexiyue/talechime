@@ -4,8 +4,8 @@
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
-use cosyvoice3::{CausalHiFtGenerator, CosyVoice3Config};
 use std::path::Path;
+use talechime_cosyvoice3::{CausalHiFtGenerator, CosyVoice3Config};
 
 fn stats(a: &Tensor, b: &Tensor) -> Result<(f32, f32)> {
     anyhow::ensure!(

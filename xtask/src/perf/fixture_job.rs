@@ -65,6 +65,7 @@ pub fn create_mode(build_path: &Path, output: &Path, mode: &str) -> anyhow::Resu
         )?),
         parameters,
         mode: "native_stream".into(),
+        delivery_boundary: "native_streaming_first_pcm".into(),
         observation: mode.into(),
         timing_contract: "production_synthesis_stream_consumer_start_to_completed/1".into(),
         observation_config: BTreeMap::from([(

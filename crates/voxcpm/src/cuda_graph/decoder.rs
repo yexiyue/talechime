@@ -1,7 +1,7 @@
 //! Experimental fixed-frame AudioVAE replay with explicit device-side state.
 use crate::codec::Codec;
+use crate::cuda_graph::replay::{Replay, copy_into};
 use candle_core::{Device, Result, Tensor};
-use candle_cuda_graph::{Replay, copy_into};
 
 /// Own one graph per Codec; the Codec and its weights must outlive this object.
 /// Output aliases replay scratch and must be consumed before the next decode.

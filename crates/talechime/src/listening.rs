@@ -1,11 +1,11 @@
 use crate::{engine::Engine, *};
 use std::{path::PathBuf, rc::Rc};
+use talechime_core::{AudioPlayer, checkpoint::CheckpointStore, session::SessionManager};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
-use tts_core::{AudioPlayer, checkpoint::CheckpointStore, session::SessionManager};
 
 /// Listening-only assembly; no persistence by default.
 #[derive(Debug, Clone)]

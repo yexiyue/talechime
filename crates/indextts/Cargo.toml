@@ -1,5 +1,5 @@
 [package]
-name = "indextts"
+name = "talechime-indextts"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
@@ -9,17 +9,16 @@ repository = "https://github.com/yexiyue/talechime"
 
 [features]
 default = []
-cuda = ["dep:tts-candle-platform", "tts-candle-platform/cuda"]
+cuda = ["candle-core/cuda", "candle-nn/cuda"]
 # cuDNN convolutions (recommended on CUDA: the conv-heavy regulator /
 # BigVGAN / CAMPPlus stacks otherwise hit candle's strided-matmul conv
 # fallback, which rejects some layouts).
-cuda-cudnn = ["cuda", "tts-candle-platform/cuda-cudnn"]
-metal = ["dep:tts-candle-platform", "tts-candle-platform/metal"]
+cuda-cudnn = ["cuda", "candle-core/cudnn"]
+metal = ["candle-nn/metal"]
 
 [dependencies]
-candle-core.workspace = true
 candle-nn.workspace = true
-tts-candle-platform = { workspace = true, optional = true }
+candle-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 regex.workspace = true

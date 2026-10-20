@@ -18,7 +18,7 @@ pub fn is_decoration_line(line: &str) -> bool {
 /// Recognize a standalone heading using the reader's built-in TOC patterns.
 pub fn is_heading_line(line: &str) -> bool {
     static HEADINGS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
-        use tts_protocol::headings::*;
+        use talechime_protocol::headings::*;
         [CHINESE_CHAPTER, ENGLISH_CHAPTER, SPECIAL_CHAPTER]
             .into_iter()
             .map(|pattern| Regex::new(pattern).expect("built-in heading pattern"))
@@ -27,7 +27,7 @@ pub fn is_heading_line(line: &str) -> bool {
     let spoken = sanitize_for_speech(line);
     let line = spoken.trim();
     !line.is_empty()
-        && line.chars().count() <= tts_protocol::headings::MAX_TITLE_CHARS
+        && line.chars().count() <= talechime_protocol::headings::MAX_TITLE_CHARS
         && !line.ends_with(['。', '.', '！', '!', '？', '?'])
         && HEADINGS.iter().any(|pattern| pattern.is_match(line))
 }

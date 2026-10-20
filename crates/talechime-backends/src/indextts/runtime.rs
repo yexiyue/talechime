@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
+use talechime_core::backend::{AudioChunk, BackendError, Pcm};
+use talechime_protocol::Device;
 use tokio::sync::{mpsc, oneshot};
-use tts_core::backend::{AudioChunk, BackendError, Pcm};
-use tts_protocol::Device;
 
 pub(super) struct Request {
     #[cfg(feature = "performance-tools")]
@@ -33,8 +33,8 @@ pub(super) fn run(
     mut jobs: mpsc::Receiver<Request>,
     ready: oneshot::Sender<Result<(), BackendError>>,
 ) {
-    let loaded =
-        candle_device(device).and_then(|device| indextts::Model::load(&directory, &device));
+    let loaded = candle_device(device)
+        .and_then(|device| talechime_indextts::Model::load(&directory, &device));
     let mut model = match loaded {
         Ok(model) => model,
         Err(error) => {
@@ -60,7 +60,7 @@ pub(super) fn run(
 }
 
 fn generate(
-    model: &mut indextts::Model,
+    model: &mut talechime_indextts::Model,
     directory: &Path,
     request: &Request,
 ) -> Result<(), BackendError> {
@@ -73,10 +73,11 @@ fn generate(
         .path(&request.voice)
         .map_err(|error| BackendError::Unsupported(error.to_string()))?
         .join("reference.wav");
-    let samples = crate::reference::load(&wav, indextts::SAMPLE_RATE)
+    let samples = crate::reference::load(&wav, talechime_indextts::SAMPLE_RATE)
         .map_err(|error| BackendError::Synthesis(error.to_string()))?;
-    let reference = indextts::Reference::from_pcm(&samples, indextts::SAMPLE_RATE)
-        .map_err(|error| BackendError::Synthesis(error.to_string()))?;
+    let reference =
+        talechime_indextts::Reference::from_pcm(&samples, talechime_indextts::SAMPLE_RATE)
+            .map_err(|error| BackendError::Synthesis(error.to_string()))?;
     if request.audio.is_closed() {
         return Ok(());
     }
@@ -86,7 +87,7 @@ fn generate(
     if request.audio.is_closed() {
         return Ok(());
     }
-    let options = indextts::Options {
+    let options = talechime_indextts::Options {
         seed: Some(request.seed),
         ..Default::default()
     };
@@ -102,7 +103,7 @@ fn generate(
         samples: outcome
             .samples
             .into_iter()
-            .map(|sample| sample / indextts::PCM16_MAX)
+            .map(|sample| sample / talechime_indextts::PCM16_MAX)
             .collect(),
         sample_rate: outcome.sample_rate,
         channels: 1,

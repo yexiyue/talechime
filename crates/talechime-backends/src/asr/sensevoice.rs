@@ -75,11 +75,11 @@ impl SenseVoice {
         samples: &[f32],
         cancelled: &AtomicBool,
         run_options: &RunOptions,
-    ) -> anyhow::Result<tts_core::verification::Transcript> {
+    ) -> anyhow::Result<talechime_core::verification::Transcript> {
         let fbank = frontend(samples);
         let frames = fbank.num_frames_ready() as usize;
         if frames == 0 {
-            return Ok(tts_core::verification::Transcript::text(String::new()));
+            return Ok(talechime_core::verification::Transcript::text(String::new()));
         }
         let length = frames.div_ceil(self.shift);
         let dim = self.width * 80;
@@ -136,7 +136,7 @@ impl SenseVoice {
             }
             last = token;
         }
-        Ok(tts_core::verification::Transcript {
+        Ok(talechime_core::verification::Transcript {
             text: text.replace('▁', " ").trim().to_owned(),
             labels,
         })

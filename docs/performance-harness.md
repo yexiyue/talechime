@@ -15,11 +15,26 @@ cargo xtask perf plan --platform windows --machine windows-9700x --output target
 cargo xtask perf plan --platform macos --machine mac-m4-pro --output target/perf/mac-plan.json
 ```
 
-计划创建不会覆盖已存在文件、下载模型、转换权重或启动推理。计划中的 unverified/deferred 不是运行成功。catalog 没有编入的模型/设备保留 missing_feature，不从矩阵消失；Mac deferred 不被 Windows catalog 激活。
+计划创建不会覆盖已存在文件、下载模型、转换权重或启动推理。计划中的 unverified/deferred 不是运行成功。catalog 没有编入的模型/设备保留 missing_feature，不从矩阵消失；Mac 仍需本机模型 readiness 验证，Windows catalog 不证明 Metal 可执行。
 
 build 在 `target/perf-builds/<配置摘要>/` 用显式 feature 构建 release 探针，自动包含开发专用 `performance-tools`；默认不包含模型 feature。定位使用 Cargo artifact 消息，收据保留有效 features、源身份和二进制 SHA。构建期间源码改变会拒绝发布收据；增加 feature 用不同收据文件，不覆盖。
 
 prepare 消费构建收据并校验可执行文件摘要。无模型默认只返回生产 AppPaths/Registry 目录和 catalog，不创建自定义资源根。指定 `--backend qwen --model 0.6b-base` 可在编入对应 feature 后对已有模型进行只读生产清单校验，生成资源收据；失败保留文件，不下载、不重命名 `.corrupt`。IndexTTS 缺少生产摘要清单/转换来源收据时 blocked；缺 importer 不调用 Python 兜底。资源已验证不等于设备执行、精度和性能已验证。
+
+Windows 资源准备使用三个显式命令，只复制或下载 pinned 文件，不做目录迁移、扫描或转换：
+
+```powershell
+cargo xtask perf resource-inventory --plan resource-plan.json --output resource-inventory.json
+cargo xtask perf resource-import --inventory resource-inventory.json --resources-root "$HOME\.talechime\resources" --output resource-import.json
+cargo xtask perf resource-download --plan resource-plan.json --resources-root "$HOME\.talechime\resources" --output resource-download.json
+cargo xtask perf resource-download --plan resource-plan.json --resources-root "$HOME\.talechime\resources" --offline --output resource-offline.json
+```
+
+`resource-inventory` 记录大小、SHA-256、复用字节和来源身份；`resource-import` 按身份加锁、暂存复核并原子无覆盖发布匹配目标，冲突保留原件。`resource-download` 仅接受 `production_manifest`，先暂存校验摘要，离线模式只复用已验证文件。转换收据和未验证文件不能替代生产清单；准备完成标记是下载/导入收据的前提，测量 Job 只消费已验证资源收据，不下载或转换。
+
+计划中的公共朗读矩阵保持 28 个 CPU/CUDA 格（25 个适用、3 个不适用）；`moss/VoiceGenerator` 是单独 `auxiliary=true` 的 CUDA 辅助行。Windows 所需 feature 记录在构建收据中：Candle 使用 `qwen-cuda`、`voxcpm-cuda`、`omnivoice-cuda`、`moss-candle-cuda`、`moss-nano-candle-cuda`、`cosyvoice3-cuda`、`indextts-cuda-cudnn`，Nano ONNX 使用 `ort-cuda`；CPU 探针使用对应基础模型 feature。
+
+基准参考音色使用生产 `voices import --text` 保存 `reference.wav`、准确转写和模型身份；探测记录只引用 `custom:<id>` 与文件摘要，不复制用户音频入仓库。缓存身份来自生产 `Backend::cache_identity()`，按实现、revision、设备、平台和目录隔离，不能仅凭同名音色跨模型复用；可证明身份时，每个进程仅在正式轮次前用一个有超时的短请求预热懒参考编码；其完整合成成本单列为 `reference_warmup_seconds`，不冒充纯参考编码成本，也不混入每轮计时。否则首次懒准备保留在首个正式轮并如实呈现。首 PCM 按能力分为 `native_streaming_first_pcm` 和 `segment_delivery_first_pcm`；后者是整段交付延迟，不能当作原生流式首块。
 
 正式测量链路的目标为纯 Rust：资源检查、构建、执行、恢复、采样、统计和报告。已有上游 Python-only 转换仅允许在显式准备阶段运行，必须记录解释器/脚本 revision、输入输出摘要，并通过生产校验；测量不隐式执行转换。历史官方 Python 对照脚本仅保留在 Git 历史中，当前树已删除 `tools/`。
 
@@ -32,7 +47,7 @@ prepare 消费构建收据并校验可执行文件摘要。无模型默认只返
 | 1：资源导入 | 保留复制、锁、摘要、无覆盖发布要求，Rust 实现；不依赖未完成的 Python importer |
 | 2：探针 | 复用本框架事件/计时/音频契约，扩展全部生产变体 |
 | 3：编排采样恢复 | 复用 xtask，禁止再建第二套 Python runner |
-| 4：报告 | 复用 Rust JSON/CSV/HTML/SVG 输出，不调用 Python 绘图 |
+| 4：报告 | 复用 Rust JSON/CSV/HTML 输出；ECharts 以仓库内固定 SHA 资产随报告离线分发，不调用 Python 绘图或 CDN |
 | 5/6/7：资源与全量批次 | Windows change 独立执行，框架 smoke 不代替全量基线 |
 
 旧 Windows design/tasks 已同步改为复用 Rust 工具，保留全量覆盖、样本协议和资源安全规则。旧 `tools/` 脚本现已全部删除；历史官方对照、转换与复现脚本可从 Git revision `e591c94` 取回。固定语料保留在 `crates/voxcpm/tests/fixtures/acceptance-corpus.txt`，当前执行、采样和报告使用 Rust 工具。
@@ -57,6 +72,8 @@ Mac 计划保留 CPU 和 Metal，适用模型行仍为 unverified，缺编译 fe
 | RSS / private_bytes | bytes | process；按 interval_ms 采样 |
 | peak_working_set | bytes | process；OS high-water，不冒充采样最大值 |
 | device_vram | bytes | whole_device，不称进程独占 |
+| system_available_private_bytes | bytes | system commit limit 减 commit total，不称为空闲物理内存 |
+| competing_gpu_processes | processes | whole_device_compute_apps 数值 reading；同帧顶层 `competing_gpu_processes` 另保留 status、reason、PID、进程名及不支持内存原因 |
 | Metal allocation | bytes 或 null | 后续 native collector 声明来源与范围 |
 
 schema 为 `talechime/performance/1`。未知版本必须拒绝恢复与比较，不能静默解释。原始逐轮结果是权威证据；metrics 聚合与 trace 仅用于补充诊断。
@@ -75,7 +92,7 @@ cargo xtask perf pack --report target/perf/fixture-report --output target/perf/f
 cargo xtask perf overhead --job target/perf/fixture-input/job.json --output target/perf/overhead
 ```
 
-构建完成后可直接运行 `target/debug/xtask.exe perf ...`；执行、恢复、报告和打包不需要 Cargo/Python PATH。离线报告只使用相对资产，无 CDN、JavaScript、fetch 或原资源目录依赖。ZIP 仅包含 manifest 中经摘要复核的资产，不递归复制资源根。试听始终 pending，确定性音频相同不代表真实模型质量验收。
+构建完成后可直接运行 `target/debug/xtask.exe perf ...`；执行、恢复、报告和打包不需要 Cargo/Python PATH。离线报告只使用相对资产，不发起 CDN、fetch 或原资源目录访问；本地 ECharts 脚本和许可证从 `docs/legal/echarts/` 复制并按 SHA-256 复核。ZIP 仅包含 manifest 中经摘要复核的资产，不递归复制资源根。试听始终 pending，确定性音频相同不代表真实模型质量验收。
 
 正式 Job 参见 `xtask/src/perf/runner.rs::Job` 和生成的 fixture job：固定 plan/build 的绝对路径、case_id、完整 Conditions、生产 request、资源收据、参考文件摘要、进程超时和采集 Budget。用 `doctor` 获取机器指纹；CUDA 必须记录实际 UUID/驱动。生产请求必须使用 catalog 中实际 backend/model/device、有效默认参数与覆盖值、准备收据，不能把 fixture 标记改成真实模型。threads 必须是唯一显式正整数 `{"rayon":N}`，runner 总是覆盖子进程继承的 RAYON_NUM_THREADS；其他 BLAS 线程环境在 environment 中冻结。math/precision 必须依实际构建与执行路径填写，不以 CPU/CUDA 名称推定。`native_stream` 和 `segment_delivery` 分开比较。测量准备不运行转换器。
 

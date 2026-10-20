@@ -1,6 +1,6 @@
 use std::path::Path;
+use talechime_protocol::Event;
 use tokio::sync::mpsc;
-use tts_protocol::Event;
 pub const REVISION: &str = "c5fdb5ccb189668d56333f77ba2629f4cd7535f4";
 pub async fn prepare(directory: &Path, progress: mpsc::Sender<Event>) -> anyhow::Result<()> {
     crate::resources::prepare(
@@ -11,7 +11,10 @@ pub async fn prepare(directory: &Path, progress: mpsc::Sender<Event>) -> anyhow:
     )
     .await?;
     let temporary = tempfile::NamedTempFile::new_in(directory)?;
-    std::io::Write::write_all(&mut temporary.as_file(), omnivoice::ARTIFACTS_JSON)?;
+    std::io::Write::write_all(
+        &mut temporary.as_file(),
+        talechime_omnivoice::ARTIFACTS_JSON,
+    )?;
     temporary.persist(directory.join("omnivoice.artifacts.json"))?;
     Ok(())
 }

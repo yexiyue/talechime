@@ -14,6 +14,7 @@ pub mod process;
 pub mod profiling;
 pub mod records;
 pub mod report;
+pub mod resources;
 pub mod runner;
 pub mod sampling;
 pub mod statistics;
@@ -130,6 +131,22 @@ enum Command {
     Doctor,
     /// Validate a frozen plan, rejecting unknown versions and invalid states.
     Check { plan: PathBuf },
+    /// Inventory explicit benchmark resource sources without copying or downloading.
+    ResourceInventory { plan: PathBuf, output: PathBuf },
+    /// Publish verified resource sources using identity locks and no-clobber staging.
+    ResourceImport {
+        inventory: PathBuf,
+        resources_root: PathBuf,
+        output: PathBuf,
+    },
+    /// Explicitly download pinned production weights during preparation, never measurement.
+    ResourceDownload {
+        plan: PathBuf,
+        resources_root: PathBuf,
+        #[arg(long)]
+        offline: bool,
+        output: PathBuf,
+    },
     /// Freeze an explicit platform plan. Existing output is never overwritten.
     Plan {
         #[arg(long, value_enum, default_value = "windows")]
@@ -214,6 +231,32 @@ pub fn run(args: Args) -> anyhow::Result<()> {
             let plan: plan::Plan = evidence::read_json(&plan)?;
             plan.validate()?;
             println!("valid: {} cases", plan.cases.len());
+            Ok(())
+        }
+        Command::ResourceInventory { plan, output } => {
+            let entries: Vec<resources::ResourceIdentity> = evidence::read_json(&plan)?;
+            let receipt = resources::inventory(&entries)?;
+            evidence::publish_json(&output, &receipt)?;
+            println!("{}", receipt["ready_count"]);
+            Ok(())
+        }
+        Command::ResourceImport {
+            inventory,
+            resources_root,
+            output,
+        } => {
+            resources::import(&inventory, &resources_root, &output)?;
+            println!("{}", output.display());
+            Ok(())
+        }
+        Command::ResourceDownload {
+            plan,
+            resources_root,
+            offline,
+            output,
+        } => {
+            resources::download(&plan, &resources_root, offline, &output)?;
+            println!("{}", output.display());
             Ok(())
         }
         Command::Doctor => {

@@ -6,7 +6,7 @@
 //! wrong types and out-of-range values are explicit session-start errors.
 
 use std::collections::BTreeMap;
-use tts_protocol::{ParamValue, ParameterSpec};
+use talechime_protocol::{ParamValue, ParameterSpec};
 
 /// Generation parameters for one execution, validated against the prepared
 /// model's declared catalog before any synthesis starts.
@@ -105,7 +105,7 @@ impl From<Option<u64>> for SeedPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tts_protocol::ParamKind;
+    use talechime_protocol::ParamKind;
 
     fn int_spec(name: &str, min: i64, max: i64) -> ParameterSpec {
         ParameterSpec {

@@ -1,4 +1,8 @@
-# qwen3-tts
+# talechime-qwen3-tts
+
+The Cargo package is `talechime-qwen3-tts`; the Rust import is `talechime_qwen3_tts`.
+Select GPU features for the target platform: CUDA on Windows/Linux, Metal on
+macOS. Do not enable both through `--all-features`.
 
 Talechime's local Candle inference library. Imported from
 [TrevorS/qwen3-tts-rs](https://github.com/TrevorS/qwen3-tts-rs) at revision

@@ -1,15 +1,15 @@
 //! Model ownership, generation and recovery are confined to this thread.
 use super::{available_devices, compiled_devices};
-use qwen3_tts::{Language, Qwen3TTS, Speaker, SynthesisOptions};
 use std::path::PathBuf;
+use talechime_core::backend::{AudioChunk, BackendError, Pcm};
+use talechime_protocol::{Device, Event};
+use talechime_qwen3_tts::{Language, Qwen3TTS, Speaker, SynthesisOptions};
 use tokio::sync::{mpsc, oneshot};
-use tts_core::backend::{AudioChunk, BackendError, Pcm};
-use tts_protocol::{Device, Event};
 
 pub(super) struct Request {
     #[cfg(feature = "performance-tools")]
     pub(crate) perf: crate::performance::OwnerContext,
-    pub(super) context: Option<tts_core::SpeechContext>,
+    pub(super) context: Option<talechime_core::SpeechContext>,
     pub(super) text: String,
     pub(super) voice: String,
     pub(super) style: Option<String>,
@@ -77,13 +77,13 @@ pub(super) fn run(
     }
 }
 
-pub(super) fn device(selected: Device) -> anyhow::Result<qwen3_tts::Device> {
+pub(super) fn device(selected: Device) -> anyhow::Result<talechime_qwen3_tts::Device> {
     match selected {
-        Device::Cpu => Ok(qwen3_tts::Device::Cpu),
+        Device::Cpu => Ok(talechime_qwen3_tts::Device::Cpu),
         #[cfg(all(feature = "qwen-cuda", any(target_os = "windows", target_os = "linux")))]
-        Device::Cuda => Ok(qwen3_tts::device::cuda(0)?),
+        Device::Cuda => Ok(talechime_qwen3_tts::device::cuda(0)?),
         #[cfg(all(feature = "qwen-metal", target_os = "macos"))]
-        Device::Metal => Ok(qwen3_tts::device::metal(0)?),
+        Device::Metal => Ok(talechime_qwen3_tts::device::metal(0)?),
         _ => anyhow::bail!("Qwen device {selected:?} is unavailable"),
     }
 }
@@ -98,7 +98,7 @@ fn inference_error(error: anyhow::Error) -> BackendError {
 fn generate(
     model: &Qwen3TTS,
     directory: &std::path::Path,
-    prompts: &mut std::collections::HashMap<String, qwen3_tts::VoiceClonePrompt>,
+    prompts: &mut std::collections::HashMap<String, talechime_qwen3_tts::VoiceClonePrompt>,
     request: &Request,
 ) -> Result<(), BackendError> {
     let language = request.language.unwrap_or_else(|| {
@@ -125,7 +125,7 @@ fn generate(
             let samples = crate::reference::mono(context.pcm(), 24000).map_err(inference_error)?;
             model
                 .create_voice_clone_prompt(
-                    &qwen3_tts::AudioBuffer::new(samples, 24000),
+                    &talechime_qwen3_tts::AudioBuffer::new(samples, 24000),
                     Some(&super::text::normalize(context.text())),
                 )
                 .map_err(inference_error)
@@ -142,10 +142,10 @@ fn generate(
             // Preserve old caches while regenerating references with corrected RoPE.
             let cache = path.join("prompt-encoder-rope-v2.json");
             let prompt = if cache.exists() {
-                qwen3_tts::VoiceClonePrompt::load(&cache, model.device())
+                talechime_qwen3_tts::VoiceClonePrompt::load(&cache, model.device())
                     .map_err(inference_error)?
             } else {
-                let reference = qwen3_tts::AudioBuffer::load(path.join("reference.wav"))
+                let reference = talechime_qwen3_tts::AudioBuffer::load(path.join("reference.wav"))
                     .map_err(inference_error)?;
                 super::validate_reference(&reference).map_err(inference_error)?;
                 let prompt = model

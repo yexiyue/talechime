@@ -1,5 +1,5 @@
 [package]
-name = "moss-tts"
+name = "talechime-moss-tts"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
@@ -9,18 +9,17 @@ repository = "https://github.com/yexiyue/talechime"
 
 [features]
 default = []
-cuda = ["dep:tts-candle-platform", "tts-candle-platform/cuda"]
-metal = ["dep:tts-candle-platform", "tts-candle-platform/metal"]
+cuda = ["candle-transformers/cuda"]
+metal = ["candle-nn/metal"]
 
 [dependencies]
+candle-nn.workspace = true
 anyhow.workspace = true
 candle-core.workspace = true
-candle-nn.workspace = true
 candle-transformers.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokenizers = { workspace = true, features = ["fancy-regex"] }
-tts-candle-platform = { workspace = true, optional = true }
 hound.workspace = true
 rand = "0.9"
 

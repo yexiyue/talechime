@@ -8,8 +8,8 @@ use talechime_core::{
     checkpoint::CheckpointStore,
     session::SessionManager,
 };
+use talechime_protocol::{Capabilities, EndReason, Event, SourceId, TextRange, text_hash};
 use tokio::sync::mpsc;
-use tts_protocol::{Capabilities, EndReason, Event, SourceId, TextRange, text_hash};
 
 struct DemoBackend;
 impl Backend for DemoBackend {

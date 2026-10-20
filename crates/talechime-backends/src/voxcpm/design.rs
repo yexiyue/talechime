@@ -1,6 +1,6 @@
 //! Design once, save the spoken reference, then narrate with its clone cache.
 use std::path::PathBuf;
-use tts_protocol::Device;
+use talechime_protocol::Device;
 pub async fn reference(
     directory: PathBuf,
     device: Device,
@@ -54,7 +54,7 @@ pub async fn reference_model(
                 let outcome = model.generate(
                     &format!("({description}){text}"),
                     None,
-                    &voxcpm::Options::default(),
+                    &talechime_voxcpm::Options::default(),
                     &|| result.is_closed(),
                     |pcm| {
                         if result.is_closed() {
@@ -66,7 +66,7 @@ pub async fn reference_model(
                 )?;
                 anyhow::ensure!(
                     !result.is_closed()
-                        && outcome == voxcpm::Outcome::Eos
+                        && outcome == talechime_voxcpm::Outcome::Eos
                         && (48000..=48000 * 30).contains(&samples.len())
                         && samples.iter().all(|s| s.is_finite()),
                     "voice design cancelled, truncated or invalid"

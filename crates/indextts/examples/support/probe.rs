@@ -22,7 +22,10 @@ pub fn write_wav(path: &Path, samples: &[f32], sample_rate: u32) -> Result<()> {
     for sample in samples {
         writer.write_sample(
             sample
-                .clamp(-indextts::PCM16_MAX, indextts::PCM16_MAX)
+                .clamp(
+                    -talechime_indextts::PCM16_MAX,
+                    talechime_indextts::PCM16_MAX,
+                )
                 .round() as i16,
         )?;
     }

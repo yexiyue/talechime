@@ -1,4 +1,4 @@
-use tts_core::text::{
+use talechime_core::text::{
     TextSegment, is_decoration_line, is_heading_line, is_non_spoken_line, sanitize_for_speech,
 };
 

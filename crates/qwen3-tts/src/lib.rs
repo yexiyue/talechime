@@ -15,7 +15,7 @@
 //! ## Quick Start
 //!
 //! ```rust,ignore
-//! use qwen3_tts::{Qwen3TTS, SynthesisOptions, auto_device};
+//! use talechime_qwen3_tts::{Qwen3TTS, SynthesisOptions, auto_device};
 //!
 //! // Load model — variant auto-detected from config.json
 //! let device = auto_device()?;
@@ -83,6 +83,8 @@
 //! a different sample rate.
 
 pub mod audio;
+#[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+mod cuda_graph;
 pub mod device;
 pub mod generation;
 pub mod models;

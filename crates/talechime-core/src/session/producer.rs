@@ -130,7 +130,7 @@ pub(super) fn spawn(
                                 source_text,
                                 previous_end,
                                 range.start,
-                                tts_protocol::ContinuationBoundary::Paragraph,
+                                talechime_protocol::ContinuationBoundary::Paragraph,
                             ),
                         );
                     if spanned {

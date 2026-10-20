@@ -9,32 +9,32 @@ repository = "https://github.com/yexiyue/talechime"
 
 [features]
 performance-tools = ["dep:tracing", "dep:metrics"]
-indextts = ["dep:indextts", "dep:candle-core", "dep:hound", "dep:rubato"]
-indextts-metal = ["indextts", "indextts/metal", "tts-candle-platform/metal"]
-indextts-cuda-cudnn = ["indextts", "indextts/cuda-cudnn"]
-cosyvoice3 = ["dep:cosyvoice3", "cosyvoice3/ort", "dep:candle-core", "dep:hound", "dep:rubato"]
-cosyvoice3-metal = ["cosyvoice3", "cosyvoice3/metal", "tts-candle-platform/metal"]
-cosyvoice3-cuda = ["cosyvoice3", "cosyvoice3/cuda"]
+indextts = ["dep:talechime-indextts", "dep:candle-core", "dep:hound", "dep:rubato"]
+indextts-metal = ["indextts", "talechime-indextts/metal", "dep:candle-metal-kernels"]
+indextts-cuda-cudnn = ["indextts", "talechime-indextts/cuda-cudnn"]
+cosyvoice3 = ["dep:talechime-cosyvoice3", "talechime-cosyvoice3/ort", "dep:candle-core", "dep:hound", "dep:rubato"]
+cosyvoice3-metal = ["cosyvoice3", "talechime-cosyvoice3/metal", "dep:candle-metal-kernels"]
+cosyvoice3-cuda = ["cosyvoice3", "talechime-cosyvoice3/cuda"]
 default = ["moss-nano-candle"]
-asr = ["dep:qwen3-asr", "dep:candle-core", "dep:ort", "dep:kaldi-fbank", "dep:rubato", "dep:hound"]
+asr = ["dep:talechime-qwen3-asr", "dep:candle-core", "dep:ort", "dep:kaldi-fbank", "dep:rubato", "dep:hound"]
 moss = ["dep:ort", "dep:sentencepiece-rs", "dep:rand", "dep:hound", "dep:rubato"]
-moss-nano-candle = ["moss", "dep:moss-tts", "dep:candle-core"]
-moss-nano-candle-metal = ["moss-nano-candle", "moss-tts/metal", "tts-candle-platform/metal"]
-moss-nano-candle-cuda = ["moss-nano-candle", "moss-tts/cuda"]
-moss-candle = ["moss", "dep:moss-tts", "dep:candle-core"]
+moss-nano-candle = ["moss", "dep:talechime-moss-tts", "dep:candle-core"]
+moss-nano-candle-metal = ["moss-nano-candle", "talechime-moss-tts/metal", "dep:candle-metal-kernels"]
+moss-nano-candle-cuda = ["moss-nano-candle", "talechime-moss-tts/cuda"]
+moss-candle = ["moss", "dep:talechime-moss-tts", "dep:candle-core"]
 experimental-moss-reference-anchor = ["moss-candle"]
-moss-candle-cuda = ["moss-candle", "moss-tts/cuda"]
-moss-candle-metal = ["moss-candle", "moss-tts/metal", "tts-candle-platform/metal"]
-qwen = ["dep:qwen3-tts", "dep:hound", "dep:rubato"]
-qwen-metal = ["qwen", "qwen3-tts/metal", "tts-candle-platform/metal"]
-qwen-cuda = ["qwen", "qwen3-tts/cuda"]
-voxcpm = ["dep:voxcpm", "dep:candle-core", "dep:hound", "dep:rubato"]
-experimental-dual-reference = ["voxcpm", "voxcpm/experimental-dual-reference"]
-voxcpm-cuda = ["voxcpm", "voxcpm/cuda"]
-voxcpm-metal = ["voxcpm", "voxcpm/metal", "tts-candle-platform/metal"]
-omnivoice = ["dep:omnivoice", "dep:hound", "dep:rubato"]
-omnivoice-cuda = ["omnivoice", "omnivoice/cuda"]
-omnivoice-metal = ["omnivoice", "omnivoice/metal", "tts-candle-platform/metal"]
+moss-candle-cuda = ["moss-candle", "talechime-moss-tts/cuda"]
+moss-candle-metal = ["moss-candle", "talechime-moss-tts/metal", "dep:candle-metal-kernels"]
+qwen = ["dep:talechime-qwen3-tts", "dep:hound", "dep:rubato"]
+qwen-metal = ["qwen", "talechime-qwen3-tts/metal", "dep:candle-metal-kernels"]
+qwen-cuda = ["qwen", "talechime-qwen3-tts/cuda"]
+voxcpm = ["dep:talechime-voxcpm", "dep:candle-core", "dep:hound", "dep:rubato"]
+experimental-dual-reference = ["voxcpm", "talechime-voxcpm/experimental-dual-reference"]
+voxcpm-cuda = ["voxcpm", "talechime-voxcpm/cuda"]
+voxcpm-metal = ["voxcpm", "talechime-voxcpm/metal", "dep:candle-metal-kernels"]
+omnivoice = ["dep:talechime-omnivoice", "dep:hound", "dep:rubato"]
+omnivoice-cuda = ["omnivoice", "talechime-omnivoice/cuda"]
+omnivoice-metal = ["omnivoice", "talechime-omnivoice/metal", "dep:candle-metal-kernels"]
 ort-coreml = ["dep:ort", "ort/coreml"]
 ort-cuda = ["dep:ort", "ort/cuda"]
 directml-probe = ["moss", "ort/directml", "dep:windows"]
@@ -42,18 +42,17 @@ directml-probe = ["moss", "ort/directml", "dep:windows"]
 [dependencies]
 tracing = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
-indextts = { workspace = true, optional = true }
-cosyvoice3 = { workspace = true, optional = true }
-tts-candle-platform.workspace = true
-moss-tts = { workspace = true, optional = true }
+talechime-indextts = { workspace = true, optional = true }
+talechime-cosyvoice3 = { workspace = true, optional = true }
+talechime-moss-tts = { workspace = true, optional = true }
 candle-core = { workspace = true, optional = true }
-omnivoice = { workspace = true, optional = true }
-voxcpm = { workspace = true, optional = true }
-qwen3-asr = { workspace = true, optional = true }
+talechime-omnivoice = { workspace = true, optional = true }
+talechime-voxcpm = { workspace = true, optional = true }
+talechime-qwen3-asr = { workspace = true, optional = true }
 kaldi-fbank = { workspace = true, optional = true }
-qwen3-tts = { workspace = true, optional = true }
-tts-core = { package = "talechime-core", path = "../talechime-core", version = "0.4.0" }
-tts-protocol = { package = "talechime-protocol", path = "../talechime-protocol", version = "0.3.0" }
+talechime-qwen3-tts = { workspace = true, optional = true }
+talechime-core = { path = "../talechime-core", version = "0.4.0" }
+talechime-protocol = { path = "../talechime-protocol", version = "0.3.0" }
 ort = { workspace = true, optional = true }
 sentencepiece-rs = { version = "0.2.2", optional = true }
 rand = { version = "0.9", optional = true }
@@ -126,3 +125,6 @@ required-features = ["moss", "qwen", "omnivoice"]
 [[example]]
 name = "moss_continuation_codec"
 required-features = ["moss"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-metal-kernels = { workspace = true, optional = true }

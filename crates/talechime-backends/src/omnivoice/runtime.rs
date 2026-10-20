@@ -1,23 +1,23 @@
 use super::voice_store;
-use ::omnivoice::{
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+use talechime_core::backend::{AudioChunk, BackendError, Pcm};
+use talechime_omnivoice::{
     contracts::{
         GenerationRequest, I64Tensor2, ReferenceAudioInput, VoiceClonePrompt, WaveformInput,
     },
     pipeline::Pipeline,
     runtime::{DeviceSpec, RuntimeOptions},
 };
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use talechime_protocol::Device;
 use tokio::sync::{mpsc, oneshot};
-use tts_core::backend::{AudioChunk, BackendError, Pcm};
-use tts_protocol::Device;
 
 pub(super) struct Request {
     #[cfg(feature = "performance-tools")]
     pub(crate) perf: crate::performance::OwnerContext,
-    context: Option<tts_core::SpeechContext>,
+    context: Option<talechime_core::SpeechContext>,
     text: String,
     voice: String,
     seed: u64,
@@ -31,7 +31,7 @@ impl Request {
         text: &str,
         voice: &str,
         audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
-        context: Option<&tts_core::SpeechContext>,
+        context: Option<&talechime_core::SpeechContext>,
         seed: u64,
         resolved: super::params::Resolved,
         style: Option<String>,
@@ -84,9 +84,11 @@ pub(super) fn run(
             continue;
         }
         let audio = request.audio.clone();
-        pipeline.set_cancellation_probe(Some(::omnivoice::stage0_model::CancellationProbe(
-            Arc::new(move || audio.is_closed()),
-        )));
+        pipeline.set_cancellation_probe(Some(
+            talechime_omnivoice::stage0_model::CancellationProbe(Arc::new(move || {
+                audio.is_closed()
+            })),
+        ));
         if let Err(error) = pipeline.set_seed(request.seed)
             && !request.audio.is_closed()
         {

@@ -14,9 +14,9 @@ mod text;
 pub mod voices;
 use sentencepiece_rs::SentencePieceProcessor;
 use std::{path::PathBuf, sync::Arc};
+use talechime_core::backend::{AudioChunk, Backend, BackendError, Segmentation, Streaming};
+use talechime_protocol::Capabilities;
 use tokio::sync::{mpsc, oneshot};
-use tts_core::backend::{AudioChunk, Backend, BackendError, Segmentation, Streaming};
-use tts_protocol::Capabilities;
 
 pub fn capabilities(directory: &std::path::Path) -> anyhow::Result<Capabilities> {
     let manifest: serde_json::Value =
@@ -55,14 +55,14 @@ enum Work {
         perf: crate::performance::OwnerContext,
         tokens: Vec<i32>,
         none_tokens: Vec<i32>,
-        context: Option<tts_core::SpeechContext>,
+        context: Option<talechime_core::SpeechContext>,
         voice: String,
         seed: Option<u64>,
         audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
         report: Option<(String, oneshot::Sender<diagnostics::GenerationReport>)>,
     },
     CheckCodec {
-        context: tts_core::SpeechContext,
+        context: talechime_core::SpeechContext,
         reply: oneshot::Sender<anyhow::Result<diagnostics::CodecContinuationReport>>,
     },
     Import {
@@ -77,7 +77,7 @@ pub struct MossBackend {
     tokenizer: Arc<SentencePieceProcessor>,
     capabilities: Capabilities,
     cache_identity: Option<String>,
-    estimate: std::cell::RefCell<(String, tts_core::text::duration::DurationEstimator)>,
+    estimate: std::cell::RefCell<(String, talechime_core::text::duration::DurationEstimator)>,
 }
 
 // Closing the initialization receiver before joining makes weight loading cancellable.
@@ -106,24 +106,24 @@ impl Drop for InferenceOwner {
 }
 impl MossBackend {
     pub async fn load(directory: PathBuf) -> Result<Self, BackendError> {
-        Self::load_on(directory, tts_protocol::Device::Cpu).await
+        Self::load_on(directory, talechime_protocol::Device::Cpu).await
     }
     pub async fn load_on(
         directory: PathBuf,
-        device: tts_protocol::Device,
+        device: talechime_protocol::Device,
     ) -> Result<Self, BackendError> {
         Self::load_with_recovery(directory, device, None).await
     }
     pub async fn load_with_recovery(
         directory: PathBuf,
-        device: tts_protocol::Device,
-        recovery: Option<mpsc::Sender<tts_protocol::Event>>,
+        device: talechime_protocol::Device,
+        recovery: Option<mpsc::Sender<talechime_protocol::Event>>,
     ) -> Result<Self, BackendError> {
         crate::devices::validate(device)
             .map_err(|error| BackendError::Initialize(error.to_string()))?;
         let caps = capabilities(&directory).map_err(|e| BackendError::Initialize(e.to_string()))?;
-        let cache_identity =
-            (recovery.is_none() || device == tts_protocol::Device::Cpu).then(|| {
+        let cache_identity = (recovery.is_none() || device == talechime_protocol::Device::Cpu)
+            .then(|| {
                 crate::cache_identity::identity(
                     "moss-nano-onnx",
                     resources::REVISION,
@@ -188,12 +188,12 @@ impl MossBackend {
                             if let Some(error) = error {
                                 let _ = crate::observation::send_audio(&audio, Err(BackendError::Synthesis(error.clone())));
                                 if end == GenerationEnd::InferenceFailure
-                                    && let Some(progress) = &recovery && current_device != tts_protocol::Device::Cpu {
-                                    match runtime::Runtime::load_on(&directory, || false, tts_protocol::Device::Cpu) {
+                                    && let Some(progress) = &recovery && current_device != talechime_protocol::Device::Cpu {
+                                    match runtime::Runtime::load_on(&directory, || false, talechime_protocol::Device::Cpu) {
                                         Ok(cpu) => {
                                             runtime = cpu;
-                                            current_device = tts_protocol::Device::Cpu;
-                                            let _ = progress.blocking_send(crate::devices::status("tts", tts_protocol::Device::Cpu, Some(format!("inference failed; failed block was not replayed: {error}"))));
+                                            current_device = talechime_protocol::Device::Cpu;
+                                            let _ = progress.blocking_send(crate::devices::status("tts", talechime_protocol::Device::Cpu, Some(format!("inference failed; failed block was not replayed: {error}"))));
                                         }
                                         Err(_) => break,
                                     }
@@ -253,7 +253,7 @@ impl MossBackend {
     /// This explicit probe returns numeric evidence; it does not synthesize or persist audio.
     pub async fn check_continuation_codec(
         &self,
-        context: &tts_core::SpeechContext,
+        context: &talechime_core::SpeechContext,
     ) -> anyhow::Result<diagnostics::CodecContinuationReport> {
         let (reply, result) = oneshot::channel();
         self.owner
@@ -271,7 +271,7 @@ impl MossBackend {
         text: &str,
         voice: &str,
         seed: Option<u64>,
-    ) -> Result<tts_core::backend::AudioStream, BackendError> {
+    ) -> Result<talechime_core::backend::AudioStream, BackendError> {
         self.stream_seeded_with_context(text, voice, seed, None)
             .await
     }
@@ -281,8 +281,8 @@ impl MossBackend {
         text: &str,
         voice: &str,
         seed: Option<u64>,
-        context: Option<&tts_core::SpeechContext>,
-    ) -> Result<tts_core::backend::AudioStream, BackendError> {
+        context: Option<&talechime_core::SpeechContext>,
+    ) -> Result<talechime_core::backend::AudioStream, BackendError> {
         self.request(text, voice, seed, None, context).await
     }
     /// Generate optional evidence without exposing model details to core.
@@ -293,7 +293,7 @@ impl MossBackend {
         seed: Option<u64>,
     ) -> Result<
         (
-            tts_core::backend::AudioStream,
+            talechime_core::backend::AudioStream,
             oneshot::Receiver<diagnostics::GenerationReport>,
         ),
         BackendError,
@@ -308,8 +308,8 @@ impl MossBackend {
         voice: &str,
         seed: Option<u64>,
         report: Option<oneshot::Sender<diagnostics::GenerationReport>>,
-        context: Option<&tts_core::SpeechContext>,
-    ) -> Result<tts_core::backend::AudioStream, BackendError> {
+        context: Option<&talechime_core::SpeechContext>,
+    ) -> Result<talechime_core::backend::AudioStream, BackendError> {
         let text = text::normalize(text);
         if text.is_empty() {
             return Err(BackendError::Unsupported("no speakable text".into()));
@@ -355,7 +355,7 @@ impl Backend for MossBackend {
     fn capabilities(&self) -> Capabilities {
         self.capabilities.clone()
     }
-    fn stream<'a>(&'a self, request: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
             request.reject_unsupported(self.capabilities.style, self.capabilities.continuation)?;
             self.request(
@@ -383,7 +383,7 @@ impl Backend for MossBackend {
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
-                    Output = Result<Option<tts_core::text::TextSegment>, BackendError>,
+                    Output = Result<Option<talechime_core::text::TextSegment>, BackendError>,
                 > + 'a,
         >,
     > {

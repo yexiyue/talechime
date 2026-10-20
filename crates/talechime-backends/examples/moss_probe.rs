@@ -1,7 +1,7 @@
 //! Fixed-seed offline synthesis evidence. Output stays in a user-selected directory.
 use std::{path::PathBuf, time::Instant};
 use talechime_backends::moss::MossBackend;
-use tts_core::{
+use talechime_core::{
     audio::BoundarySilence,
     backend::{AudioChunk, Backend},
     text::TextSegment,
@@ -37,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
     while offset < text.len() {
         let piece = if mode == "lines" {
             let line = text[offset..].split_inclusive('\n').next().unwrap_or("");
-            if line.trim().is_empty() || tts_core::text::is_decoration_line(line) {
+            if line.trim().is_empty() || talechime_core::text::is_decoration_line(line) {
                 offset += line.len();
                 continue;
             }

@@ -12,8 +12,8 @@ use talechime_core::{
     session::{SessionEvent, SessionManager},
     text::TextSegment,
 };
+use talechime_protocol::{Capabilities, Config, EndReason, Event, SourceId, TextRange, text_hash};
 use tokio::sync::mpsc;
-use tts_protocol::{Capabilities, Config, EndReason, Event, SourceId, TextRange, text_hash};
 
 #[derive(Clone, Copy)]
 enum Mode {
@@ -31,7 +31,7 @@ struct Call {
     voice: String,
     style: Option<String>,
     seed: u64,
-    params: Vec<(String, tts_protocol::ParamValue)>,
+    params: Vec<(String, talechime_protocol::ParamValue)>,
 }
 
 /// Seed and params vary per policy; existing assertions cover text/voice/style.
@@ -540,7 +540,10 @@ async fn seek_preserves_roles_and_new_input_identity() {
                     .append_plan("before", vec![span(0, 3, "A")])
                     .is_err()
             );
-            assert_eq!(h.manager.status().1, tts_protocol::SessionState::Paused);
+            assert_eq!(
+                h.manager.status().1,
+                talechime_protocol::SessionState::Paused
+            );
             h.manager.resume("after").await.unwrap();
             h.drive(true, |h| h.ended("after", EndReason::Completed))
                 .await;
@@ -1447,10 +1450,10 @@ async fn native_speed_routes_to_generation_and_divides_out_of_the_sink() {
         .run_until(async {
             let mut h = Harness::new();
             // Declare a native speed parameter on the prepared backend.
-            h.backend.caps.borrow_mut().parameters = vec![tts_protocol::ParameterSpec {
+            h.backend.caps.borrow_mut().parameters = vec![talechime_protocol::ParameterSpec {
                 name: "speed".into(),
-                kind: tts_protocol::ParamKind::Float { min: 0.5, max: 2.0 },
-                default: tts_protocol::ParamValue::Float(1.0),
+                kind: talechime_protocol::ParamKind::Float { min: 0.5, max: 2.0 },
+                default: talechime_protocol::ParamValue::Float(1.0),
                 description: String::new(),
             }];
             let mut plan = h.plan("甲乙");
@@ -1481,10 +1484,11 @@ async fn native_speed_routes_to_generation_and_divides_out_of_the_sink() {
             assert!((sink - 2.0 / 1.5).abs() < 1e-6, "seek lost speed: {sink}");
             h.drive(true, |h| h.ended("resumed", EndReason::Completed))
                 .await;
-            assert!(
-                h.backend.calls.borrow().iter().all(|call| call.params
-                    == [("speed".to_string(), tts_protocol::ParamValue::Float(1.5))])
-            );
+            assert!(h.backend.calls.borrow().iter().all(|call| call.params
+                == [(
+                    "speed".to_string(),
+                    talechime_protocol::ParamValue::Float(1.5)
+                )]));
         })
         .await;
 }
@@ -1494,17 +1498,17 @@ async fn explicit_native_speed_wins_initially_and_survives_seek() {
     tokio::task::LocalSet::new()
         .run_until(async {
             let mut h = Harness::new();
-            h.backend.caps.borrow_mut().parameters = vec![tts_protocol::ParameterSpec {
+            h.backend.caps.borrow_mut().parameters = vec![talechime_protocol::ParameterSpec {
                 name: "speed".into(),
-                kind: tts_protocol::ParamKind::Float { min: 0.5, max: 2.0 },
-                default: tts_protocol::ParamValue::Float(1.0),
+                kind: talechime_protocol::ParamKind::Float { min: 0.5, max: 2.0 },
+                default: talechime_protocol::ParamValue::Float(1.0),
                 description: String::new(),
             }];
             let mut plan = h.plan("甲乙");
             plan.append(vec![span(0, 6, "A")]).unwrap();
             plan.seal().unwrap();
             let mut params = talechime_core::GenerationParams::new();
-            params.insert("speed", tts_protocol::ParamValue::Float(1.5));
+            params.insert("speed", talechime_protocol::ParamValue::Float(1.5));
             h.manager
                 .start_plan(
                     "explicit".into(),
@@ -1534,10 +1538,10 @@ async fn legacy_settings_divide_out_native_generation_speed() {
     tokio::task::LocalSet::new()
         .run_until(async {
             let mut h = Harness::new();
-            h.backend.caps.borrow_mut().parameters = vec![tts_protocol::ParameterSpec {
+            h.backend.caps.borrow_mut().parameters = vec![talechime_protocol::ParameterSpec {
                 name: "speed".into(),
-                kind: tts_protocol::ParamKind::Float { min: 0.5, max: 2.0 },
-                default: tts_protocol::ParamValue::Float(1.0),
+                kind: talechime_protocol::ParamKind::Float { min: 0.5, max: 2.0 },
+                default: talechime_protocol::ParamValue::Float(1.0),
                 description: String::new(),
             }];
             let text = "甲乙";

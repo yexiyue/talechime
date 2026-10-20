@@ -134,7 +134,7 @@ pub(crate) fn hard_boundary(
     source: &str,
     start: usize,
     end: usize,
-    boundary: tts_protocol::ContinuationBoundary,
+    boundary: talechime_protocol::ContinuationBoundary,
 ) -> bool {
     let anchor = if start > 0 && source.as_bytes().get(start - 1..start + 1) == Some(b"\r\n") {
         start - 1
@@ -148,13 +148,13 @@ pub(crate) fn hard_boundary(
         let length = rest.find(['\r', '\n']).unwrap_or(rest.len());
         let line = &rest[..length];
         let hard = match boundary {
-            tts_protocol::ContinuationBoundary::Paragraph => {
+            talechime_protocol::ContinuationBoundary::Paragraph => {
                 crate::text::is_heading_line(line) || crate::text::is_non_spoken_line(line)
             }
-            tts_protocol::ContinuationBoundary::Scene => {
+            talechime_protocol::ContinuationBoundary::Scene => {
                 crate::text::is_heading_line(line) || crate::text::is_decoration_line(line)
             }
-            tts_protocol::ContinuationBoundary::None => false,
+            talechime_protocol::ContinuationBoundary::None => false,
         };
         if hard && (at >= start || !line.trim().is_empty()) {
             return true;
@@ -223,7 +223,7 @@ mod tests {
     }
     #[test]
     fn source_boundaries_distinguish_soft_lines_and_crlf() {
-        use tts_protocol::ContinuationBoundary::Paragraph;
+        use talechime_protocol::ContinuationBoundary::Paragraph;
         for text in ["甲\n乙", "甲\r\n乙", "甲\r乙"] {
             let start = text.find('乙').unwrap();
             assert!(!hard_boundary(text, 0, text.len(), Paragraph));
@@ -241,7 +241,7 @@ mod tests {
     }
     #[test]
     fn boundary_policies_control_which_structure_resets_the_chain() {
-        use tts_protocol::ContinuationBoundary::{None, Paragraph, Scene};
+        use talechime_protocol::ContinuationBoundary::{None, Paragraph, Scene};
         // A real novel layout: every paragraph gap is a blank line.
         let paragraphs = "第一段。\n\n第二段。\n\n第三段。";
         let second = paragraphs.find("第二段").unwrap();

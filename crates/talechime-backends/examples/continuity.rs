@@ -1,7 +1,7 @@
 //! Export a reproducible same-voice comparison without an audio output device.
 use std::{path::PathBuf, time::Instant};
 use talechime_backends::moss::MossBackend;
-use tts_core::{
+use talechime_core::{
     audio::BoundarySilence,
     backend::{AudioChunk, Backend, Pcm},
 };
@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 let mut offset = 0;
                 for line in source.split_inclusive('\n') {
-                    if line.trim().is_empty() || tts_core::text::is_decoration_line(line) {
+                    if line.trim().is_empty() || talechime_core::text::is_decoration_line(line) {
                         offset += line.len();
                     } else {
                         break;
@@ -63,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
                     .char_indices()
                     .find(|(_, c)| "。！？!?\n".contains(*c))
                     .map_or(source.len(), |(i, c)| offset + i + c.len_utf8());
-                (offset < end).then(|| tts_core::text::TextSegment {
+                (offset < end).then(|| talechime_core::text::TextSegment {
                     text: source[offset..end].into(),
                     start: offset,
                     end,

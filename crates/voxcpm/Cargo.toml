@@ -1,5 +1,5 @@
 [package]
-name = "voxcpm"
+name = "talechime-voxcpm"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
@@ -15,14 +15,12 @@ experimental-dual-reference = []
 # Accelerate CPU builds so Cargo feature unification cannot contaminate them.
 codec-experiment = []
 accelerate-experiment = ["codec-experiment", "dep:candle-transformers"]
-cuda = ["dep:candle-cuda-graph", "dep:tts-candle-platform", "tts-candle-platform/cuda"]
-metal = ["dep:tts-candle-platform", "tts-candle-platform/metal"]
+cuda = ["candle-core/cuda", "candle-nn/cuda", "dep:cudarc"]
+metal = ["candle-nn/metal"]
 
 [dependencies]
-candle-cuda-graph = { workspace = true, optional = true }
-candle-core.workspace = true
 candle-nn.workspace = true
-tts-candle-platform = { workspace = true, optional = true }
+candle-core.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 tokenizers = { workspace = true, features = ["onig"] }
@@ -37,5 +35,7 @@ anyhow.workspace = true
 hound.workspace = true
 libc.workspace = true
 rubato.workspace = true
-tts-core.workspace = true
+talechime-core.workspace = true
 
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+cudarc = { workspace = true, optional = true }

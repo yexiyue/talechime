@@ -10,15 +10,15 @@ use talechime_core::{
     text::TextSegment,
     verification::*,
 };
+use talechime_protocol::Capabilities;
 use tokio::sync::mpsc;
-use tts_protocol::Capabilities;
 
 #[derive(Debug, PartialEq)]
 struct Call {
     text: String,
     previous: Option<(String, f32)>,
     seed: u64,
-    params: Vec<(String, tts_protocol::ParamValue)>,
+    params: Vec<(String, talechime_protocol::ParamValue)>,
 }
 
 #[derive(Default)]
@@ -43,10 +43,10 @@ impl Backend for Fixture {
             cloning: false,
             pronunciation: false,
             continuation: true,
-            parameters: vec![tts_protocol::ParameterSpec {
+            parameters: vec![talechime_protocol::ParameterSpec {
                 name: "gain".into(),
-                kind: tts_protocol::ParamKind::Int { min: 0, max: 10 },
-                default: tts_protocol::ParamValue::Int(3),
+                kind: talechime_protocol::ParamKind::Int { min: 0, max: 10 },
+                default: talechime_protocol::ParamValue::Int(3),
                 description: "fixture gain".into(),
             }],
         }
@@ -192,7 +192,7 @@ async fn spent_chain_reanchors_at_paragraph_gaps_under_scene_policy() {
                 None,
                 None,
                 SynthesisOptions {
-                    continuation_boundary: tts_protocol::ContinuationBoundary::Scene,
+                    continuation_boundary: talechime_protocol::ContinuationBoundary::Scene,
                     continuation_span: Some(2),
                     ..Default::default()
                 },
@@ -233,7 +233,7 @@ async fn streams_without_paragraph_gaps_hit_the_mid_stream_ceiling() {
                 None,
                 None,
                 SynthesisOptions {
-                    continuation_boundary: tts_protocol::ContinuationBoundary::None,
+                    continuation_boundary: talechime_protocol::ContinuationBoundary::None,
                     continuation_span: Some(2),
                     ..Default::default()
                 },
@@ -318,7 +318,7 @@ async fn scene_policy_keeps_the_chain_across_paragraph_gaps() {
                 None,
                 None,
                 SynthesisOptions {
-                    continuation_boundary: tts_protocol::ContinuationBoundary::Scene,
+                    continuation_boundary: talechime_protocol::ContinuationBoundary::Scene,
                     ..Default::default()
                 },
             )
@@ -341,7 +341,7 @@ async fn scene_policy_keeps_the_chain_across_paragraph_gaps() {
                 None,
                 None,
                 SynthesisOptions {
-                    continuation_boundary: tts_protocol::ContinuationBoundary::None,
+                    continuation_boundary: talechime_protocol::ContinuationBoundary::None,
                     ..Default::default()
                 },
             )
@@ -487,7 +487,7 @@ async fn pinned_seeds_reproduce_and_params_reach_the_backend() {
                 ..Default::default()
             };
             let mut params = talechime_core::GenerationParams::new();
-            params.insert("gain", tts_protocol::ParamValue::Int(5));
+            params.insert("gain", talechime_protocol::ParamValue::Int(5));
             let mut first = SynthesisStream::start_with_options(
                 backend.clone(),
                 text,
@@ -505,9 +505,8 @@ async fn pinned_seeds_reproduce_and_params_reach_the_backend() {
                 .map(|call| call.seed)
                 .collect();
             assert!(initial.windows(2).all(|pair| pair[0] != pair[1]));
-            assert!(backend.calls.borrow().iter().all(
-                |call| call.params == [("gain".to_string(), tts_protocol::ParamValue::Int(5))]
-            ));
+            assert!(backend.calls.borrow().iter().all(|call| call.params
+                == [("gain".to_string(), talechime_protocol::ParamValue::Int(5))]));
 
             // Same pin and same plan reproduce the exact seed sequence.
             let mut repeat = SynthesisStream::start_with_options(
@@ -543,7 +542,7 @@ async fn pinned_seeds_reproduce_and_params_reach_the_backend() {
                 .collect();
             assert_ne!(initial, diverged);
             let mut unknown = talechime_core::GenerationParams::new();
-            unknown.insert("temperature", tts_protocol::ParamValue::Float(0.5));
+            unknown.insert("temperature", talechime_protocol::ParamValue::Float(0.5));
             assert!(
                 SynthesisStream::start_with_options(
                     backend.clone(),
@@ -556,7 +555,7 @@ async fn pinned_seeds_reproduce_and_params_reach_the_backend() {
                 .is_err()
             );
             let mut out_of_range = talechime_core::GenerationParams::new();
-            out_of_range.insert("gain", tts_protocol::ParamValue::Int(99));
+            out_of_range.insert("gain", talechime_protocol::ParamValue::Int(99));
             assert!(
                 SynthesisStream::start_with_options(
                     backend.clone(),

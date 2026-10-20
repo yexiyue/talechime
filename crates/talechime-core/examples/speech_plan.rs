@@ -1,6 +1,6 @@
 //! Build a plan without a model, runtime, audio device or user configuration.
 use talechime_core::{PlaybackPolicy, SourceSnapshot, SpeechPlan, SpeechSpan, VoiceSnapshot};
-use tts_protocol::{Capabilities, SourceId, TextRange, text_hash};
+use talechime_protocol::{Capabilities, SourceId, TextRange, text_hash};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // A real caller obtains these capabilities from its prepared backend.

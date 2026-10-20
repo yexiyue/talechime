@@ -1,8 +1,8 @@
 //! Thin application assembly using the same public library as embedded hosts.
 use std::rc::Rc;
 use talechime::{Engine, ListeningHandle, ListeningOptions, ListeningSession};
+use talechime_core::{backend::Backend, checkpoint::CheckpointStore, session::SessionEvent};
 use tokio::sync::mpsc;
-use tts_core::{backend::Backend, checkpoint::CheckpointStore, session::SessionEvent};
 
 pub struct AppSession {
     pub control: ListeningHandle,
@@ -85,7 +85,7 @@ mod tests {
             events
                 .send(SessionEvent {
                     session_id: "occupied".into(),
-                    event: tts_protocol::Event::Accepted,
+                    event: talechime_protocol::Event::Accepted,
                 })
                 .await
                 .unwrap();
@@ -97,13 +97,13 @@ mod tests {
             )
             .unwrap();
             let source = talechime::SourceSnapshot::new(
-                tts_protocol::SourceId {
+                talechime_protocol::SourceId {
                     namespace: "test".into(),
                     book: "book".into(),
                     chapter: "chapter".into(),
                 },
                 "甲",
-                &tts_protocol::text_hash("甲"),
+                &talechime_protocol::text_hash("甲"),
             )
             .unwrap();
             let caps = owner.capabilities().unwrap();

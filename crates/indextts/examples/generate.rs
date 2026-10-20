@@ -2,7 +2,7 @@
 //! checkpoints — see the retired IndexTTS exporter in Git revision `e591c94`).
 //!
 //! ```sh
-//! cargo run --release -p indextts --example generate -- \
+//! cargo run --release -p talechime-indextts --example generate -- \
 //!     --dir <converted-dir> --reference <spk.wav> --text "你好，世界。" \
 //!     --lang zh --out out.wav [--seed 7] [--device cuda]
 //! ```
@@ -58,21 +58,21 @@ fn main() -> Result<()> {
     let device = probe::device(&args.device)?;
 
     let t0 = Instant::now();
-    let mut model = indextts::Model::load(&args.dir, &device)
+    let mut model = talechime_indextts::Model::load(&args.dir, &device)
         .with_context(|| format!("load model from {}", args.dir.display()))?;
     let load_secs = t0.elapsed().as_secs_f64();
 
-    let (pcm, sr) = indextts::dsp::load_wav_mono(&args.reference)?;
+    let (pcm, sr) = talechime_indextts::dsp::load_wav_mono(&args.reference)?;
     let t1 = Instant::now();
-    let reference = indextts::Reference::from_pcm(&pcm, sr)?;
+    let reference = talechime_indextts::Reference::from_pcm(&pcm, sr)?;
     model.prepare_reference(&reference)?;
     if let Some(emo_path) = &args.emo_reference {
-        let (epcm, esr) = indextts::dsp::load_wav_mono(emo_path)?;
-        model.prepare_emo_reference(&indextts::Reference::from_pcm(&epcm, esr)?)?;
+        let (epcm, esr) = talechime_indextts::dsp::load_wav_mono(emo_path)?;
+        model.prepare_emo_reference(&talechime_indextts::Reference::from_pcm(&epcm, esr)?)?;
     }
     let ref_secs = t1.elapsed().as_secs_f64();
 
-    let options = indextts::Options {
+    let options = talechime_indextts::Options {
         seed: args.seed,
         duration_factor: args.duration_factor,
         text_normalization: !args.no_text_normalization,

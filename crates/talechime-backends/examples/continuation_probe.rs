@@ -5,11 +5,11 @@ use std::{
     rc::Rc,
     time::Instant,
 };
-use tts_core::{
+use talechime_core::{
     SynthesisOptions, SynthesisState, SynthesisStream,
     backend::{AudioChunk, Backend, Pcm, Segmentation, Streaming},
 };
-use tts_protocol::{Capabilities, Device};
+use talechime_protocol::{Capabilities, Device};
 
 #[derive(serde::Serialize)]
 struct Metric {
@@ -40,7 +40,7 @@ impl Backend for SeededMoss {
     fn capabilities(&self) -> Capabilities {
         self.backend().capabilities()
     }
-    fn stream<'a>(&'a self, request: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         match self {
             Self::Onnx(backend) => Box::pin(backend.stream_seeded_with_context(
                 request.text,
@@ -64,8 +64,8 @@ impl Backend for SeededMoss {
         Box<
             dyn std::future::Future<
                     Output = Result<
-                        Option<tts_core::text::TextSegment>,
-                        tts_core::backend::BackendError,
+                        Option<talechime_core::text::TextSegment>,
+                        talechime_core::backend::BackendError,
                     >,
                 > + 'a,
         >,
@@ -86,17 +86,17 @@ struct Observed {
     inner: Rc<dyn Backend>,
     metrics: Rc<RefCell<Vec<Metric>>>,
     fixed_anchor: bool,
-    anchor: Rc<RefCell<Option<tts_core::SpeechContext>>>,
+    anchor: Rc<RefCell<Option<talechime_core::SpeechContext>>>,
     line_segments: bool,
 }
 impl Backend for Observed {
     fn capabilities(&self) -> Capabilities {
         self.inner.capabilities()
     }
-    fn stream<'a>(&'a self, request: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
             let anchor = self.anchor.borrow().clone();
-            let request = tts_core::backend::SegmentRequest {
+            let request = talechime_core::backend::SegmentRequest {
                 text: request.text,
                 voice: request.voice,
                 style: request.style,
@@ -147,7 +147,7 @@ impl Backend for Observed {
                     }
                     if ended {
                         if let Some(pcm) = reference.take() {
-                            match tts_core::SpeechContext::new(text.clone(), pcm) {
+                            match talechime_core::SpeechContext::new(text.clone(), pcm) {
                                 Ok(context) => *anchor_store.borrow_mut() = Some(context),
                                 Err(error) => eprintln!("fixed anchor rejected: {error}"),
                             }
@@ -179,8 +179,8 @@ impl Backend for Observed {
         Box<
             dyn std::future::Future<
                     Output = Result<
-                        Option<tts_core::text::TextSegment>,
-                        tts_core::backend::BackendError,
+                        Option<talechime_core::text::TextSegment>,
+                        talechime_core::backend::BackendError,
                     >,
                 > + 'a,
         >,
@@ -193,7 +193,7 @@ impl Backend for Observed {
                 }
                 let line_end = text[start..].find('\n').map_or(text.len(), |n| start + n);
                 let end = text[..line_end].trim_end().len();
-                Ok(Some(tts_core::text::TextSegment {
+                Ok(Some(talechime_core::text::TextSegment {
                     text: text[start..end].to_owned(),
                     start,
                     end,
@@ -264,9 +264,9 @@ async fn run() -> anyhow::Result<()> {
     let mut moss_reference_anchor = false;
     let mut line_segments = false;
     let mut continuation_span = None;
-    let mut continuation_boundary = tts_protocol::ContinuationBoundary::Paragraph;
+    let mut continuation_boundary = talechime_protocol::ContinuationBoundary::Paragraph;
     let mut style: Option<String> = None;
-    let mut params = tts_core::params::GenerationParams::new();
+    let mut params = talechime_core::params::GenerationParams::new();
     let mut extra = args[8..].iter();
     while let Some(flag) = extra.next() {
         match flag.as_str() {
@@ -313,7 +313,7 @@ async fn run() -> anyhow::Result<()> {
                     .ok_or_else(|| anyhow::anyhow!("--param requires name=value"))?;
                 params.insert(
                     name,
-                    serde_json::from_str::<tts_protocol::ParamValue>(value)
+                    serde_json::from_str::<talechime_protocol::ParamValue>(value)
                         .map_err(|e| anyhow::anyhow!("invalid param value: {e}"))?,
                 );
             }
@@ -472,12 +472,12 @@ async fn run() -> anyhow::Result<()> {
             continuation_span,
             continuation_boundary,
             params: params.clone(),
-            seed: tts_core::SeedPolicy::Pinned(seed),
+            seed: talechime_core::SeedPolicy::Pinned(seed),
             ..Default::default()
         },
     )?;
     let mut audio: Option<Pcm> = None;
-    let mut segments: Vec<(tts_protocol::TextRange, Pcm)> = vec![];
+    let mut segments: Vec<(talechime_protocol::TextRange, Pcm)> = vec![];
     while let Some(block) = stream.recv().await {
         let block = match block {
             Ok(block) => block,
@@ -564,7 +564,7 @@ async fn run() -> anyhow::Result<()> {
         "audio_seconds": seconds,
         "rtf": elapsed_ms as f64 / 1000.0 / seconds,
         "segments": *metrics.borrow(),
-        "source_hash": tts_protocol::text_hash(&text),
+        "source_hash": talechime_protocol::text_hash(&text),
         "completed": true,
         "seed": seed,
         "params": params

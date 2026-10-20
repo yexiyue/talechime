@@ -10,7 +10,7 @@ pub struct PlanSessionOptions {
     pub continuation: bool,
     /// Source structure that resets the continuation chain; hosts own this
     /// policy because only they know their text layout.
-    pub continuation_boundary: tts_protocol::ContinuationBoundary,
+    pub continuation_boundary: talechime_protocol::ContinuationBoundary,
     /// Chained seconds before the reference re-anchors on the static voice;
     /// `None` uses the core default.
     pub continuation_span: Option<u64>,
@@ -38,7 +38,7 @@ impl Default for PlanSessionOptions {
     fn default() -> Self {
         Self {
             continuation: true,
-            continuation_boundary: tts_protocol::ContinuationBoundary::Paragraph,
+            continuation_boundary: talechime_protocol::ContinuationBoundary::Paragraph,
             continuation_span: None,
             params: crate::params::GenerationParams::default(),
             seed: crate::params::SeedPolicy::default(),
@@ -72,7 +72,7 @@ pub struct PlanProgress {
 
 pub(super) struct PlanInput {
     pub(super) continuation: bool,
-    pub(super) continuation_boundary: tts_protocol::ContinuationBoundary,
+    pub(super) continuation_boundary: talechime_protocol::ContinuationBoundary,
     pub(super) continuation_span: Option<u64>,
     pub(super) params: crate::params::GenerationParams,
     pub(super) seed: crate::params::SeedPolicy,
@@ -89,7 +89,7 @@ impl PlanInput {
     pub(super) fn new(plan: SpeechPlan, byte: usize) -> Self {
         Self {
             continuation: true,
-            continuation_boundary: tts_protocol::ContinuationBoundary::Paragraph,
+            continuation_boundary: talechime_protocol::ContinuationBoundary::Paragraph,
             continuation_span: None,
             params: crate::params::GenerationParams::default(),
             seed: crate::params::SeedPolicy::default(),

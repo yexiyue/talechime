@@ -1,6 +1,6 @@
 //! Identities for immutable model resources and their concrete execution path.
 use std::path::Path;
-use tts_protocol::Device;
+use talechime_protocol::Device;
 
 pub(crate) fn identity(
     implementation: &str,

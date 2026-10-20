@@ -1,7 +1,7 @@
 //! Preserve the concrete stream and backpressure while propagating request context.
 use std::{cell::Cell, rc::Rc};
+use talechime_core::backend::{Backend, Segmentation, Streaming};
 use tracing::Instrument;
-use tts_core::backend::{Backend, Segmentation, Streaming};
 
 pub struct Observed {
     pub inner: Rc<dyn Backend>,
@@ -10,13 +10,13 @@ pub struct Observed {
 }
 
 impl Backend for Observed {
-    fn capabilities(&self) -> tts_protocol::Capabilities {
+    fn capabilities(&self) -> talechime_protocol::Capabilities {
         self.inner.capabilities()
     }
     fn cache_identity(&self) -> Option<String> {
         self.inner.cache_identity()
     }
-    fn stream<'a>(&'a self, request: tts_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
+    fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         let id = self.calls.get();
         self.calls.set(id + 1);
         let span = tracing::info_span!(target:"talechime_perf",parent:&self.parent,"segment_request",call=id);
@@ -29,8 +29,8 @@ impl Backend for Observed {
         Box<
             dyn std::future::Future<
                     Output = Result<
-                        Option<tts_core::text::TextSegment>,
-                        tts_core::backend::BackendError,
+                        Option<talechime_core::text::TextSegment>,
+                        talechime_core::backend::BackendError,
                     >,
                 > + 'a,
         >,

@@ -9,13 +9,13 @@ use std::{
 };
 pub async fn reference(
     root: PathBuf,
-    selected: tts_protocol::Device,
+    selected: talechime_protocol::Device,
     text: String,
     description: String,
     output: PathBuf,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
-        selected == tts_protocol::Device::Cuda,
+        selected == talechime_protocol::Device::Cuda,
         "MOSS voice design currently requires verified CUDA/BF16"
     );
     anyhow::ensure!(
@@ -34,7 +34,7 @@ pub async fn reference(
         .spawn(move || {
             let generated = (|| -> anyhow::Result<()> {
                 let device = runtime::device(selected)?;
-                let mut model = moss_tts::Model::load(
+                let mut model = talechime_moss_tts::Model::load(
                     "voice-design-1.7b",
                     &resources::design_directory(&root),
                     &device,
@@ -42,12 +42,12 @@ pub async fn reference(
                 )?;
                 let check = || signal.load(Ordering::Relaxed) || reply.is_closed();
                 anyhow::ensure!(!check(), "voice design cancelled");
-                let mut codec = moss_tts::codec::AudioCodec::load(
+                let mut codec = talechime_moss_tts::codec::AudioCodec::load(
                     &resources::codec_directory(&root),
                     &device,
                     candle_core::DType::F16,
                 )?;
-                let mut request = moss_tts::Generation::new(&text);
+                let mut request = talechime_moss_tts::Generation::new(&text);
                 request.instruction = Some(&description);
                 request.max_frames = 125;
                 let mut frames = Vec::new();
@@ -67,7 +67,7 @@ pub async fn reference(
                     !check() && !samples.is_empty(),
                     "voice design cancelled or empty"
                 );
-                let pcm = tts_core::backend::Pcm {
+                let pcm = talechime_core::backend::Pcm {
                     samples,
                     sample_rate: 24000,
                     channels: 1,

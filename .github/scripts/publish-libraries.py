@@ -13,13 +13,13 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGES = (
     "talechime-protocol",
-    "tts-candle-platform",
     "moss-tts",
     "qwen3-tts",
     "qwen3-asr",
     "voxcpm",
     "omnivoice",
     "cosyvoice3",
+    "indextts",
     "talechime-core",
     "talechime-backends",
     "talechime",
