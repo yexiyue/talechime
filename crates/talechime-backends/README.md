@@ -93,6 +93,6 @@ MOSS 软换行可共享上下文；初始目标 8 秒/预计上限 12 秒，保�
 
 统一音色管理保存参考 WAV、准确文字、描述及模型身份；模型专用提示由适配器懒编码并缓存。Vox 和 Omni 支持一次性设计参考再克隆。
 
-来源与固定 revision：`crates/voxcpm-sys/native/SOURCE.md`、`crates/omnivoice/SOURCE.md`。Vox 代码 MIT、权重 Apache-2.0；Omni 生成器 Apache-2.0，但 tokenizer 使用 BOSON/Higgs/Llama 许可。不得将整个组件集合标作 Apache/MIT。
+来源与固定 revision：[Vox Candle](../voxcpm/SOURCE.md)、[OmniVoice](../omnivoice/SOURCE.md)。Vox Candle 计算库及其模型语义、权重为 Apache-2.0，Candle 依赖保留 Apache-2.0 / MIT 双许可；Omni 生成器 Apache-2.0，但 tokenizer 使用 BOSON/Higgs/Llama 许可。不得将整个组件集合标作 Apache/MIT。旧 C++ 开发对照已退役，[来源与许可证归档](../../docs/legal/retired-voxcpm-native/README.md)保留恢复说明。
 
 对照数值 fixture、固定语料、WAV、性能和待验收项见 [验收记录](../../docs/records/tts-core/tts-model-tiers-acceptance.md)；普通测试不下载大模型。

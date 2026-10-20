@@ -62,7 +62,7 @@ Cargo 会统一同一计算库的 feature，可能使依赖同时拥有多个加
 与 `continuation_span`，缺省值保持 0.2.0 行为；旧宿主发出的计划仍被接受），不兼容已发布
 的 0.1.0 / 协议 v5。
 Qwen 计算库使用 `talechime-qwen3-tts` / `talechime-qwen3-asr`，避免占用其他作者的包名；
-Rust 导入名不变。开发对照用 `voxcpm-sys` 不发布。
+Rust 导入名不变。旧 `voxcpm-sys` 开发对照已退役，历史复现见[来源与许可证归档](legal/retired-voxcpm-native/README.md)。
 
 发布失败后只重跑原提交的工作流；脚本查询同版本并核验 `.cargo_vcs_info.json` 的提交和包目录。
 已从该提交发布的包跳过；来自可验证祖先提交的版本，仅在该包目录与根 `Cargo.toml`

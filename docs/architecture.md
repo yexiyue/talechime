@@ -29,7 +29,7 @@ flowchart TD
 - `crates/talechime-core`：Backend / Playback 接口、会话、背压、音频预算、实际播放进度、配置和检查点。
 - `crates/talechime-backends`：Registry、资源清单、参考音频、设备与具体模型适配。
 - `crates/{qwen3-tts,moss-tts,voxcpm,omnivoice,cosyvoice3,indextts,tts-candle-platform}`：模型计算及平台路由。
-- `crates/voxcpm-sys`：保留原生实现作为独立开发对照，生产 VoxCPM 适配器使用 Candle。
+- VoxCPM 原生 C++ 开发对照已退役；生产适配器使用 Candle，[归档来源](legal/retired-voxcpm-native/README.md)保留旧源码恢复说明。
 
 ## 所有权与故障边界
 

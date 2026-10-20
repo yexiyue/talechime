@@ -10,7 +10,7 @@ Talechime 原创项目代码沿用仓库根目录 MIT 许可证。第三方代�
 | MOSS Candle 计算库 | `crates/moss-tts/SOURCE.md`、LICENSE / NOTICE |
 | MOSS Nano 资源 | `crates/talechime-backends/src/moss/assets/LICENSE.OpenMOSS` 与固定资源清单 |
 | VoxCPM Candle 计算库 | `crates/voxcpm/SOURCE.md` 与许可证 |
-| VoxCPM 原生开发对照 | `crates/voxcpm-sys/native/SOURCE.md` 与 vendored 许可证 |
+| 已退役的 VoxCPM 原生开发对照（历史归档） | [固定来源、许可证与源码恢复说明](legal/retired-voxcpm-native/README.md) |
 | OmniVoice | `crates/omnivoice/SOURCE.md` 与许可证；tokenizer 的 BOSON/Higgs/Llama 授权单独保留 |
 | IndexTTS 2.5 Candle 计算库 | `crates/indextts/SOURCE.md`、`LICENSE.IndexTTS` 与 `third-party/candle/LICENSE-APACHE`；权重与子模型许可单独遵循上游声明 |
 | 已移除的 Qwen 对齐（历史归档） | [许可](legal/retired-qwen-alignment/LICENSE)、[固定资源清单](legal/retired-qwen-alignment/SOURCE.md) |

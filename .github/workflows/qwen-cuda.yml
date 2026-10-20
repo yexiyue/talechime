@@ -8,7 +8,6 @@ on:
       - 'crates/omnivoice/**'
       - 'crates/cosyvoice3/**'
       - 'crates/moss-tts/**'
-      - 'crates/voxcpm-sys/**'
       - 'crates/voxcpm/**'
       - 'crates/tts-candle-platform/**'
       - 'crates/talechime-backends/**'

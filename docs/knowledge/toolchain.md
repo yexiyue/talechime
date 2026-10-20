@@ -196,17 +196,17 @@ host 对象与 ORT 共用动态 CRT。ORT 构建显式设置 `ORT_CUDA_VERSION=1
 构建和真实 provider 检查结果见 `docs/records/platform/ort-rc13-upgrade.md`，不以 Windows
 feature 检查替代 Linux CUDA 或 macOS Metal 验收。
 
-独立 `voxcpm-sys` 对照工具在 CMake 3.31 / CUDA 13 下自动 `native` 架构探测
+历史上的 `voxcpm-sys` 对照工具（现已退役）在 CMake 3.31 / CUDA 13 下自动 `native` 架构探测
 失败；本机完整 workspace CUDA 检查显式设 `CUDA_COMPUTE_CAP=120`。该值是
 RTX 5070 的硬件算力；其他设备不能照搬。生产 Candle 推理不依赖此 C++ 工具。
 
-### 多模型原生 TTS 与 CMake
+### 多模型原生 TTS 与 CMake（历史）
 
-新增 `crates/voxcpm-sys` 固定 llama.cpp-omni 静态 C ABI，`crates/omnivoice` 只保留标准 Candle 推理。native 依赖只经 worker 引入；阅读器仅使用 protocol。CMake/cc 置于 workspace dependencies。Windows 使用 Ninja 与 cc::windows_registry 得到的 MSVC 环境，无需 CUDA Visual Studio 插件；VS generator 在 ZIP Toolkit 安装中会报 No CUDA toolset。本机 CMake 3.31.6 / Ninja 1.11.1.4 位于 D:/dev-tools/bin。
+旧 `crates/voxcpm-sys` 曾封装固定 llama.cpp-omni 静态 C ABI，使用 workspace CMake/cc、Ninja 与 cc::windows_registry 获取的 MSVC 环境。2026-10-20 已删除该开发对照及其直接构建依赖声明；生产 VoxCPM 和 OmniVoice 均使用 Candle。下述旧 CMake/GGML 经验不适用于当前 VoxCPM 构建。旧 VS generator 在 ZIP Toolkit 安装中会报 No CUDA toolset；当时本机 CMake 3.31.6 / Ninja 1.11.1.4 位于 D:/dev-tools/bin。
 
 Omni tokenizer 权重为 BOSON/Higgs/Llama 条款，不能跟生成器一起标为 Apache；`crates/omnivoice/LICENSE.Higgs-Audio` 保存原始许可。
 
-**相关文件**：`crates/tts-candle-platform/`、`crates/voxcpm-sys/build.rs`、`.github/workflows/qwen-cuda.yml`。
+**相关文件**：`crates/tts-candle-platform/`、`.github/workflows/qwen-cuda.yml`；旧 build.rs 见[退役对照恢复说明](../legal/retired-voxcpm-native/README.md)。
 
 ### MOSS 统一 Candle 试用
 
@@ -215,11 +215,11 @@ Omni tokenizer 权重为 BOSON/Higgs/Llama 条款，不能跟生成器一起标�
 **相关文件**：`crates/moss-tts/`、`crates/novel-tts-backends/src/moss/candle/`、`docs/records/moss/moss-candle-acceptance.md`。
 
 
-### macOS VoxCPM2 原生链接
+### macOS VoxCPM2 原生链接（已退役实现的历史经验）
 
 VoxCPM2 的 vendored GGML 在 Apple 平台默认启用 BLAS；Rust 静态链接必须同时包含 `ggml-blas` 和 Accelerate 框架，否则最终链接报 `_ggml_backend_blas_reg` 未定义。仅完成 CMake 构建或 `cargo check` 不能发现该问题，必须构建实际 worker/example。
 
-**相关文件**：`crates/voxcpm-sys/build.rs`。
+**历史文件**：`crates/voxcpm-sys/build.rs`，恢复方式见[退役归档](../legal/retired-voxcpm-native/README.md)。
 
 VoxCPM2 设备探测要匹配 vendored GGML 的注册名 `MTL`（实际 backend 名为 `MTL0`），不是 UI/协议名 `Metal`。显式设备加载后的防 CPU 回退检查也必须使用同一原生名称；只检查 GPU 日志或 Metal feature 编译通过会漏掉这个错误。
 
@@ -272,7 +272,7 @@ CFM 只缓存一个步数对应的时间嵌入表，每个 patch 的 cond projec
 
 ### VoxCPM2 Candle 生产接入（2026-10-07）
 
-用户明确接受当前 F32 数值差异先接入；不改容差，不将数值验收记为通过。`voxcpm` worker 现使用本地 Candle crate，沿用 Q8_0/F16 GGUF、模型目录和 feature 名称。`voxcpm-sys` 暂留独立开发基准 crate，适配器和 worker 的依赖及 CUDA/Metal feature 均不含它。发布通知复制 `crates/voxcpm` 的 Apache-2.0 许可证和 SOURCE.md。
+用户明确接受当前 F32 数值差异先接入；不改容差，不将数值验收记为通过。`voxcpm` worker 使用本地 Candle crate，沿用 Q8_0/F16 GGUF、模型目录和 feature 名称。`voxcpm-sys` 当时暂留为独立开发基准，2026-10-20 已退役；适配器和 worker 的依赖及 CUDA/Metal feature 均不含它。发布通知复制 `crates/voxcpm` 的 Apache-2.0 许可证和 SOURCE.md。
 
 **正确做法**：旧音色 WAV/voice.json 保留；`features.json` 不读取。`candle-reference-v1.json` 验证实现、权重清单摘要、模型/revision、WAV 摘要、文字及 F32/F16 精度，不兼容则重建。专用线程只保留一个音色编码，初始化/生成/设计取消后均回收线程。性能校准 revision 带 candle-v1，不能复用 llama.cpp 的校准值。
 
@@ -408,9 +408,9 @@ ABBA 交替 ≥8 进程、丢弃 ≥1 轮预热、电源计划用高性能、测
 
 M4 Pro / 24GB / Candle 0.11 的 release Q8 Metal 完整语料热测平均 RTF 0.954，旧原生 Metal 1.737；相同短句 CPU 3.689、Metal 0.922。该机器 Metal 仅略快于实时，不可用吞吐数据代替实际播放断流和听感验收。详细条件、原始日志与复现见 `docs/records/voxcpm/voxcpm-macos-performance.md`。
 
-**正确做法**：现有 `tools/tts/metrics.py` 不采样 macOS 内存，Mac 基准使用 `/usr/bin/time -l`，分开记录 maximum resident set size 和 peak memory footprint，二者不相加、不当作独占 GPU 内存。原生开发基准暂未提供 Metal CLI match arm，实测时临时补入口并恢复，不需要更改生产设备路由。
+**正确做法**：现有 `tools/tts/metrics.py` 不采样 macOS 内存，Mac 基准使用 `/usr/bin/time -l`，分开记录 maximum resident set size 和 peak memory footprint，二者不相加、不当作独占 GPU 内存。当时的原生开发基准未提供 Metal CLI match arm，实测时临时补入口并恢复；该对照现已退役，不需要更改生产设备路由。
 
-**相关文件**：`crates/talechime-backends/examples/voxcpm_candle_probe.rs`、`crates/voxcpm-sys/examples/voxcpm_native_benchmark.rs`、`tools/tts/metrics.py`。
+**相关文件**：`crates/talechime-backends/examples/voxcpm_candle_probe.rs`、`tools/tts/metrics.py`；旧原生探针见[退役归档](../legal/retired-voxcpm-native/README.md)。
 
 ### 朗读计划审查约束
 

@@ -6,7 +6,8 @@ the workspace and performs inference without Python, Burn or llama.cpp.
 The production `voxcpm` adapter uses this library following explicit user approval
 of staged integration. Strict numerical acceptance is still incomplete; failed
 comparisons and outstanding playback/listening/platform gates remain reported.
-The former engine is retained only as a development benchmark dependency.
+The former C++ development benchmark has been retired; its provenance and
+recovery instructions remain in the [archive](../../docs/legal/retired-voxcpm-native/README.md).
 
 The worker also exposes `2b-bf16` as an explicitly authorized CUDA experiment,
 labelled as experimental in the reader. It reads pinned original Safetensors and
@@ -74,10 +75,9 @@ cancellation and the next request. `VOXCPM_BENCH_ROUNDS` adjusts development run
 `VOXCPM_BENCH_PROFILE=1` enables synchronized module timing and must be kept off
 for throughput measurements.
 
-The matching preserved-engine hot benchmark is `voxcpm_native_benchmark`, built
-with `cargo build -p voxcpm-sys --features cuda --example voxcpm_native_benchmark --release`. It accepts the same directory/device/output/
-text/reference/transcript arguments and exports one warmup plus five rounds.
-Both examples are development tools; the production backend has no engine selector.
+The former `voxcpm_native_benchmark` C++ comparison is available only from the
+Git revision documented in the [archive](../../docs/legal/retired-voxcpm-native/README.md).
+The Candle probes remain development tools; the production backend has no engine selector.
 
 The development-only `tools/tts/voxcpm_reference.py` imports modules from the
 pinned official checkout and creates real-weight numerical tensors. Run ignored

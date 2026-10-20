@@ -4721,19 +4721,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "voxcpm-sys"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cc",
- "cmake",
- "hound",
- "serde_json",
- "talechime-backends",
- "talechime-core",
-]
-
-[[package]]
 name = "walkdir"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

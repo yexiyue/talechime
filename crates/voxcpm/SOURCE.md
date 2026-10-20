@@ -27,7 +27,8 @@ Weights remain the existing DennisHuang648/VoxCPM2-GGUF resource revision
 in `novel-tts-backends` for sizes and SHA-256. The production adapter uses this
 Candle library after explicit user authorization to integrate before complete
 qualification. Strict numerical failures and outstanding acceptance remain
-reported; the old engine is retained only as a development benchmark.
+reported; the old C++ development benchmark has been retired. Its fixed source
+and licenses remain in `docs/legal/retired-voxcpm-native/` with recovery instructions.
 
 | File | Bytes | SHA-256 |
 | --- | ---: | --- |
