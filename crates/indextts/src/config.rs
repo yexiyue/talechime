@@ -1,7 +1,7 @@
 //! Typed view of the official IndexTTS 2.5 `config.yaml`.
 //!
-//! Upstream reads the YAML with OmegaConf; the development conversion script
-//! (`tools/tts/indextts_export_safetensors.py`) emits the same structure as
+//! Upstream reads the YAML with OmegaConf; the retired conversion script
+//! (Git revision `e591c94`) emitted the same structure as
 //! JSON next to the converted weights, and this crate only consumes that JSON
 //! so no YAML parser is needed at runtime. Field names and defaults mirror
 //! the Python constructors (`UnifiedVoice`, `EnhancedCodec`, `MyModel`).

@@ -3,7 +3,7 @@
 //!
 //! All tests are `#[ignore]`d: they need `INDEXTTS_CONVERTED_DIR` (converted
 //! checkpoints) and `INDEXTTS_ORACLE_JSON` (produced by
-//! `tools/tts/indextts_reference.py` from the pinned Python checkout).
+//! the historical IndexTTS oracle exporter (Git revision `e591c94`) from the pinned Python checkout).
 //! Inputs are taken verbatim from the oracle JSON so the comparison
 //! isolates model math from DSP front-ends (resampling, feature
 //! extraction); those are covered by module unit tests. Tolerances follow

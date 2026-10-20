@@ -1,5 +1,5 @@
 //! Cleanup must include descendants and leave other jobs alone.
-#![cfg(windows)]
+#![cfg(any(windows, target_os = "macos"))]
 use std::sync::atomic::AtomicBool;
 use std::{
     process::{Command, Stdio},
@@ -91,5 +91,53 @@ fn bounded_capture_handles_timeout_flood_and_next_success_serially() -> anyhow::
     assert!(success.errors.is_empty());
     assert!(root.path().join("timeout/capture.json").is_file());
     assert!(root.path().join("flood/stderr.log").is_file());
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn mac_spawn_failure_and_orphaned_pipe_cleanup_are_bounded() -> anyhow::Result<()> {
+    assert!(Process::spawn(&mut Command::new("/no/such/performance-probe")).is_err());
+    let root = tempfile::tempdir()?;
+    let started = Instant::now();
+    let capture = execute(
+        Command::new(env!("CARGO_BIN_EXE_xtask"))
+            .args(["__perf-fixture", "orphan-pipe", "--marker"])
+            .arg(root.path().join("parent")),
+        &root.path().join("capture"),
+        "fixture",
+        Duration::from_secs(3),
+        Budget::default(),
+        &AtomicBool::new(false),
+    )?;
+    assert_eq!(capture.outcome, "failure");
+    assert!(capture.cleanup_verified, "{capture:?}");
+    assert!(started.elapsed() < Duration::from_secs(6));
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn observed_group_escape_fails_closed_and_retains_capture() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let capture = execute(
+        Command::new(env!("CARGO_BIN_EXE_xtask"))
+            .args(["__perf-fixture", "escape-tree", "--marker"])
+            .arg(root.path().join("parent")),
+        &root.path().join("capture"),
+        "fixture",
+        Duration::from_secs(3),
+        Budget::default(),
+        &AtomicBool::new(false),
+    )?;
+    assert!(
+        root.path().join("parent.escaped").is_file(),
+        "{capture:?}; {:?}",
+        std::fs::read_to_string(root.path().join("capture/stderr.log"))
+    );
+    assert!(!capture.cleanup_verified);
+    assert_eq!(capture.outcome, "failure");
+    assert!(capture.errors.iter().any(|error| error.contains("escaped")));
+    assert!(root.path().join("capture/capture.json").is_file());
     Ok(())
 }

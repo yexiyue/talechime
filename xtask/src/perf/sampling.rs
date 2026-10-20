@@ -78,7 +78,7 @@ pub fn process(pid: u32, interval_ms: u64) -> BTreeMap<String, Reading> {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn process(_pid: u32, interval_ms: u64) -> BTreeMap<String, Reading> {
     let mut reading = missing(
         "process",
@@ -175,5 +175,95 @@ mod tests {
         assert!(readings["rss_bytes"].value.is_some_and(|n| n > 0.0));
         assert!(readings["os_peak_working_set_bytes"].value >= readings["rss_bytes"].value);
         assert!(process(u32::MAX, 500)["rss_bytes"].value.is_none());
+    }
+}
+
+/// Mac RSS and footprint are different OS measures, never exclusive GPU VRAM.
+#[cfg(target_os = "macos")]
+pub fn process(pid: u32, interval_ms: u64) -> BTreeMap<String, Reading> {
+    // SAFETY: Zeroed output buffer matches RUSAGE_INFO_V4 and is correctly sized.
+    let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        libc::proc_pid_rusage(
+            pid as i32,
+            libc::RUSAGE_INFO_V4,
+            &mut info as *mut _ as *mut libc::rusage_info_t,
+        )
+    };
+    let error = (result != 0).then(|| std::io::Error::last_os_error().to_string());
+    let mut readings: BTreeMap<_, _> = [
+        ("rss_bytes", info.ri_resident_size),
+        ("physical_footprint_bytes", info.ri_phys_footprint),
+        (
+            "os_peak_physical_footprint_bytes",
+            info.ri_lifetime_max_phys_footprint,
+        ),
+    ]
+    .into_iter()
+    .map(|(name, value)| {
+        let reading = if let Some(error) = &error {
+            missing(
+                "process",
+                "macOS proc_pid_rusage RUSAGE_INFO_V4",
+                error.clone(),
+                interval_ms,
+            )
+        } else {
+            Reading {
+                value: Some(value as f64),
+                unit: "bytes".into(),
+                scope: "process".into(),
+                source: "macOS proc_pid_rusage RUSAGE_INFO_V4".into(),
+                interval_ms: Some(interval_ms),
+                status: "available".into(),
+                reason: None,
+            }
+        };
+        (name.into(), reading)
+    })
+    .collect();
+    readings.insert(
+        "os_peak_rss_bytes".into(),
+        missing(
+            "process",
+            "macOS proc_pid_rusage",
+            "RUSAGE_INFO_V4 exposes footprint peak, not RSS high-water mark".into(),
+            interval_ms,
+        ),
+    );
+    readings.insert(
+        "metal_allocation_bytes".into(),
+        missing(
+            "process_device_allocations",
+            "Metal native collector",
+            "not implemented; RSS and unified memory are not exclusive VRAM".into(),
+            interval_ms,
+        ),
+    );
+    readings
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod mac_tests {
+    #[test]
+    fn native_memory_has_units_and_unavailable_is_not_zero() {
+        let mut allocation = vec![0u8; 16 * 1024 * 1024];
+        for byte in allocation.iter_mut().step_by(4096) {
+            *byte = 1;
+        }
+        std::hint::black_box(&allocation);
+        let readings = super::process(std::process::id(), 100);
+        assert!(readings["rss_bytes"].value.unwrap() > 0.0);
+        assert_eq!(readings["rss_bytes"].unit, "bytes");
+        assert_eq!(readings["rss_bytes"].scope, "process");
+        assert!(
+            readings["os_peak_physical_footprint_bytes"].value.unwrap()
+                >= readings["physical_footprint_bytes"].value.unwrap()
+        );
+        assert!(readings["os_peak_rss_bytes"].value.is_none());
+        assert!(readings["metal_allocation_bytes"].value.is_none());
+        let missing = super::process(i32::MAX as u32, 100);
+        assert!(missing["rss_bytes"].value.is_none());
+        assert!(missing["rss_bytes"].reason.is_some());
     }
 }

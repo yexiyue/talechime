@@ -1,5 +1,7 @@
 # CosyVoice3 第三方来源声明
 
+> Legacy `tools/tts` scripts mentioned here were removed on 2026-10-20. Retrieve historical scripts from Git revision `e591c94`; their paths below describe provenance or historical reproduction, not current executable entry points.
+
 `crates/cosyvoice3` 的实现以 Fun-CosyVoice3 官方 PyTorch 实现为行为规范，模块结构参考社区
 Rust 移植，全部代码在本仓库内按 Candle 0.11.0 重写并修复审计偏差
 （见 docs/records/cosyvoice3/cosyvoice3-candle-audit-2026-10-17.md）。

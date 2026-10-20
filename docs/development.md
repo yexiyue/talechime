@@ -29,7 +29,7 @@ cargo test --locked --workspace --features talechime/qwen,talechime/voxcpm,talec
 cargo build --locked -p talechime --bins
 ```
 
-完整 all-features 检查需要相应平台工具链；CUDA 与 Metal 编译分别在原生 CI 中检查。普通测试不下载大模型；真实模型测试使用显式环境变量，保留历史 `TRNOVEL_*` 变量以兼容已有验收脚本。`tools/tts/` Python 仅供开发对照。
+完整 all-features 检查需要相应平台工具链；CUDA 与 Metal 编译分别在原生 CI 中检查。普通测试不下载大模型；真实模型测试使用显式环境变量，保留历史 `TRNOVEL_*` 变量以兼容已有验收脚本。旧 `tools/` 脚本已删除；性能工具使用 Rust `cargo xtask perf`。历史对照和转换脚本可从 Git revision `e591c94` 取回，不是当前工具依赖。
 
 ## 编译 feature 分层
 
@@ -156,3 +156,7 @@ CUDA 可替换为相应 `-cuda` feature 与 `cuda` 设备。使用 `on` / `off` 
 BF16 仍只开放 CUDA。听感与真实平台数值验收单独记录，不由能力标记推断。
 
 CosyVoice3 的本地转换、资源校验、音色导入与端到端探针见 [CosyVoice3 后端](cosyvoice3.md)。
+
+## Mac 性能工具契约
+
+`cargo test --locked -p xtask` 包含 Mac 原生进程/采集测试。构建免模型 performance_probe 后设置 `TALECHIME_PERF_PROBE_BUILD` 为 build receipt 的绝对路径，再运行 `cargo test --locked -p xtask --test cancellation_cli`，才能验证实际 SIGINT/SIGTERM CLI 取消；未设置时测试仅提示跳过。Mac CI 运行相同显式流程，不下载模型。命令与平台保证见 [性能工具](performance-harness.md#mac-原生工具接线)。

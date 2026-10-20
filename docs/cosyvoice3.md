@@ -24,8 +24,10 @@ ROOT/cosyvoice3/models/0.5b/2512-candle-f64-v1/
 [本机对照记录](records/cosyvoice3/cosyvoice3-local-parity-2026-10-17.md)准备 Python 环境和来源文件。
 `llm.pt`、`flow.pt`、`hift.pt` 的原始 SHA-256 见该记录末尾。
 
+旧转换脚本已删除，可从 [Git 固定快照](https://github.com/yexiyue/talechime/blob/e591c94/tools/tts/cosyvoice3_convert_weights.py) 取回为显式外部工具；以下路径由操作者提供：
+
 ```sh
-python tools/tts/cosyvoice3_convert_weights.py \
+python /path/to/cosyvoice3_convert_weights.py \
   --input OFFICIAL_MODEL_DIR \
   --official_repo PINNED_COSYVOICE_CHECKOUT \
   --output ROOT/cosyvoice3/models/0.5b/2512-candle-f64-v1

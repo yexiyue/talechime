@@ -1,7 +1,7 @@
 //! Converted-checkpoint loading.
 //!
-//! The development export script (`tools/tts/indextts_export_safetensors.py`)
-//! converts the official torch checkpoints into safetensors with the Python
+//! The retired development exporter (Git revision `e591c94`)
+//! converted the official torch checkpoints into safetensors with the Python
 //! state-dict names preserved verbatim:
 //!
 //! ```text
@@ -49,7 +49,7 @@ fn mmap(dir: &std::path::Path, name: &str, device: &Device) -> Result<VarBuilder
     let path = dir.join(name);
     if !path.is_file() {
         bail!(
-            "missing converted IndexTTS weight {} (run tools/tts/indextts_export_safetensors.py)",
+            "missing converted IndexTTS weight {} (provide offline converted weights from the pinned upstream checkpoint; see docs/indextts.md)",
             path.display()
         );
     }

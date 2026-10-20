@@ -1,6 +1,6 @@
 //! Fair local performance benchmark for the Candle CosyVoice3 port.
 //!
-//! Timing boundaries match `tools/tts/cosyvoice3_bench.py` (official
+//! Timing boundaries match the historical CosyVoice3 Python benchmark (Git revision `e591c94`) (official
 //! PyTorch) so both sides measure the same spans. No diagnostic hooks and
 //! no fixture export happen inside any timed region; every number is a
 //! wall-clock span around public library calls on resident models.
@@ -16,7 +16,7 @@
 //! local benchmark; these are not independent official numeric fixtures.
 //!
 //! `<case-dir>` is an official-reference fixture directory produced by
-//! `tools/tts/cosyvoice3_reference.py` (metadata.json, frontend/llm/flow
+//! the historical CosyVoice3 oracle exporter (Git revision `e591c94`) (metadata.json, frontend/llm/flow
 //! safetensors, official prompt wav). `--reextract` re-runs the ORT
 //! frontend on the prompt wav each round; without it the fixture's
 //! pre-extracted prompt features are reused. File I/O (JSON, WAV) stays

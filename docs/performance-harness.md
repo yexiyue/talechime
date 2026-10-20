@@ -21,7 +21,7 @@ build 在 `target/perf-builds/<配置摘要>/` 用显式 feature 构建 release 
 
 prepare 消费构建收据并校验可执行文件摘要。无模型默认只返回生产 AppPaths/Registry 目录和 catalog，不创建自定义资源根。指定 `--backend qwen --model 0.6b-base` 可在编入对应 feature 后对已有模型进行只读生产清单校验，生成资源收据；失败保留文件，不下载、不重命名 `.corrupt`。IndexTTS 缺少生产摘要清单/转换来源收据时 blocked；缺 importer 不调用 Python 兜底。资源已验证不等于设备执行、精度和性能已验证。
 
-正式测量链路的目标为纯 Rust：资源检查、构建、执行、恢复、采样、统计和报告。已有上游 Python-only 转换仅允许在显式准备阶段运行，必须记录解释器/脚本 revision、输入输出摘要，并通过生产校验；测量不隐式执行转换。历史官方 Python 对照脚本保留。
+正式测量链路的目标为纯 Rust：资源检查、构建、执行、恢复、采样、统计和报告。已有上游 Python-only 转换仅允许在显式准备阶段运行，必须记录解释器/脚本 revision、输入输出摘要，并通过生产校验；测量不隐式执行转换。历史官方 Python 对照脚本仅保留在 Git 历史中，当前树已删除 `tools/`。
 
 ## 与 Windows 基线的任务映射
 
@@ -35,11 +35,11 @@ prepare 消费构建收据并校验可执行文件摘要。无模型默认只返
 | 4：报告 | 复用 Rust JSON/CSV/HTML/SVG 输出，不调用 Python 绘图 |
 | 5/6/7：资源与全量批次 | Windows change 独立执行，框架 smoke 不代替全量基线 |
 
-旧 Windows design/tasks 已同步改为复用 Rust 工具，保留全量覆盖、样本协议和资源安全规则。后续清理已删除无引用的 `benchmark_resources.py` 草稿和被 Rust 采样替代的 `probe_metrics.py`；官方对照、转换和 Mac 历史复现脚本继续保留，见 `tools/tts/README.md`。
+旧 Windows design/tasks 已同步改为复用 Rust 工具，保留全量覆盖、样本协议和资源安全规则。旧 `tools/` 脚本现已全部删除；历史官方对照、转换与复现脚本可从 Git revision `e591c94` 取回。固定语料保留在 `crates/voxcpm/tests/fixtures/acceptance-corpus.txt`，当前执行、采样和报告使用 Rust 工具。
 
 ## Mac 接续边界
 
-Mac 计划保留 CPU 和 Metal，每行给出 deferred 或不适用原因。后续原生实现需要验证：进程组及取消回收；RSS/OS 高水位；CPU 有效 Accelerate/BLAS 或其他实现及线程；Metal owner 的工作完成边界；统一内存采样含义；可选 Instruments artifact；基础/详细观测开销；真实模型 CPU 与 Metal 独立基线。
+Mac 计划保留 CPU 和 Metal，适用模型行仍为 unverified，缺编译 feature 由 catalog 标记 missing_feature，不适用组合保留原因。原生工具已接入受控进程组及 SIGINT/SIGTERM 取消回收、RSS/physical footprint 和 OS footprint 高水位；模型 readiness 与工具能力独立。真实 CPU/Metal 基线和真实观测开销另行验收，Instruments 仍 deferred。
 
 统一内存不是进程独占显存。native 编译通过不等于真实模型性能验收，Windows 数据不激活 Mac 能力。
 
@@ -119,15 +119,42 @@ cargo xtask perf attach-profile --run target/perf/profile-run --tool nsight_syst
 
 WPR 使用 `--tool wpr` 与 `.etl`。导入要求 profile run、工具版本和实际调用记录；版本/调用由调用者声明，工具不擅自启动全局 WPR 会话。报告保存原生文件和来源收据。工具缺失不阻塞 baseline；Mac Instruments deferred。overhead 用同条件 off/baseline/trace 独立进程，先核验音频摘要，再输出分布和描述性开销；真实模型开销验收始终明确 unverified，夹具不支持固定开销承诺。
 
-## Mac 后续验收映射
+## Mac 验收映射
 
 | 后续实机工作 | 证据与能力字段 |
 | --- | --- |
-| 原生进程组、取消、孙进程回收 | lifecycle deferred → cleanup_verified；未完成禁止执行 |
+| 原生进程组、取消、孙进程回收 | 原生工具已接通；逐 attempt 必须 cleanup_verified，失败禁止继续 |
 | RSS 与高水位 | reading source/scope/interval/status/reason，分清 sampled max 和 OS peak |
 | CPU Accelerate/math/线程 | Conditions math_backend/features/threads/environment，独立 CPU 基线 |
 | Metal 完成边界和内存 | timing_contract、reading scope，统一内存不称独占显存 |
 | Instruments | profile-mode 原生附件、工具版本/调用；目前 deferred |
 | 开销与真实模型 | 独立 off/baseline/trace 分布、资源摘要、CPU/Metal 分组和人工试听 |
 
-编译检查、免模型夹具、已准备资源短 smoke、全量真实基线和试听验收分别记录。Windows 框架验证不能解除 Mac deferred，也不能完成旧 Windows change 的全量实测任务。
+编译检查、免模型夹具、已准备资源短 smoke、全量真实基线和试听验收分别记录。Mac 只能依据本平台证据激活能力，Windows 框架验证不能代替 Mac 验收，也不能完成旧 Windows change 的全量实测任务。
+
+
+## Mac 原生工具接线
+
+```sh
+cargo xtask perf doctor
+cargo xtask perf plan --platform macos --machine mac-m4-pro --output target/perf/mac-plan.json
+cargo xtask perf build --probe performance_probe --output target/perf/mac-fixture-build.json
+cargo xtask perf fixture-job --build target/perf/mac-fixture-build.json --output target/perf/mac-fixture-input
+PATH='' target/debug/xtask perf run --job target/perf/mac-fixture-input/job.json --output target/perf/mac-fixture-run
+PATH='' target/debug/xtask perf resume --job target/perf/mac-fixture-input/job.json --output target/perf/mac-fixture-run
+PATH='' target/debug/xtask perf report --run target/perf/mac-fixture-run --output target/perf/mac-fixture-report
+```
+
+相同输出目录不可覆盖；重跑用新目录。Mac fixture 自动选择本机平台。doctor 不加载模型、无需 Python 或音频设备；性能 CI 在 macOS 上运行无模型契约、进程回收和显式 CLI 取消测试，不下载权重。Windows 仍由 Windows 原生 CI 验证。
+
+Mac 受控进程组面向不主动脱离会话的可信探针；已观察换组、PID 身份变化或回收不确定时保存失败并停止后续推理。正常退出后仍清理遗留后代。SIGINT/SIGTERM 触发有界回收；SIGKILL/断电不保证实时清理。轮询前逃逸且重新托管的恶意后代不在保证内。
+
+Mac `proc_pid_rusage(RUSAGE_INFO_V4)` 提供 rss_bytes、physical_footprint_bytes 和 os_peak_physical_footprint_bytes（bytes/process）；最后一个是 OS lifetime footprint 高水位，不是 RSS 峰值。报告对普通 RSS 只显示采样最大值。os_peak_rss_bytes 与 metal_allocation_bytes 当前为 null+reason；统一内存/RSS 不称独占 VRAM。查询失败/短命进程仍保留 unavailable，不填零。
+
+真实 Mac job 的 math_backend 必须匹配所构建 `performance_probe --execution-info` 返回的 cpu_math/metal_math；它由该二进制 Candle 的 has_accelerate 报告有效构建能力，ORT 仅在选用时参与，不宣称逐算子 AMX/纯 GPU。rayon 为显式正整数，启动前覆盖；VECLIB_MAXIMUM_THREADS 为冻结的继承环境配置并核对；设置时必须为正的 32 位十进制整数，不承诺观测到的 BLAS 工作线程数。其他未知线程键拒绝。OS/build、硬件、设备、feature、math、线程、环境与二进制改变时不得复用旧 run。
+
+Metal 计时继续采用 production_synthesis_stream_consumer_start_to_completed/1：owner 产出 host PCM，consumer drain 到显式 Completed，导出写盘不计合成。源码审查确认 Qwen/VoxCPM/MOSS codec 输出 host samples、OmniVoice/IndexTTS 返回 host PCM、CosyVoice3 pipeline 交付 host chunks 后才发送成功 End；这是请求输出边界，不是 GPU kernel 时间、整设备空闲或播放完成。各模型实机验证状态独立，不以源码审查标全模型通过。Instruments 保持可选 deferred。
+
+接通证据见 [Mac 实施记录](records/2026-10-20-macos-performance-harness.md)。完整矩阵、资源补齐、正式重复协议、真实模型开销与人工听感属于后续独立基线任务。
+
+恢复前会在 run 锁内核对所有历史 attempt 的 cleanup 证据：缺失、损坏或 cleanup_verified=false 时拒绝 resume，不会忽略旧失败再启动推理。需先在工具外确认遗留进程已清理，再以新的 run 记录重新开始；工具不提供静默覆盖此门禁的开关。

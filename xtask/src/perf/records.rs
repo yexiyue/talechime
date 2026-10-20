@@ -61,6 +61,15 @@ impl Conditions {
             );
         }
         self.rayon_threads()?;
+        if self.os.starts_with("macos")
+            && let Some(Some(value)) = self.environment.get("VECLIB_MAXIMUM_THREADS")
+        {
+            ensure!(
+                value.bytes().all(|byte| byte.is_ascii_digit())
+                    && value.parse::<i32>().is_ok_and(|count| count > 0),
+                "VECLIB_MAXIMUM_THREADS must be a positive 32-bit integer"
+            );
+        }
         ensure!(
             ["baseline", "trace", "profile", "off"].contains(&self.observation.as_str()),
             "invalid observation profile"
@@ -304,6 +313,25 @@ impl EventSequence {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mac_accelerate_thread_control_rejects_invalid_frozen_values() {
+        let mut conditions = super::super::test_support::attempts(&[1.0])
+            .remove(0)
+            .conditions;
+        conditions.os = "macos:fixture:build".into();
+        for value in ["", "0", "-1", "abc", "1.5", "2147483648"] {
+            conditions
+                .environment
+                .insert("VECLIB_MAXIMUM_THREADS".into(), Some(value.into()));
+            assert!(conditions.validate().is_err(), "accepted {value:?}");
+        }
+        for value in [None, Some("1".into()), Some("12".into())] {
+            conditions
+                .environment
+                .insert("VECLIB_MAXIMUM_THREADS".into(), value);
+            assert!(conditions.validate().is_ok());
+        }
+    }
     #[test]
     fn thread_identity_requires_supported_explicit_effective_setting() {
         let mut attempts = super::super::test_support::attempts(&[1.0]);

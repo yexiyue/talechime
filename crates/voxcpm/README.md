@@ -1,5 +1,7 @@
 # VoxCPM2 Candle
 
+> Legacy `tools/tts` scripts mentioned here were removed on 2026-10-20. Retrieve historical scripts from Git revision `e591c94`; their paths below describe provenance or historical reproduction, not current executable entry points.
+
 The computation library reads the current Q8_0 BaseLM and F16 Acoustic GGUF
 without converting or downloading model weights. It shares Candle 0.11.0 with
 the workspace and performs inference without Python, Burn or llama.cpp.
@@ -50,7 +52,8 @@ folds AudioVAE weight normalization in Rust. Networks support CUDA BF16/F16;
 AudioVAE stays F32 as in the official implementation. CPU accepts F32.
 This explicit comparison API does not change the production Q8 model choice.
 
-Download verified pinned assets once with `tools/tts/download_voxcpm_official.py`.
+For historical original-weight preparation, retrieve the retired downloader
+from Git revision `e591c94` and verify all pinned asset identities.
 Set `VOXCPM_BENCH_PRECISION=bf16` or `f16` and pass the original directory to
 `voxcpm_candle_probe`. Its default `q8` continues to use the GGUF directory.
 Each run uses the same corpus, reference and sampling, but original weights
@@ -79,8 +82,8 @@ The former `voxcpm_native_benchmark` C++ comparison is available only from the
 Git revision documented in the [archive](../../docs/legal/retired-voxcpm-native/README.md).
 The Candle probes remain development tools; the production backend has no engine selector.
 
-The development-only `tools/tts/voxcpm_reference.py` imports modules from the
-pinned official checkout and creates real-weight numerical tensors. Run ignored
+The retired `voxcpm_reference.py` (Git revision `e591c94`) imported modules from the
+pinned official checkout and created real-weight numerical tensors. Run ignored
 tests with `VOXCPM_TEST_MODELS` and `VOXCPM_TEST_REFERENCE` pointing at local
 directories, using `--ignored --nocapture --test-threads=1`. No model is downloaded
 by tests. F32 assertions use atol=1e-5 and rtol=1e-4; Q8/F16 errors have separate
@@ -89,10 +92,13 @@ reports. See `SOURCE.md`, the fixture README and
 Use `cargo test --release` for real-weight oracles: Debug's unoptimized matrix
 arithmetic is much slower. The numerical thresholds are identical in both profiles.
 
+Historical commands below require recovering the scripts first; paths are supplied
+by the caller, outside the current checkout.
+
 ```text
-python tools/tts/voxcpm_reference.py --source OFFICIAL_CHECKOUT --gguf-python GGUF_PY_DIRECTORY --models MODEL_DIRECTORY --output ORACLE_DIRECTORY
-python tools/tts/voxcpm_tokenizer_reference.py --source OFFICIAL_CHECKOUT --gguf MODEL_DIRECTORY/VoxCPM2-BaseLM-Q8_0.gguf --gguf-python GGUF_PY_DIRECTORY --fixtures crates/voxcpm/tests/fixtures/tokenizer.json
-python tools/tts/voxcpm_transcribe.py OUTPUT_DIRECTORY/round-5
+python /path/to/voxcpm_reference.py --source OFFICIAL_CHECKOUT --gguf-python GGUF_PY_DIRECTORY --models MODEL_DIRECTORY --output ORACLE_DIRECTORY
+python /path/to/voxcpm_tokenizer_reference.py --source OFFICIAL_CHECKOUT --gguf MODEL_DIRECTORY/VoxCPM2-BaseLM-Q8_0.gguf --gguf-python GGUF_PY_DIRECTORY --fixtures crates/voxcpm/tests/fixtures/tokenizer.json
+python /path/to/voxcpm_transcribe.py OUTPUT_DIRECTORY/round-5
 ```
 
 The oracle uses development Torch/NumPy/pydantic/einops, the tokenizer check also

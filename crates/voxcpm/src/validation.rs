@@ -1,4 +1,4 @@
-//! Opt-in tests against tensors emitted by tools/tts/voxcpm_reference.py.
+//! Opt-in tests against tensors emitted by the historical VoxCPM oracle exporter (Git revision `e591c94`).
 use super::{acoustic::Acoustic, codec::Codec, transformer::Transformer, weights::Weights};
 use candle_core::{DType, Device, Tensor};
 use std::path::{Path, PathBuf};

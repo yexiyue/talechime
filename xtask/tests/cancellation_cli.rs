@@ -1,10 +1,12 @@
 //! Explicit fixture workflow smoke, enabled after building the model-free probe.
-#![cfg(windows)]
+#![cfg(any(windows, target_os = "macos"))]
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::{
-    os::windows::process::CommandExt,
     process::{Child, Command},
     time::{Duration, Instant},
 };
+#[cfg(windows)]
 use windows::Win32::System::{
     Console::{CTRL_BREAK_EVENT, GenerateConsoleCtrlEvent},
     Threading::CREATE_NEW_PROCESS_GROUP,
@@ -26,6 +28,17 @@ impl Drop for ChildGuard {
 
 #[test]
 fn cli_ctrl_break_retains_cancelled_attempt_and_stops_scheduling() -> anyhow::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        cancellation(Some(libc::SIGINT))?;
+        cancellation(Some(libc::SIGTERM))?;
+    }
+    #[cfg(windows)]
+    cancellation(None)?;
+    Ok(())
+}
+
+fn cancellation(signal: Option<i32>) -> anyhow::Result<()> {
     let Some(build) = std::env::var_os("TALECHIME_PERF_PROBE_BUILD") else {
         eprintln!(
             "explicit workflow smoke: set TALECHIME_PERF_PROBE_BUILD to a model-free probe receipt"
@@ -40,15 +53,17 @@ fn cli_ctrl_break_retains_cancelled_attempt_and_stops_scheduling() -> anyhow::Re
     std::fs::remove_file(input.join("plan.json"))?;
     publish_json(&input.join("plan.json"), &plan)?;
     let output = root.path().join("run");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NEW_PROCESS_GROUP.0);
     let mut child = ChildGuard(
-        Command::new(env!("CARGO_BIN_EXE_xtask"))
+        command
             .args(["perf", "run", "--job"])
             .arg(input.join("job.json"))
             .arg("--output")
             .arg(&output)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .creation_flags(CREATE_NEW_PROCESS_GROUP.0)
             .spawn()?,
     );
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -74,8 +89,18 @@ fn cli_ctrl_break_retains_cancelled_attempt_and_stops_scheduling() -> anyhow::Re
         std::thread::sleep(Duration::from_millis(10));
     }
     // SAFETY: Target only the new CLI process group created above, never group zero.
+    #[cfg(windows)]
     unsafe {
         GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, child.0.id())?;
+    }
+    #[cfg(windows)]
+    let _ = signal;
+    #[cfg(target_os = "macos")]
+    unsafe {
+        anyhow::ensure!(
+            libc::kill(child.0.id() as i32, signal.unwrap()) == 0,
+            "signal CLI failed"
+        );
     }
     let status = loop {
         if let Some(status) = child.0.try_wait()? {

@@ -13,7 +13,7 @@
 //! registration is available through the opt-in `cosyvoice3` adapter feature.
 //!
 //! Weights come from the conversion script
-//! `tools/tts/cosyvoice3_convert_weights.py`: fp32 safetensors with
+//! the retired CosyVoice3 converter (Git revision `e591c94`): fp32 safetensors with
 //! weight-norm fusion and key renames.
 
 pub mod activations;

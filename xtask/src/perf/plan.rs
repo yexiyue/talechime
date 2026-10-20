@@ -36,11 +36,21 @@ pub struct Case {
     pub reason: String,
 }
 
+impl Platform {
+    pub fn host() -> anyhow::Result<Self> {
+        match std::env::consts::OS {
+            "windows" => Ok(Self::Windows),
+            "macos" => Ok(Self::Macos),
+            _ => anyhow::bail!("native execution unavailable on this platform"),
+        }
+    }
+}
+
 impl Plan {
     pub fn apply_catalog(&mut self, catalog: &super::prepare::Catalog) -> anyhow::Result<()> {
         catalog.validate()?;
         for case in &mut self.cases {
-            if case.status == "not_applicable" || self.platform == Platform::Macos {
+            if case.status == "not_applicable" {
                 continue;
             }
             let entry = catalog
@@ -94,11 +104,6 @@ impl Plan {
                         (
                             "not_applicable",
                             "product does not expose this device/model combination",
-                        )
-                    } else if platform == Platform::Macos {
-                        (
-                            "deferred",
-                            "Mac lifecycle, native collectors and real-device verification pending",
                         )
                     } else {
                         (
@@ -171,9 +176,6 @@ impl Plan {
                 "unknown case status"
             );
             ensure!(!case.reason.is_empty(), "case requires evidence or reason");
-            if self.platform == Platform::Macos {
-                ensure!(case.status != "ready", "Mac native execution is deferred");
-            }
         }
         Ok(())
     }
@@ -204,14 +206,14 @@ mod tests {
         Ok(())
     }
     #[test]
-    fn mac_plan_is_deferred_and_unknown_schema_is_rejected() -> anyhow::Result<()> {
+    fn mac_plan_keeps_models_unverified_and_unknown_schema_is_rejected() -> anyhow::Result<()> {
         let mut plan = Plan::new(Platform::Macos, "mac-fixture".into())?;
         plan.validate()?;
         assert_eq!(plan.cases.len(), 28);
         assert!(
             plan.cases
                 .iter()
-                .all(|c| c.status == "deferred" || c.status == "not_applicable")
+                .all(|c| c.status == "unverified" || c.status == "not_applicable")
         );
         assert!(
             plan.cases
@@ -220,7 +222,7 @@ mod tests {
                 .all(|c| c.math_backend.contains("accelerate"))
         );
         plan.cases[0].status = "ready".into();
-        assert!(plan.validate().is_err());
+        assert!(plan.validate().is_ok());
         plan.cases[0].status = "missing_feature".into();
         assert!(plan.validate().is_ok());
         plan.schema = "talechime/performance/999".into();
@@ -240,6 +242,16 @@ mod tests {
             resource_acquisition: false,
         };
         plan.apply_catalog(&catalog)?;
+        let mut mac = Plan::new(Platform::Macos, "mac-fixture".into())?;
+        mac.apply_catalog(&catalog)?;
+        assert_eq!(mac.cases.len(), 28);
+        assert_eq!(
+            mac.cases
+                .iter()
+                .filter(|c| c.status == "missing_feature")
+                .count(),
+            24
+        );
         assert_eq!(plan.cases.len(), 28);
         assert_eq!(
             plan.cases

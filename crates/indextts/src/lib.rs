@@ -8,7 +8,7 @@
 //! stores and playback live in the adapter layer.
 //!
 //! Ordinary tests never download models; real-model numeric oracles are
-//! `#[ignore]` tests driven by fixtures produced by `tools/tts`.
+//! `#[ignore]` tests driven by fixtures produced by the retired Python tools (Git revision `e591c94`).
 
 pub mod bigvgan;
 pub mod campplus;

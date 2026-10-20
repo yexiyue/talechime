@@ -30,11 +30,18 @@ struct Series {
 
 impl CounterFn for Series {
     fn increment(&self, value: u64) {
-        let _ = self
-            .counter
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
-                Some(n.saturating_add(value))
-            });
+        let mut current = self.counter.load(Ordering::Relaxed);
+        loop {
+            match self.counter.compare_exchange_weak(
+                current,
+                current.saturating_add(value),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(observed) => current = observed,
+            }
+        }
     }
     fn absolute(&self, value: u64) {
         self.counter.fetch_max(value, Ordering::Relaxed);

@@ -2,7 +2,7 @@
 use super::{
     build::Build,
     evidence::{VERSION, contained, digest, file_digest, publish_bytes, publish_json, read_json},
-    executor::{Budget, execute},
+    executor::{Budget, Capture, execute},
     plan::{Plan, Platform},
     records::{Artifact, Attempt, Conditions, Event, Round},
     storage::{RunLock, commit, new_attempt, recover},
@@ -34,7 +34,7 @@ pub struct Job {
 /// Input changes always require a different run directory, including during resume.
 pub fn run(job_path: &Path, root: &Path, resume: bool) -> anyhow::Result<PathBuf> {
     ensure!(
-        cfg!(windows),
+        cfg!(any(windows, target_os = "macos")),
         "deferred: native lifecycle has not been implemented on this platform"
     );
     let job: Job = read_json(job_path)?;
@@ -66,7 +66,7 @@ pub fn run(job_path: &Path, root: &Path, resume: bool) -> anyhow::Result<PathBuf
     let plan: Plan = read_json(&job.plan)?;
     plan.validate()?;
     ensure!(
-        plan.platform == Platform::Windows && plan.machine == job.conditions.machine,
+        plan.platform == Platform::host()? && plan.machine == job.conditions.machine,
         "job machine/platform differs from frozen plan"
     );
     let build: Build = read_json(&job.build)?;
@@ -94,6 +94,14 @@ pub fn run(job_path: &Path, root: &Path, resume: bool) -> anyhow::Result<PathBuf
         "request/backend/device identity mismatch"
     );
     let fixture = job.request["fixture"] == true;
+    #[cfg(target_os = "macos")]
+    if !fixture {
+        let info: serde_json::Value = serde_json::from_slice(&super::prepare::capture(
+            Command::new(&build.executable).arg("--execution-info"),
+            Duration::from_secs(10),
+        )?)?;
+        validate_mac_execution_info(&info, &job.conditions)?;
+    }
     let resource_root = PathBuf::from(
         job.request["resources_root"]
             .as_str()
@@ -167,6 +175,7 @@ pub fn run(job_path: &Path, root: &Path, resume: bool) -> anyhow::Result<PathBuf
             file_digest(&corpus_snapshot)? == job.conditions.corpus_sha256,
             "immutable corpus snapshot missing or changed"
         );
+        verify_previous_cleanup(&root)?;
     } else {
         publish_bytes(&corpus_snapshot, &std::fs::read(&corpus_path)?)?;
         publish_json(
@@ -230,6 +239,10 @@ pub fn run(job_path: &Path, root: &Path, resume: bool) -> anyhow::Result<PathBuf
         let mut command = Command::new(&build.executable);
         command.arg(&request_path).arg(&directory);
         command.env("RAYON_NUM_THREADS", rayon_threads.to_string());
+        #[cfg(target_os = "macos")]
+        if let Some(Some(value)) = job.conditions.environment.get("VECLIB_MAXIMUM_THREADS") {
+            command.env("VECLIB_MAXIMUM_THREADS", value);
+        }
         let capture = execute(
             &mut command,
             &directory,
@@ -322,6 +335,9 @@ pub fn run(job_path: &Path, root: &Path, resume: bool) -> anyhow::Result<PathBuf
             expected.trace_complete = diagnostics["trace_complete"].as_bool().unwrap_or(false);
             expected.dropped_trace_records = diagnostics["dropped_trace_records"].as_u64();
         }
+        if super::cancellation::requested() {
+            expected.outcome = "cancelled".into();
+        }
         if expected.outcome == "success" {
             commit(&directory, &expected)?;
         } else {
@@ -331,7 +347,12 @@ pub fn run(job_path: &Path, root: &Path, resume: bool) -> anyhow::Result<PathBuf
                 &serde_json::json!({"preflight_identity_verified":preflight_valid,"terminal_success":terminal_success,"capture":capture}),
             )?;
         }
+        let cleanup_verified = expected.cleanup_verified;
         results.push(expected);
+        ensure!(
+            cleanup_verified,
+            "cleanup unverified; partial evidence retained; refuse next measurement"
+        );
     }
     let suffix = if resume {
         format!(
@@ -353,23 +374,91 @@ pub fn run(job_path: &Path, root: &Path, resume: bool) -> anyhow::Result<PathBuf
     Ok(results_path)
 }
 
-fn find_committed(root: &Path, expected: &Attempt) -> anyhow::Result<Option<Attempt>> {
-    let directory = root.join("attempts");
+fn attempt_directories(root: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let directory = contained(root, Path::new("attempts"))?;
     if !directory.exists() {
-        return Ok(None);
+        return Ok(Vec::new());
     }
-    let mut attempts = std::fs::read_dir(directory)?
-        .map(|entry| entry.map(|e| e.path()))
-        .collect::<std::io::Result<Vec<_>>>()?;
-    attempts.sort();
-    for attempt in attempts {
-        let attempt = contained(root, attempt.strip_prefix(root)?)?;
-        if !attempt.is_dir() || !attempt.join("committed.json").is_file() {
-            continue;
+    let mut attempts = Vec::new();
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = contained(root, &Path::new("attempts").join(entry.file_name()))?;
+        if path.is_dir() {
+            attempts.push(path);
         }
-        if let Ok(saved) = recover(&attempt, expected) {
+    }
+    attempts.sort();
+    Ok(attempts)
+}
+
+fn verify_previous_cleanup(root: &Path) -> anyhow::Result<()> {
+    for attempt in attempt_directories(root)? {
+        let capture: Capture = read_json(&contained(&attempt, Path::new("capture.json"))?)
+            .with_context(|| {
+                format!(
+                    "cleanup unverified: prior attempt {} has no valid capture; refuse resume",
+                    attempt.display()
+                )
+            })?;
+        ensure!(
+            capture.cleanup_verified,
+            "cleanup unverified: prior attempt {}; refuse resume until cleanup is independently verified",
+            attempt.display()
+        );
+    }
+    Ok(())
+}
+
+fn find_committed(root: &Path, expected: &Attempt) -> anyhow::Result<Option<Attempt>> {
+    for attempt in attempt_directories(root)? {
+        if attempt.join("committed.json").is_file()
+            && let Ok(saved) = recover(&attempt, expected)
+        {
             return Ok(Some(saved));
         }
     }
     Ok(None)
+}
+
+#[cfg(target_os = "macos")]
+fn validate_mac_execution_info(
+    info: &serde_json::Value,
+    conditions: &Conditions,
+) -> anyhow::Result<()> {
+    ensure!(
+        info["schema"] == "talechime/performance-execution/1"
+            && info["os"] == "macos"
+            && info["arch"] == conditions.arch,
+        "probe execution metadata mismatch"
+    );
+    let math = match conditions.provider.as_str() {
+        "cpu" => &info["cpu_math"],
+        "metal" => &info["metal_math"],
+        _ => anyhow::bail!("unsupported Mac provider; no fallback"),
+    };
+    ensure!(
+        math == &conditions.math_backend && info["timing_contract"] == conditions.timing_contract,
+        "effective probe math/timing contract differs from frozen conditions"
+    );
+    Ok(())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod mac_tests {
+    #[test]
+    fn mismatched_math_build_and_provider_are_rejected() -> anyhow::Result<()> {
+        let mut conditions = super::super::test_support::attempts(&[1.0])
+            .remove(0)
+            .conditions;
+        let info = serde_json::json!({"schema":"talechime/performance-execution/1", "os":"macos", "arch":conditions.arch,
+            "cpu_math":"build:candle-rust", "metal_math":"build:candle-metal", "timing_contract":conditions.timing_contract});
+        assert!(super::validate_mac_execution_info(&info, &conditions).is_err());
+        conditions.math_backend = "build:candle-rust".into();
+        super::validate_mac_execution_info(&info, &conditions)?;
+        conditions.provider = "metal".into();
+        assert!(super::validate_mac_execution_info(&info, &conditions).is_err());
+        conditions.provider = "cuda".into();
+        assert!(super::validate_mac_execution_info(&info, &conditions).is_err());
+        Ok(())
+    }
 }

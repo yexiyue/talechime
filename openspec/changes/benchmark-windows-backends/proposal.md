@@ -26,6 +26,6 @@
 
 ## Impact
 
-涉及 `tools/tts/`、`crates/talechime-backends/examples/`、必要的模型探针入口及对应普通测试、`docs/development.md`、`docs/knowledge/tts-performance.md` 和新的 Windows 批次记录。默认资源根沿用 `talechime-core/src/paths.rs`，不新增产品路径迁移机制；本地生成物位于 `~/.talechime/benchmarks/windows/<run-id>/`，资源位于 `~/.talechime/resources/`。
+涉及 `xtask/`、`crates/talechime-backends/examples/`、必要的模型探针入口及对应普通测试、`docs/development.md`、`docs/knowledge/tts-performance.md` 和新的 Windows 批次记录。默认资源根沿用 `talechime-core/src/paths.rs`，不新增产品路径迁移机制；本地生成物位于 `~/.talechime/benchmarks/windows/<run-id>/`，资源位于 `~/.talechime/resources/`。
 
 本机盘点发现：Qwen Base06 在 target；Vox BF16 在旧 `.novel-tts`；IndexTTS 在相邻 index-tts 仓库；CosyVoice3 HiFT 与当前生产清单存在摘要冲突。必须明确处理这些门禁，不能放宽清单或把独立计算库测量当作生产适配器通过。关联：https://github.com/yexiyue/talechime/issues/5 。

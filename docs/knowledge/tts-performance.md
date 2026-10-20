@@ -98,7 +98,7 @@ VoxCPM 的 `cuda_graph/decoder.rs` 回放 AudioVAE 的卷积历史和 overlap。
 | 依赖或共享 feature | 组合启用后端的测试与链接；CPU、CUDA、Metal 分别记录，不用逐包通过替代组合回归 |
 
 WAV 字节哈希用于相同 writer 的严格复现；另存 F32LE、codes 和元数据便于区分容器差异。
-`tools/tts/compare_wav.py` 可检查 float32 WAV，包括 extensible 格式，报告 hash/误差/SNR。
+旧 WAV 对比脚本已随 `tools/` 删除（Git revision `e591c94` 可取回）。新证据须保存 float32 PCM 摘要；需数值误差/SNR 时显式使用经过验证的独立比较工具，不把相同 seed 当作音频等价。
 ASR 回读只能辅助覆盖检查，不能替代听感，也不能从有限误差推断无音色变化。
 模型自然 EOS 才算正常生成完成；播放完成仍由播放器实际消费决定。图优化不能越过
 有界队列，也不能把取消当成 EOS。普通测试使用夹具，真模型测试显式启用且不下载。

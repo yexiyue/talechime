@@ -15,6 +15,14 @@ pub struct RunLock {
     _file: File,
 }
 
+impl Drop for RunLock {
+    fn drop(&mut self) {
+        // Release the owner lock even if a concurrent fork temporarily inherited
+        // the open file description before CLOEXEC takes effect.
+        let _ = self._file.unlock();
+    }
+}
+
 impl RunLock {
     pub fn acquire(root: &Path) -> anyhow::Result<Self> {
         std::fs::create_dir_all(root)?;
@@ -174,8 +182,11 @@ mod tests {
             std::fs::read_to_string(first.join("failure.txt"))?,
             "old failure"
         );
+        // A fork between open and exec can temporarily retain this description.
+        let inherited = lock._file.try_clone()?;
         drop(lock);
         RunLock::acquire(root.path())?;
+        drop(inherited);
         Ok(())
     }
 }

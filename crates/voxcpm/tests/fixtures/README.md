@@ -1,5 +1,7 @@
 # Numerical fixtures
 
+> Legacy `tools/tts` scripts mentioned here were removed on 2026-10-20. Retrieve historical scripts from Git revision `e591c94`; their paths below describe provenance or historical reproduction, not current executable entry points.
+
 `causal-convolutions.json` uses CPU PyTorch 2.14.1, `torch.manual_seed(42)`:
 random input `(1,2,7)`, transpose weights `(2,3,6)`, bias `(3)`;
 `conv_transpose1d(stride=3)` with the last three samples removed. The next

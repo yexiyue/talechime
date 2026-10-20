@@ -1,5 +1,5 @@
 //! Real-model verification probe (development only; requires converted
-//! checkpoints — see `tools/tts/indextts_export_safetensors.py`).
+//! checkpoints — see the retired IndexTTS exporter in Git revision `e591c94`).
 //!
 //! ```sh
 //! cargo run --release -p indextts --example generate -- \

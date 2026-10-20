@@ -247,7 +247,7 @@ impl Model {
             let path = self.source_dir.join("codec.safetensors");
             if !path.is_file() {
                 candle_core::bail!(
-                    "missing converted codec weights {} (run tools/tts/indextts_export_safetensors.py)",
+                    "missing converted codec weights {} (provide offline converted weights from the pinned upstream checkpoint; see docs/indextts.md)",
                     path.display()
                 );
             }

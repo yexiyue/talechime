@@ -225,8 +225,8 @@ pub fn run(args: Args) -> anyhow::Result<()> {
                     "host_arch": std::env::consts::ARCH,
                     "environment": environment::capture_environment("cpu")?,
                     "python_required": false,
-                "model_execution": "Windows baseline job; real-model validation pending",
-                    "macos_native": "deferred",
+                "model_execution": "native tool available on Windows/macOS; per-model validation separate",
+                    "macos_native": {"lifecycle": if cfg!(target_os = "macos") {"available"} else {"not_this_host"}, "rss": if cfg!(target_os = "macos") {"available"} else {"not_this_host"}, "models":"unverified; explicit readiness and smoke required", "instruments":"deferred", "metal_allocation":"unavailable"},
                     "product_executable": "talechime"
                 }))?
             );

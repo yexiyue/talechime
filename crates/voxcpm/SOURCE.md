@@ -1,5 +1,7 @@
 # VoxCPM2 native Candle port
 
+> Legacy `tools/tts` scripts mentioned here were removed on 2026-10-20. Retrieve historical scripts from Git revision `e591c94`; their paths below describe provenance or historical reproduction, not current executable entry points.
+
 Model semantics: [OpenBMB/VoxCPM](https://github.com/OpenBMB/VoxCPM),
 revision `f0c787f0937dc1c9a8f4f64d9a332d9c5da2e629`, Apache-2.0.
 GGUF tensor mapping reference: [llama.cpp-omni](https://github.com/tc-mb/llama.cpp-omni),

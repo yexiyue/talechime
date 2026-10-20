@@ -93,7 +93,7 @@ pub fn diagnostic(mut reader: impl Read, mut log: impl Write, limit: u64) -> any
     Ok(())
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn execute(
     command: &mut Command,
     directory: &Path,
@@ -131,6 +131,11 @@ pub fn execute(
     let errors = process.take_stderr().context("probe stderr missing")?;
     let fault = AtomicBool::new(false);
     let sample_stop = AtomicBool::new(false);
+    let reader_abort = AtomicBool::new(false);
+    #[cfg(target_os = "macos")]
+    let outgoing = super::process::InterruptiblePipe::new(outgoing, &reader_abort)?;
+    #[cfg(target_os = "macos")]
+    let errors = super::process::InterruptiblePipe::new(errors, &reader_abort)?;
     let start = Instant::now();
     let result = std::thread::scope(|scope| -> anyhow::Result<Capture> {
         // Own the guard inside the scope so error unwinding kills descendants
@@ -195,6 +200,7 @@ pub fn execute(
         });
         let mut outcome = "success";
         let mut exit_code = None;
+        let mut lifecycle_errors = Vec::new();
         loop {
             if cancel.load(Ordering::Acquire) {
                 outcome = "cancelled";
@@ -208,22 +214,38 @@ pub fn execute(
                 outcome = "timeout";
                 break;
             }
-            if let Some(status) = process.try_wait()? {
+            let status = match process.try_wait() {
+                Ok(status) => status,
+                Err(error) => {
+                    lifecycle_errors.push(error.to_string());
+                    outcome = "failure";
+                    break;
+                }
+            };
+            if let Some(status) = status {
                 exit_code = status.code();
                 if !status.success() {
                     outcome = "failure";
                 }
-                if process.active_processes()? > 0 {
-                    outcome = "failure";
+                match process.active_processes() {
+                    Ok(0) => {}
+                    Ok(_) => outcome = "failure",
+                    Err(error) => {
+                        lifecycle_errors.push(error.to_string());
+                        outcome = "failure";
+                    }
                 }
                 break;
             }
             std::thread::sleep(Duration::from_millis(10));
         }
         // No subsequent execution may proceed unless this succeeds.
-        process.cleanup()?;
+        let cleanup = process.cleanup();
+        if cleanup.is_err() {
+            reader_abort.store(true, Ordering::Release);
+        }
         sample_stop.store(true, Ordering::Release);
-        let mut failures = Vec::new();
+        let mut failures = lifecycle_errors;
         for result in [
             stdout
                 .join()
@@ -239,13 +261,17 @@ pub fn execute(
                 failures.push(error.to_string());
             }
         }
+        if let Err(error) = &cleanup {
+            failures.push(format!("cleanup unverified: {error:#}"));
+            outcome = "failure";
+        }
         if !failures.is_empty() && outcome == "success" {
             outcome = "failure";
         }
         Ok(Capture {
             outcome: outcome.into(),
             exit_code,
-            cleanup_verified: true,
+            cleanup_verified: cleanup.is_ok(),
             errors: failures,
         })
     });
@@ -255,7 +281,7 @@ pub fn execute(
     result
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn execute(
     _command: &mut Command,
     _directory: &Path,

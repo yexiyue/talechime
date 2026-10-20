@@ -1,5 +1,7 @@
 ## 2026-10-09：T4 计划入口与 API 收简
 
+> Legacy `tools/tts` scripts mentioned here were removed on 2026-10-20. Retrieve historical scripts from Git revision `e591c94`; their paths below describe provenance or historical reproduction, not current executable entry points.
+
 用户明确不要求兼容，JSON Lines 直接升级 v7，start 只接受计划；不保留能力协商或旧 wire start。Engine::plan/single_voice_plan 从已准备模型创建声音快照。ListeningSession 分离本地执行 owner，Listening 组合库自建 receiver；CLI/worker 使用宿主队列直接投递，无事件转发任务。配置声音仅用于未来计划，当前计划独立调整音量/速度。单音色与多音色共用计划执行。TRNovel 优先级最低，待 Talechime API 与 CastGlean 各自稳定后再共同接入。cli feature 门控二进制及 clap/crossterm 等依赖；纯库 normal dependency tree 不含这两项。原生 CI 的 --no-default-features 二进制构建显式选择 cli。
 
 # 工具链 / 工程

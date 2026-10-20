@@ -14,7 +14,7 @@ cargo build --release --locked -p talechime --features indextts-metal
 cargo build --release --locked -p talechime --features indextts-cuda-cudnn
 ```
 
-后端只读取本地转换文件，不自动下载官方权重或启动 Python。使用固定的 [IndexTTS 2.5 上游来源](../crates/indextts/SOURCE.md)和 [`tools/tts/indextts_export_safetensors.py`](../tools/tts/indextts_export_safetensors.py) 转换；转换环境与步骤见[移植记录](records/indextts/indextts-candle-port.md)。以 `--model-dir ROOT` 为资源根，将转换输出放入：
+后端只读取本地转换文件，不自动下载官方权重或启动 Python。使用固定的 [IndexTTS 2.5 上游来源](../crates/indextts/SOURCE.md)和 [历史转换脚本](https://github.com/yexiyue/talechime/blob/e591c94/tools/tts/indextts_export_safetensors.py) 转换（脚本已从当前树删除，按需从上述固定 Git 快照取回）；转换环境与步骤见[移植记录](records/indextts/indextts-candle-port.md)。以 `--model-dir ROOT` 为资源根，将转换输出放入：
 
 ```text
 ROOT/indextts/models/2.5/c39ce5ba-candle-v1/

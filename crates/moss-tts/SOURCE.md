@@ -1,5 +1,7 @@
 # Upstream source
 
+> Legacy `tools/tts` scripts mentioned here were removed on 2026-10-20. Retrieve historical scripts from Git revision `e591c94`; their paths below describe provenance or historical reproduction, not current executable entry points.
+
 Model equations, message formats and generation schedules are ported from:
 
 - https://github.com/OpenMOSS/MOSS-TTS at revision

@@ -560,7 +560,10 @@ fn macos_accelerate_codec_experiment() -> Result<()> {
             &required_path("VOXCPM_EXPERIMENT_TRANSCRIPT")?,
             &env::var("VOXCPM_EXPERIMENT_CORPUS")
                 .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from("tools/tts/acceptance-corpus.txt")),
+                .unwrap_or_else(|_| {
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("tests/fixtures/acceptance-corpus.txt")
+                }),
             &capture_directory,
         ),
         "replay" => replay_capture(

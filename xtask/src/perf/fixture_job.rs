@@ -31,7 +31,7 @@ pub fn create_mode(build_path: &Path, output: &Path, mode: &str) -> anyhow::Resu
     let bytes = "你好，欢迎使用性能测试夹具。".as_bytes();
     std::fs::write(&corpus, bytes)?;
     let environment = super::environment::capture_environment("cpu")?;
-    let mut plan = Plan::new(Platform::Windows, environment.machine.clone())?;
+    let mut plan = Plan::new(Platform::host()?, environment.machine.clone())?;
     // The executed immutable binary, rather than later edits to the workspace,
     // owns the source identity of this intentionally synthetic smoke plan.
     plan.source = build.source.clone();

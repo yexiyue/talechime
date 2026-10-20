@@ -10,7 +10,7 @@ jobs:
   contracts:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-2022]
+        os: [ubuntu-latest, windows-2022, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -51,3 +51,20 @@ jobs:
             & target/debug/xtask.exe perf @arguments
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
+
+      - name: Mac synthetic end-to-end evidence
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo xtask perf build --probe performance_probe --output target/perf/ci-build.json
+          cargo xtask perf fixture-job --build target/perf/ci-build.json --output target/perf/ci-input
+          export TALECHIME_PERF_PROBE_BUILD="$PWD/target/perf/ci-build.json"
+          cargo test --locked -p xtask --test cancellation_cli
+          PATH='' target/debug/xtask perf run --job target/perf/ci-input/job.json --output target/perf/ci-run
+          PATH='' target/debug/xtask perf resume --job target/perf/ci-input/job.json --output target/perf/ci-run
+          PATH='' target/debug/xtask perf overhead --job target/perf/ci-input/job.json --output target/perf/ci-overhead
+          PATH='' target/debug/xtask perf report --run target/perf/ci-run --output target/perf/ci-report
+          PATH='' target/debug/xtask perf pack --report target/perf/ci-report --output target/perf/ci-report.zip
+          printf '%s\n' '{"schema":"talechime/performance/1","metric":"rtf","lower_is_better":true,"absolute_threshold":0.01,"relative_threshold":0.1,"expected_processes":3,"require_equal_output":true}' > target/perf/ci-policy.json
+          PATH='' target/debug/xtask perf compare --baseline target/perf/ci-run/results.json --candidate target/perf/ci-run/results.json --policy target/perf/ci-policy.json --output target/perf/ci-compare.json

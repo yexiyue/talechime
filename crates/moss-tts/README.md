@@ -1,5 +1,7 @@
 # MOSS Candle computation
 
+> Legacy `tools/tts` scripts mentioned here were removed on 2026-10-20. Retrieve historical scripts from Git revision `e591c94`; their paths below describe provenance or historical reproduction, not current executable entry points.
+
 Experimental Rust implementation of the official MOSS Local, Realtime and Delay
 model schedulers and MOSS Audio Tokenizer. This crate uses the workspace's pinned
 Candle version and platform features; it does not manage downloads, playback,
@@ -18,7 +20,7 @@ spoken coverage. See [验收记录](../../docs/records/moss/moss-candle-acceptan
   `8c50ac4c5d7287d2ed6ea20a08c90ca439887d23`, Apache-2.0.
 - `assets/*.json` records immutable official weight URLs, sizes and SHA-256.
   Official model cards identify the MOSS weights as Apache-2.0.
-- `tools/tts/moss_reference_fixture.py` creates numerical fixtures from official
+- The retired `moss_reference_fixture.py` (Git revision `e591c94`) created numerical fixtures from official
   Python modules for development only. Generated fixtures require no Python to test.
 
 ## Experimental probe

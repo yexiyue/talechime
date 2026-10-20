@@ -7,7 +7,7 @@
 //! ```sh
 //! cargo run --release -p indextts --features cuda --example corpus -- \
 //!     --dir <converted-dir> --reference <spk.wav> \
-//!     --corpus tools/tts/acceptance-corpus.txt \
+//!     --corpus crates/voxcpm/tests/fixtures/acceptance-corpus.txt \
 //!     --out-dir target/tts-integration/indextts --rounds 2 --seed 7 --device cuda
 //! ```
 
