@@ -935,6 +935,7 @@ impl Stage0RuntimePlan {
         for (batch_index, target_len) in prepared.target_lens.iter().copied().enumerate() {
             final_tokens.push(tokens.i((batch_index, .., 0..target_len))?.contiguous()?);
         }
+        dump_final_tokens(&final_tokens);
 
         let debug_capture = if !debug_enabled {
             None
@@ -961,6 +962,35 @@ impl Stage0RuntimePlan {
             tokens: final_tokens,
             debug_capture,
         })
+    }
+}
+
+/// Diagnostic-only: `OMNIVOICE_CODES_DUMP=<path>` appends the final discrete
+/// codes of every generation so two numeric paths can be compared token by
+/// token. Never enable in production runs.
+fn dump_final_tokens(final_tokens: &[Tensor]) {
+    let Ok(path) = std::env::var("OMNIVOICE_CODES_DUMP") else {
+        return;
+    };
+    for tokens in final_tokens {
+        let Ok(values) = tokens.to_dtype(DType::I64).and_then(|t| t.flatten_all()) else {
+            return;
+        };
+        let Ok(values) = values.to_vec1::<i64>() else {
+            return;
+        };
+        let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        else {
+            return;
+        };
+        use std::io::Write;
+        let count = (values.len() as u32).to_le_bytes();
+        let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let _ = file.write_all(&count);
+        let _ = file.write_all(&bytes);
     }
 }
 
@@ -1762,7 +1792,14 @@ fn apply_step_updates_device(
     let flat_scores = masked_scores.flatten_all()?;
     let flat_len = flat_scores.elem_count();
     let top_k = update_count.min(flat_len);
+    let probe = SyncProbe::new();
+    let probe_started = probe.begin(current_tokens.device())?;
     let sorted_indices = argsort_descending(&flat_scores.reshape((1, flat_len))?)?;
+    probe.end(
+        current_tokens.device(),
+        probe_started,
+        "stage0_argsort_sync",
+    )?;
     let top_indices = sorted_indices.i((0, 0..top_k))?;
     let flat_predicted = predicted_tokens.flatten_all()?;
     let update_values = flat_predicted.gather(&top_indices, 0)?;

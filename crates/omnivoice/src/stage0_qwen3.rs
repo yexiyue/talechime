@@ -192,13 +192,13 @@ impl Stage0Qwen3Attention {
 
         let q_flat = q.flatten(0, 2)?;
         let k_flat = k.flatten(0, 2)?;
-        let q = apply_hf_compatible_rms_norm(&self.q_norm, &q_flat)?.reshape((
+        let q = apply_rms_norm(&self.q_norm, &q_flat)?.reshape((
             batch,
             self.num_heads,
             seq_len,
             self.head_dim,
         ))?;
-        let k = apply_hf_compatible_rms_norm(&self.k_norm, &k_flat)?.reshape((
+        let k = apply_rms_norm(&self.k_norm, &k_flat)?.reshape((
             batch,
             self.num_kv_heads,
             seq_len,
@@ -206,8 +206,7 @@ impl Stage0Qwen3Attention {
         ))?;
 
         let (q, k) = self.rotary_emb.apply(&q, &k, 0)?;
-        let scale_f32 = 1.0f32 / (self.head_dim as f32).sqrt();
-        let context = self.attention_context(q, k, v, attention_mask, flash_seqlens, scale_f32)?;
+        let context = self.attention_context(q, k, v, attention_mask, flash_seqlens)?;
         Ok(context
             .transpose(1, 2)?
             .contiguous()?
@@ -222,23 +221,80 @@ impl Stage0Qwen3Attention {
         v: Tensor,
         attention_mask: Option<&Tensor>,
         flash_seqlens: Option<&[usize]>,
-        scale_f32: f32,
     ) -> Result<Tensor> {
-        let _ = (scale_f32, flash_seqlens);
+        let _ = flash_seqlens;
         let repeats = self.num_heads / self.num_kv_heads;
         let k = candle_transformers::utils::repeat_kv(k, repeats)?;
         let v = candle_transformers::utils::repeat_kv(v, repeats)?;
-        let scale = 1.0 / (self.head_dim as f64).sqrt();
-        let k_t = k.transpose(2, 3)?.contiguous()?;
-        let mut scores = q.matmul(&k_t)?.affine(scale, 0.0)?;
-        if let Some(mask) =
-            attention_mask.filter(|_| !crate::stage0_qwen3::ablation_enabled("mask"))
-        {
-            scores = scores.broadcast_add(mask)?;
+        let scale = 1.0f64 / (self.head_dim as f64).sqrt();
+        // The fused SDPA kernel only exists on Metal; CPU keeps the manual
+        // score-matrix path.
+        if q.device().is_metal() {
+            attention_sdpa(&q, &k, &v, attention_mask, scale as f32)
+        } else {
+            attention_manual(&q, &k, &v, attention_mask, scale)
         }
-        let probs = candle_nn::ops::softmax_last_dim(&scores)?;
-        Ok(probs.matmul(&v)?)
     }
+}
+
+/// Manual attention: materialises the full `[B, H, S, S]` score matrix,
+/// adds the mask and softmaxes it in the runtime dtype.
+fn attention_manual(
+    q: &Tensor,
+    k: &Tensor,
+    v: &Tensor,
+    attention_mask: Option<&Tensor>,
+    scale: f64,
+) -> Result<Tensor> {
+    let k_t = k.transpose(2, 3)?.contiguous()?;
+    let mut scores = q.matmul(&k_t)?.affine(scale, 0.0)?;
+    if let Some(mask) = attention_mask {
+        scores = scores.broadcast_add(mask)?;
+    }
+    let probs = candle_nn::ops::softmax_last_dim(&scores)?;
+    Ok(probs.matmul(v)?)
+}
+
+/// Fused attention: one Metal SDPA kernel, no materialised score matrix.
+///
+/// The fused kernel reads the mask through its strides and requires
+/// `[bs, qheads, qseq, kseq]`; a zero head stride keeps the shared
+/// `[bs, 1, qseq, kseq]` mask without materialising it.
+fn attention_sdpa(
+    q: &Tensor,
+    k: &Tensor,
+    v: &Tensor,
+    attention_mask: Option<&Tensor>,
+    scale: f32,
+) -> Result<Tensor> {
+    let (batch, heads, q_seq, _) = q.dims4()?;
+    let mask = match attention_mask {
+        Some(mask) => {
+            let (mask_batch, mask_heads, mask_q, mask_k) = mask.dims4()?;
+            if mask_batch != batch || mask_q != q_seq {
+                return Err(candle_core::Error::Msg(format!(
+                    "stage0 attention mask shape {mask:?} does not match q shape {:?}",
+                    q.dims()
+                ))
+                .into());
+            }
+            if mask_heads == heads {
+                Some(mask.clone())
+            } else {
+                Some(mask.expand((batch, heads, mask_q, mask_k))?)
+            }
+        }
+        None => None,
+    };
+    Ok(candle_nn::ops::sdpa(
+        q,
+        k,
+        v,
+        mask.as_ref(),
+        false,
+        scale,
+        1.0,
+    )?)
 }
 
 #[derive(Debug, Clone)]
@@ -278,13 +334,13 @@ impl Stage0Qwen3DecoderLayer {
         flash_seqlens: Option<&[usize]>,
     ) -> Result<Tensor> {
         let residual = xs;
-        let hidden = apply_hf_compatible_rms_norm(&self.input_layernorm, xs)?;
+        let hidden = apply_rms_norm(&self.input_layernorm, xs)?;
         let hidden = self
             .self_attn
             .forward(&hidden, attention_mask, flash_seqlens)?;
         let hidden = (hidden + residual)?;
         let residual = &hidden;
-        let post_attention = apply_hf_compatible_rms_norm(&self.post_attention_layernorm, &hidden)?;
+        let post_attention = apply_rms_norm(&self.post_attention_layernorm, &hidden)?;
         let mlp_hidden = self.mlp.forward(&post_attention)?;
         Ok((residual + mlp_hidden)?)
     }
@@ -355,7 +411,7 @@ impl Stage0Qwen3Backbone {
                 captures.insert(index, hidden.clone());
             }
         }
-        let final_hidden = apply_hf_compatible_rms_norm(&self.norm, &hidden)?;
+        let final_hidden = apply_rms_norm(&self.norm, &hidden)?;
         Ok(Stage0BackboneOutput {
             final_hidden,
             captured_hidden_layers: captures,
@@ -363,29 +419,18 @@ impl Stage0Qwen3Backbone {
     }
 }
 
-fn apply_hf_compatible_rms_norm(norm: &RmsNorm, xs: &Tensor) -> Result<Tensor> {
-    if ablation_enabled("rms") {
-        return Ok(norm.forward(xs)?);
-    }
-    if matches!(xs.dtype(), DType::F16 | DType::BF16) {
-        Ok(norm.forward_diff(xs)?)
-    } else {
+/// RMS norm for the stage0 backbone.
+///
+/// On Metal the fused kernel is used: it accumulates the sum of squares in
+/// f32 and tracks an f64 host reference as closely as the layer-norm path
+/// (relative RMS 2.9e-4 for both, see the metal tests). Other devices keep
+/// the layer-norm path so f16/bf16 stays HuggingFace compatible.
+fn apply_rms_norm(norm: &RmsNorm, xs: &Tensor) -> Result<Tensor> {
+    if xs.device().is_metal() || !matches!(xs.dtype(), DType::F16 | DType::BF16) {
         Ok(norm.forward(xs)?)
+    } else {
+        Ok(norm.forward_diff(xs)?)
     }
-}
-
-/// Diagnostic-only ablation switches (`OMNIVOICE_ABLATE=rms,mask`).
-pub(crate) fn ablation_enabled(flag: &str) -> bool {
-    static FLAGS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-    let flags = FLAGS.get_or_init(|| {
-        std::env::var("OMNIVOICE_ABLATE")
-            .unwrap_or_default()
-            .split(',')
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .collect()
-    });
-    flags.iter().any(|value| value == flag)
 }
 
 #[allow(dead_code)]
@@ -397,4 +442,182 @@ fn try_flash_attention_per_row(
     _scale: f32,
 ) -> Result<Option<Tensor>> {
     Ok(None)
+}
+
+#[cfg(all(test, feature = "metal"))]
+mod metal_tests {
+    use super::*;
+    use candle_core::Device;
+
+    /// The fused Metal SDPA kernel and the manual score matrix path must
+    /// agree within f16 tolerance on the shapes stage0 actually uses.
+    #[test]
+    fn fused_sdpa_matches_manual_attention() -> Result<()> {
+        let device = Device::new_metal(0)?;
+        let (batch, heads, kv_heads, seq, dim) = (2usize, 16usize, 8usize, 287usize, 128usize);
+        let q =
+            Tensor::rand(0f32, 1f32, (batch, heads, seq, dim), &device)?.to_dtype(DType::F16)?;
+        let k =
+            Tensor::rand(0f32, 1f32, (batch, kv_heads, seq, dim), &device)?.to_dtype(DType::F16)?;
+        let v =
+            Tensor::rand(0f32, 1f32, (batch, kv_heads, seq, dim), &device)?.to_dtype(DType::F16)?;
+        let repeats = heads / kv_heads;
+        let k = candle_transformers::utils::repeat_kv(k, repeats)?;
+        let v = candle_transformers::utils::repeat_kv(v, repeats)?;
+        // Additive mask in the runtime dtype, exactly like stage0 prepares it.
+        let mask_bool = Tensor::rand(0f32, 1f32, (batch, 1, seq, seq), &device)?;
+        let mask = mask_bool.to_dtype(DType::F16)?;
+        let scale = 1.0f64 / (dim as f64).sqrt();
+
+        let manual = attention_manual(&q, &k, &v, Some(&mask), scale)?;
+        let fused = attention_sdpa(&q, &k, &v, Some(&mask), scale as f32)?;
+        let manual = manual
+            .to_dtype(DType::F32)?
+            .flatten_all()?
+            .to_vec1::<f32>()?;
+        let fused = fused
+            .to_dtype(DType::F32)?
+            .flatten_all()?
+            .to_vec1::<f32>()?;
+        assert_eq!(manual.len(), fused.len());
+        let mut max_abs = 0f32;
+        let mut sum_sq = 0f64;
+        let mut reference_sq = 0f64;
+        for (a, b) in manual.iter().zip(fused.iter()) {
+            let diff = (a - b).abs();
+            max_abs = max_abs.max(diff);
+            sum_sq += f64::from(diff) * f64::from(diff);
+            reference_sq += f64::from(*a) * f64::from(*a);
+        }
+        let rms = (sum_sq / manual.len() as f64).sqrt();
+        let reference_rms = (reference_sq / manual.len() as f64).sqrt();
+        // f16 has ~3 decimal digits; the two paths may only differ by the
+        // accumulation order, not by a different softmax.
+        assert!(
+            max_abs < 0.05,
+            "fused sdpa diverged from manual attention: max_abs={max_abs}"
+        );
+        assert!(
+            rms <= 0.01 * reference_rms.max(1e-6),
+            "fused sdpa rms error {rms} too large against {reference_rms}"
+        );
+        Ok(())
+    }
+
+    /// The fused kernel must also agree when the mask blocks whole rows.
+    #[test]
+    fn fused_sdpa_matches_manual_attention_with_masked_rows() -> Result<()> {
+        let device = Device::new_metal(0)?;
+        let (batch, heads, seq, dim) = (2usize, 16usize, 64usize, 128usize);
+        let q =
+            Tensor::rand(0f32, 1f32, (batch, heads, seq, dim), &device)?.to_dtype(DType::F16)?;
+        let k =
+            Tensor::rand(0f32, 1f32, (batch, heads, seq, dim), &device)?.to_dtype(DType::F16)?;
+        let v =
+            Tensor::rand(0f32, 1f32, (batch, heads, seq, dim), &device)?.to_dtype(DType::F16)?;
+        let mut mask_values = vec![0f32; batch * seq * seq];
+        for (index, value) in mask_values.iter_mut().enumerate() {
+            if index % seq == seq - 1 {
+                *value = f32::NEG_INFINITY;
+            }
+        }
+        let mask =
+            Tensor::from_vec(mask_values, (batch, 1, seq, seq), &device)?.to_dtype(DType::F16)?;
+        let scale = 1.0f64 / (dim as f64).sqrt();
+        let manual = attention_manual(&q, &k, &v, Some(&mask), scale)?;
+        let fused = attention_sdpa(&q, &k, &v, Some(&mask), scale as f32)?;
+        let manual = manual
+            .to_dtype(DType::F32)?
+            .flatten_all()?
+            .to_vec1::<f32>()?;
+        let fused = fused
+            .to_dtype(DType::F32)?
+            .flatten_all()?
+            .to_vec1::<f32>()?;
+        let mut max_abs = 0f32;
+        for (a, b) in manual.iter().zip(fused.iter()) {
+            max_abs = max_abs.max((a - b).abs());
+        }
+        assert!(
+            max_abs < 0.05,
+            "fused sdpa diverged with masked rows: max_abs={max_abs}"
+        );
+        Ok(())
+    }
+
+    /// The fused rms_norm kernel and the layer-norm path must both track an
+    /// f64 host reference; the fused kernel rounds the scale to f16, so this
+    /// records how much accuracy the speed-up costs.
+    #[test]
+    fn fused_rms_norm_tracks_f64_host_reference() -> Result<()> {
+        let device = Device::new_metal(0)?;
+        let (rows, hidden) = (64usize, 1024usize);
+        let eps = 1e-6f64;
+        let xs = Tensor::rand(-3f32, 3f32, (rows, hidden), &device)?.to_dtype(DType::F16)?;
+        let weight = Tensor::rand(0.5f32, 1.5f32, (hidden,), &device)?.to_dtype(DType::F16)?;
+        let norm = candle_nn::RmsNorm::new(weight.clone(), eps);
+
+        let reference = {
+            let host = xs
+                .to_dtype(DType::F32)?
+                .to_device(&Device::Cpu)?
+                .to_vec2::<f32>()?;
+            let host_weight = weight
+                .to_dtype(DType::F32)?
+                .to_device(&Device::Cpu)?
+                .to_vec1::<f32>()?;
+            let mut out = vec![0f32; rows * hidden];
+            for (row, values) in host.iter().enumerate() {
+                let mean_sq = values
+                    .iter()
+                    .map(|v| f64::from(*v) * f64::from(*v))
+                    .sum::<f64>()
+                    / hidden as f64;
+                let scale = 1.0 / (mean_sq + eps).sqrt();
+                for (index, value) in values.iter().enumerate() {
+                    let normalized = f64::from(*value) * scale;
+                    let scaled = normalized * f64::from(host_weight[index]);
+                    out[row * hidden + index] = scaled as f32;
+                }
+            }
+            out
+        };
+
+        let mut errors = Vec::new();
+        for (label, actual) in [
+            ("layer_norm_path", norm.forward_diff(&xs)?),
+            ("fused_kernel", norm.forward(&xs)?),
+        ] {
+            let actual = actual
+                .to_dtype(DType::F32)?
+                .to_device(&Device::Cpu)?
+                .to_vec2::<f32>()?;
+            let mut max_abs = 0f32;
+            let mut sum_sq = 0f64;
+            let mut reference_sq = 0f64;
+            for (row, values) in actual.iter().enumerate() {
+                for (index, value) in values.iter().enumerate() {
+                    let expected = reference[row * hidden + index];
+                    let diff = (f64::from(*value) - f64::from(expected)).abs();
+                    max_abs = max_abs.max(diff as f32);
+                    sum_sq += diff * diff;
+                    reference_sq += f64::from(expected) * f64::from(expected);
+                }
+            }
+            let rms = (sum_sq / (rows * hidden) as f64).sqrt();
+            let reference_rms = (reference_sq / (rows * hidden) as f64).sqrt();
+            errors.push((label, max_abs, rms / reference_rms.max(1e-9)));
+        }
+        for (label, max_abs, relative_rms) in &errors {
+            eprintln!("rms_norm {label}: max_abs={max_abs:.6} relative_rms={relative_rms:.3e}");
+        }
+        // Both paths must stay far below the f16 rounding band (2^-11 ~ 4.9e-4).
+        for (label, _, relative_rms) in &errors {
+            assert!(
+                *relative_rms < 2e-3,
+                "{label} diverged from the f64 reference: relative_rms={relative_rms}"
+            );
+        }
+        Ok(())
+    }
 }
