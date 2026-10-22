@@ -231,7 +231,9 @@ impl Stage0Qwen3Attention {
         let scale = 1.0 / (self.head_dim as f64).sqrt();
         let k_t = k.transpose(2, 3)?.contiguous()?;
         let mut scores = q.matmul(&k_t)?.affine(scale, 0.0)?;
-        if let Some(mask) = attention_mask {
+        if let Some(mask) =
+            attention_mask.filter(|_| !crate::stage0_qwen3::ablation_enabled("mask"))
+        {
             scores = scores.broadcast_add(mask)?;
         }
         let probs = candle_nn::ops::softmax_last_dim(&scores)?;
@@ -362,11 +364,28 @@ impl Stage0Qwen3Backbone {
 }
 
 fn apply_hf_compatible_rms_norm(norm: &RmsNorm, xs: &Tensor) -> Result<Tensor> {
+    if ablation_enabled("rms") {
+        return Ok(norm.forward(xs)?);
+    }
     if matches!(xs.dtype(), DType::F16 | DType::BF16) {
         Ok(norm.forward_diff(xs)?)
     } else {
         Ok(norm.forward(xs)?)
     }
+}
+
+/// Diagnostic-only ablation switches (`OMNIVOICE_ABLATE=rms,mask`).
+pub(crate) fn ablation_enabled(flag: &str) -> bool {
+    static FLAGS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let flags = FLAGS.get_or_init(|| {
+        std::env::var("OMNIVOICE_ABLATE")
+            .unwrap_or_default()
+            .split(',')
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .collect()
+    });
+    flags.iter().any(|value| value == flag)
 }
 
 #[allow(dead_code)]

@@ -75,6 +75,11 @@ GPU feature 由模型 manifest 直接启用并按目标平台选择，Metal 探�
 - 先编译 release，再串行运行独立进程。GPU 基准期间不编译、不并行推理。
 - 明确计时边界：模型加载/参考准备是否计入；导出音频放在计时外；异步设备在计时
   入口和出口同步。host tracing span 只表示 API 墙钟，不能直接解释为 kernel 独占耗时。
+- 测量框架自身的预热合成用的是**另一段文本**，序列长度与被测文本不同。
+  比较每步成本前必须先打印被比较轮次的实际目标长度/段长，否则会把
+  “文本更长”误读成“第二次调用变慢”。OmniVoice 的 `prepare_reference`
+  用 9 字参考语料（target_len 48）预热，而被测语料是 target_len 130，
+  2.6× 的 forward 差异全部来自序列长度，不是进程级退化。
 - 正式输出保持型比较优先用 ABBAABBA 八进程，各一轮预热、五轮热测；逐进程先取均值，
   再报 mean-of-means、进程均值区间及逐轮数据，不挑最快一轮。预热单列，不计入统计。
 - NVIDIA 可用时记录实际时钟、功率、温度、P-state、限频原因和其他进程；锁频/电源操作
@@ -179,6 +184,7 @@ patch 下能编译当作发行可用。确需 fork 独有公开 API 时，受影
 | VoxCPM 分组 GQA / K transpose view（Windows / RTX 5070 CUDA） | 小收益或变慢，且改变 PCM/部分 EOS 长度，拒绝；不能说去 contiguous 必然更快 |
 | VoxCPM 静态 KV LM 原型（Windows / RTX 5070 CUDA） | primitive 通过但 Q8 BaseLM 真模型严格对照失败；原因未证明，不作为上游缺陷或已完成能力 |
 | OmniVoice 0.6B 性能基线（M4 Pro / Metal 与 CPU） | 当前主线首个真实模型基线：Metal 短句 RTF 1.1110、长文 1.1763（3 进程 × 1 预热 + 5 热测），CPU 短句 5.2418、长文 5.8359（筛选协议）；`num_step` 诊断显示每步约 0.17 s，步循环占合成时间约 92–93%；**只做基线，未做优化**，试听与 ASR 回读 pending，见 [OmniVoice 性能记录](../records/omnivoice/omnivoice-performance-2026-10-22.md) |
+| OmniVoice 0.6B 热点定位与官方对照（M4 Pro / Metal vs 官方 MPS） | 官方 `k2-fsa/OmniVoice` rev `08be0b4` 同权重同 seed：短句 RTF 0.635 vs 我们 1.111，每步 forward 96.6 vs 157 ms；长文两边持平（官方 1.163–1.279 vs 我们 1.176）。差距定位在手写 attention（含 mask 广播 2.57 ms/层 vs 融合 SDPA 0.39 ms/层）与非融合 rms_norm（170–196 vs 12.6 µs/次），GEMM 与 MPS 持平不是瓶颈；**只做定位，未改生产路径**，消融与 SDPA 均未做 ABBA 验收，试听与 ASR 回读 pending，见 [OmniVoice 热点与官方对照](../records/omnivoice/omnivoice-hotspot-and-official-2026-10-22.md) |
 | Qwen 设备帧缓冲简化（M4 Pro / Metal） | 严格 PCM/codes 一致，未证明提速；保留理由是数据流更简单 |
 | Qwen 采样边界修复（M4 Pro / Metal；Windows CPU 边界复核） | 修正 nucleus 同分与累积规则；改变旧输出，属于准确性修复，另建基线 |
 | Qwen CUDA CodePredictor 一次 cat 打包（Windows / RTX 5070 CUDA） | 输出严格一致，但 ABBA 初筛完整慢 1.04%、流式快 0.46%，收益不明确，撤回；后续优先评估固定 15 步图 |
@@ -199,5 +205,6 @@ patch 下能编译当作发行可用。确需 fork 独有公开 API 时，受影
 [Qwen 1.7B CUDA 独立验收](../records/qwen/qwen17-cuda-acceptance-2026-10-18.md)、
 [IndexTTS 性能记录](../records/indextts/indextts-candle-performance-2026-10-17.md)、
 [OmniVoice 性能记录](../records/omnivoice/omnivoice-performance-2026-10-22.md)、
+[OmniVoice 热点与官方对照](../records/omnivoice/omnivoice-hotspot-and-official-2026-10-22.md)、
 [CosyVoice3 性能记录](../records/cosyvoice3/cosyvoice3-performance-2026-10-17.md)。
 旧官方/C++ RTF 使用不同协议，不与这些数值直接排名。后续后端按本文流程建立自己的基线。

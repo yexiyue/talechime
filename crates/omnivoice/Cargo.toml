@@ -10,6 +10,7 @@ repository="https://github.com/yexiyue/talechime"
 candle-nn.workspace = true
 candle-core.workspace=true
 candle-transformers.workspace=true
+tracing.workspace = true
 half="2.4.1"
 hound.workspace=true
 regex.workspace=true
@@ -29,3 +30,7 @@ metal = ["candle-nn/metal"]
 
 [dev-dependencies]
 tempfile.workspace=true
+
+[[example]]
+name="gemm_probe"
+required-features=["metal"]

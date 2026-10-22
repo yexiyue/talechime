@@ -656,6 +656,12 @@ impl Stage0RuntimePlan {
         });
         let batch_size = prepared.target_lens.len();
         let debug_enabled = !capture_steps.is_empty();
+        if sync_probe_enabled() {
+            eprintln!(
+                "[stage] name=stage0_lengths target_len={:?} cond_len={:?} codebooks={}",
+                prepared.target_lens, prepared.cond_lens, self.config.num_audio_codebook
+            );
+        }
         if batch_size != 1 && debug_enabled {
             return Err(OmniVoiceError::Unsupported(
                 "stage0 debug capture currently supports one prompt per run".to_string(),
@@ -730,14 +736,36 @@ impl Stage0RuntimePlan {
                     "inference cancelled".to_string(),
                 ));
             }
-            let forward = model.forward_with_text_cache(
-                &batch_input_ids,
-                &prepared.audio_mask,
-                &attention_mask,
-                &empty_capture_layers,
-                Some(&cached_text_embeds),
-                Some(flash_seqlens.as_slice()),
-            )?;
+            let forward = {
+                let _span = tracing::info_span!("omnivoice_stage0_forward", step = step).entered();
+                // Diagnostic-only GPU sync probe: without a barrier the span
+                // below measures command submission, not execution.
+                let probe = SyncProbe::new();
+                if probe.enabled
+                    && let Some((lhs, rhs)) = sync_probe_canary(&self.device)
+                {
+                    let canary_started = std::time::Instant::now();
+                    for _ in 0..20 {
+                        let _ = lhs.matmul(&rhs)?;
+                    }
+                    self.device.synchronize()?;
+                    eprintln!(
+                        "[stage] name=stage0_canary_gemm ms={:.2}",
+                        canary_started.elapsed().as_secs_f64() * 1000.0
+                    );
+                }
+                let started = probe.begin(&self.device)?;
+                let out = model.forward_with_text_cache(
+                    &batch_input_ids,
+                    &prepared.audio_mask,
+                    &attention_mask,
+                    &empty_capture_layers,
+                    Some(&cached_text_embeds),
+                    Some(flash_seqlens.as_slice()),
+                )?;
+                probe.end(&self.device, started, "stage0_forward_sync")?;
+                out
+            };
             // Keep full logits in runtime dtype; only cast the (small) target
             // slices to f32 for scoring — avoids a full (2B,C,S,V) materialization.
             let batch_logits = &forward.logits;
@@ -766,30 +794,46 @@ impl Stage0RuntimePlan {
                 }
                 let target_len = prepared.target_lens[batch_index];
                 let cond_len = prepared.cond_lens[batch_index];
-                let c_logits = batch_logits
-                    .i((
-                        batch_index..batch_index + 1,
-                        ..,
-                        (cond_len - target_len)..cond_len,
-                        ..,
-                    ))?
-                    .to_dtype(DType::F32)?;
-                let u_logits = batch_logits
-                    .i((
-                        batch_size + batch_index..batch_size + batch_index + 1,
-                        ..,
-                        0..target_len,
-                        ..,
-                    ))?
-                    .to_dtype(DType::F32)?;
+                let (c_logits, u_logits) = {
+                    let _span =
+                        tracing::info_span!("omnivoice_stage0_logits_cast", step = step).entered();
+                    let probe = SyncProbe::new();
+                    let started = probe.begin(&self.device)?;
+                    let c_logits = batch_logits
+                        .i((
+                            batch_index..batch_index + 1,
+                            ..,
+                            (cond_len - target_len)..cond_len,
+                            ..,
+                        ))?
+                        .to_dtype(DType::F32)?;
+                    let u_logits = batch_logits
+                        .i((
+                            batch_size + batch_index..batch_size + batch_index + 1,
+                            ..,
+                            0..target_len,
+                            ..,
+                        ))?
+                        .to_dtype(DType::F32)?;
+                    probe.end(&self.device, started, "stage0_logits_cast_sync")?;
+                    (c_logits, u_logits)
+                };
                 let batch_input_ids_before_update =
                     if debug_enabled && capture_steps.contains(&step) {
                         Some(batch_input_ids.clone())
                     } else {
                         None
                     };
-                let (pred_tokens_tensor, confidence_scores_tensor) =
-                    predict_tokens_with_scoring_from_tensors(
+                let (pred_tokens_tensor, confidence_scores_tensor) = {
+                    let _span = tracing::info_span!(
+                        "omnivoice_stage0_predict_scoring",
+                        step = step,
+                        batch = batch_index
+                    )
+                    .entered();
+                    let probe = SyncProbe::new();
+                    let started = probe.begin(&self.device)?;
+                    let out = predict_tokens_with_scoring_from_tensors(
                         &c_logits,
                         &u_logits,
                         config.guidance_scale,
@@ -797,6 +841,9 @@ impl Stage0RuntimePlan {
                         self.config.audio_mask_id as usize,
                         host_rng.as_mut(),
                     )?;
+                    probe.end(&self.device, started, "stage0_predict_sync")?;
+                    out
+                };
                 let current_tokens_view =
                     tokens.i((batch_index..batch_index + 1, .., 0..target_len))?;
                 let step_noise = if let Some(noise) = shared_step_noise.as_ref() {
@@ -806,41 +853,64 @@ impl Stage0RuntimePlan {
                 } else {
                     None
                 };
-                let updated_tokens = apply_step_updates_device(
-                    &current_tokens_view,
-                    &pred_tokens_tensor,
-                    &confidence_scores_tensor,
-                    self.config.audio_mask_id,
-                    update_count,
-                    &layer_penalties,
-                    config.position_temperature,
-                    host_rng.as_mut(),
-                    step_noise.as_ref(),
-                )?;
-                tokens = tokens.slice_assign(
-                    &[
-                        batch_index..batch_index + 1,
-                        0..num_codebooks,
-                        0..target_len,
-                    ],
-                    &updated_tokens,
-                )?;
-                batch_input_ids = batch_input_ids.slice_assign(
-                    &[
-                        batch_index..batch_index + 1,
-                        0..num_codebooks,
-                        (cond_len - target_len)..cond_len,
-                    ],
-                    &updated_tokens,
-                )?;
-                batch_input_ids = batch_input_ids.slice_assign(
-                    &[
-                        batch_size + batch_index..batch_size + batch_index + 1,
-                        0..num_codebooks,
-                        0..target_len,
-                    ],
-                    &updated_tokens,
-                )?;
+                let updated_tokens = {
+                    let _span = tracing::info_span!(
+                        "omnivoice_stage0_update",
+                        step = step,
+                        batch = batch_index
+                    )
+                    .entered();
+                    let probe = SyncProbe::new();
+                    let started = probe.begin(&self.device)?;
+                    let out = apply_step_updates_device(
+                        &current_tokens_view,
+                        &pred_tokens_tensor,
+                        &confidence_scores_tensor,
+                        self.config.audio_mask_id,
+                        update_count,
+                        &layer_penalties,
+                        config.position_temperature,
+                        host_rng.as_mut(),
+                        step_noise.as_ref(),
+                    )?;
+                    probe.end(&self.device, started, "stage0_update_sync")?;
+                    out
+                };
+                {
+                    let _span = tracing::info_span!(
+                        "omnivoice_stage0_token_writeback",
+                        step = step,
+                        batch = batch_index
+                    )
+                    .entered();
+                    let probe = SyncProbe::new();
+                    let started = probe.begin(&self.device)?;
+                    tokens = tokens.slice_assign(
+                        &[
+                            batch_index..batch_index + 1,
+                            0..num_codebooks,
+                            0..target_len,
+                        ],
+                        &updated_tokens,
+                    )?;
+                    batch_input_ids = batch_input_ids.slice_assign(
+                        &[
+                            batch_index..batch_index + 1,
+                            0..num_codebooks,
+                            (cond_len - target_len)..cond_len,
+                        ],
+                        &updated_tokens,
+                    )?;
+                    batch_input_ids = batch_input_ids.slice_assign(
+                        &[
+                            batch_size + batch_index..batch_size + batch_index + 1,
+                            0..num_codebooks,
+                            0..target_len,
+                        ],
+                        &updated_tokens,
+                    )?;
+                    probe.end(&self.device, started, "stage0_writeback_sync")?;
+                }
 
                 if debug_enabled && capture_steps.contains(&step) {
                     step_captures.push(Stage0StepDebugCapture {
@@ -1231,6 +1301,9 @@ fn argsort_descending(values: &Tensor) -> Result<Tensor> {
     // threads in one group. More than 1024 threads silently corrupt indices.
     // Sort only the scores on CPU; model evaluation and token updates stay on GPU.
     if values.device().is_metal() && values.dim(candle_core::D::Minus1)? > 1024 {
+        let columns = values.dim(candle_core::D::Minus1)?;
+        let _span =
+            tracing::info_span!("omnivoice_argsort_cpu_fallback", columns = columns).entered();
         values
             .to_device(&Device::Cpu)?
             .arg_sort_last_dim(false)?
@@ -1238,6 +1311,71 @@ fn argsort_descending(values: &Tensor) -> Result<Tensor> {
             .map_err(Into::into)
     } else {
         values.arg_sort_last_dim(false).map_err(Into::into)
+    }
+}
+
+/// Diagnostic-only: `OMNIVOICE_SYNC_PROBE=1` brackets the stage0 forward with
+/// device barriers so the measured time reflects GPU execution rather than
+/// command submission. Never enable in production runs.
+fn sync_probe_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("OMNIVOICE_SYNC_PROBE").is_ok_and(|value| value == "1"))
+}
+
+/// Diagnostic-only canary: a fixed-shape matmul measured next to the stage0
+/// forward so GPU throughput regressions can be separated from
+/// model-specific work.
+fn sync_probe_canary(device: &Device) -> Option<(Tensor, Tensor)> {
+    static CANARY: std::sync::OnceLock<std::sync::Mutex<Option<(Tensor, Tensor)>>> =
+        std::sync::OnceLock::new();
+    let slot = CANARY.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = slot.lock().ok()?;
+    if guard.is_none() {
+        let lhs = Tensor::rand(0f32, 1f32, (300, 1024), device)
+            .ok()?
+            .to_dtype(DType::F16)
+            .ok()?;
+        let rhs = Tensor::rand(0f32, 1f32, (1024, 1024), device)
+            .ok()?
+            .to_dtype(DType::F16)
+            .ok()?;
+        *guard = Some((lhs, rhs));
+    }
+    guard.clone()
+}
+
+/// Diagnostic-only device barrier helper used by `OMNIVOICE_SYNC_PROBE=1`.
+struct SyncProbe {
+    enabled: bool,
+}
+
+impl SyncProbe {
+    fn new() -> Self {
+        Self {
+            enabled: sync_probe_enabled(),
+        }
+    }
+
+    /// Barrier, then start the clock.
+    fn begin(&self, device: &Device) -> Result<Option<std::time::Instant>> {
+        if !self.enabled {
+            return Ok(None);
+        }
+        device.synchronize()?;
+        Ok(Some(std::time::Instant::now()))
+    }
+
+    /// Barrier, then report the elapsed time as a stage timing line.
+    fn end(&self, device: &Device, started: Option<std::time::Instant>, label: &str) -> Result<()> {
+        let Some(started) = started else {
+            return Ok(());
+        };
+        device.synchronize()?;
+        eprintln!(
+            "[stage] name={label} ms={:.2}",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+        Ok(())
     }
 }
 

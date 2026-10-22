@@ -4202,6 +4202,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokenizers",
+ "tracing",
  "unicode-general-category",
 ]
 
