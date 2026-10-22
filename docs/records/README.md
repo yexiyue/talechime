@@ -13,6 +13,7 @@
 | `cosyvoice3/` | CosyVoice 3 移植、验收、审查与性能 |
 | `indextts/` | IndexTTS 2.5 移植、验收、审查与性能 |
 | `moss/` | MOSS 后端各阶段验收与实验 |
+| `omnivoice/` | OmniVoice 0.6B 后端验收与性能 |
 | `qwen/` | Qwen TTS 后端验收 |
 | `voxcpm/` | VoxCPM 移植与平台性能 |
 | `asr/` | ASR 回读校验选型、验收与标签能力 |

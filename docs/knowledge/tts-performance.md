@@ -178,6 +178,7 @@ patch 下能编译当作发行可用。确需 fork 独有公开 API 时，受影
 | VoxCPM LocalEncoder 图（Windows / RTX 5070 CUDA） | 约 7.5–7.9%，未达 10% 门槛，删除运行时实现 |
 | VoxCPM 分组 GQA / K transpose view（Windows / RTX 5070 CUDA） | 小收益或变慢，且改变 PCM/部分 EOS 长度，拒绝；不能说去 contiguous 必然更快 |
 | VoxCPM 静态 KV LM 原型（Windows / RTX 5070 CUDA） | primitive 通过但 Q8 BaseLM 真模型严格对照失败；原因未证明，不作为上游缺陷或已完成能力 |
+| OmniVoice 0.6B 性能基线（M4 Pro / Metal 与 CPU） | 当前主线首个真实模型基线：Metal 短句 RTF 1.1110、长文 1.1763（3 进程 × 1 预热 + 5 热测），CPU 短句 5.2418、长文 5.8359（筛选协议）；`num_step` 诊断显示每步约 0.17 s，步循环占合成时间约 92–93%；**只做基线，未做优化**，试听与 ASR 回读 pending，见 [OmniVoice 性能记录](../records/omnivoice/omnivoice-performance-2026-10-22.md) |
 | Qwen 设备帧缓冲简化（M4 Pro / Metal） | 严格 PCM/codes 一致，未证明提速；保留理由是数据流更简单 |
 | Qwen 采样边界修复（M4 Pro / Metal；Windows CPU 边界复核） | 修正 nucleus 同分与累积规则；改变旧输出，属于准确性修复，另建基线 |
 | Qwen CUDA CodePredictor 一次 cat 打包（Windows / RTX 5070 CUDA） | 输出严格一致，但 ABBA 初筛完整慢 1.04%、流式快 0.46%，收益不明确，撤回；后续优先评估固定 15 步图 |
@@ -197,5 +198,6 @@ patch 下能编译当作发行可用。确需 fork 独有公开 API 时，受影
 [Qwen 解码图与审查](../records/qwen/qwen-decoder-graph-2026-10-18.md)、
 [Qwen 1.7B CUDA 独立验收](../records/qwen/qwen17-cuda-acceptance-2026-10-18.md)、
 [IndexTTS 性能记录](../records/indextts/indextts-candle-performance-2026-10-17.md)、
+[OmniVoice 性能记录](../records/omnivoice/omnivoice-performance-2026-10-22.md)、
 [CosyVoice3 性能记录](../records/cosyvoice3/cosyvoice3-performance-2026-10-17.md)。
 旧官方/C++ RTF 使用不同协议，不与这些数值直接排名。后续后端按本文流程建立自己的基线。
