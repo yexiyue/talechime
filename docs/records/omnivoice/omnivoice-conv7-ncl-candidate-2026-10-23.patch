@@ -1,0 +1,21 @@
+--- a/candle-core/src/metal_backend/mod.rs
++++ b/candle-core/src/metal_backend/mod.rs
+@@ -964,6 +964,18 @@
+         let k = params.k_size * params.c_in;
+         let m = l_out;
+         let col_l = Layout::contiguous((b, m, k));
++        // Offline decoder experiment: preserve native im2col, produce NCL directly.
++        if self.dtype == DType::F32
++            && params.k_size == 7
++            && params.stride == 1
++            && params.padding == 3 * params.dilation
++            && params.c_in == params.c_out
++            && kernel_l.is_contiguous()
++        {
++            let weight_l = Layout::contiguous_with_offset((1, n, k), kernel_l.start_offset())
++                .broadcast_as((b, n, k))?;
++            return kernel.matmul(&col, (b, n, m, k), &weight_l, &col_l.transpose(1, 2)?);
++        }
+         let res = if kernel_l.is_contiguous() {
+             let kernel_l = Layout::contiguous_with_offset((1, n, k), kernel_l.start_offset())
+                 .transpose(1, 2)?

@@ -15,13 +15,26 @@ fn select(log_probs: &Tensor, gather: bool) -> candle_core::Result<(Tensor, Tens
     Ok((ids.to_dtype(DType::I64)?, scores))
 }
 
-fn score(c: &Tensor, u: &Tensor, gather: bool) -> candle_core::Result<(Tensor, Tensor)> {
+fn score(
+    c: &Tensor,
+    u: &Tensor,
+    gather: bool,
+    mask_view: bool,
+) -> candle_core::Result<(Tensor, Tensor)> {
     let c = candle_nn::ops::log_softmax(c, D::Minus1)?;
     let u = candle_nn::ops::log_softmax(u, D::Minus1)?;
     let guided = (&c + ((&c - &u)? * 2.0)?)?;
     let probs = candle_nn::ops::log_softmax(&guided, D::Minus1)?;
     let width = probs.dim(D::Minus1)?;
     let prefix = probs.narrow(D::Minus1, 0, width - 1)?;
+    if mask_view {
+        let ids = prefix.argmax(D::Minus1)?;
+        // Metal gather uses dense source dimensions, not arbitrary source strides.
+        let scores = probs
+            .gather(&ids.unsqueeze(D::Minus1)?, D::Minus1)?
+            .squeeze(D::Minus1)?;
+        return Ok((ids.to_dtype(DType::I64)?, scores));
+    }
     let mask = Tensor::full(f32::NEG_INFINITY, (1, 8, 130, 1), probs.device())?;
     select(&Tensor::cat(&[prefix, mask], D::Minus1)?, gather)
 }
@@ -104,7 +117,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     bench(
         &device,
         "full scoring",
-        |v| score(&c, &u, v == 1),
+        |v| score(&c, &u, v == 1, false),
         &[0, 1, 1, 0],
     )?;
     bench(
@@ -112,9 +125,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         "cast plus scoring",
         |v| {
             let (c, u) = cast(v)?;
-            score(&c, &u, false)
+            score(&c, &u, false, false)
         },
         &[0, 1, 2, 2, 1, 0],
+    )?;
+    bench(
+        &device,
+        "greedy mask view",
+        |v| score(&c, &u, true, v == 1),
+        &[0, 1, 1, 0],
     )?;
     Ok(())
 }
