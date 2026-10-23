@@ -294,9 +294,9 @@ impl ResidualUnit {
 
 impl Module for ResidualUnit {
     fn forward(&self, xs: &Tensor) -> CandleResult<Tensor> {
-        let ys = xs
-            .apply(&self.snake1)?
-            .apply(&self.conv1)?
+        let ys = self
+            .conv1
+            .forward_decoder_conv7(&xs.apply(&self.snake1)?)?
             .apply(&self.snake2)?;
         let ys = self.conv2.forward_decoder_pointwise(&ys)?;
         let pad = (xs.dim(candle_core::D::Minus1)? - ys.dim(candle_core::D::Minus1)?) / 2;

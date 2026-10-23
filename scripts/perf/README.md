@@ -167,3 +167,31 @@ runner's name prefix, so parse the marker wherever it occurs in a line.
 Activation and complete MLP+residual timings overlap and must not be added.
 Explicit continuity was slower on all three real-input processes in the dated
 2026-10-24 record; it remains an offline experiment, not a production option.
+
+## CPU real decoder 7-tap layout screen
+
+The private ignored test `codec_layers::cpu_conv7::compare_real_conv7_layouts`
+uses the existing 130-frame `decoder-frames-130-block-{0..4}-res_unit1` and
+`-conv1` tensor archives, plus immutable codec weights. Use the same CPU runner
+and `OMNI_CPU_TRACE_ROOT` / `OMNI_CPU_TRACE_MODEL` settings as above. Run three
+serial independent processes with the frozen release test executable.
+
+Variants 0/1/2 compare original Conv1d / explicit NLC windows / the actual
+restricted NCL production helper. Each real case is checked twice for complete
+conv+bias and Snake+pointwise+residual output bits. The latter includes the
+retained CPU pointwise path. Variants warm once per boundary, then run three
+groups of candidate-specific ABBA slots, three calls per slot, alternating
+candidate order between groups. Parse `CPU_CONV7` wherever it occurs in a line.
+
+Component controls precompute operands: window materialization, GEMM and output
+layout+bias each warm once and run five separate hot calls. These overlapping
+controls are not production phase timings. In particular, explicit NLC windows
+are a surrogate for the original private im2col implementation, not a direct
+measurement of that implementation. Do not add components or consumers.
+
+This probe covers dilation one; production restricts CPU Accelerate F32 to dense,
+contiguous, square 32/64/128/256/512-channel weights and contiguous input, kernel
+seven, stride one, padding three, groups one, and time length at least eight and
+divisible by eight. Other configurations use original Conv1d. Verify complete
+fixed-code decoder outputs and short/long native codes and F32/PCM16 WAVs before
+retention; local component bits alone are insufficient.

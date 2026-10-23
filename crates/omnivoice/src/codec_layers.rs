@@ -17,6 +17,10 @@ use crate::error::Result;
 #[path = "codec_layers/cpu_pointwise.rs"]
 mod cpu_pointwise;
 
+#[cfg(test)]
+#[path = "codec_layers/cpu_conv7.rs"]
+mod cpu_conv7;
+
 /// Lookup table that stays in GGUF storage and gathers rows on demand.
 ///
 /// Float GGML blobs (F32/F16/BF16) are materialized as a dense tensor once at
@@ -167,12 +171,61 @@ enum CodecConv1dInner {
 }
 
 impl CodecConv1d {
+    pub(crate) fn forward_decoder_conv7(&self, xs: &Tensor) -> CandleResult<Tensor> {
+        match &self.inner {
+            CodecConv1dInner::Dense(layer) => forward_dense_decoder_conv7(layer, xs),
+            _ => self.forward(xs),
+        }
+    }
+
     // Opt in only from the decoder: reference-audio encoding keeps its original path.
     pub(crate) fn forward_decoder_pointwise(&self, xs: &Tensor) -> CandleResult<Tensor> {
         match &self.inner {
             CodecConv1dInner::Dense(layer) => forward_dense_decoder_pointwise(layer, xs),
             _ => self.forward(xs),
         }
+    }
+}
+
+fn forward_dense_decoder_conv7(layer: &Conv1d, xs: &Tensor) -> CandleResult<Tensor> {
+    let cfg = layer.config();
+    let (output, input, kernel) = layer.weight().dims3()?;
+    if !candle_core::utils::has_accelerate()
+        || !xs.device().is_cpu()
+        || !layer.weight().device().is_cpu()
+        || xs.dtype() != DType::F32
+        || layer.weight().dtype() != DType::F32
+        || !xs.is_contiguous()
+        || !layer.weight().is_contiguous()
+        || input != output
+        || !matches!(input, 32 | 64 | 128 | 256 | 512)
+        || kernel != 7
+        || cfg.stride != 1
+        || cfg.padding != 3
+        || cfg.dilation != 1
+        || cfg.groups != 1
+    {
+        return layer.forward(xs);
+    }
+    let (batch, channels, len) = xs.dims3()?;
+    if batch == 0 || channels != input || len < 8 || len % 8 != 0 {
+        return layer.forward(xs);
+    }
+    // Preserve the [input_channel, tap] contraction order and produce NCL directly.
+    let columns = xs
+        .pad_with_zeros(2, 3, 3)?
+        .unfold(2, 7, 1)?
+        .permute((0, 1, 3, 2))?
+        .contiguous()?
+        .reshape((batch, input * 7, len))?;
+    let weight = layer
+        .weight()
+        .reshape((1, output, input * 7))?
+        .broadcast_as((batch, output, input * 7))?;
+    let result = weight.matmul(&columns)?;
+    match layer.bias() {
+        Some(bias) => result.broadcast_add(&bias.reshape((1, output, 1))?),
+        None => Ok(result),
     }
 }
 
