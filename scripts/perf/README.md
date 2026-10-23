@@ -145,3 +145,25 @@ and five hot calls). Compare raw WAV bytes, complete short/long native codes and
 all native F32/PCM16 WAVs. Keep formal short product timing separate from dumps
 and correctness checks. The run record includes rejected materialized/transposed
 layout screens; those alternatives are not runtime options.
+
+## CPU real MLP layout screen
+
+After building the CPU release library tests, run the frozen executable's
+`stage0_qwen3::cpu_attribution::compare_real_mlp_layouts` using `--ignored --exact
+TEST_NAME --nocapture --test-threads=1`, through `omnivoice_cpu_run.py` in three
+serial independent processes. Set `OMNI_CPU_TRACE_MODEL` to the immutable model
+and `OMNI_CPU_TRACE_ROOT` to the prior real-input capture directory. It requires
+the nine `step-{0,15,31}-layer-{0,13,27}-replay.safetensors` archives.
+
+The probe recomputes merged projections from actual `mlp_input` and weights,
+instead of loading canonicalized gate/up as if their layout were unchanged.
+Variants 0/1/2/3 retain split views / materialize gate / materialize up /
+materialize both. All use the original SiLU and multiplication. Before timing,
+compare every activation, MLP and residual output bit, twice per variant.
+Each scope warms all variants once, then runs five groups of candidate-specific
+ABBA slots, five calls per slot, rotating candidate order between groups.
+`CPU_MLP_LAYOUT` JSON lines retain all samples; the first can follow the test
+runner's name prefix, so parse the marker wherever it occurs in a line.
+Activation and complete MLP+residual timings overlap and must not be added.
+Explicit continuity was slower on all three real-input processes in the dated
+2026-10-24 record; it remains an offline experiment, not a production option.

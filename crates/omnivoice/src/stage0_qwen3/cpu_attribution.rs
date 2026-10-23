@@ -100,6 +100,100 @@ fn config() -> Result<Stage0Qwen3BackboneConfig> {
     })
 }
 
+fn layout_activation(both: &Tensor, variant: usize) -> candle_core::Result<Tensor> {
+    let width = both.dim(2)? / 2;
+    let gate = both.narrow(2, 0, width)?;
+    let up = both.narrow(2, width, width)?;
+    let gate = if variant & 1 != 0 {
+        gate.contiguous()?
+    } else {
+        gate
+    };
+    let up = if variant & 2 != 0 {
+        up.contiguous()?
+    } else {
+        up
+    };
+    gate.silu()? * up
+}
+
+#[test]
+#[ignore = "requires captured real CPU MLP inputs and immutable local weights"]
+fn compare_real_mlp_layouts() -> Result<()> {
+    use std::{hint::black_box, time::Instant};
+
+    assert!(candle_core::utils::has_accelerate());
+    let cfg = config()?;
+    // SAFETY: the pinned local model remains immutable throughout this offline probe.
+    let vb = unsafe {
+        VarBuilder::from_mmaped_safetensors(
+            &[io::model()?.join("model.safetensors")],
+            DType::F32,
+            &Device::Cpu,
+        )?
+    };
+    for layer in [0, 13, 27] {
+        let mlp = Stage0Qwen3Mlp::load(&cfg, vb.pp(format!("llm.layers.{layer}.mlp")))?;
+        let projection = mlp.gate_up_proj.as_ref().expect("merged CPU MLP");
+        for step in [0, 15, 31] {
+            let case = format!("step-{step}-layer-{layer}");
+            let tensors = io::load(&format!("{case}-replay"))?;
+            let input = &tensors["mlp_input"];
+            let residual = &tensors["residual"];
+            let both = input.apply(projection)?;
+            let activation = layout_activation(&both, 0)?;
+            let output = mlp.forward(input)?;
+            io::equal(&output, &tensors["mlp_output"])?;
+            let consumer = (&output + residual)?;
+            for variant in 0..4 {
+                for _ in 0..2 {
+                    let candidate = layout_activation(&both, variant)?;
+                    io::equal(&candidate, &activation)?;
+                    let candidate = candidate.apply(&mlp.down_proj)?;
+                    io::equal(&candidate, &output)?;
+                    io::equal(&(&candidate + residual)?, &consumer)?;
+                }
+            }
+            for scope in ["activation", "mlp_residual"] {
+                let run = |variant| -> Result<Tensor> {
+                    if scope == "activation" {
+                        Ok(layout_activation(&both, variant)?)
+                    } else {
+                        let projected = input.apply(projection)?;
+                        let output =
+                            layout_activation(&projected, variant)?.apply(&mlp.down_proj)?;
+                        Ok((&output + residual)?)
+                    }
+                };
+                for variant in 0..4 {
+                    black_box(run(variant)?);
+                }
+                // Each pair is ABBA; rotate candidates to balance their position in a group.
+                for group in 0..5 {
+                    for candidate in (1..4).cycle().skip(group % 3).take(3) {
+                        for variant in [0, candidate, candidate, 0] {
+                            let start = Instant::now();
+                            for _ in 0..5 {
+                                black_box(run(variant)?);
+                            }
+                            println!(
+                                "CPU_MLP_LAYOUT {}",
+                                serde_json::json!({
+                                    "case":case,"scope":scope,"group":group,
+                                    "candidate":candidate,"variant":variant,
+                                    "microseconds":start.elapsed().as_secs_f64()*1e6/5.0,
+                                    "bits_equal":true,
+                                })
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn normalized_rotated(
     attn: &Stage0Qwen3Attention,
     q: &Tensor,
