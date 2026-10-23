@@ -191,6 +191,13 @@ patch 下能编译当作发行可用。确需 fork 独有公开 API 时，受影
 
 ## 已验证实例与拒绝项
 
+[OmniVoice decoder 1×1 GEMM](../records/omnivoice/omnivoice-decoder-pointwise-2026-10-23.md)
+仅在 decoder 显式选择 dense Metal F32 的通道优先矩阵乘法，省去 im2col 和输出布局复制：
+固定 130 帧 codes、ABBA、每进程 1 预热 + 5 热轮，176.20→161.85 ms（-8.15%）；
+1/7/130/179 帧及短/长 codes、F32/PCM16 WAV 逐字节一致。整链观测约 -0.37%，
+低于进程波动，未确认整链提速。Snake 缓存缺少稳定收益证据而撤回，不能把撤回归因于
+未达到某个默认百分比；BTC GEMM 候选更慢，未保留。7-tap 仅做诊断。
+
 后续 [OmniVoice 贪心 confidence 与转型实验](../records/omnivoice/omnivoice-scoring-2026-10-23.md)
 保留 Metal 贪心的 argmax 索引 gather：三进程 1025 词表选择 60.23→36.63 µs
 （-39.2%），同形状完整 scoring 探针约 -1.6%，短/长 codes 与 F32/PCM16 WAV 一致；

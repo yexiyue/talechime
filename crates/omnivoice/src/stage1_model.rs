@@ -293,8 +293,8 @@ impl Module for ResidualUnit {
         let ys = xs
             .apply(&self.snake1)?
             .apply(&self.conv1)?
-            .apply(&self.snake2)?
-            .apply(&self.conv2)?;
+            .apply(&self.snake2)?;
+        let ys = self.conv2.forward_decoder_pointwise(&ys)?;
         let pad = (xs.dim(candle_core::D::Minus1)? - ys.dim(candle_core::D::Minus1)?) / 2;
         if pad > 0 {
             Ok((&ys + xs.narrow(candle_core::D::Minus1, pad, ys.dim(candle_core::D::Minus1)?)?)?)

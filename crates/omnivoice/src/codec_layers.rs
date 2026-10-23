@@ -162,6 +162,48 @@ enum CodecConv1dInner {
     WeightNormLazy(LazyWeightNormConv1d),
 }
 
+impl CodecConv1d {
+    // Opt in only from the decoder: reference-audio encoding keeps its original path.
+    pub(crate) fn forward_decoder_pointwise(&self, xs: &Tensor) -> CandleResult<Tensor> {
+        match &self.inner {
+            CodecConv1dInner::Dense(layer) => forward_dense_decoder_pointwise(layer, xs),
+            _ => self.forward(xs),
+        }
+    }
+}
+
+fn forward_dense_decoder_pointwise(layer: &Conv1d, xs: &Tensor) -> CandleResult<Tensor> {
+    let config = layer.config();
+    let (out_channels, in_channels, kernel) = layer.weight().dims3()?;
+    if !xs.device().is_metal()
+        || xs.dtype() != DType::F32
+        || kernel != 1
+        || config.stride != 1
+        || config.padding != 0
+        || config.dilation != 1
+        || config.groups != 1
+        || !xs.is_contiguous()
+        || !layer.weight().is_contiguous()
+    {
+        return layer.forward(xs);
+    }
+    let (batch, _, len) = xs.dims3()?;
+    if batch == 0 || len == 0 {
+        return layer.forward(xs);
+    }
+    // NCL output directly avoids both im2col and the output transpose copy.
+    let weight = layer.weight().squeeze(2)?.unsqueeze(0)?.broadcast_as((
+        batch,
+        out_channels,
+        in_channels,
+    ))?;
+    let output = weight.matmul(xs)?;
+    match layer.bias() {
+        Some(bias) => output.broadcast_add(&bias.reshape((1, out_channels, 1))?),
+        None => Ok(output),
+    }
+}
+
 #[derive(Debug, Clone)]
 struct LazyConv1dWeights {
     weight: Arc<QTensor>,
@@ -816,6 +858,115 @@ fn vb_get_bias(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pointwise_cases(device: &Device) -> CandleResult<()> {
+        let bits = |t: Tensor| -> CandleResult<Vec<u32>> {
+            Ok(t.to_dtype(DType::F32)?
+                .flatten_all()?
+                .to_vec1::<f32>()?
+                .into_iter()
+                .map(f32::to_bits)
+                .collect())
+        };
+        for (input, output) in [(3, 5), (8, 8), (16, 16), (32, 32), (32, 64), (64, 32)] {
+            let weight = Tensor::rand(-0.1f32, 0.1f32, (output, input, 1), device)?;
+            for bias in [None, Some(Tensor::rand(-0.1f32, 0.1f32, output, device)?)] {
+                let conv = Conv1d::new(weight.clone(), bias, Conv1dConfig::default());
+                let wrapper = CodecConv1d {
+                    inner: CodecConv1dInner::Dense(conv.clone()),
+                };
+                for batch in [1, 2] {
+                    for frames in [1, 7, 130, 179] {
+                        for strided in [false, true] {
+                            let xs = if strided {
+                                Tensor::rand(-0.1f32, 0.1f32, (batch, frames, input), device)?
+                                    .transpose(1, 2)?
+                            } else {
+                                Tensor::rand(-0.1f32, 0.1f32, (batch, input, frames), device)?
+                            };
+                            let expected = bits(conv.forward(&xs)?)?;
+                            assert_eq!(bits(wrapper.forward(&xs)?)?, expected);
+                            for _ in 0..2 {
+                                assert_eq!(
+                                    bits(wrapper.forward_decoder_pointwise(&xs)?)?,
+                                    expected,
+                                    "input={input} output={output} batch={batch} frames={frames} strided={strided}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for (kernel, config) in [
+            (
+                7,
+                Conv1dConfig {
+                    padding: 3,
+                    ..Default::default()
+                },
+            ),
+            (
+                7,
+                Conv1dConfig {
+                    padding: 9,
+                    dilation: 3,
+                    ..Default::default()
+                },
+            ),
+            (
+                1,
+                Conv1dConfig {
+                    stride: 2,
+                    ..Default::default()
+                },
+            ),
+            (
+                1,
+                Conv1dConfig {
+                    padding: 1,
+                    ..Default::default()
+                },
+            ),
+            (
+                1,
+                Conv1dConfig {
+                    groups: 2,
+                    ..Default::default()
+                },
+            ),
+        ] {
+            let weight = Tensor::rand(-0.1f32, 0.1f32, (4, 4 / config.groups, kernel), device)?;
+            let conv = Conv1d::new(weight, None, config);
+            let xs = Tensor::rand(-0.1f32, 0.1f32, (2, 4, 23), device)?;
+            assert_eq!(
+                bits(forward_dense_decoder_pointwise(&conv, &xs)?)?,
+                bits(conv.forward(&xs)?)?
+            );
+        }
+        let conv = Conv1d::new(
+            Tensor::ones((4, 4, 1), DType::F16, device)?,
+            None,
+            Conv1dConfig::default(),
+        );
+        let xs = Tensor::ones((1, 4, 7), DType::F16, device)?;
+        assert_eq!(
+            bits(forward_dense_decoder_pointwise(&conv, &xs)?)?,
+            bits(conv.forward(&xs)?)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cpu_decoder_pointwise_keeps_original_path() -> CandleResult<()> {
+        pointwise_cases(&Device::Cpu)
+    }
+
+    #[test]
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    fn metal_decoder_pointwise_matches_original_bits_and_fallbacks() -> CandleResult<()> {
+        pointwise_cases(&Device::new_metal(0)?)
+    }
 
     #[test]
     fn cpu_transposed_convolution_keeps_original_path() -> CandleResult<()> {

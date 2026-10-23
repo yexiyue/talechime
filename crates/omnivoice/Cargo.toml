@@ -42,3 +42,7 @@ required-features=["metal"]
 [[example]]
 name="scoring_probe"
 required-features=["metal"]
+
+[[example]]
+name="decoder_ops_probe"
+required-features=["metal"]
