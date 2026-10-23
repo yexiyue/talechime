@@ -16,6 +16,7 @@ pub mod pipeline;
 pub mod postprocess;
 pub mod reference_prompt;
 pub mod runtime;
+mod stage0_cpu_linear;
 pub mod stage0_loop;
 pub mod stage0_model;
 pub mod stage0_qwen3;

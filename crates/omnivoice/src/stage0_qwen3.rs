@@ -8,6 +8,7 @@ use candle_nn::{Activation, Embedding, VarBuilder};
 use candle_transformers::models::with_tracing::{Linear, RmsNorm, linear_b};
 
 use crate::error::Result;
+use crate::stage0_cpu_linear::CpuProjection;
 
 #[derive(Debug, Clone)]
 pub struct Stage0Qwen3BackboneConfig {
@@ -132,8 +133,8 @@ impl Module for Stage0Qwen3Mlp {
 #[derive(Debug, Clone)]
 struct Stage0Qwen3Attention {
     q_proj: Linear,
-    k_proj: Linear,
-    v_proj: Linear,
+    k_proj: CpuProjection,
+    v_proj: CpuProjection,
     o_proj: Linear,
     q_norm: RmsNorm,
     k_norm: RmsNorm,
@@ -160,13 +161,13 @@ impl Stage0Qwen3Attention {
                 cfg.attention_bias,
                 vb.pp("q_proj"),
             )?,
-            k_proj: linear_b(
+            k_proj: CpuProjection::load(
                 cfg.hidden_size,
                 num_kv_heads * head_dim,
                 cfg.attention_bias,
                 vb.pp("k_proj"),
             )?,
-            v_proj: linear_b(
+            v_proj: CpuProjection::load(
                 cfg.hidden_size,
                 num_kv_heads * head_dim,
                 cfg.attention_bias,
