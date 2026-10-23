@@ -13,6 +13,10 @@ use candle_transformers::quantized_var_builder::VarBuilder as QuantizedVarBuilde
 
 use crate::error::Result;
 
+#[cfg(test)]
+#[path = "codec_layers/cpu_pointwise.rs"]
+mod cpu_pointwise;
+
 /// Lookup table that stays in GGUF storage and gathers rows on demand.
 ///
 /// Float GGML blobs (F32/F16/BF16) are materialized as a dense tensor once at
@@ -175,7 +179,14 @@ impl CodecConv1d {
 fn forward_dense_decoder_pointwise(layer: &Conv1d, xs: &Tensor) -> CandleResult<Tensor> {
     let config = layer.config();
     let (out_channels, in_channels, kernel) = layer.weight().dims3()?;
-    if !xs.device().is_metal()
+    // Keep CPU BLAS geometry to the aligned square projections used by this decoder.
+    let cpu_pointwise = xs.device().is_cpu()
+        && candle_core::utils::has_accelerate()
+        && layer.weight().device().is_cpu()
+        && layer.weight().dtype() == DType::F32
+        && out_channels == in_channels
+        && matches!(in_channels, 32 | 64 | 128 | 256 | 512);
+    if !(xs.device().is_metal() || cpu_pointwise)
         || xs.dtype() != DType::F32
         || kernel != 1
         || config.stride != 1
@@ -187,8 +198,11 @@ fn forward_dense_decoder_pointwise(layer: &Conv1d, xs: &Tensor) -> CandleResult<
     {
         return layer.forward(xs);
     }
-    let (batch, _, len) = xs.dims3()?;
-    if batch == 0 || len == 0 {
+    let (batch, channels, len) = xs.dims3()?;
+    if batch == 0
+        || len == 0
+        || (cpu_pointwise && (channels != in_channels || len < 8 || len % 8 != 0))
+    {
         return layer.forward(xs);
     }
     // NCL output directly avoids both im2col and the output transpose copy.
@@ -969,8 +983,65 @@ mod tests {
     }
 
     #[test]
-    fn cpu_decoder_pointwise_keeps_original_path() -> CandleResult<()> {
+    fn cpu_decoder_pointwise_matches_original_bits_and_fallbacks() -> CandleResult<()> {
         pointwise_cases(&Device::Cpu)
+    }
+
+    #[test]
+    fn cpu_decoder_pointwise_preserves_bits_for_decoder_channels_and_layouts() -> CandleResult<()> {
+        let device = &Device::Cpu;
+        let bits = |t: Tensor| -> CandleResult<Vec<u32>> {
+            Ok(t.flatten_all()?
+                .to_vec1::<f32>()?
+                .into_iter()
+                .map(f32::to_bits)
+                .collect())
+        };
+        for channels in [32, 64, 128, 256, 512] {
+            let weight = Tensor::rand(-0.1f32, 0.1, (channels + 1, channels, 1), device)?
+                .narrow(0, 1, channels)?;
+            for bias in [None, Some(Tensor::rand(-0.1f32, 0.1, channels, device)?)] {
+                let conv = Conv1d::new(weight.clone(), bias, Conv1dConfig::default());
+                for batch in [1, 2] {
+                    for len in [
+                        1, 7, 8, 9, 13, 16, 24, 32, 40, 56, 64, 72, 96, 128, 130, 160, 179, 256,
+                        280, 480, 520, 960, 1040,
+                    ] {
+                        for strided in [false, true] {
+                            let xs = if strided {
+                                Tensor::rand(-0.1f32, 0.1, (batch, len, channels), device)?
+                                    .transpose(1, 2)?
+                            } else {
+                                Tensor::rand(-0.1f32, 0.1, (batch + 1, channels, len), device)?
+                                    .narrow(0, 1, batch)?
+                            };
+                            let reference = bits(conv.forward(&xs)?)?;
+                            for _ in 0..2 {
+                                let actual = bits(forward_dense_decoder_pointwise(&conv, &xs)?)?;
+                                assert_eq!(
+                                    actual
+                                        .iter()
+                                        .zip(&reference)
+                                        .filter(|(a, b)| a != b)
+                                        .count(),
+                                    0,
+                                    "channels={channels} batch={batch} len={len} strided={strided}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            let xs = Tensor::rand(-0.1f32, 0.1, (1, channels, 32), device)?;
+            let strided_weight =
+                Tensor::rand(-0.1f32, 0.1, (channels, channels, 1), device)?.transpose(0, 1)?;
+            let conv = Conv1d::new(strided_weight, None, Conv1dConfig::default());
+            assert_eq!(
+                bits(forward_dense_decoder_pointwise(&conv, &xs)?)?,
+                bits(conv.forward(&xs)?)?
+            );
+        }
+        Ok(())
     }
 
     #[test]

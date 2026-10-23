@@ -287,6 +287,13 @@ Accelerate F32 / hidden1024 / FFN3072 / SiLU 权重启用单次 gate/up 投影�
 Accelerate BLAS 与 SiLU 向量路径已启用，官方同输入层实际调用 CPU Flash；没有证据表明
 CPU 已到硬件上限。本轮只保留离线诊断，短/长完整 codes 和 28 个 WAV 保持一致。
 
+随后 [CPU decoder 1×1 卷积](../records/omnivoice/omnivoice-cpu-pointwise-2026-10-24.md)
+对受限的 Accelerate F32、连续、方阵通道和 8 倍时间长度复用直接 NCL GEMM，避开
+im2col 与输出布局复制；长度 13 的数值位差由回退保护。固定 130 帧 decoder ABBA
+419.901→345.533 ms（-17.71%），短长完整 codes 和 28 个 WAV 一致。
+整链首组和唯一补组的观测均值分别改善 0.34% / 2.01%，存在顺序反向及组间波动，
+不确认稳定整链增量；按可重复的 decoder 收益和低维护成本保留，没有改 7-tap 或 stage0。
+
 | 案例（测试设备 / 路径） | 结论与证据范围 |
 | --- | --- |
 | CosyVoice3 首轮 Windows CPU / RTX 5070 CUDA | 建立准确转写、单实例基线；DiT/MLP 图及组合端到端不足 10%，转置 view 更慢且改变 PCM，均撤回。保留 recorder 输出复制预热修复；HiFT 转换摘要与生产清单不同，未通过资源准备门禁，不能宣称新增整链提速 |

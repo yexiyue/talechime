@@ -117,3 +117,31 @@ measurement groups, tensor/layout hashes, code fixture hashes, `manifest.json`,
 `e2e-summary.json` and `parity-summary.json`. The JSON can be committed as numeric
 evidence; the tensor payloads and audio cannot. Keep rejected fixture screens in a
 separate subdirectory so the summarizer cannot mix them into accepted results.
+
+## CPU decoder pointwise validation
+
+The retained CPU path is limited to Accelerate F32, dense contiguous square
+weights with 32/64/128/256/512 channels, contiguous NCL input, kernel/stride/
+dilation/groups all one, zero padding, and time length at least eight and
+multiple of eight. Non-aligned lengths retain the original path: unrestricted
+NCL GEMM changed bits in a 13-sample test. Encoder calls use their original entry.
+
+With `OMNI_CPU_TRACE_MODEL` and `OMNI_CPU_TRACE_ROOT` pointing to the immutable
+model and prior real-input capture, the frozen CPU test executable provides:
+
+- `codec_layers::cpu_pointwise::compare_real_pointwise`: compare the original
+  Conv1d and actual retained decoder path, including bias and a residual/next-Snake
+  consumer. Each case runs ABBA slots, each one warmup plus five groups of five
+  timed calls; run three independent processes, all serially.
+- `codec_layers::cpu_pointwise::compare_fixed_decoder_bits`: compare all fixed
+  code fixtures against their archived original raw decoder outputs, twice each.
+  This is numeric verification, not a throughput benchmark.
+
+Invoke each using `--ignored --exact TEST_NAME --nocapture --test-threads=1`
+through `omnivoice_cpu_run.py`. Ordinary tests exercise shape/layout/fallback
+coverage without models. Freeze pre-change and candidate `stage1_probe` binaries
+with identical CPU features, then run ABBA per fixed-code case (one first decode
+and five hot calls). Compare raw WAV bytes, complete short/long native codes and
+all native F32/PCM16 WAVs. Keep formal short product timing separate from dumps
+and correctness checks. The run record includes rejected materialized/transposed
+layout screens; those alternatives are not runtime options.
