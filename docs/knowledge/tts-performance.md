@@ -241,6 +241,13 @@ Mac 全模型发行配置已通过 Qwen/CosyVoice 合并启用 Accelerate，不�
 feature 差异当作发行包新增收益。诊断的主要成本在 stage0 forward；正常配置未改，
 仅修复 CPU 阶段探针误执行不受 Accelerate 支持的 F16 GPU canary。
 
+其后的 [CPU 注意力布局优化](../records/omnivoice/omnivoice-cpu-attention-2026-10-23.md)
+仅对 Accelerate CPU F32、连续 K、head_dim=128 省掉 K 转置物化，让 BLAS 读转置视图。
+同期原版/候选/官方 ABCCBA，六进程均无编译活动观测：8.258→7.235 s（-12.39%），
+官方 CPU 为 6.120 s，候选仍慢 18.21%。短/长完整 codes 和 28 个 WAV 逐字节一致；
+其他维度的已知位差由回退规避。CPU Flash 在该形状更慢且改输出；投影权重预转置
+存在短形状位差且 down projection 更慢，均未接入生产；分组 GQA 仅为离线候选。
+
 | 案例（测试设备 / 路径） | 结论与证据范围 |
 | --- | --- |
 | CosyVoice3 首轮 Windows CPU / RTX 5070 CUDA | 建立准确转写、单实例基线；DiT/MLP 图及组合端到端不足 10%，转置 view 更慢且改变 PCM，均撤回。保留 recorder 输出复制预热修复；HiFT 转换摘要与生产清单不同，未通过资源准备门禁，不能宣称新增整链提速 |

@@ -278,7 +278,20 @@ fn attention_manual(
     attention_mask: Option<&Tensor>,
     scale: f64,
 ) -> Result<Tensor> {
-    let k_t = k.transpose(2, 3)?.contiguous()?;
+    let k_t = k.transpose(2, 3)?;
+    // Accelerate accepts a transposed contiguous matrix directly. Materializing
+    // it also changes BLAS's transpose route, which costs more at these shapes.
+    // Keep the specialization at the validated OmniVoice head dimension.
+    let k_t = if q.device().is_cpu()
+        && q.dtype() == DType::F32
+        && candle_core::utils::has_accelerate()
+        && k.is_contiguous()
+        && k.dim(3)? == 128
+    {
+        k_t
+    } else {
+        k_t.contiguous()?
+    };
     let mut scores = q.matmul(&k_t)?.affine(scale, 0.0)?;
     if let Some(mask) = attention_mask {
         scores = scores.broadcast_add(mask)?;
@@ -474,6 +487,68 @@ fn try_flash_attention_per_row(
     _scale: f32,
 ) -> Result<Option<Tensor>> {
     Ok(None)
+}
+
+#[cfg(test)]
+mod cpu_tests {
+    use super::*;
+    use candle_core::Device;
+
+    #[test]
+    fn cpu_attention_transposed_key_matches_materialized_bits() -> Result<()> {
+        let device = Device::Cpu;
+        for batch in [1, 2] {
+            for seq in [1, 7, 33, 157] {
+                for dim in [8, 128] {
+                    let q = Tensor::rand(-0.5f32, 0.5, (batch, 4, seq, dim), &device)?;
+                    let k = Tensor::rand(-0.5f32, 0.5, (batch, 4, seq, dim), &device)?;
+                    let v = Tensor::rand(-0.5f32, 0.5, (batch, 4, seq, dim), &device)?;
+                    let strided_k = k.transpose(2, 3)?.contiguous()?.transpose(2, 3)?;
+                    let mask = Tensor::from_vec(
+                        (0..batch * seq * seq)
+                            .map(|i| {
+                                if seq > 1 && i % seq == seq - 1 {
+                                    f32::NEG_INFINITY
+                                } else {
+                                    0f32
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                        (batch, 1, seq, seq),
+                        &device,
+                    )?;
+                    for k in [&k, &strided_k] {
+                        for mask in [None, Some(&mask)] {
+                            let scale = 1.0 / (dim as f64).sqrt();
+                            let mut scores = q
+                                .matmul(&k.transpose(2, 3)?.contiguous()?)?
+                                .affine(scale, 0.0)?;
+                            if let Some(mask) = mask {
+                                scores = scores.broadcast_add(mask)?;
+                            }
+                            let expected = candle_nn::ops::softmax_last_dim(&scores)?
+                                .matmul(&v)?
+                                .flatten_all()?
+                                .to_vec1::<f32>()?
+                                .into_iter()
+                                .map(f32::to_bits)
+                                .collect::<Vec<_>>();
+                            for _ in 0..2 {
+                                let actual = attention_manual(&q, k, &v, mask, scale)?
+                                    .flatten_all()?
+                                    .to_vec1::<f32>()?
+                                    .into_iter()
+                                    .map(f32::to_bits)
+                                    .collect::<Vec<_>>();
+                                assert_eq!(actual, expected, "batch={batch} seq={seq} dim={dim}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(all(test, feature = "metal"))]
