@@ -223,15 +223,16 @@ impl Stage0Qwen3Attention {
         flash_seqlens: Option<&[usize]>,
     ) -> Result<Tensor> {
         let _ = flash_seqlens;
-        let repeats = self.num_heads / self.num_kv_heads;
-        let k = candle_transformers::utils::repeat_kv(k, repeats)?;
-        let v = candle_transformers::utils::repeat_kv(v, repeats)?;
         let scale = 1.0f64 / (self.head_dim as f64).sqrt();
         // The fused SDPA kernel only exists on Metal; CPU keeps the manual
         // score-matrix path.
         if q.device().is_metal() {
+            // Metal SDPA maps query heads to KV heads directly for GQA.
             attention_sdpa(&q, &k, &v, attention_mask, scale as f32)
         } else {
+            let repeats = self.num_heads / self.num_kv_heads;
+            let k = candle_transformers::utils::repeat_kv(k, repeats)?;
+            let v = candle_transformers::utils::repeat_kv(v, repeats)?;
             attention_manual(&q, &k, &v, attention_mask, scale)
         }
     }
@@ -448,6 +449,54 @@ fn try_flash_attention_per_row(
 mod metal_tests {
     use super::*;
     use candle_core::Device;
+
+    #[test]
+    fn native_gqa_matches_repeated_kv_exactly() -> Result<()> {
+        let device = Device::new_metal(0)?;
+        for seq in [1, 33, 157, 287] {
+            let q = Tensor::rand(-1f32, 1f32, (2, 16, seq, 128), &device)?.to_dtype(DType::F16)?;
+            let k = Tensor::rand(-1f32, 1f32, (2, 8, seq, 128), &device)?.to_dtype(DType::F16)?;
+            let v = Tensor::rand(-1f32, 1f32, (2, seq, 8, 128), &device)?
+                .to_dtype(DType::F16)?
+                .transpose(1, 2)?;
+            let repeated_k = candle_transformers::utils::repeat_kv(k.clone(), 2)?;
+            let repeated_v = candle_transformers::utils::repeat_kv(v.clone(), 2)?;
+            let mask: Vec<f32> = (0..2 * seq * seq)
+                .map(|i| {
+                    if i % seq == seq - 1 && seq > 1 {
+                        f32::NEG_INFINITY
+                    } else {
+                        0.0
+                    }
+                })
+                .collect();
+            let mask = Tensor::from_vec(mask, (2, 1, seq, seq), &device)?.to_dtype(DType::F16)?;
+            for mask in [None, Some(&mask)] {
+                let scale = 1.0 / 128f32.sqrt();
+                let native = attention_sdpa(&q, &k, &v, mask, scale)?;
+                let repeated = attention_sdpa(&q, &repeated_k, &repeated_v, mask, scale)?;
+                assert_eq!(
+                    native
+                        .to_dtype(DType::F32)?
+                        .flatten_all()?
+                        .to_vec1::<f32>()?
+                        .into_iter()
+                        .map(f32::to_bits)
+                        .collect::<Vec<_>>(),
+                    repeated
+                        .to_dtype(DType::F32)?
+                        .flatten_all()?
+                        .to_vec1::<f32>()?
+                        .into_iter()
+                        .map(f32::to_bits)
+                        .collect::<Vec<_>>(),
+                    "sequence length {seq}, masked={}",
+                    mask.is_some()
+                );
+            }
+        }
+        Ok(())
+    }
 
     /// The fused Metal SDPA kernel and the manual score matrix path must
     /// agree within f16 tolerance on the shapes stage0 actually uses.

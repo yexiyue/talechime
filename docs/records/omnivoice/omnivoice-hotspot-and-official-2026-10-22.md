@@ -58,7 +58,7 @@ venv 必须放本地盘，否则基准会被磁盘 I/O 主导。
 | 位置 | 官方（PyTorch） | 我们（Candle/Rust） | 影响 |
 | --- | --- | --- | --- |
 | 注意力 | transformers 的融合 SDPA（`omnivoice/models/omnivoice.py` 走 `_attn_implementation="sdpa"`，也支持 flex_attention 分支） | `crates/omnivoice/src/stage0_qwen3.rs` 手写 `q.matmul(k_t)` → 物化完整 `[B,H,S,S]` 分数 → `broadcast_add(mask)` → `softmax_last_dim` → `matmul(v)` | **最大差距来源** |
-| GQA | 直接用 8 个 KV 头做融合注意力 | `repeat_kv` 物化 8→16 头 | 小 |
+| GQA | 2026-10-23 更正：本地 transformers 5.3.0 的 SDPA 在有 attention mask 时也会 `repeat_kv`；不能把官方此路径称为原生 GQA | 当时 `repeat_kv` 物化 8→16 头；后续 Metal 改用原生 GQA | 见后续独立实测 |
 | flash attention | 有 `omnivoice_flashinfer.py` 分支 | `flash_seqlens` 参数被完全忽略，`try_flash_attention_per_row` 是返回 `None` 的桩 | Metal 上永远没有融合注意力 |
 | 位置选择 | `torch.topk(scores.flatten(), k)`（device 端） | `argsort_descending` 全量 argsort，Metal 且列数 > 1024 时回退 CPU 排序再拷回 | 每次生成一次主机往返 |
 | logits 精度 | 每步把整批 `.to(torch.float32)` | 只 cast 目标切片 | **我们更省**：官方每步把 `[2,8,287,1025]`（约 4.7M 元素、18.8 MB F32）整批物化，我们只 cast 目标切片 |
@@ -175,8 +175,9 @@ mask 广播把每层 attention 的成本抬高了 1.4 ms（`[2,1,S,S] → [2,16,
 融合 SDPA 在本仓库锁定的 candle fork（rev `2266099`）里已经可用：
 `candle_nn::ops::sdpa` → `CustomOp3("metal-sdpa")` → `call_sdpa_full`，
 支持加性 mask 与 head 维 stride；限制是要求 mask 形状恰好是
-`[bs, qheads, qseq, kseq]` 且 dtype 与 q 相同，`q_head == k_head`
-（GQA 需要先 `repeat_kv`）。
+`[bs, qheads, qseq, kseq]` 且 dtype 与 q 相同。
+2026-10-23 更正：`q_head == k_head` 检查的是 head dimension，不是头数；
+固定 fork 的 `call_sdpa_full` 原生支持 GQA，K/V 不需要先 `repeat_kv`。
 
 ### 5.4 真实模型消融（Metal，短语料，forward 均值）
 
@@ -197,7 +198,7 @@ mask 广播把每层 attention 的成本抬高了 1.4 ms（`[2,1,S,S] → [2,16,
 
 | 候选 | 证据 | 预估收益（相对当前 157 ms/step） | 风险 |
 | --- | --- | ---: | --- |
-| attention 换成 `candle_nn::ops::sdpa`（融合 Metal kernel） | 逐算子 2569 → 386 µs/层（-85%）；28 层 | **-61 ms/step（-39%）**，forward 157 → ~96 ms/step | 数值语义变化（融合累加顺序）、mask 需 reshape 到 `[B,H,S,S]`、GQA 需 `repeat_kv` |
+| attention 换成 `candle_nn::ops::sdpa`（融合 Metal kernel） | 逐算子 2569 → 386 µs/层（-85%）；28 层 | **-61 ms/step（-39%）**，forward 157 → ~96 ms/step | 数值语义变化（融合累加顺序）、mask 需 expand 到 `[B,H,S,S]`；当时实现重复 K/V，内核本身无需重复 |
 | rms_norm 换成融合算子 | 真实模型消融 -18.7% | **-29 ms/step** | 与 HF `Qwen3RMSNorm` 的数值 parity 必须先验证 |
 | mask 广播路径 | 逐算子 351 µs vs full 10.6 µs；消融 -8.1% | **-12 ms/step** | SDPA 方案会自动覆盖这一项 |
 | device 端 top-k 替代全量 argsort | 代码路径存在；官方用 `torch.topk` | 未测 | 采样语义必须等价 |

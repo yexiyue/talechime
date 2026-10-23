@@ -34,3 +34,7 @@ tempfile.workspace=true
 [[example]]
 name="gemm_probe"
 required-features=["metal"]
+
+[[example]]
+name="gqa_probe"
+required-features=["metal"]

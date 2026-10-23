@@ -191,6 +191,12 @@ patch 下能编译当作发行可用。确需 fork 独有公开 API 时，受影
 
 ## 已验证实例与拒绝项
 
+OmniVoice 的最新增量记录见 [Metal 原生 GQA](../records/omnivoice/omnivoice-native-gqa-2026-10-23.md)：
+固定 Candle 已支持直接传入 8 个 KV 头；移除 Metal 上的 repeat_kv 后，短/长文本
+完整 codes、F32/PCM16 WAV 逐字节一致。同 feature 无编译活动子集 3.845→3.200 s
+（约 -16.8%，A 两进程、B 一进程）；完整 ABBA 有一个外部编译干扰进程，
+保留原始数据并区分口径，不能把子集写成完整无干扰基准。
+
 | 案例（测试设备 / 路径） | 结论与证据范围 |
 | --- | --- |
 | CosyVoice3 首轮 Windows CPU / RTX 5070 CUDA | 建立准确转写、单实例基线；DiT/MLP 图及组合端到端不足 10%，转置 view 更慢且改变 PCM，均撤回。保留 recorder 输出复制预热修复；HiFT 转换摘要与生产清单不同，未通过资源准备门禁，不能宣称新增整链提速 |
