@@ -62,3 +62,6 @@ required-features=["metal"]
 [[example]]
 name="conv7_layout_probe"
 required-features=["metal"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { workspace = true, features = ["accelerate"] }

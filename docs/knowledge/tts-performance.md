@@ -140,6 +140,14 @@ Qwen 语义采样当前使用一次 F32 logits 回传后的统一 CPU 排名策�
 Qwen Metal depthwise 的窗口 matmul 只适用已验证的卷积条件；CUDA 先测 stock/cuDNN
 真实路径，不继承 Metal 分派阈值。Accelerate feature 合并会影响同进程其他 CPU 后端。
 
+macOS 的所有 Candle 模型库默认通过 target 依赖启用 Accelerate，包括独立 CPU
+构建；后续 macOS CPU 实验以此为基线。此规则不改变 ORT provider，也不适用于
+Windows/Linux 的 AMD CPU。BLAS 切换可能改变浮点结果，不承诺所有模型逐位一致；
+feature/链接与普通测试通过不等于全部模型真实音频验收，实际算子也不一定使用 AMX。
+默认接线与 OmniVoice 线程初筛见[记录](../records/omnivoice/omnivoice-cpu-accelerate-defaults-2026-10-23.md)：
+默认与此前显式 Accelerate 的完整 codes 和 96 个短文本 WAV 一致；线程实验末尾
+出现外部编译，未确认新整链收益，不修改全局线程策略。
+
 ## CUDA Graph 的所有权规则
 
 1. 先选固定形状、无 host 读回、无图内取消的边界。动态 KV 长度、设备 offset 和采样

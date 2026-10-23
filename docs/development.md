@@ -51,10 +51,14 @@ CLI 与 backends 使用同名开关，计算库只提供 `cuda` / `metal` 平台
 
 | ORT provider | `ort-cuda`、`ort-coreml` | 为 Nano 提供 provider，不自动启用模型适配器 |
 
-macOS 上 `cosyvoice3` 与 `qwen` 的 CPU matmul 默认经系统 Accelerate（AMX BLAS）执行
-（2026-10-18 决定；target 门控依赖，无开关）。数值与其他平台的纯 Rust
-`gemm` 路径非位级一致，详见[性能记录](records/cosyvoice3/cosyvoice3-performance-2026-10-17.md) §11
-与 [Qwen 记录](records/qwen/qwen-tts-acceptance.md)。
+macOS 上所有 Candle 模型库（含 Qwen3-ASR）的 CPU 默认启用系统 Accelerate，
+通过 macOS target 依赖激活，无需额外 feature。Windows/Linux 不启用 Apple framework；
+AMD CPU 在这些平台不能使用 Accelerate。ORT CPU provider 的计算实现独立于 Candle feature。
+Accelerate 不代表每个算子都由 AMX 执行，也不覆盖量化算子的全部路径。
+BLAS 切换可能改变浮点结果，不能保证与其他平台的纯 Rust `gemm` 逐位一致。
+Qwen/CosyVoice 的历史验收见[性能记录](records/cosyvoice3/cosyvoice3-performance-2026-10-17.md)
+与 [Qwen 记录](records/qwen/qwen-tts-acceptance.md)；其他模型的编译/普通测试不等于真实音频验收。
+后续 macOS CPU 性能实验以 Accelerate 为默认基线；标准全模型发行配置此前已合并启用它。
 
 适配器层不提供通用 `metal` / `cuda` 开关；选择加速时必须明确模型。旧 `metal` / `coreml` 名称已移除，改用 `qwen-metal` / `ort-coreml`。加速开关包含对应模型开关，发行配置无需重复列出模型。`directml-probe` 仅是 backends 的实验 example，不暴露产品设备。
 

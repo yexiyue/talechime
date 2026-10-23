@@ -950,10 +950,21 @@ mod tests {
             Conv1dConfig::default(),
         );
         let xs = Tensor::ones((1, 4, 7), DType::F16, device)?;
-        assert_eq!(
-            bits(forward_dense_decoder_pointwise(&conv, &xs)?)?,
-            bits(conv.forward(&xs)?)?
-        );
+        if device.is_cpu() && candle_core::utils::has_accelerate() {
+            let expected = conv.forward(&xs).unwrap_err().to_string();
+            assert!(expected.contains("does not support f16 matmul"));
+            assert_eq!(
+                forward_dense_decoder_pointwise(&conv, &xs)
+                    .unwrap_err()
+                    .to_string(),
+                expected
+            );
+        } else {
+            assert_eq!(
+                bits(forward_dense_decoder_pointwise(&conv, &xs)?)?,
+                bits(conv.forward(&xs)?)?
+            );
+        }
         Ok(())
     }
 

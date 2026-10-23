@@ -10,9 +10,8 @@ repository = "https://github.com/yexiyue/talechime"
 [features]
 default = []
 experimental-dual-reference = []
-# Test-only macOS experiment. It does not expose a production API or change
-# the default Metal build. The two features permit separate plain-CPU and
-# Accelerate CPU builds so Cargo feature unification cannot contaminate them.
+# Test-only codec replay. macOS now always enables Accelerate; retain the
+# historical accelerate-experiment feature for existing replay commands.
 codec-experiment = []
 accelerate-experiment = ["codec-experiment", "dep:candle-transformers"]
 cuda = ["candle-core/cuda", "candle-nn/cuda", "dep:cudarc"]
@@ -28,6 +27,7 @@ tokenizers = { workspace = true, features = ["onig"] }
 # Feature carrier only for the isolated experiment. A second direct core alias
 # conflicts with Cargo's same-package naming rule in all-features builds.
 [target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { workspace = true, features = ["accelerate"] }
 candle-transformers = { workspace = true, features = ["accelerate"], optional = true }
 
 [dev-dependencies]

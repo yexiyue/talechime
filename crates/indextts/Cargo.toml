@@ -29,3 +29,6 @@ hound.workspace = true
 [dev-dependencies]
 anyhow.workspace = true
 clap.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { workspace = true, features = ["accelerate"] }

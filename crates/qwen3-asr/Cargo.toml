@@ -20,3 +20,6 @@ rustfft.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 log.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { workspace = true, features = ["accelerate"] }
