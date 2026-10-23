@@ -226,6 +226,13 @@ Candle 补丁将固定 codes 解码 162.68→154.64 ms（-4.94%），短/长完�
 项目依赖与生产路径未改。整链 ABBA 遇外部编译而中止，不确认整链提速；专用 NCL
 展开反而慢 9.77%，贪心 mask 视图无稳定收益，均未进入生产。
 
+[OmniVoice CPU 完整链路](../records/omnivoice/omnivoice-cpu-full-chain-2026-10-23.md)
+另测 F32 / CPU：Accelerate 两进程均值 8.390 s、官方 CPU 6.103 s，RTF 1.577 / 1.130；
+四个进程均无构建活动观测。独立默认 CPU 的两组有外部构建活动，不报精确 A/B 提速。
+Mac 全模型发行配置已通过 Qwen/CosyVoice 合并启用 Accelerate，不能把独立包的
+feature 差异当作发行包新增收益。诊断的主要成本在 stage0 forward；正常配置未改，
+仅修复 CPU 阶段探针误执行不受 Accelerate 支持的 F16 GPU canary。
+
 | 案例（测试设备 / 路径） | 结论与证据范围 |
 | --- | --- |
 | CosyVoice3 首轮 Windows CPU / RTX 5070 CUDA | 建立准确转写、单实例基线；DiT/MLP 图及组合端到端不足 10%，转置 view 更慢且改变 PCM，均撤回。保留 recorder 输出复制预热修复；HiFT 转换摘要与生产清单不同，未通过资源准备门禁，不能宣称新增整链提速 |

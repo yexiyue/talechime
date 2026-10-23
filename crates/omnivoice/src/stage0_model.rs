@@ -1366,6 +1366,10 @@ fn sync_probe_enabled() -> bool {
 /// forward so GPU throughput regressions can be separated from
 /// model-specific work.
 fn sync_probe_canary(device: &Device) -> Option<(Tensor, Tensor)> {
+    // This GPU canary uses F16, which CPU Accelerate matmul does not support.
+    if device.is_cpu() {
+        return None;
+    }
     static CANARY: std::sync::OnceLock<std::sync::Mutex<Option<(Tensor, Tensor)>>> =
         std::sync::OnceLock::new();
     let slot = CANARY.get_or_init(|| std::sync::Mutex::new(None));
