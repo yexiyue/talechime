@@ -113,7 +113,9 @@ talechime --backend voxcpm --param steps=32 --param temperature=0.9 --seed 7 cha
 | CosyVoice3 0.5B，M4 Pro CPU，`long` 样例，热模型非流式 | 1.17 | 1.089 | RTF 约低 7% | [本机报告](docs/records/cosyvoice3/cosyvoice3-performance-2026-10-17.md)：Rust 为 10 月 18 日默认启用 Accelerate 后的单组测量；官方与 Rust 采样 token 数不同，尚无最终版本的配对多轮官方复测 |
 | IndexTTS 2.5，RTX 5070 CUDA，同语料 6 段 × 2 轮 | 0.45577 | 0.42137 | 整体 RTF 低 7.55%；排除首条后低 1.53% | [串行 ABBA 对照](docs/records/indextts/indextts-candle-performance-2026-10-17.md)：测于独立计算库；接入后端的实机性能尚未复测，稳态差距不能外推为稳定优势 |
 
-CosyVoice3 的 Rust Metal 没有对应的官方 MPS 实现可作同设备对照；[报告](docs/records/cosyvoice3/cosyvoice3-performance-2026-10-17.md)另列 Metal 和官方 CPU 的绝对结果，不能把设备差异算成移植提速。Qwen 官方对照使用显式匹配采样和空历史 repetition guard；官方源码补丁只用于可运行的 MPS 基准与 EOS/来源记录，不改变 Talechime 实现，历史失效比较保留在[审查记录](docs/records/qwen/qwen-performance-review-2026-10-18.md)。MOSS、VoxCPM2 和 OmniVoice 目前缺少同条件的**官方实现**性能基准，因此不报“比官方快多少”。VoxCPM2 的[原生 llama.cpp-omni 对照](docs/records/voxcpm/voxcpm-candle-acceptance.md)与官方 PyTorch 是不同基线。
+CosyVoice3 的 Rust Metal 没有对应的官方 MPS 实现可作同设备对照；[报告](docs/records/cosyvoice3/cosyvoice3-performance-2026-10-17.md)另列 Metal 和官方 CPU 的绝对结果，不能把设备差异算成移植提速。Qwen 官方对照使用显式匹配采样和空历史 repetition guard；官方源码补丁只用于可运行的 MPS 基准与 EOS/来源记录，不改变 Talechime 实现，历史失效比较保留在[审查记录](docs/records/qwen/qwen-performance-review-2026-10-18.md)。MOSS 和 VoxCPM2 目前缺少同条件的**官方实现**性能基准，因此不报“比官方快多少”。VoxCPM2 的[原生 llama.cpp-omni 对照](docs/records/voxcpm/voxcpm-candle-acceptance.md)与官方 PyTorch 是不同基线。
+
+OmniVoice 已有 [CPU / Metal 执行路径与对照记录](docs/knowledge/omnivoice-performance.md)。2026-10-23 的 M4 Pro 短文本同期比较为 Rust Metal 2.672 s、官方 MPS 3.235 s；两端生成长度与随机轨迹不同，是特定条件下的产品表现，不能外推所有输入或音质等价。CPU 后续 decoder 优化有独立固定 codes 收益，尚无最终组合版本与官方的新配对排名。
 
 **仓库内优化（Qwen3-TTS 0.6B Base ICL，RTX 5070 CUDA）**：上表是“对官方”口径；CUDA 上另有一项仓库内 A/B——CodePredictor 整帧 CUDA 图（`qwen-cuda` 默认启用，`QWEN_CP_GRAPH=0` 关闭，profiling 走 eager）。ABBA 八进程、锁频、丢弃预热，每次生成 59 帧 / 4.72 s 音频，两组区间均不重叠，codes、原始 PCM 与 WAV 与 eager 逐字节一致：
 

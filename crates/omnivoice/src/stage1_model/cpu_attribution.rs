@@ -117,7 +117,7 @@ fn trace_decoder(model: &Stage1Model, tokens: &I64Tensor2, export: bool) -> Resu
             if unit_index == 0 {
                 let y = x.apply(&unit.snake1)?;
                 let y = measure(&format!("{unit_base}-conv1"), "conv7", &y, export, |x| {
-                    Ok(x.apply(&unit.conv1)?)
+                    Ok(unit.conv1.forward_decoder_conv7(x)?)
                 })?;
                 let y = y.apply(&unit.snake2)?;
                 let y = measure(&format!("{unit_base}-conv2"), "conv1", &y, export, |x| {

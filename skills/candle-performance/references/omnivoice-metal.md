@@ -32,7 +32,8 @@ CFG 拼在 batch，不能将其误算成双倍序列长度；287 是额外合成
 head dimension，不能只凭变量名推断头数限制。检查 full-SDPA 分支，不能只读 vector 分支。
 
 同探针比较原生 GQA 与 repeat_kv，包含复制、分配和真实 mask/V 布局；再核完整
-生成输出。CPU 等其他设备保留原路径。本案例不等于“照搬官方”：固定 transformers
+生成输出。CPU 需要独立验收其 grouped 手写 attention，不调用 Metal SDPA。
+本案例不等于“照搬官方”：固定 transformers
 在有 mask 时仍重复 K/V，Candle Metal 与 PyTorch MPS 的路由不同。
 
 ### 顺着消费者布局消除复制，而不是逐个删除 contiguous
@@ -116,6 +117,9 @@ Rust 3.02383→2.67203 s（-11.63%），官方 MPS F16 为 3.23450 s。
 现有离线探针包括 `gqa_probe`、`attention_copyfree_probe`、`scoring_probe`、
 `decoder_ops_probe`、`stage1_probe`、`conv7_layout_probe`；普通测试不下载模型。
 移出本仓库后，下列链接可能不可用；上面的流程不依赖历史产物才能执行。
+
+截至 2026-10-24，CPU 另保留受限的 1×1 与 dilation=1 的 7-tap NCL 布局，
+见 [CPU 经验](omnivoice-cpu.md)。这不会推翻本页 Metal 7-tap 候选撤回结论。
 
 - [初期融合与数值变化](../../../docs/records/omnivoice/omnivoice-optimization-2026-10-22.md)
 - [转置卷积与 decoder 差距](../../../docs/records/omnivoice/omnivoice-backend-experiments-2026-10-23.md)

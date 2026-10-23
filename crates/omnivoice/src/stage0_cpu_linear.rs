@@ -24,6 +24,7 @@ impl CpuProjection {
             && weight.dtype() == DType::F32
             && candle_core::utils::has_accelerate()
             && !weight.is_variable()
+            && weight.is_contiguous()
             && (input, output) == (1024, 1024)
         {
             Some(weight.t()?.contiguous()?)
@@ -156,6 +157,35 @@ mod tests {
         );
         let layer = CpuProjection::load(1024, 1024, false, vb)?;
         assert!(layer.weight_t.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn cpu_projection_keeps_strided_weights_on_original_route() -> Result<()> {
+        let device = Device::Cpu;
+        let weights = [
+            Tensor::rand(-0.1f32, 0.1, (1024, 1024), &device)?.t()?,
+            Tensor::rand(-0.1f32, 0.1, (1024, 2048), &device)?.narrow(1, 128, 1024)?,
+        ];
+        for weight in weights {
+            assert!(!weight.is_contiguous());
+            let vb = VarBuilder::from_tensors(
+                HashMap::from([("weight".into(), weight.clone())]),
+                DType::F32,
+                &device,
+            );
+            let layer = CpuProjection::load(1024, 1024, false, vb)?;
+            assert!(layer.weight_t.is_none());
+            let xs = Tensor::ones((8, 1024), DType::F32, &device)?;
+            let expected = Linear::new(weight, None).forward(&xs);
+            match (expected, layer.forward(&xs)) {
+                (Ok(expected), Ok(actual)) => assert_eq!(bits(actual)?, bits(expected)?),
+                (Err(expected), Err(actual)) => {
+                    assert_eq!(actual.to_string(), expected.to_string())
+                }
+                (expected, actual) => panic!("fallback changed result: {expected:?} vs {actual:?}"),
+            }
+        }
         Ok(())
     }
 

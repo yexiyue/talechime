@@ -26,6 +26,7 @@ TTS 是经验来源，不是目标项目必须采用的结构。按用户要求�
 | Metal 的成本模型、thin-M GEMM 与权重布局、排序/卷积、小张量与主机同步 | [Metal](references/metal.md) |
 | OmniVoice Metal 的 GQA、RoPE 布局、decoder 快路径及已排除的候选 | [OmniVoice Metal 经验](references/omnivoice-metal.md) |
 | macOS CPU BLAS、AMX、线程争用 | [Accelerate/AMX](references/accelerate-amx.md) |
+| OmniVoice CPU 的真实输入归因、GQA、权重缓存与卷积布局 | [OmniVoice CPU 经验](references/omnivoice-cpu.md) |
 | CUDA/cuDNN、CUDA Graph、内存与流所有权 | [CUDA](references/cuda.md) |
 | Candle issue/PR、fork、feature 和发布兼容性 | [上游与依赖](references/upstream.md) |
 | 需要比照已有成功/失败案例 | [案例与证据](references/case-studies.md) |

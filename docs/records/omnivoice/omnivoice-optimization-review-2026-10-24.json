@@ -1,0 +1,305 @@
+{
+  "manifest": {
+    "review_base": "ec3b862796362123a9313607bad6a5503af5eaaf",
+    "head_before_review": "d13385b8df1a405d5132adb1edbf190865ee4034",
+    "sources_sha256": {
+      "Cargo.lock": "dd8d9c2c3f3486d3ce7f5036c428058fc60bab998210ffc482edd1a2f857ac7f",
+      "crates/omnivoice/src/codec_layers.rs": "58e25338614d37807d0a82670d95bf2385965a9b692012df1dcb461d4cbbbaaa",
+      "crates/omnivoice/src/codec_layers/tests.rs": "731675470db073f56a19a76f25f85f18ebec4f9eb5ca81198db7507665991167",
+      "crates/omnivoice/src/stage0_qwen3.rs": "11e352d3fabc7ca7cc3e6a4b21c0297d7ac5330951ae05538c6dfc1c7a5b8c7d",
+      "crates/omnivoice/src/stage0_qwen3/cpu_tests.rs": "7d5aa5ef34c30132119d6b9e7ee7f1296245ac1190f8593678354f3e50f557ee",
+      "crates/omnivoice/src/stage0_qwen3/metal_tests.rs": "bd07c5cbd518aeff0891c40cf469b9843b947b627ed459696c2f2f8bbfc3e649",
+      "crates/omnivoice/src/stage0_cpu_linear.rs": "a0f5f869533680039df29d3f3ef4f6a16b572f2297f5c4d3acba72d4b31623b2",
+      "crates/omnivoice/src/stage0_model.rs": "afb7d8d1365f9a179addd6e3180493ef5607a746be4b6cbe465d1e9bfcab9f70",
+      "crates/omnivoice/src/stage0_model/scoring_tests.rs": "38718ae098c4e7339ff2e866da0900d36ef1f7df6ced6b372176dadd8a8e83d1",
+      "crates/omnivoice/src/stage0_model/metal_tests.rs": "9eb5aa9f7471f303fe91d64c2aa8b7c2b13964c2d860b7e8d68c9eb98e2f0ce2",
+      "crates/omnivoice/src/stage0_model/probe_tests.rs": "e7a805c6c2054be56c48c07b58b1b96223f8f48b273e32786edd4430d68a8560",
+      "crates/omnivoice/src/stage1_model/cpu_attribution.rs": "789001539b6e261b13deba456b73d329652a75d0d731c3d3961daf7aab3e489e"
+    },
+    "binaries_sha256": {
+      "tests-cpu": "d3d8cba63c6ba5ebf85bb8950ac9c129e93a8d0d5a44a5d4f5edcda682f8042f",
+      "tests-metal": "10f4fa2372ba5aaf129cb1f90ef3647d828b2f66704fce0abe074c2b5f11034b",
+      "probe-cpu": "054aa1a1df0f2462b8530e48e57bd80fb50064b7294128662b44ab712d82b956",
+      "probe-metal": "9ca6ee7dae1253db7cbbc6212e81c10c7519445155a276a301c071aa3b79054f"
+    },
+    "links": {
+      "probe-cpu": "target/perf/omni-review/probe-cpu:\n\t/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate (compatibility version 1.0.0, current version 4.0.0)\n\t/System/Library/Frameworks/Security.framework/Versions/A/Security (compatibility version 1.0.0, current version 62460.1.2)\n\t/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5027.0.69)\n\t/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox (compatibility version 1.0.0, current version 1000.0.0)\n\t/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio (compatibility version 1.0.0, current version 1.0.0)\n\t/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)\n\t/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 5027.0.69)\n\t/usr/lib/libiconv.2.dylib (compatibility version 7.0.0, current version 7.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)\n",
+      "probe-metal": "target/perf/omni-review/probe-metal:\n\t/System/Library/Frameworks/Metal.framework/Versions/A/Metal (compatibility version 1.0.0, current version 382.5.3)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)\n\t/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 5027.0.69)\n\t/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate (compatibility version 1.0.0, current version 4.0.0)\n\t/System/Library/Frameworks/Security.framework/Versions/A/Security (compatibility version 1.0.0, current version 62460.1.2)\n\t/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5027.0.69)\n\t/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox (compatibility version 1.0.0, current version 1000.0.0)\n\t/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio (compatibility version 1.0.0, current version 1.0.0)\n\t/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)\n\t/usr/lib/libiconv.2.dylib (compatibility version 7.0.0, current version 7.0.0)\n"
+    },
+    "weight_and_input_sha256": {
+      "/Users/yexiyue/.talechime/resources/omnivoice/models/0.6b/c5fdb5ccb189668d56333f77ba2629f4cd7535f4/model.safetensors": "730839316de585f4c8298ec0e1712efc10fb19c6fa4e36eb741cb8d51ebcf6aa",
+      "/Users/yexiyue/.talechime/resources/omnivoice/models/0.6b/c5fdb5ccb189668d56333f77ba2629f4cd7535f4/audio_tokenizer/model.safetensors": "fe7c5e8785e0a05833e1bfc3e002ec7f55af21e306b2e7154a448c1f54ccfb0d",
+      "/Volumes/yexiyue/omnivoice-hotspot/talechime/target/perf/omni-input/corpus-short.txt": "f29b49d81cce2947186d9b6f6d5fc719a2aaee26e7993c14e394db0afb313657",
+      "Cargo.lock": "dd8d9c2c3f3486d3ce7f5036c428058fc60bab998210ffc482edd1a2f857ac7f"
+    },
+    "candle_revision": "2266099d92265112ecc0d56ecee1761e3cc2ac00",
+    "os": "ProductName:\t\tmacOS\nProductVersion:\t\t26.6.2\nBuildVersion:\t\t25G83\n",
+    "device": "Apple M4 Pro",
+    "baseline_archive_manifests": {
+      "target/perf/omni-cpu-conv7-real/manifest.json": "2e9d2bbdffe5cc69bcc3a590e55ec97998466e0355c90819f150806351d4c912",
+      "target/perf/omni-audit/manifest.json": "9d322eb0e7418c393b260f5e47ef2aa592c6550c7d85b5197330040b4d1a1753"
+    }
+  },
+  "processes": [
+    {
+      "name": "parity-cpu-long",
+      "receipt": {
+        "command": [
+          "/Volumes/yexiyue/omnivoice-hotspot/talechime/target/perf/omni-review/probe-cpu",
+          "/Volumes/yexiyue/omnivoice-hotspot/talechime/target/perf/omni-cpu-mlp/final-parity-long.request.json",
+          "/Volumes/yexiyue/omnivoice-hotspot/talechime/target/perf/omni-review/parity-cpu-long"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 83.80146370899999,
+        "peak_rss_kib": 4308576,
+        "threads": {
+          "RAYON_NUM_THREADS": "8",
+          "VECLIB_MAXIMUM_THREADS": "8",
+          "OMP_NUM_THREADS": "8"
+        },
+        "activity": []
+      },
+      "stdout_sha256": "ead12cdca2f019e90c13945160886f4b3745609532062007f3cb38754dc85047",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "parity-cpu-short",
+      "receipt": {
+        "command": [
+          "/Volumes/yexiyue/omnivoice-hotspot/talechime/target/perf/omni-review/probe-cpu",
+          "/Volumes/yexiyue/omnivoice-hotspot/talechime/target/perf/omni-cpu-mlp/final-parity-short.request.json",
+          "/Volumes/yexiyue/omnivoice-hotspot/talechime/target/perf/omni-review/parity-cpu-short"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 19.281933417,
+        "peak_rss_kib": 2870704,
+        "threads": {
+          "RAYON_NUM_THREADS": "8",
+          "VECLIB_MAXIMUM_THREADS": "8",
+          "OMP_NUM_THREADS": "8"
+        },
+        "activity": []
+      },
+      "stdout_sha256": "2b411f7351471e1e1940f320417bc4fa07ac739e60f5204b4132ae339cc37576",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "parity-metal-long",
+      "receipt": {
+        "command": [
+          "/Volumes/yexiyue/omnivoice-hotspot/talechime/target/perf/omni-review/probe-metal",
+          "/Volumes/yexiyue/omnivoice-hotspot/talechime/target/perf/omni-audit/score-parity-long.json",
+          "/Volumes/yexiyue/omnivoice-hotspot/talechime/target/perf/omni-review/parity-metal-long"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 40.949557125,
+        "peak_rss_kib": 4411600,
+        "threads": {
+          "RAYON_NUM_THREADS": "8",
+          "VECLIB_MAXIMUM_THREADS": "8",
+          "OMP_NUM_THREADS": "8"
+        },
+        "activity": []
+      },
+      "stdout_sha256": "24ecf2851649f2cb42dbbdadef06cd3e1182d10537dc99c8013849e7f5d58a77",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "parity-metal-short",
+      "receipt": {
+        "command": [
+          "/Volumes/yexiyue/omnivoice-hotspot/talechime/target/perf/omni-review/probe-metal",
+          "/Volumes/yexiyue/omnivoice-hotspot/talechime/target/perf/omni-audit/score-parity-short.json",
+          "/Volumes/yexiyue/omnivoice-hotspot/talechime/target/perf/omni-review/parity-metal-short"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 12.835594083,
+        "peak_rss_kib": 2465456,
+        "threads": {
+          "RAYON_NUM_THREADS": "8",
+          "VECLIB_MAXIMUM_THREADS": "8",
+          "OMP_NUM_THREADS": "8"
+        },
+        "activity": []
+      },
+      "stdout_sha256": "e18c9cfeecac8edc772cc91ba4c55a4cb65d46cabffb1298052a0428a70fe021",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "real-decoder",
+      "receipt": {
+        "command": [
+          "/Volumes/yexiyue/omnivoice-hotspot/talechime/target/perf/omni-review/tests-cpu",
+          "stage1_model::cpu_attribution::replay_real_cpu_decoder",
+          "--ignored",
+          "--exact",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 37.067241875,
+        "peak_rss_kib": 1454800,
+        "threads": {
+          "RAYON_NUM_THREADS": "8",
+          "VECLIB_MAXIMUM_THREADS": "8",
+          "OMP_NUM_THREADS": "8"
+        },
+        "activity": []
+      },
+      "stdout_sha256": "21de02da05119997c579f3696aa1f3a43575b7a0bcd972ee818fd483960de6e4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "real-forward",
+      "receipt": {
+        "command": [
+          "/Volumes/yexiyue/omnivoice-hotspot/talechime/target/perf/omni-review/tests-cpu",
+          "stage0_qwen3::cpu_attribution::replay_real_cpu_inputs",
+          "--ignored",
+          "--exact",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 6.451623457999999,
+        "peak_rss_kib": 387568,
+        "threads": {
+          "RAYON_NUM_THREADS": "8",
+          "VECLIB_MAXIMUM_THREADS": "8",
+          "OMP_NUM_THREADS": "8"
+        },
+        "activity": []
+      },
+      "stdout_sha256": "f376119629d02db1084c9f854cb872004f3b9b76e6ec1a2274f4fce1f9689380",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "parity": [
+    {
+      "device": "cpu",
+      "length": "short",
+      "codes_equal": true,
+      "codes_sha256": "1aa283e47c13daf228482390f78d6c5ba46ef934df19248599f60bf4ac8e1096",
+      "reference": "/Volumes/yexiyue/omnivoice-hotspot/talechime/target/perf/omni-cpu-conv7-real/parity-short",
+      "request_sha256": "f302eeb9d33680e33150adc7e392d57db7fb0bb1ca6eba4a1e1d1a748a18f592",
+      "wav_count": 4,
+      "wav_sha256": {
+        "round-0-full-f32.wav": "2de9f6fb2688b651a33a36470cace6acf3c1e8126d17feb5094c18691d1a9b5c",
+        "round-0-segment-0-f32.wav": "2de9f6fb2688b651a33a36470cace6acf3c1e8126d17feb5094c18691d1a9b5c",
+        "round-0-full-pcm16.wav": "2d78fbe065bcb24d2e2417983739ad819e188d49e915bf59a6fadd1d11313084",
+        "round-0-segment-0-pcm16.wav": "2d78fbe065bcb24d2e2417983739ad819e188d49e915bf59a6fadd1d11313084"
+      }
+    },
+    {
+      "device": "cpu",
+      "length": "long",
+      "codes_equal": true,
+      "codes_sha256": "283526efd5c460545114bacf001103a66275a75343bd60aa58afcca672d0af3a",
+      "reference": "/Volumes/yexiyue/omnivoice-hotspot/talechime/target/perf/omni-cpu-conv7-real/parity-long",
+      "request_sha256": "f7443a88eff58b4452bcb257e386b74a9c73df76e09ebabef132bb756d858e2e",
+      "wav_count": 24,
+      "wav_sha256": {
+        "round-0-segment-2-f32.wav": "819c9f485c52d35bdf2a624e7bbc584b41106877e8d2ada72ee00b0428472c52",
+        "round-0-segment-10-f32.wav": "3c4150807974237357c6f66dd159662777f6bd3747d5fc076ec0cc1bdd21c21d",
+        "round-0-segment-2-pcm16.wav": "069fff18894a6eb45de783094452bc1064130e47569ec0f472bf7d1dde93c1f5",
+        "round-0-segment-9-pcm16.wav": "203fee003d64a8e1001007ed73030d4dbaa91ca6921895f5bead21af24e3d58d",
+        "round-0-segment-3-f32.wav": "0e3bdece5cfea1132952a3724ca84d679be2414d2077f4edd1a8d1f02262d16e",
+        "round-0-segment-4-pcm16.wav": "18227ca51bc0226d930b37e0170656ab57450a0e52ee24b394b5776764fa6fc7",
+        "round-0-segment-1-f32.wav": "b5ffa73ae85b904b0053590cea56a156ffcbf22b57e920fb9820089beb601fd5",
+        "round-0-full-f32.wav": "9d0b73c9f1c803297e16d7bf6b5bfff9f475e923f62f02a05c10c588aaa4e6f3",
+        "round-0-segment-3-pcm16.wav": "e3c57cafd80bf1320061c85f1db8a1198dad728c4f0072289de513d50524f695",
+        "round-0-segment-8-f32.wav": "aa79b2d16ac1d85fb762aa7d6bee0a76dbadfb37d61eb0de0f6c4864a73306a0",
+        "round-0-segment-8-pcm16.wav": "07a3b3dc99b7cb84701e47a9aa8d4e8b888d0ed2d908e38e62678bfc3aa1927f",
+        "round-0-segment-9-f32.wav": "79e991cd772730b5be3c571a4fc4f6a77bb9cfd6491a9ce476b2a518e830611a",
+        "round-0-segment-5-pcm16.wav": "1abf7ebdf1ae5ae5f75ff66fe951ef5d2bcf0c237eae225b72980bcfd7039562",
+        "round-0-segment-0-f32.wav": "16d77115399e9bc4064cd3068fc0763613ab42d34c31b2a2bd3c6ba64c452133",
+        "round-0-segment-5-f32.wav": "422536491b441dab3e14793a4ebe14f382464b1a369e893c33089b9d67c4ce67",
+        "round-0-full-pcm16.wav": "7af6ead0656e3fc4c0748d6105c5b5d9f7f33f2f49bef7cc810d888e4ff5bc94",
+        "round-0-segment-0-pcm16.wav": "028c299798d7c95c1d519e99f6526d5b0b3a3f93baa4f2c8c837765fb1c68453",
+        "round-0-segment-4-f32.wav": "7971ad23c3144460d7b86b2b165e1eeb6d7156c33c3382f6348684b1c4694a6e",
+        "round-0-segment-6-pcm16.wav": "ee90d08130dbff0dbc32f9438955a3b57b9ebcce187e5714dfb398bd97e912d1",
+        "round-0-segment-6-f32.wav": "b3fabda3af09f44b17fe680bec683f598887bf8debaddd8bc2582f9bedbc6af8",
+        "round-0-segment-1-pcm16.wav": "c2722d4d875f261a1412371d1954acdedefb7425310e1e65249fbfd60fa2877d",
+        "round-0-segment-7-f32.wav": "b0097b0a2f751466c8f41562639f48f536db178dff9573a4815873f2e4669240",
+        "round-0-segment-10-pcm16.wav": "83e188321610af380c3384690919cdedfc144374328baa3e8b78d04f007edce0",
+        "round-0-segment-7-pcm16.wav": "aaadd9e185a68ab223ba0da3bbf000ad7ed89c486e9791a571e89d380948170f"
+      }
+    },
+    {
+      "device": "metal",
+      "length": "short",
+      "codes_equal": true,
+      "codes_sha256": "d1f037724f6a674505e3e0f52c5ae23d3c341d95cefb6c7ad74d7a7015d829c3",
+      "reference": "/Volumes/yexiyue/omnivoice-hotspot/talechime/target/perf/omni-audit/copyfree-full-short-B",
+      "request_sha256": "63a5bcadd16fe40bfb3220445fb4ca70026276bd9fa0ad5598ae84495762defa",
+      "wav_count": 4,
+      "wav_sha256": {
+        "round-0-full-f32.wav": "2eadc756eb4482fe320efe678ef8a67312ce79dcfa6d6f4dbf41ed4642be324e",
+        "round-0-segment-0-f32.wav": "2eadc756eb4482fe320efe678ef8a67312ce79dcfa6d6f4dbf41ed4642be324e",
+        "round-0-full-pcm16.wav": "aeeff6385fe4239084a081c29782495ed97a096740185c1c95f7de52ec03bee9",
+        "round-0-segment-0-pcm16.wav": "aeeff6385fe4239084a081c29782495ed97a096740185c1c95f7de52ec03bee9"
+      }
+    },
+    {
+      "device": "metal",
+      "length": "long",
+      "codes_equal": true,
+      "codes_sha256": "69dd8d8476dcb38aef411a588461245ae39026dc9159c4d6af63d5bdbb42b29c",
+      "reference": "/Volumes/yexiyue/omnivoice-hotspot/talechime/target/perf/omni-audit/copyfree-full-long-B",
+      "request_sha256": "9f6c2712ab4c502a7d09c19e5747af294022c7ce9b26bf2dccd4f1086e38f24e",
+      "wav_count": 24,
+      "wav_sha256": {
+        "round-0-segment-2-f32.wav": "8e396ebae8bb80b9f5539f4b7d780af17d7e7092ba33eea379ce5c3b8d817b64",
+        "round-0-segment-10-f32.wav": "9ce726cc4672ec1e107275efe0db94a7796d85bec113013914ac58e5d3e9f9d6",
+        "round-0-segment-2-pcm16.wav": "a97a778c99214fb713af50ca187d70669a35df9ff252494c0060a38074d545a7",
+        "round-0-segment-9-pcm16.wav": "f48b6762e276818d011bcea467ee12cb861b43794c22d98bba25e0154c911120",
+        "round-0-segment-3-f32.wav": "125dd313cf6e1ecb9602f74bba83488326dab183327d132e95b1ca9a2e94b0b5",
+        "round-0-segment-4-pcm16.wav": "dd99f685d2f5f8e44eded16049e5dd3ed35501b231760ff2bcb47fc3d3acdc5a",
+        "round-0-segment-1-f32.wav": "575e4e2d0866cd2c9d4fba31553014567c161544b7c9fa4b5383347b5755de1d",
+        "round-0-full-f32.wav": "16ed9c8e045a082bd5ec65ddc3a5383e6df24f7abf0007369f8bdce87b24ef70",
+        "round-0-segment-3-pcm16.wav": "91ba6737c892f8545067ef30701812e7a4bdfde73a7263106042bc4b5a8f7547",
+        "round-0-segment-8-f32.wav": "e8a9923e11451236ca0ac3d5aee9c247eceacc7e4bc7f77a4baadc3b014f4982",
+        "round-0-segment-8-pcm16.wav": "adb47df7006d56a2e59dfad459abc5f977315e941fb0a03f2e7a12d69f34a9c3",
+        "round-0-segment-9-f32.wav": "d83327505a2e46f3c2950a96a5da0b813a5006db436a9bdace8fa1bae52ec8f3",
+        "round-0-segment-5-pcm16.wav": "a1e21a4a50c393f81d22422f00c7e8c7908b34ad13746e4d5b3c9628633c48f1",
+        "round-0-segment-0-f32.wav": "b21ca600c0e8b8e4d025331628a8fa0103019be28fad97e93ba0697f4253492e",
+        "round-0-segment-5-f32.wav": "44df567c85096db086b07fbd4ed5b7392996b46877559cb855d75d078e781cff",
+        "round-0-full-pcm16.wav": "2eb33b5213b53ef010e879bcc54f3bc09e8c2069b2f9541ef2e12b3739bf964d",
+        "round-0-segment-0-pcm16.wav": "b2d889682e1afc70d34c56e7f5e522025c4f527fae6642c8b11f46905b4485fe",
+        "round-0-segment-4-f32.wav": "5e54c006922f9de9a8c286f489beccb531b330bedeeba88c7189a079d4962648",
+        "round-0-segment-6-pcm16.wav": "be3abd16032a037e59541b5e018973d87a08d61a6b070f90738222bfb2a28c8f",
+        "round-0-segment-6-f32.wav": "5ab5081d8c28c9731dbedec8c45624b471cd754f19a7cb63a9ab3e39e96c80e2",
+        "round-0-segment-1-pcm16.wav": "89475e4c473ef9c545ec78f868848f3a12edbf4768bc90034f1f44d75ef270d3",
+        "round-0-segment-7-f32.wav": "778dc7b3ff9fa6a4d20f4930dd715df781a9f97b633599a0d5699c7c2f4e3df5",
+        "round-0-segment-10-pcm16.wav": "38449c8641bffd29f5f918192efeea97608489ab9f002291cb00581223404f3d",
+        "round-0-segment-7-pcm16.wav": "317966e34db4db8e0ec98eed585b1f8126c02047bc9441b45f673da0e1084728"
+      }
+    }
+  ],
+  "review": {
+    "standards_findings": 2,
+    "spec_findings": 1,
+    "all_fixed": true,
+    "independent_followup": "no new actionable findings"
+  },
+  "validation": {
+    "cpu_release": {
+      "passed": 40,
+      "ignored": 7
+    },
+    "metal_release": {
+      "passed": 55,
+      "ignored": 7
+    },
+    "host_tests": {
+      "passed": 11
+    },
+    "cpu_model_combo": "omnivoice,qwen,voxcpm,moss-candle,cosyvoice3,indextts,asr: cargo check --locked passed",
+    "cpu_clippy": "all-targets -D warnings passed",
+    "metal_clippy": "all-targets -D warnings passed",
+    "rustdoc": "Metal -D warnings --document-private-items passed",
+    "fmt": "cargo fmt --all -- --check passed",
+    "skill": "quick_validate.py passed",
+    "relocated_tests": "5 modules: same identities and assertions, only formatting changes"
+  }
+}

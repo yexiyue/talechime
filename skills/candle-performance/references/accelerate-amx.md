@@ -1,5 +1,8 @@
 # macOS Accelerate / AMX
 
+OmniVoice 的真实输入归因、受限 GQA/投影/卷积布局及失败候选见
+[CPU 案例](omnivoice-cpu.md)，不要将 Metal 的收益直接外推到 CPU。
+
 ## 先确定调用路径
 
 本 skill 中的 AMX 优化入口主要指 Apple Silicon CPU 的 Accelerate BLAS 路径，

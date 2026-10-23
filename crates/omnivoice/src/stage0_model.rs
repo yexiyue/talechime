@@ -414,6 +414,7 @@ pub struct Stage0RuntimePlan {
     device: Device,
     runtime_dtype: DType,
     model: OnceLock<std::result::Result<Stage0Model, String>>,
+    sync_canary: OnceLock<Option<(Tensor, Tensor)>>,
     cpu_seed: Mutex<Option<u64>>,
     cancellation: Mutex<Option<CancellationProbe>>,
 }
@@ -447,6 +448,7 @@ impl Stage0RuntimePlan {
             cancellation: Mutex::new(None),
             options,
             model: OnceLock::new(),
+            sync_canary: OnceLock::new(),
         })
     }
 
@@ -742,11 +744,13 @@ impl Stage0RuntimePlan {
                 // below measures command submission, not execution.
                 let probe = SyncProbe::new();
                 if probe.enabled
-                    && let Some((lhs, rhs)) = sync_probe_canary(&self.device)
+                    && let Some((lhs, rhs)) = self
+                        .sync_canary
+                        .get_or_init(|| sync_probe_canary(&self.device))
                 {
                     let canary_started = std::time::Instant::now();
                     for _ in 0..20 {
-                        let _ = lhs.matmul(&rhs)?;
+                        let _ = lhs.matmul(rhs)?;
                     }
                     self.device.synchronize()?;
                     eprintln!(
@@ -1374,22 +1378,15 @@ fn sync_probe_canary(device: &Device) -> Option<(Tensor, Tensor)> {
     if device.is_cpu() {
         return None;
     }
-    static CANARY: std::sync::OnceLock<std::sync::Mutex<Option<(Tensor, Tensor)>>> =
-        std::sync::OnceLock::new();
-    let slot = CANARY.get_or_init(|| std::sync::Mutex::new(None));
-    let mut guard = slot.lock().ok()?;
-    if guard.is_none() {
-        let lhs = Tensor::rand(0f32, 1f32, (300, 1024), device)
-            .ok()?
-            .to_dtype(DType::F16)
-            .ok()?;
-        let rhs = Tensor::rand(0f32, 1f32, (1024, 1024), device)
-            .ok()?
-            .to_dtype(DType::F16)
-            .ok()?;
-        *guard = Some((lhs, rhs));
-    }
-    guard.clone()
+    let lhs = Tensor::rand(0f32, 1f32, (300, 1024), device)
+        .ok()?
+        .to_dtype(DType::F16)
+        .ok()?;
+    let rhs = Tensor::rand(0f32, 1f32, (1024, 1024), device)
+        .ok()?
+        .to_dtype(DType::F16)
+        .ok()?;
+    Some((lhs, rhs))
 }
 
 /// Diagnostic-only device barrier helper used by `OMNIVOICE_SYNC_PROBE=1`.
@@ -2081,225 +2078,13 @@ pub(crate) fn tensor_to_i64_tensor2(tensor: &Tensor) -> Result<I64Tensor2> {
 }
 
 #[cfg(test)]
-mod scoring_tests {
-    use super::*;
+#[path = "stage0_model/scoring_tests.rs"]
+mod scoring_tests;
 
-    fn check_greedy_confidence(device: &Device) -> Result<()> {
-        for width in [1024, 1025, 4097] {
-            // Repeated maxima, different rows, and a mask token with the largest raw logit.
-            let values: Vec<f32> = (0..2 * 8 * 7 * width)
-                .map(|i| {
-                    if i % width == width - 1 {
-                        20.0
-                    } else {
-                        (i % 13) as f32 - 6.0
-                    }
-                })
-                .collect();
-            let logits = Tensor::from_vec(values, (2, 8, 7, width), device)?;
-            let u = (logits.sin()? * 0.5)?;
-            for guidance in [0.0, 2.0] {
-                let c_probs = candle_nn::ops::log_softmax(&logits, candle_core::D::Minus1)?;
-                let old_probs = if guidance == 0.0 {
-                    c_probs
-                } else {
-                    let u_probs = candle_nn::ops::log_softmax(&u, candle_core::D::Minus1)?;
-                    let guided = (&c_probs + ((&c_probs - &u_probs)? * guidance as f64)?)?;
-                    candle_nn::ops::log_softmax(&guided, candle_core::D::Minus1)?
-                };
-                let old_probs = mask_audio_token(&old_probs, width - 1)?;
-                let (tokens, confidence) = predict_tokens_with_scoring_from_tensors(
-                    &logits,
-                    &u,
-                    guidance,
-                    0.0,
-                    width - 1,
-                    None,
-                )?;
-                assert_eq!(
-                    tokens.flatten_all()?.to_vec1::<i64>()?,
-                    old_probs
-                        .argmax(candle_core::D::Minus1)?
-                        .to_dtype(DType::I64)?
-                        .flatten_all()?
-                        .to_vec1::<i64>()?,
-                    "tokens width={width} guidance={guidance}"
-                );
-                let bits = |t: Tensor| -> Result<Vec<u32>> {
-                    Ok(t.flatten_all()?
-                        .to_vec1::<f32>()?
-                        .into_iter()
-                        .map(f32::to_bits)
-                        .collect())
-                };
-                assert_eq!(
-                    bits(confidence)?,
-                    bits(old_probs.max(candle_core::D::Minus1)?)?,
-                    "confidence width={width} guidance={guidance}"
-                );
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn cpu_greedy_confidence_gather_matches_full_reduction() -> Result<()> {
-        check_greedy_confidence(&Device::Cpu)
-    }
-
-    #[test]
-    fn cpu_greedy_confidence_preserves_nonfinite_and_signed_zero_results() -> Result<()> {
-        for values in [
-            vec![0., -0., 1., 1., f32::NEG_INFINITY],
-            vec![f32::from_bits(0x7fc00042), -1., 3., 3., 0.],
-            vec![1., f32::INFINITY, -1., f32::NAN, 0.],
-            vec![f32::NEG_INFINITY; 5],
-        ] {
-            let logits = Tensor::from_vec(values, (1, 1, 1, 5), &Device::Cpu)?;
-            let probs = mask_audio_token(
-                &candle_nn::ops::log_softmax(&logits, candle_core::D::Minus1)?,
-                4,
-            )?;
-            let (tokens, confidence) =
-                predict_tokens_with_scoring_from_tensors(&logits, &logits, 0., 0., 4, None)?;
-            assert_eq!(
-                tokens.flatten_all()?.to_vec1::<i64>()?,
-                probs
-                    .argmax(candle_core::D::Minus1)?
-                    .to_dtype(DType::I64)?
-                    .flatten_all()?
-                    .to_vec1::<i64>()?
-            );
-            assert_eq!(
-                confidence
-                    .flatten_all()?
-                    .to_vec1::<f32>()?
-                    .into_iter()
-                    .map(f32::to_bits)
-                    .collect::<Vec<_>>(),
-                probs
-                    .max(candle_core::D::Minus1)?
-                    .flatten_all()?
-                    .to_vec1::<f32>()?
-                    .into_iter()
-                    .map(f32::to_bits)
-                    .collect::<Vec<_>>()
-            );
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn cpu_stochastic_confidence_remains_the_distribution_maximum() -> Result<()> {
-        use rand::SeedableRng;
-
-        let logits = Tensor::from_vec(
-            (0..8 * 7 * 33)
-                .map(|i| (i % 7) as f32 / 4.)
-                .collect::<Vec<_>>(),
-            (1, 8, 7, 33),
-            &Device::Cpu,
-        )?;
-        let probs = mask_audio_token(
-            &candle_nn::ops::log_softmax(&logits, candle_core::D::Minus1)?,
-            32,
-        )?;
-        let mut rng = StdRng::seed_from_u64(42);
-        let (tokens, confidence) =
-            predict_tokens_with_scoring_from_tensors(&logits, &logits, 0., 1., 32, Some(&mut rng))?;
-        assert_ne!(
-            tokens.flatten_all()?.to_vec1::<i64>()?,
-            probs
-                .argmax(candle_core::D::Minus1)?
-                .to_dtype(DType::I64)?
-                .flatten_all()?
-                .to_vec1::<i64>()?
-        );
-        assert_eq!(
-            confidence.flatten_all()?.to_vec1::<f32>()?,
-            probs
-                .max(candle_core::D::Minus1)?
-                .flatten_all()?
-                .to_vec1::<f32>()?
-        );
-        Ok(())
-    }
-
-    #[cfg(all(feature = "metal", target_os = "macos"))]
-    #[test]
-    fn metal_greedy_confidence_gather_matches_full_reduction() -> Result<()> {
-        check_greedy_confidence(&Device::new_metal(0)?)
-    }
-}
+#[cfg(test)]
+#[path = "stage0_model/probe_tests.rs"]
+mod probe_tests;
 
 #[cfg(all(test, feature = "metal", target_os = "macos"))]
-mod metal_tests {
-    use super::*;
-
-    #[test]
-    fn class_top_k_above_metal_threadgroup_limit_matches_cpu() -> Result<()> {
-        let device = match Device::new_metal(0) {
-            Ok(device) => device,
-            Err(error) => {
-                eprintln!("Skipping Metal parity test: {error}");
-                return Ok(());
-            }
-        };
-        for width in [1024, 1025, 4097] {
-            let values = (0..2 * width)
-                .map(|i| (i % width) as f32)
-                .collect::<Vec<_>>();
-            let cpu = Tensor::from_vec(values, (2, width), &Device::Cpu)?;
-            let actual = filter_top_k(&cpu.to_device(&device)?, 0.1)?
-                .to_device(&Device::Cpu)?
-                .flatten_all()?
-                .to_vec1::<f32>()?;
-            let expected = filter_top_k(&cpu, 0.1)?.flatten_all()?.to_vec1::<f32>()?;
-            assert_eq!(actual, expected, "vocabulary width {width}");
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn unmask_selection_above_metal_threadgroup_limit_matches_cpu() -> Result<()> {
-        let device = match Device::new_metal(0) {
-            Ok(device) => device,
-            Err(error) => {
-                eprintln!("Skipping Metal parity test: {error}");
-                return Ok(());
-            }
-        };
-        // 130 frames * 8 codebooks requires a 2048-thread bitonic sort.
-        let dims = (1, 8, 130);
-        for update_count in [7, 1040] {
-            let run = |device: &Device| -> Result<Vec<i64>> {
-                let current = Tensor::full(1024i64, dims, device)?;
-                let predictions =
-                    Tensor::from_vec((0..1040).map(|i| (i % 1024) as i64).collect(), dims, device)?;
-                let scores = Tensor::from_vec((0..1040).map(|i| i as f32).collect(), dims, device)?;
-                let penalties = Tensor::zeros((1, 8, 1), DType::F32, device)?;
-                let updated = apply_step_updates_device(
-                    &current,
-                    &predictions,
-                    &scores,
-                    1024,
-                    update_count,
-                    &penalties,
-                    0.0,
-                    None,
-                    None,
-                )?;
-                Ok(updated
-                    .to_device(&Device::Cpu)?
-                    .flatten_all()?
-                    .to_vec1::<i64>()?)
-            };
-            assert_eq!(
-                run(&device)?,
-                run(&Device::Cpu)?,
-                "update count {update_count}"
-            );
-        }
-        Ok(())
-    }
-}
+#[path = "stage0_model/metal_tests.rs"]
+mod metal_tests;

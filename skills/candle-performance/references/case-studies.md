@@ -25,6 +25,7 @@ skill 的操作规则自包含；这里的仓库相对链接在移出 Talechime 
 ## 仓库记录
 
 - [OmniVoice Metal 经验](omnivoice-metal.md)：原生 GQA、序列优先 RoPE、卷积快路径与失败候选；区分已启用、撤回和仅离线验证。
+- [OmniVoice CPU 经验](omnivoice-cpu.md)：同真实张量归因、GQA/权重布局、受限 NCL 卷积及 MLP 连续化失败；局部收益与整链增量分开判断。
 - [OmniVoice 同期官方对照](../../../docs/records/omnivoice/omnivoice-official-comparison-audit-2026-10-23.md)：免拷贝 Rust 2.672 s、官方 MPS 3.235 s，仅限该短文本 F16 生成路径，不证明跨框架输出或音质等价。
 - [CosyVoice3 Windows](../../../docs/records/cosyvoice3/cosyvoice3-windows-performance-2026-10-19.md)：Ryzen 9700X CPU / RTX 5070 CUDA；逐 solve 的 DiT 图局部快但端到端不足 10%，MLP 图及组合也不足，全部撤回；CUDA 转置 view 更慢且改变 PCM；保留跨平台基准与 recorder 修复，不宣称已取得整链提速。
 - [通用方法](../../../docs/knowledge/tts-performance.md)：架构与验证策略。

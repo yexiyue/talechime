@@ -287,6 +287,10 @@ Accelerate F32 / hidden1024 / FFN3072 / SiLU 权重启用单次 gate/up 投影�
 Accelerate BLAS 与 SiLU 向量路径已启用，官方同输入层实际调用 CPU Flash；没有证据表明
 CPU 已到硬件上限。本轮只保留离线诊断，短/长完整 codes 和 28 个 WAV 保持一致。
 
+当前两条链路的设备/精度、受限路径、官方对照与数值边界统一见
+[OmniVoice 优化现状](omnivoice-performance.md)。后续审查已修复非连续 K/V 权重回退、
+decoder 归因入口与生产不一致、诊断 canary 跨设备全局缓存的问题；历史计时保持原日期口径。
+
 随后 [CPU decoder 1×1 卷积](../records/omnivoice/omnivoice-cpu-pointwise-2026-10-24.md)
 对受限的 Accelerate F32、连续、方阵通道和 8 倍时间长度复用直接 NCL GEMM，避开
 im2col 与输出布局复制；长度 13 的数值位差由回退保护。固定 130 帧 decoder ABBA
