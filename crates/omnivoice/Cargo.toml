@@ -58,3 +58,7 @@ required-features=["metal"]
 [[example]]
 name="attention_copyfree_probe"
 required-features=["metal"]
+
+[[example]]
+name="conv7_layout_probe"
+required-features=["metal"]

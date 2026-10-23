@@ -215,6 +215,11 @@ OmniVoice 的上一轮增量记录见 [Metal 原生 GQA](../records/omnivoice/om
 历史驱动的编译监控路径匹配错误已纠正，旧微基准的过度归因已撤回；不能把单个
 GEMM 推广为整个 forward 瓶颈，也不能由输入前缀不变推导深层 K/V 可缓存。
 
+免拷贝后的[后续热点与 7-tap 初筛](../records/omnivoice/omnivoice-next-hotspots-2026-10-23.md)
+排除了通用 unfold 展开再 GEMM 的两个候选：真实权重、合成激活、三独立进程，
+卷积输出逐位相同，但含展开/偏置及后续 Snake 的局部耗时均变慢，未改生产路径。
+该结果不能推广为专用 im2col 内核没有优化空间，也不能用组件计时推导整链收益。
+
 | 案例（测试设备 / 路径） | 结论与证据范围 |
 | --- | --- |
 | CosyVoice3 首轮 Windows CPU / RTX 5070 CUDA | 建立准确转写、单实例基线；DiT/MLP 图及组合端到端不足 10%，转置 view 更慢且改变 PCM，均撤回。保留 recorder 输出复制预热修复；HiFT 转换摘要与生产清单不同，未通过资源准备门禁，不能宣称新增整链提速 |
