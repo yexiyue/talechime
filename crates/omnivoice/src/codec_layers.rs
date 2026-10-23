@@ -240,9 +240,41 @@ struct LazyConvTranspose1dWeights {
 impl Module for CodecConvTranspose1d {
     fn forward(&self, xs: &Tensor) -> CandleResult<Tensor> {
         match &self.inner {
-            CodecConvTranspose1dInner::Dense(layer) => layer.forward(xs),
+            CodecConvTranspose1dInner::Dense(layer) => forward_dense_conv_transpose1d(layer, xs),
             CodecConvTranspose1dInner::Lazy(lazy) => lazy.forward(xs).map_err(codec_candle_err),
         }
+    }
+}
+
+fn forward_dense_conv_transpose1d(layer: &ConvTranspose1d, xs: &Tensor) -> CandleResult<Tensor> {
+    let config = layer.config();
+    if !xs.device().is_metal()
+        || xs.dtype() != DType::F32
+        || !xs.is_contiguous()
+        || !layer.weight().is_contiguous()
+        || config.groups != 1
+        || config.dilation != 1
+        || config.padding == 0
+        || config.output_padding > config.padding
+    {
+        return layer.forward(xs);
+    }
+
+    // Nonzero padding misses Candle's GEMM + col2im kernel. Compute the full
+    // convolution, then crop; output_padding reduces the right margin.
+    let full = xs.conv_transpose1d(layer.weight(), 0, 0, config.stride, 1, 1)?;
+    let right_crop = config.padding - config.output_padding;
+    let output_len = full
+        .dim(2)?
+        .checked_sub(config.padding)
+        .and_then(|len| len.checked_sub(right_crop))
+        .ok_or_else(|| {
+            candle_core::Error::Msg("transposed convolution crop exceeds output".into())
+        })?;
+    let cropped = full.narrow(2, config.padding, output_len)?;
+    match layer.bias() {
+        None => Ok(cropped),
+        Some(bias) => cropped.broadcast_add(&bias.reshape((1, bias.elem_count(), 1))?),
     }
 }
 
@@ -779,4 +811,127 @@ fn vb_get_bias(
             .dequantize(device)?
             .to_dtype(activation_dtype)?,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cpu_transposed_convolution_keeps_original_path() -> CandleResult<()> {
+        let device = Device::Cpu;
+        let xs = Tensor::from_vec(vec![0.1f32; 8], (1, 2, 4), &device)?;
+        let weights = Tensor::from_vec(vec![0.2f32; 6], (2, 1, 3), &device)?;
+        let config = ConvTranspose1dConfig {
+            padding: 1,
+            stride: 2,
+            ..Default::default()
+        };
+        let layer = ConvTranspose1d::new(weights, None, config);
+        let expected = layer.forward(&xs)?.flatten_all()?.to_vec1::<f32>()?;
+        let actual = forward_dense_conv_transpose1d(&layer, &xs)?
+            .flatten_all()?
+            .to_vec1::<f32>()?;
+        assert_eq!(actual, expected);
+        Ok(())
+    }
+
+    #[cfg(feature = "metal")]
+    #[test]
+    fn metal_transposed_convolution_crop_matches_host_reference() -> CandleResult<()> {
+        let device = Device::new_metal(0)?;
+        let (in_channels, out_channels) = (3, 2);
+        for batch in [1, 2] {
+            for frames in [1, 7, 130] {
+                for stride in [2usize, 3, 4, 5, 8] {
+                    for with_bias in [false, true] {
+                        let kernel = 2 * stride;
+                        let config = ConvTranspose1dConfig {
+                            stride,
+                            padding: stride.div_ceil(2),
+                            output_padding: stride % 2,
+                            ..Default::default()
+                        };
+                        let values = (0..batch * in_channels * frames)
+                            .map(|i| (i as f32 * 0.13).sin() * 0.2)
+                            .collect::<Vec<_>>();
+                        let weights = (0..in_channels * out_channels * kernel)
+                            .map(|i| (i as f32 * 0.17).cos() * 0.1)
+                            .collect::<Vec<_>>();
+                        let bias = if with_bias {
+                            Some(Tensor::from_vec(vec![0.03f32, -0.02], 2, &device)?)
+                        } else {
+                            None
+                        };
+                        let xs = Tensor::from_vec(
+                            values.clone(),
+                            (batch, in_channels, frames),
+                            &device,
+                        )?;
+                        let layer = ConvTranspose1d::new(
+                            Tensor::from_vec(
+                                weights.clone(),
+                                (in_channels, out_channels, kernel),
+                                &device,
+                            )?,
+                            bias,
+                            config,
+                        );
+                        let out_len = (frames - 1) * stride + kernel - 2 * config.padding
+                            + config.output_padding;
+                        let mut reference = vec![0f64; batch * out_channels * out_len];
+                        if with_bias {
+                            for (i, value) in reference.iter_mut().enumerate() {
+                                *value = f64::from([0.03f32, -0.02][(i / out_len) % 2]);
+                            }
+                        }
+                        for b in 0..batch {
+                            for c in 0..in_channels {
+                                for t in 0..frames {
+                                    let value = values[(b * in_channels + c) * frames + t];
+                                    for o in 0..out_channels {
+                                        for k in 0..kernel {
+                                            let position = t * stride + k;
+                                            if position >= config.padding {
+                                                let position = position - config.padding;
+                                                if position < out_len {
+                                                    reference[(b * out_channels + o) * out_len
+                                                        + position] += f64::from(value)
+                                                        * f64::from(
+                                                            weights[(c * out_channels + o)
+                                                                * kernel
+                                                                + k],
+                                                        );
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        let mut actuals = vec![forward_dense_conv_transpose1d(&layer, &xs)?];
+                        // Candle's original debug length formula subtracts padding
+                        // before adding the kernel width and underflows for one frame.
+                        if (frames - 1) * stride >= 2 * config.padding {
+                            actuals.push(layer.forward(&xs)?);
+                        }
+                        for tensor in actuals {
+                            assert_eq!(tensor.dims(), &[batch, out_channels, out_len]);
+                            let actual = tensor.flatten_all()?.to_vec1::<f32>()?;
+                            for (index, (&actual, &expected)) in
+                                actual.iter().zip(&reference).enumerate()
+                            {
+                                assert!(
+                                    actual.is_finite()
+                                        && (f64::from(actual) - expected).abs() < 2e-5,
+                                    "batch={batch} frames={frames} stride={stride} bias={with_bias} index={index}: actual={actual} expected={expected}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
