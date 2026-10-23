@@ -100,6 +100,10 @@ cargo xtask perf overhead --job target/perf/fixture-input/job.json --output targ
 
 比较需要显式 policy：
 
+这里的阈值按具体指标与测量噪声配置，用于本次比较判定，不是优化是否保留的统一门槛。
+项目不设置默认的整链改善百分比；局部显著收益的保留与组合复测遵循
+[优化保留判断](knowledge/tts-performance.md#优化保留判断)。
+
 ```json
 {"schema":"talechime/performance/1","metric":"rtf","lower_is_better":true,"absolute_threshold":0.02,"relative_threshold":0.05,"expected_processes":3,"require_equal_output":true}
 ```
