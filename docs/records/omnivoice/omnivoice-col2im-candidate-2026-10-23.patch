@@ -1,0 +1,28 @@
+diff --git a/crates/omnivoice/src/codec_layers.rs b/crates/omnivoice/src/codec_layers.rs
+index ca5910a..941ea37 100644
+--- a/crates/omnivoice/src/codec_layers.rs
++++ b/crates/omnivoice/src/codec_layers.rs
+@@ -240,7 +240,22 @@ struct LazyConvTranspose1dWeights {
+ impl Module for CodecConvTranspose1d {
+     fn forward(&self, xs: &Tensor) -> CandleResult<Tensor> {
+         match &self.inner {
+-            CodecConvTranspose1dInner::Dense(layer) => layer.forward(xs),
++            CodecConvTranspose1dInner::Dense(layer) => {
++                let cfg = layer.config();
++                if std::env::var("OMNIVOICE_COL2IM").is_ok_and(|s| s == "1")
++                    && cfg.dilation == 1 && cfg.groups == 1
++                    && cfg.output_padding <= cfg.padding {
++                    let full = xs.conv_transpose1d(layer.weight(), 0, 0, cfg.stride, 1, 1)?;
++                    let len = full.dim(2)? - 2 * cfg.padding + cfg.output_padding;
++                    let cropped = full.narrow(2, cfg.padding, len)?;
++                    match layer.bias() {
++                        None => Ok(cropped),
++                        Some(bias) => cropped.broadcast_add(&bias.reshape((1, bias.elem_count(), 1))?),
++                    }
++                } else {
++                    layer.forward(xs)
++                }
++            },
+             CodecConvTranspose1dInner::Lazy(lazy) => lazy.forward(xs).map_err(codec_candle_err),
+         }
+     }

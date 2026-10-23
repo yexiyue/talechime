@@ -1,5 +1,10 @@
 # OmniVoice 0.6B 热点定位与官方对照（2026-10-22，Apple M4 Pro）
 
+> 2026-10-23 更正：直接观测模型层输入后确认，短句的实际 attention 序列长为
+> 157，CFG 两路沿 batch 维拼接，不是 cond=157 + target=130 = 287。本文 S=287
+> 微基准是独立合成形状，不能用于该短句的逐层成本外推；端到端和 forward 原始
+> 测量仍有效。后续固定 codes 实验定位到 stage1 反卷积的通用慢路径。
+
 本记录接续 [OmniVoice 0.6B 性能基线](omnivoice-performance-2026-10-22.md)：把基线里的
 三个“假设”逐条换成测量结论，拉取官方 `k2-fsa/OmniVoice` 做同条件对照，并给出下一轮
 优化的优先级。本轮**没有改动任何生产默认路径**，也没有做输出保持型优化验收；
@@ -28,7 +33,7 @@
 
 | 项 | 我们（Talechime） | 官方（OmniVoice） |
 | --- | --- | --- |
-| 仓库 | `talechime`，提交 `ec3b862`（本轮改动在 `codex/omnivoice-hotspot`） | `github.com/k2-fsa/OmniVoice`，revision `08be0b4ccbac3e13e374e86fbfead4b4cac3435f4` |
+| 仓库 | `talechime`，提交 `ec3b862`（本轮改动在 `codex/omnivoice-hotspot`） | `github.com/k2-fsa/OmniVoice`，revision `08be0b4ccbac3e13e374e86fbfead4b4cac343e2` |
 | 依赖 | Candle 统一版，fork `github.com/yexiyue/candle` rev `2266099d92265112ecc0d56ecee1761e3cc2ac00` | torch 2.8.0 / transformers 5.3.0 / Python 3.12.14 |
 | 设备路径 | Metal（stage0 F16，stage1/audio F32） | MPS（参数与 buffer 分布 cpu+mps，dtype float16） |
 | 权重 | `~/.talechime/resources/omnivoice/models/0.6b/c5fdb5ccb189668d56333f77ba2629f4cd7535f4` | 同一份权重目录 |
