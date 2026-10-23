@@ -7,6 +7,10 @@
 CPU 读回后的队列同步是不同问题，分别做最小复现。
 不套用 CUDA 的 fast path 或调度阈值，也不因统一内存就假定主机往返没有同步成本。
 
+涉及 GQA/RoPE、codec 转置卷积、1×1 卷积或贪心 confidence 的布局优化时，
+参照 [OmniVoice Metal 经验](omnivoice-metal.md)：先核消费者支持的 stride 和原生
+快路径条件，再决定是否物化；其中收益与回退条件是版本相关案例，不是通用阈值。
+
 ## 排序与采样
 
 Candle 历史版本的大词表排序曾出现线程组/索引问题；这不是所有新版本或所有 Metal
