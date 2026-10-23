@@ -261,12 +261,59 @@ impl Stage0Qwen3Attention {
             // Metal SDPA maps query heads to KV heads directly for GQA.
             attention_sdpa(&q, &k, &v, attention_mask, scale as f32)
         } else {
+            if let Some(context) = cpu_grouped_attention(&q, &k, &v, attention_mask, scale)? {
+                return Ok(context);
+            }
             let repeats = self.num_heads / self.num_kv_heads;
             let k = candle_transformers::utils::repeat_kv(k, repeats)?;
             let v = candle_transformers::utils::repeat_kv(v, repeats)?;
             attention_manual(&q, &k, &v, attention_mask, scale)
         }
     }
+}
+
+fn cpu_grouped_attention(
+    q: &Tensor,
+    k: &Tensor,
+    v: &Tensor,
+    mask: Option<&Tensor>,
+    scale: f64,
+) -> Result<Option<Tensor>> {
+    if !q.device().is_cpu()
+        || q.dtype() != DType::F32
+        || !candle_core::utils::has_accelerate()
+        || !q.is_contiguous()
+        || !k.is_contiguous()
+    {
+        return Ok(None);
+    }
+    let (batch, heads, seq, dim) = q.dims4()?;
+    let (kb, kv_heads, ks, kd) = k.dims4()?;
+    // Small M can select a numerically different BLAS route. Keep those
+    // shapes and configurations outside the validated 2:1 GQA path unchanged.
+    if seq < 8
+        || dim != 128
+        || heads != 2 * kv_heads
+        || (kb, ks, kd) != (batch, seq, dim)
+        || v.dims() != k.dims()
+    {
+        return Ok(None);
+    }
+    // Consecutive query heads share a KV head. Folding them into the row
+    // dimension avoids KV repetition and halves the number of BLAS calls.
+    let grouped_q = q.reshape((batch, kv_heads, 2 * seq, dim))?;
+    let mut scores = grouped_q
+        .matmul(&k.transpose(2, 3)?)?
+        .affine(scale, 0.0)?
+        .reshape((batch, heads, seq, seq))?;
+    if let Some(mask) = mask {
+        scores = scores.broadcast_add(mask)?;
+    }
+    let context = candle_nn::ops::softmax_last_dim(&scores)?
+        .reshape((batch, kv_heads, 2 * seq, seq))?
+        .matmul(&v.contiguous()?)?
+        .reshape((batch, heads, seq, dim))?;
+    Ok(Some(context))
 }
 
 /// Manual attention: materialises the full `[B, H, S, S]` score matrix,
@@ -493,6 +540,71 @@ fn try_flash_attention_per_row(
 mod cpu_tests {
     use super::*;
     use candle_core::Device;
+
+    #[test]
+    fn cpu_grouped_attention_matches_repeated_kv_bits() -> Result<()> {
+        let device = Device::Cpu;
+        for batch in [1, 2] {
+            for seq in [1, 7, 8, 33, 157, 179, 287] {
+                for dim in [8, 128] {
+                    let q = Tensor::rand(-1f32, 1.0, (batch, 4, seq, dim), &device)?;
+                    let k = Tensor::rand(-1f32, 1.0, (batch, 2, seq, dim), &device)?;
+                    let v =
+                        Tensor::rand(-1f32, 1.0, (batch, seq, 2, dim), &device)?.transpose(1, 2)?;
+                    let mask = Tensor::from_vec(
+                        (0..batch * seq * seq)
+                            .map(|i| {
+                                if seq > 1 && i % seq == seq - 1 {
+                                    f32::NEG_INFINITY
+                                } else {
+                                    0.
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                        (batch, 1, seq, seq),
+                        &device,
+                    )?;
+                    let repeated_k = candle_transformers::utils::repeat_kv(k.clone(), 2)?;
+                    let repeated_v = candle_transformers::utils::repeat_kv(v.clone(), 2)?;
+                    let strided_k = k.transpose(2, 3)?.contiguous()?.transpose(2, 3)?;
+                    let scale = 1. / (dim as f64).sqrt();
+                    for mask in [None, Some(&mask)] {
+                        let expected = attention_manual(&q, &repeated_k, &repeated_v, mask, scale)?;
+                        for _ in 0..2 {
+                            let actual = cpu_grouped_attention(&q, &k, &v, mask, scale)?;
+                            if dim != 128 || seq < 8 || !candle_core::utils::has_accelerate() {
+                                assert!(actual.is_none());
+                            } else {
+                                let actual = actual.expect("eligible CPU GQA");
+                                let expected = expected.flatten_all()?.to_vec1::<f32>()?;
+                                let actual = actual.flatten_all()?.to_vec1::<f32>()?;
+                                let differing = actual
+                                    .iter()
+                                    .zip(&expected)
+                                    .filter(|(a, b)| a.to_bits() != b.to_bits())
+                                    .count();
+                                assert_eq!(differing, 0, "batch={batch} seq={seq} dim={dim}");
+                            }
+                        }
+                        if seq > 1 {
+                            assert!(
+                                cpu_grouped_attention(&q, &strided_k, &v, mask, scale)?.is_none()
+                            );
+                            let strided_q = q.transpose(2, 3)?.contiguous()?.transpose(2, 3)?;
+                            assert!(
+                                cpu_grouped_attention(&strided_q, &k, &v, mask, scale)?.is_none()
+                            );
+                        }
+                        assert!(
+                            cpu_grouped_attention(&q, &repeated_k, &repeated_v, mask, scale)?
+                                .is_none()
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn cpu_attention_transposed_key_matches_materialized_bits() -> Result<()> {

@@ -246,7 +246,13 @@ feature 差异当作发行包新增收益。诊断的主要成本在 stage0 forw
 同期原版/候选/官方 ABCCBA，六进程均无编译活动观测：8.258→7.235 s（-12.39%），
 官方 CPU 为 6.120 s，候选仍慢 18.21%。短/长完整 codes 和 28 个 WAV 逐字节一致；
 其他维度的已知位差由回退规避。CPU Flash 在该形状更慢且改输出；投影权重预转置
-存在短形状位差且 down projection 更慢，均未接入生产；分组 GQA 仅为离线候选。
+存在短形状位差且 down projection 更慢，均未接入生产；该轮分组 GQA 仅为离线候选。
+
+随后 [CPU 分组 GQA](../records/omnivoice/omnivoice-cpu-gqa-2026-10-23.md) 对限定的
+Accelerate F32 / 128 head dimension / 2:1 GQA / seq>=8 配置启用 Q 头分组合并行维，
+省掉 K/V repetition，保持 score/mask/softmax 语义。三进程局部 1.014→0.835 ms
+（-17.59%），短/长完整 codes 与 28 个 WAV 逐字节一致，因此按局部收益保留。
+两轮整链对照受到外部编译活动影响，未确认新的整链增量比例，也未更新对官方排名。
 
 | 案例（测试设备 / 路径） | 结论与证据范围 |
 | --- | --- |
