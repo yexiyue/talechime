@@ -69,6 +69,25 @@ impl Stage0Qwen3RotaryEmbedding {
         let k_embed = candle_nn::rotary_emb::rope(&k.contiguous()?, &cos, &sin)?;
         Ok((q_embed, k_embed))
     }
+
+    /// Rotate q/k that are laid out as `[batch, seq, heads, head_dim]`.
+    ///
+    /// The fused `rope_thd` kernel indexes cos/sin by the sequence position and
+    /// accepts this layout, which is what the projections already produce.  It
+    /// therefore avoids the head-major copy that `rope` requires.
+    fn apply_sequence_first(
+        &self,
+        q: &Tensor,
+        k: &Tensor,
+        offset: usize,
+    ) -> Result<(Tensor, Tensor)> {
+        let (_, seq_len, _, _) = q.dims4()?;
+        let cos = self.cos.narrow(0, offset, seq_len)?;
+        let sin = self.sin.narrow(0, offset, seq_len)?;
+        let q_embed = candle_nn::rotary_emb::rope_thd(q, &cos, &sin)?;
+        let k_embed = candle_nn::rotary_emb::rope_thd(k, &cos, &sin)?;
+        Ok((q_embed, k_embed))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -180,32 +199,44 @@ impl Stage0Qwen3Attention {
         let k = self.k_proj.forward(xs)?;
         let v = self.v_proj.forward(xs)?;
 
-        let q = q
-            .reshape((batch, seq_len, self.num_heads, self.head_dim))?
-            .transpose(1, 2)?;
-        let k = k
-            .reshape((batch, seq_len, self.num_kv_heads, self.head_dim))?
-            .transpose(1, 2)?;
+        let (q, k) = if xs.device().is_metal() {
+            // The fused rope kernel for the sequence-first layout reads the
+            // layout the projections already produce, so q and k never need a
+            // head-major copy.  The transposed view below is what the
+            // attention kernel reads; it accepts strided q/k/v.
+            let q = q.reshape((batch, seq_len, self.num_heads, self.head_dim))?;
+            let k = k.reshape((batch, seq_len, self.num_kv_heads, self.head_dim))?;
+            let q = apply_rms_norm(&self.q_norm, &q)?;
+            let k = apply_rms_norm(&self.k_norm, &k)?;
+            let (q, k) = self.rotary_emb.apply_sequence_first(&q, &k, 0)?;
+            (q.transpose(1, 2)?, k.transpose(1, 2)?)
+        } else {
+            let q = q
+                .reshape((batch, seq_len, self.num_heads, self.head_dim))?
+                .transpose(1, 2)?;
+            let k = k
+                .reshape((batch, seq_len, self.num_kv_heads, self.head_dim))?
+                .transpose(1, 2)?;
+            let q_flat = q.flatten(0, 2)?;
+            let k_flat = k.flatten(0, 2)?;
+            let q = apply_rms_norm(&self.q_norm, &q_flat)?.reshape((
+                batch,
+                self.num_heads,
+                seq_len,
+                self.head_dim,
+            ))?;
+            let k = apply_rms_norm(&self.k_norm, &k_flat)?.reshape((
+                batch,
+                self.num_kv_heads,
+                seq_len,
+                self.head_dim,
+            ))?;
+            self.rotary_emb.apply(&q, &k, 0)?
+        };
         let v = v
             .reshape((batch, seq_len, self.num_kv_heads, self.head_dim))?
             .transpose(1, 2)?;
 
-        let q_flat = q.flatten(0, 2)?;
-        let k_flat = k.flatten(0, 2)?;
-        let q = apply_rms_norm(&self.q_norm, &q_flat)?.reshape((
-            batch,
-            self.num_heads,
-            seq_len,
-            self.head_dim,
-        ))?;
-        let k = apply_rms_norm(&self.k_norm, &k_flat)?.reshape((
-            batch,
-            self.num_kv_heads,
-            seq_len,
-            self.head_dim,
-        ))?;
-
-        let (q, k) = self.rotary_emb.apply(&q, &k, 0)?;
         let context = self.attention_context(q, k, v, attention_mask, flash_seqlens)?;
         Ok(context
             .transpose(1, 2)?
@@ -449,6 +480,105 @@ fn try_flash_attention_per_row(
 mod metal_tests {
     use super::*;
     use candle_core::Device;
+
+    fn bit_pattern(tensor: &Tensor) -> Result<Vec<u32>> {
+        Ok(tensor
+            .to_dtype(DType::F32)?
+            .flatten_all()?
+            .to_vec1::<f32>()?
+            .into_iter()
+            .map(f32::to_bits)
+            .collect())
+    }
+
+    /// The sequence-first rope path replaces a head-major layout copy.  It has
+    /// to produce exactly the same q and k, otherwise the discrete codes
+    /// change.
+    #[test]
+    fn sequence_first_rope_matches_head_major_rope() -> Result<()> {
+        let device = Device::new_metal(0)?;
+        let (batch, seq, dim) = (2usize, 157usize, 128usize);
+        let cos = Tensor::rand(-1f32, 1f32, (seq, dim / 2), &device)?.to_dtype(DType::F16)?;
+        let sin = Tensor::rand(-1f32, 1f32, (seq, dim / 2), &device)?.to_dtype(DType::F16)?;
+        let norm_weight = Tensor::rand(0.5f32, 1.5f32, (dim,), &device)?.to_dtype(DType::F16)?;
+        // The production path calls the fused kernel on Metal; the wrapper in
+        // `with_tracing` forwards to exactly this implementation.
+        let norm = candle_nn::RmsNorm::new(norm_weight, 1e-6);
+
+        for heads in [16usize, 8] {
+            let proj = Tensor::rand(-1f32, 1f32, (batch, seq, heads * dim), &device)?
+                .to_dtype(DType::F16)?;
+
+            // Head-major path: copy into `[B, H, S, D]`, normalise, rotate.
+            let head_major = proj
+                .reshape((batch, seq, heads, dim))?
+                .transpose(1, 2)?
+                .flatten(0, 2)?;
+            let head_major = norm
+                .forward(&head_major)?
+                .reshape((batch, heads, seq, dim))?;
+            let head_major = candle_nn::rotary_emb::rope(&head_major, &cos, &sin)?;
+
+            // Sequence-first path: normalise and rotate in place, then hand
+            // the transposed view to the attention.
+            let sequence_first = norm.forward(&proj.reshape((batch, seq, heads, dim))?)?;
+            let sequence_first =
+                candle_nn::rotary_emb::rope_thd(&sequence_first, &cos, &sin)?.transpose(1, 2)?;
+
+            assert_eq!(
+                bit_pattern(&head_major)?,
+                bit_pattern(&sequence_first)?,
+                "sequence-first rope differs for {heads} heads"
+            );
+        }
+        Ok(())
+    }
+
+    /// The attention kernel reads strided q/k/v, so the copy-free path has to
+    /// produce the same context as the head-major path.
+    #[test]
+    fn strided_attention_matches_contiguous_attention() -> Result<()> {
+        let device = Device::new_metal(0)?;
+        let (batch, seq, heads, kv_heads, dim) = (2usize, 157usize, 16usize, 8usize, 128usize);
+        let scale = 1.0f32 / (dim as f32).sqrt();
+        let mask = Tensor::rand(0f32, 1f32, (batch, 1, seq, seq), &device)?.to_dtype(DType::F16)?;
+        let mask = mask.expand((batch, heads, seq, seq))?;
+
+        for masked in [false, true] {
+            let q_seq = Tensor::rand(-1f32, 1f32, (batch, seq, heads * dim), &device)?
+                .to_dtype(DType::F16)?;
+            let k_seq = Tensor::rand(-1f32, 1f32, (batch, seq, kv_heads * dim), &device)?
+                .to_dtype(DType::F16)?;
+            let v_seq = Tensor::rand(-1f32, 1f32, (batch, seq, kv_heads * dim), &device)?
+                .to_dtype(DType::F16)?;
+
+            // Copy-free path: the projections stay in the sequence-first
+            // layout and the attention reads the transposed views.
+            let q = q_seq.reshape((batch, seq, heads, dim))?.transpose(1, 2)?;
+            let k = k_seq
+                .reshape((batch, seq, kv_heads, dim))?
+                .transpose(1, 2)?;
+            let v = v_seq
+                .reshape((batch, seq, kv_heads, dim))?
+                .transpose(1, 2)?;
+            let mask_ref = if masked { Some(&mask) } else { None };
+            let strided = attention_sdpa(&q, &k, &v, mask_ref, scale)?;
+
+            let contiguous = attention_sdpa(
+                &q.contiguous()?,
+                &k.contiguous()?,
+                &v.contiguous()?,
+                mask_ref,
+                scale,
+            )?;
+            assert_eq!(
+                bit_pattern(&strided)?,
+                bit_pattern(&contiguous)?,
+                "strided attention differs, masked={masked}"
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn native_gqa_matches_repeated_kv_exactly() -> Result<()> {

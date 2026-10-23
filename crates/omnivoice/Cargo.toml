@@ -46,3 +46,15 @@ required-features=["metal"]
 [[example]]
 name="decoder_ops_probe"
 required-features=["metal"]
+
+[[example]]
+name="gemm_merge_probe"
+required-features=["metal"]
+
+[[example]]
+name="attention_layout_probe"
+required-features=["metal"]
+
+[[example]]
+name="attention_copyfree_probe"
+required-features=["metal"]
