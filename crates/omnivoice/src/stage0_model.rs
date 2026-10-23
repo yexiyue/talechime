@@ -1269,7 +1269,11 @@ fn predict_tokens_with_scoring_from_tensors(
     let pred_tokens = if class_temperature > 0.0 {
         let filtered = filter_top_k(&log_probs, 0.1)?;
         gumbel_argmax(&filtered, class_temperature)?
-    } else if log_probs.device().is_metal() {
+    } else if log_probs.device().is_metal()
+        || (log_probs.device().is_cpu()
+            && log_probs.dtype() == DType::F32
+            && log_probs.is_contiguous())
+    {
         let tokens = log_probs.argmax(candle_core::D::Minus1)?;
         // Greedy confidence is the selected maximum; avoid a second vocabulary scan.
         let confidence = log_probs
@@ -2076,13 +2080,11 @@ pub(crate) fn tensor_to_i64_tensor2(tensor: &Tensor) -> Result<I64Tensor2> {
     I64Tensor2::new(dims, data)
 }
 
-#[cfg(all(test, feature = "metal", target_os = "macos"))]
-mod metal_tests {
+#[cfg(test)]
+mod scoring_tests {
     use super::*;
 
-    #[test]
-    fn greedy_confidence_gather_matches_full_reduction() -> Result<()> {
-        let device = Device::new_metal(0)?;
+    fn check_greedy_confidence(device: &Device) -> Result<()> {
         for width in [1024, 1025, 4097] {
             // Repeated maxima, different rows, and a mask token with the largest raw logit.
             let values: Vec<f32> = (0..2 * 8 * 7 * width)
@@ -2094,7 +2096,7 @@ mod metal_tests {
                     }
                 })
                 .collect();
-            let logits = Tensor::from_vec(values, (2, 8, 7, width), &device)?;
+            let logits = Tensor::from_vec(values, (2, 8, 7, width), device)?;
             let u = (logits.sin()? * 0.5)?;
             for guidance in [0.0, 2.0] {
                 let c_probs = candle_nn::ops::log_softmax(&logits, candle_core::D::Minus1)?;
@@ -2139,6 +2141,100 @@ mod metal_tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn cpu_greedy_confidence_gather_matches_full_reduction() -> Result<()> {
+        check_greedy_confidence(&Device::Cpu)
+    }
+
+    #[test]
+    fn cpu_greedy_confidence_preserves_nonfinite_and_signed_zero_results() -> Result<()> {
+        for values in [
+            vec![0., -0., 1., 1., f32::NEG_INFINITY],
+            vec![f32::from_bits(0x7fc00042), -1., 3., 3., 0.],
+            vec![1., f32::INFINITY, -1., f32::NAN, 0.],
+            vec![f32::NEG_INFINITY; 5],
+        ] {
+            let logits = Tensor::from_vec(values, (1, 1, 1, 5), &Device::Cpu)?;
+            let probs = mask_audio_token(
+                &candle_nn::ops::log_softmax(&logits, candle_core::D::Minus1)?,
+                4,
+            )?;
+            let (tokens, confidence) =
+                predict_tokens_with_scoring_from_tensors(&logits, &logits, 0., 0., 4, None)?;
+            assert_eq!(
+                tokens.flatten_all()?.to_vec1::<i64>()?,
+                probs
+                    .argmax(candle_core::D::Minus1)?
+                    .to_dtype(DType::I64)?
+                    .flatten_all()?
+                    .to_vec1::<i64>()?
+            );
+            assert_eq!(
+                confidence
+                    .flatten_all()?
+                    .to_vec1::<f32>()?
+                    .into_iter()
+                    .map(f32::to_bits)
+                    .collect::<Vec<_>>(),
+                probs
+                    .max(candle_core::D::Minus1)?
+                    .flatten_all()?
+                    .to_vec1::<f32>()?
+                    .into_iter()
+                    .map(f32::to_bits)
+                    .collect::<Vec<_>>()
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cpu_stochastic_confidence_remains_the_distribution_maximum() -> Result<()> {
+        use rand::SeedableRng;
+
+        let logits = Tensor::from_vec(
+            (0..8 * 7 * 33)
+                .map(|i| (i % 7) as f32 / 4.)
+                .collect::<Vec<_>>(),
+            (1, 8, 7, 33),
+            &Device::Cpu,
+        )?;
+        let probs = mask_audio_token(
+            &candle_nn::ops::log_softmax(&logits, candle_core::D::Minus1)?,
+            32,
+        )?;
+        let mut rng = StdRng::seed_from_u64(42);
+        let (tokens, confidence) =
+            predict_tokens_with_scoring_from_tensors(&logits, &logits, 0., 1., 32, Some(&mut rng))?;
+        assert_ne!(
+            tokens.flatten_all()?.to_vec1::<i64>()?,
+            probs
+                .argmax(candle_core::D::Minus1)?
+                .to_dtype(DType::I64)?
+                .flatten_all()?
+                .to_vec1::<i64>()?
+        );
+        assert_eq!(
+            confidence.flatten_all()?.to_vec1::<f32>()?,
+            probs
+                .max(candle_core::D::Minus1)?
+                .flatten_all()?
+                .to_vec1::<f32>()?
+        );
+        Ok(())
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    fn metal_greedy_confidence_gather_matches_full_reduction() -> Result<()> {
+        check_greedy_confidence(&Device::new_metal(0)?)
+    }
+}
+
+#[cfg(all(test, feature = "metal", target_os = "macos"))]
+mod metal_tests {
+    use super::*;
 
     #[test]
     fn class_top_k_above_metal_threadgroup_limit_matches_cpu() -> Result<()> {
