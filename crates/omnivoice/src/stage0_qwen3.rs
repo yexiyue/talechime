@@ -10,6 +10,10 @@ use candle_transformers::models::with_tracing::{Linear, RmsNorm, linear_b};
 use crate::error::Result;
 use crate::stage0_cpu_linear::CpuProjection;
 
+#[cfg(test)]
+#[path = "stage0_qwen3/cpu_attribution.rs"]
+mod cpu_attribution;
+
 #[derive(Debug, Clone)]
 pub struct Stage0Qwen3BackboneConfig {
     pub vocab_size: usize,
@@ -535,10 +539,22 @@ impl Stage0Qwen3Backbone {
         capture_layers: &BTreeSet<usize>,
         flash_seqlens: Option<&[usize]>,
     ) -> Result<Stage0BackboneOutput> {
+        #[cfg(test)]
+        let trace_step = cpu_attribution::begin_forward();
         let mut hidden = input_embeds.clone();
         let mut captures = BTreeMap::new();
         for (index, layer) in self.layers.iter().enumerate() {
+            #[cfg(test)]
+            let trace_input = hidden.clone();
             hidden = layer.forward(&hidden, attention_mask, flash_seqlens)?;
+            #[cfg(test)]
+            cpu_attribution::capture_layer(
+                trace_step,
+                index,
+                &trace_input,
+                &hidden,
+                attention_mask,
+            )?;
             // HuggingFace exposes `hidden_states[layer_index + 1]` before the
             // final model norm.  Keep the last decoder layer in that same
             // form; callers that need the post-norm output already receive it
@@ -548,6 +564,8 @@ impl Stage0Qwen3Backbone {
             }
         }
         let final_hidden = apply_rms_norm(&self.norm, &hidden)?;
+        #[cfg(test)]
+        cpu_attribution::capture_head(trace_step, &final_hidden)?;
         Ok(Stage0BackboneOutput {
             final_hidden,
             captured_hidden_layers: captures,

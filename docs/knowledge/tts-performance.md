@@ -280,6 +280,13 @@ Accelerate F32 / hidden1024 / FFN3072 / SiLU 权重启用单次 gate/up 投影�
 干扰，未确认稳定整链增量或追平官方。加载临时拷贝、拆分视图延长激活寿命的代价另记。
 显式拆分连续化、合并权重预转置和 SiLU×up 自定义操作无可信完整 MLP 收益，均只留离线。
 
+[CPU 真实输入归因](../records/omnivoice/omnivoice-cpu-real-input-2026-10-23.md) 以 `23722ed`
+重新对照：整链 RPPR 为 Rust 7.021 s / 官方 6.236 s，但音频长度、seed 派生和宿主后处理
+不同，仅作产品比较。同真实张量的三进程层重放确认：MLP 激活 0.578 / 0.199 ms，
+固定 130 帧 decoder RPPR 为 445.209 / 111.566 ms，普通卷积与布局是下一轮优先项。
+Accelerate BLAS 与 SiLU 向量路径已启用，官方同输入层实际调用 CPU Flash；没有证据表明
+CPU 已到硬件上限。本轮只保留离线诊断，短/长完整 codes 和 28 个 WAV 保持一致。
+
 | 案例（测试设备 / 路径） | 结论与证据范围 |
 | --- | --- |
 | CosyVoice3 首轮 Windows CPU / RTX 5070 CUDA | 建立准确转写、单实例基线；DiT/MLP 图及组合端到端不足 10%，转置 view 更慢且改变 PCM，均撤回。保留 recorder 输出复制预热修复；HiFT 转换摘要与生产清单不同，未通过资源准备门禁，不能宣称新增整链提速 |

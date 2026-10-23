@@ -1,6 +1,10 @@
 use candle_core::{IndexOp, Result as CandleResult, Tensor};
 use candle_nn::Module;
 
+#[cfg(test)]
+#[path = "stage1_model/cpu_attribution.rs"]
+mod cpu_attribution;
+
 use crate::{
     codec_layers::{
         CodecConv1d, CodecConvTranspose1d, CodecEmbedding, CodecLinear, CodecWeightSource,

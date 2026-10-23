@@ -8,6 +8,8 @@ pub mod audio_input;
 pub mod audio_tokenizer;
 mod codec_layers;
 pub mod contracts;
+#[cfg(test)]
+mod cpu_attribution;
 pub mod error;
 pub mod frontend;
 pub mod model_source;
