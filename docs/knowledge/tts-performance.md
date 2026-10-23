@@ -191,7 +191,12 @@ patch 下能编译当作发行可用。确需 fork 独有公开 API 时，受影
 
 ## 已验证实例与拒绝项
 
-OmniVoice 的最新增量记录见 [Metal 原生 GQA](../records/omnivoice/omnivoice-native-gqa-2026-10-23.md)：
+后续 [OmniVoice 贪心 confidence 与转型实验](../records/omnivoice/omnivoice-scoring-2026-10-23.md)
+保留 Metal 贪心的 argmax 索引 gather：三进程 1025 词表选择 60.23→36.63 µs
+（-39.2%），同形状完整 scoring 探针约 -1.6%，短/长 codes 与 F32/PCM16 WAV 一致；
+尚无可信整链提速结论。两种 logits 转型布局候选慢约 2.3%/4.3%，未进入生产路径。
+
+OmniVoice 的上一轮增量记录见 [Metal 原生 GQA](../records/omnivoice/omnivoice-native-gqa-2026-10-23.md)：
 固定 Candle 已支持直接传入 8 个 KV 头；移除 Metal 上的 repeat_kv 后，短/长文本
 完整 codes、F32/PCM16 WAV 逐字节一致。同 feature 无编译活动子集 3.845→3.200 s
 （约 -16.8%，A 两进程、B 一进程）；完整 ABBA 有一个外部编译干扰进程，

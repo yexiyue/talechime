@@ -38,3 +38,7 @@ required-features=["metal"]
 [[example]]
 name="gqa_probe"
 required-features=["metal"]
+
+[[example]]
+name="scoring_probe"
+required-features=["metal"]

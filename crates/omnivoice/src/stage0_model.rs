@@ -1269,6 +1269,16 @@ fn predict_tokens_with_scoring_from_tensors(
     let pred_tokens = if class_temperature > 0.0 {
         let filtered = filter_top_k(&log_probs, 0.1)?;
         gumbel_argmax(&filtered, class_temperature)?
+    } else if log_probs.device().is_metal() {
+        let tokens = log_probs.argmax(candle_core::D::Minus1)?;
+        // Greedy confidence is the selected maximum; avoid a second vocabulary scan.
+        let confidence = log_probs
+            .gather(
+                &tokens.unsqueeze(candle_core::D::Minus1)?,
+                candle_core::D::Minus1,
+            )?
+            .squeeze(candle_core::D::Minus1)?;
+        return Ok((tokens.to_dtype(DType::I64)?, confidence));
     } else {
         log_probs.argmax(candle_core::D::Minus1)?
     }
@@ -2065,6 +2075,66 @@ pub(crate) fn tensor_to_i64_tensor2(tensor: &Tensor) -> Result<I64Tensor2> {
 #[cfg(all(test, feature = "metal", target_os = "macos"))]
 mod metal_tests {
     use super::*;
+
+    #[test]
+    fn greedy_confidence_gather_matches_full_reduction() -> Result<()> {
+        let device = Device::new_metal(0)?;
+        for width in [1024, 1025, 4097] {
+            // Repeated maxima, different rows, and a mask token with the largest raw logit.
+            let values: Vec<f32> = (0..2 * 8 * 7 * width)
+                .map(|i| {
+                    if i % width == width - 1 {
+                        20.0
+                    } else {
+                        (i % 13) as f32 - 6.0
+                    }
+                })
+                .collect();
+            let logits = Tensor::from_vec(values, (2, 8, 7, width), &device)?;
+            let u = (logits.sin()? * 0.5)?;
+            for guidance in [0.0, 2.0] {
+                let c_probs = candle_nn::ops::log_softmax(&logits, candle_core::D::Minus1)?;
+                let old_probs = if guidance == 0.0 {
+                    c_probs
+                } else {
+                    let u_probs = candle_nn::ops::log_softmax(&u, candle_core::D::Minus1)?;
+                    let guided = (&c_probs + ((&c_probs - &u_probs)? * guidance as f64)?)?;
+                    candle_nn::ops::log_softmax(&guided, candle_core::D::Minus1)?
+                };
+                let old_probs = mask_audio_token(&old_probs, width - 1)?;
+                let (tokens, confidence) = predict_tokens_with_scoring_from_tensors(
+                    &logits,
+                    &u,
+                    guidance,
+                    0.0,
+                    width - 1,
+                    None,
+                )?;
+                assert_eq!(
+                    tokens.flatten_all()?.to_vec1::<i64>()?,
+                    old_probs
+                        .argmax(candle_core::D::Minus1)?
+                        .to_dtype(DType::I64)?
+                        .flatten_all()?
+                        .to_vec1::<i64>()?,
+                    "tokens width={width} guidance={guidance}"
+                );
+                let bits = |t: Tensor| -> Result<Vec<u32>> {
+                    Ok(t.flatten_all()?
+                        .to_vec1::<f32>()?
+                        .into_iter()
+                        .map(f32::to_bits)
+                        .collect())
+                };
+                assert_eq!(
+                    bits(confidence)?,
+                    bits(old_probs.max(candle_core::D::Minus1)?)?,
+                    "confidence width={width} guidance={guidance}"
+                );
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn class_top_k_above_metal_threadgroup_limit_matches_cpu() -> Result<()> {
