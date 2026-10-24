@@ -101,6 +101,64 @@ pub fn layer_norm_no_affine(x: &Tensor) -> Result<Tensor> {
     xc.broadcast_div(&std)
 }
 
+/// `ln(x) * scale + shift` with `[B, 1, dim]` per-branch modulations.
+///
+/// On Metal this folds the modulation into candle's fused `layer_norm`
+/// kernel (one kernel per batch branch instead of the manual two-pass norm
+/// chain plus two broadcast passes; the fused kernel computes the variance
+/// in one pass, `E[x^2] - mean^2`, a ~1e-7-level difference at f32 gated in
+/// `dit::tests::modulated_ln_matches_reference_metal`). Other devices keep
+/// the reference two-pass chain so CPU anchors stay bit-stable.
+pub fn modulated_layer_norm(x: &Tensor, scale: &Tensor, shift: &Tensor) -> Result<Tensor> {
+    if !x.device().is_metal() {
+        let x = layer_norm_no_affine(x)?;
+        return x.broadcast_mul(scale)?.broadcast_add(shift);
+    }
+    let dim = x.dim(D::Minus1)?;
+    let b = x.dim(0)?;
+    let mut branches = Vec::with_capacity(b);
+    for i in 0..b {
+        let alpha = scale.narrow(0, i, 1)?.reshape((dim,))?;
+        let beta = shift.narrow(0, i, 1)?.reshape((dim,))?;
+        branches.push(candle_nn::ops::layer_norm(
+            &x.narrow(0, i, 1)?,
+            &alpha,
+            &beta,
+            1e-6,
+        )?);
+    }
+    if b == 1 {
+        Ok(branches.pop().expect("b >= 1"))
+    } else {
+        Tensor::cat(&branches, 0)
+    }
+}
+
+/// Normalized attention input and its timestep modulation views. The raw
+/// packed embedding owns the layout contract consumed by fused Metal ops.
+pub(crate) struct ModulatedInput {
+    pub normalized: Tensor,
+    pub gate_msa: Tensor,
+    pub shift_mlp: Tensor,
+    pub scale_mlp: Tensor,
+    pub gate_mlp: Tensor,
+    pub raw: Tensor,
+}
+
+impl ModulatedInput {
+    pub(crate) fn from_raw(normalized: Tensor, raw: Tensor) -> Result<Self> {
+        let dim = raw.dim(D::Minus1)? / 6;
+        Ok(Self {
+            normalized,
+            gate_msa: raw.narrow(D::Minus1, 2 * dim, dim)?,
+            shift_mlp: raw.narrow(D::Minus1, 3 * dim, dim)?,
+            scale_mlp: raw.narrow(D::Minus1, 4 * dim, dim)?,
+            gate_mlp: raw.narrow(D::Minus1, 5 * dim, dim)?,
+            raw,
+        })
+    }
+}
+
 /// AdaLayerNormZero: 6-way modulation from the timestep embedding.
 #[derive(Debug)]
 pub struct AdaLayerNormZero {
@@ -134,32 +192,32 @@ impl AdaLayerNormZero {
         let scale_mlp = emb.narrow(D::Minus1, 4 * d, d)?;
         let gate_mlp = emb.narrow(D::Minus1, 5 * d, d)?;
 
-        let x = layer_norm_no_affine(x)?;
-        let x = x.broadcast_mul(&(scale_msa.unsqueeze(1)? + 1.0)?)?;
-        let x = x.broadcast_add(&shift_msa.unsqueeze(1)?)?;
+        let x = modulated_layer_norm(
+            x,
+            &(scale_msa.unsqueeze(1)? + 1.0)?,
+            &shift_msa.unsqueeze(1)?,
+        )?;
         Ok((x, gate_msa, shift_mlp, scale_mlp, gate_mlp))
     }
 
+    /// Affine only (no layer norm): the raw `[B, 1, 6D]` embedding the fused
+    /// Metal kernels index by channel offset. Used when the normed input is
+    /// produced by the previous block's fused tail kernel.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn mods(&self, act_emb: &Tensor) -> Result<Tensor> {
+        self.linear.forward(act_emb)?.unsqueeze(1)
+    }
+
     /// Hot-path variant taking an already Swish-activated `emb`, returning
-    /// modulation tensors shaped `[B, 1, D]` ready for broadcast.
-    pub(crate) fn forward_act(
-        &self,
-        x: &Tensor,
-        act_emb: &Tensor,
-    ) -> Result<(Tensor, Tensor, Tensor, Tensor, Tensor)> {
+    /// modulation tensors shaped `[B, 1, D]` ready for broadcast plus the
+    /// raw `[B, 1, 6D]` embedding (consumed by the fused Metal gate kernel).
+    pub(crate) fn forward_act(&self, x: &Tensor, act_emb: &Tensor) -> Result<ModulatedInput> {
         let emb = self.linear.forward(act_emb)?.unsqueeze(1)?;
         let d = self.dim;
         let shift_msa = emb.narrow(D::Minus1, 0, d)?;
         let scale_msa = emb.narrow(D::Minus1, d, d)?;
-        let gate_msa = emb.narrow(D::Minus1, 2 * d, d)?;
-        let shift_mlp = emb.narrow(D::Minus1, 3 * d, d)?;
-        let scale_mlp = emb.narrow(D::Minus1, 4 * d, d)?;
-        let gate_mlp = emb.narrow(D::Minus1, 5 * d, d)?;
-
-        let x = layer_norm_no_affine(x)?;
-        let x = x.broadcast_mul(&(scale_msa + 1.0)?)?;
-        let x = x.broadcast_add(&shift_msa)?;
-        Ok((x, gate_msa, shift_mlp, scale_mlp, gate_mlp))
+        let x = modulated_layer_norm(x, &(scale_msa + 1.0)?, &shift_msa)?;
+        ModulatedInput::from_raw(x, emb)
     }
 }
 
@@ -190,8 +248,19 @@ impl AdaLayerNormZeroFinal {
         let d = self.dim;
         let scale = emb.narrow(D::Minus1, 0, d)?;
         let shift = emb.narrow(D::Minus1, d, d)?;
-        let x = layer_norm_no_affine(x)?;
-        x.broadcast_mul(&(scale + 1.0)?)?.broadcast_add(&shift)
+        modulated_layer_norm(x, &(scale + 1.0)?, &shift)
+    }
+
+    /// Final modulation in the six-channel-group layout consumed by the
+    /// fused block tail: `[shift, scale, zero padding]`.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn tail_modulation(&self, act_emb: &Tensor) -> Result<Tensor> {
+        let raw = self.linear.forward(act_emb)?.unsqueeze(1)?;
+        let d = self.dim;
+        let shift = raw.narrow(D::Minus1, d, d)?;
+        let scale = raw.narrow(D::Minus1, 0, d)?;
+        let pad = Tensor::zeros((raw.dim(0)?, 1, 4 * d), raw.dtype(), raw.device())?;
+        Tensor::cat(&[&shift, &scale, &pad], D::Minus1)
     }
 }
 

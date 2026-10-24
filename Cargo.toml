@@ -18,6 +18,7 @@ candle-core = "=0.11.0"
 candle-nn = "=0.11.0"
 candle-transformers = "=0.11.0"
 candle-metal-kernels = "=0.11.0"
+objc2-metal = "0.3.1"
 # Pinned to the same resolution candle-core 0.11.0 uses, so the CUDA graph
 # capture API used by `voxcpm` operates on the same CudaContext instance.
 # Leave CUDA library loading and optional libraries to Candle's feature set.
@@ -76,10 +77,10 @@ tempfile = "3.27.0"
 # (31f35b147389700ed2a178ee66a91c3cc25cc80d). Patch policy, provenance and the
 # crates.io publishing consequences live in docs/legal/candle/SOURCE.md.
 [patch.crates-io]
-candle-core = { git = "https://github.com/yexiyue/candle", rev = "2266099d92265112ecc0d56ecee1761e3cc2ac00", package = "candle-core" }
-candle-nn = { git = "https://github.com/yexiyue/candle", rev = "2266099d92265112ecc0d56ecee1761e3cc2ac00", package = "candle-nn" }
-candle-transformers = { git = "https://github.com/yexiyue/candle", rev = "2266099d92265112ecc0d56ecee1761e3cc2ac00", package = "candle-transformers" }
-candle-metal-kernels = { git = "https://github.com/yexiyue/candle", rev = "2266099d92265112ecc0d56ecee1761e3cc2ac00", package = "candle-metal-kernels" }
+candle-core = { git = "https://github.com/yexiyue/candle", rev = "884b359895a16c8fbd3647789b1f7c7974894708", package = "candle-core" }
+candle-nn = { git = "https://github.com/yexiyue/candle", rev = "884b359895a16c8fbd3647789b1f7c7974894708", package = "candle-nn" }
+candle-transformers = { git = "https://github.com/yexiyue/candle", rev = "884b359895a16c8fbd3647789b1f7c7974894708", package = "candle-transformers" }
+candle-metal-kernels = { git = "https://github.com/yexiyue/candle", rev = "884b359895a16c8fbd3647789b1f7c7974894708", package = "candle-metal-kernels" }
 
 
 [profile.release]

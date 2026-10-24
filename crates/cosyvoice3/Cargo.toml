@@ -10,7 +10,7 @@ repository = "https://github.com/yexiyue/talechime"
 [features]
 default = []
 cuda = ["candle-transformers/cuda"]
-metal = ["candle-nn/metal"]
+metal = ["candle-nn/metal", "candle-core/metal", "dep:candle-metal-kernels", "dep:objc2-metal"]
 # Official ONNX artifacts: campplus / speech_tokenizer_v3 frontends and the
 # export_onnx.py flow estimator used for numeric comparison against Candle.
 ort = ["dep:ort"]
@@ -21,6 +21,12 @@ ort = ["dep:ort"]
 # before relying on cross-platform bit-parity.
 [target.'cfg(target_os = "macos")'.dependencies]
 candle-core = { workspace = true, features = ["accelerate"] }
+
+# Fused DiT Metal kernels (rope/head-split, gated residual mod-LN) hosted via
+# candle custom ops; objc2-metal is already in the tree through candle (same
+# 0.3.1 pin) and only provides the MTLSize struct here.
+candle-metal-kernels = { workspace = true, optional = true }
+objc2-metal = { workspace = true, optional = true }
 
 [dependencies]
 candle-nn.workspace = true

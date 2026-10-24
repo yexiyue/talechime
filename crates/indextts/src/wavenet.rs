@@ -150,8 +150,14 @@ impl Wavenet {
         for i in 0..self.n_layers {
             let k = self.in_layers[i].weight().dims()[2];
             let side = (k - 1) / 2;
-            let padded = reflect_pad1d(&x, side, side)?;
-            let x_in = self.in_layers[i].forward(&padded)?; // (B, 2H, T)
+            let padded = {
+                let _g = crate::profile::scope(Some(x.device()), "wn.pad");
+                reflect_pad1d(&x, side, side)?
+            };
+            let x_in = {
+                let _g = crate::profile::scope(Some(x.device()), "wn.conv");
+                self.in_layers[i].forward(&padded)?
+            }; // (B, 2H, T)
             // g slice (B, 2H, T_g), broadcast over time.
             let g_l = if g_t == 1 {
                 g.narrow(1, i * 2 * hidden, 2 * hidden)?
@@ -159,19 +165,55 @@ impl Wavenet {
                 // Upstream only ever uses T_g == 1 (timestep embedding).
                 candle_core::bail!("wavenet conditioning must have length 1 (got {g_t})");
             };
-            let in_act = x_in.broadcast_add(&g_l)?;
-            let t_act = in_act.narrow(1, 0, hidden)?.tanh()?;
-            let s_act = candle_nn::ops::sigmoid(&in_act.narrow(1, hidden, hidden)?)?;
-            let acts = t_act.mul(&s_act)?; // fused_add_tanh_sigmoid_multiply
-            let res_skip_acts = self.res_skip_layers[i].forward(&acts)?;
+            let eager_activation = || -> Result<Tensor> {
+                let _g = crate::profile::scope(Some(x.device()), "wn.act");
+                let in_act = x_in.broadcast_add(&g_l)?;
+                let t_act = in_act.narrow(1, 0, hidden)?.tanh()?;
+                let s_act = candle_nn::ops::sigmoid(&in_act.narrow(1, hidden, hidden)?)?;
+                t_act.mul(&s_act)
+            };
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            let acts = if x.device().is_metal() {
+                let fused = {
+                    let _g = crate::profile::scope(Some(x.device()), "wn.act");
+                    crate::metal_fused::wn_gate_act(&x_in, &g, i * 2 * hidden)
+                };
+                fused.or_else(|_| eager_activation())?
+            } else {
+                eager_activation()?
+            };
+            #[cfg(not(all(feature = "metal", target_os = "macos")))]
+            let acts = eager_activation()?;
+            let res_skip_acts = {
+                let _g = crate::profile::scope(Some(x.device()), "wn.res_skip");
+                self.res_skip_layers[i].forward(&acts)?
+            };
+            let _g = crate::profile::scope(Some(x.device()), "wn.act");
             if i < self.n_layers - 1 {
-                let res = res_skip_acts.narrow(1, 0, hidden)?;
-                let skip = res_skip_acts.narrow(1, hidden, hidden)?;
-                x = x.add(&res)?;
-                output = output.add(&skip)?;
+                let eager_tail = || -> Result<(Tensor, Tensor)> {
+                    let res = res_skip_acts.narrow(1, 0, hidden)?;
+                    let skip = res_skip_acts.narrow(1, hidden, hidden)?;
+                    Ok((x.add(&res)?, output.add(&skip)?))
+                };
+                #[cfg(all(feature = "metal", target_os = "macos"))]
+                let tail = if x.device().is_metal() {
+                    match crate::metal_fused::wn_res_skip_tail(&res_skip_acts, &x, &output) {
+                        Ok(both) => (
+                            both.narrow(0, 0, 1)?.squeeze(0)?,
+                            both.narrow(0, 1, 1)?.squeeze(0)?,
+                        ),
+                        Err(_) => eager_tail()?,
+                    }
+                } else {
+                    eager_tail()?
+                };
+                #[cfg(not(all(feature = "metal", target_os = "macos")))]
+                let tail = eager_tail()?;
+                (x, output) = tail;
             } else {
                 output = output.add(&res_skip_acts)?;
             }
+            drop(_g);
         }
         Ok(output)
     }
@@ -316,5 +358,79 @@ mod tests {
                 .iter()
                 .all(|&v| v == 0.0)
         );
+    }
+    /// Metal numeric gate for the fused wavenet kernels against the
+    /// candle elementwise chain on the real solve shapes (B=2 CFG batch,
+    /// hidden 512, odd T included). The tanh/sigmoid expressions are
+    /// candle's verbatim, so the gate can demand bit-exactness; the tail
+    /// add order matches the reference (x + res, output + skip).
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    #[ignore = "requires a Metal device; no models"]
+    fn wavenet_fused_acts_match_chain_metal() {
+        let metal = match Device::new_metal(0) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("skipping, no metal device: {e}");
+                return;
+            }
+        };
+        let (b, hidden, n_layers) = (2usize, 512usize, 8usize);
+        for t in [1024usize, 37] {
+            let two_h = 2 * hidden;
+            let g_len = two_h * n_layers;
+            let x_in = Tensor::randn(0f32, 1f32, (b, two_h, t), &metal).unwrap();
+            let g = Tensor::randn(0f32, 1f32, (b, g_len, 1), &metal).unwrap();
+            for layer in [0usize, 3, n_layers - 1] {
+                let g_off = layer * two_h;
+                let g_l = g.narrow(1, g_off, two_h).unwrap();
+                let in_act = x_in.broadcast_add(&g_l).unwrap();
+                let want = in_act
+                    .narrow(1, 0, hidden)
+                    .unwrap()
+                    .tanh()
+                    .unwrap()
+                    .mul(
+                        &candle_nn::ops::sigmoid(&in_act.narrow(1, hidden, hidden).unwrap())
+                            .unwrap(),
+                    )
+                    .unwrap();
+                let got = crate::metal_fused::wn_gate_act(&x_in, &g, g_off).unwrap();
+                assert_eq!(got.dims(), want.dims());
+                let max_abs = (got - &want)
+                    .unwrap()
+                    .abs()
+                    .unwrap()
+                    .max_all()
+                    .unwrap()
+                    .to_scalar::<f32>()
+                    .unwrap();
+                println!("wn-gate-act t={t} layer {layer}: max_abs {max_abs:.3e}");
+                assert!(max_abs == 0.0, "t={t} layer {layer} max_abs {max_abs:.3e}");
+
+                // Tail: rs -> (x + res, output + skip).
+                let rs = Tensor::randn(0f32, 1f32, (b, two_h, t), &metal).unwrap();
+                let x = Tensor::randn(0f32, 1f32, (b, hidden, t), &metal).unwrap();
+                let output = Tensor::randn(0f32, 1f32, (b, hidden, t), &metal).unwrap();
+                let both = crate::metal_fused::wn_res_skip_tail(&rs, &x, &output).unwrap();
+                assert_eq!(both.dims(), &[2, b, hidden, t][..]);
+                let want_x = x.add(&rs.narrow(1, 0, hidden).unwrap()).unwrap();
+                let want_o = output.add(&rs.narrow(1, hidden, hidden).unwrap()).unwrap();
+                let plane0 = both.narrow(0, 0, 1).unwrap().squeeze(0).unwrap();
+                let plane1 = both.narrow(0, 1, 1).unwrap().squeeze(0).unwrap();
+                for (plane, got, expect) in [(0usize, &plane0, &want_x), (1, &plane1, &want_o)] {
+                    let max_abs = (got - expect)
+                        .unwrap()
+                        .abs()
+                        .unwrap()
+                        .max_all()
+                        .unwrap()
+                        .to_scalar::<f32>()
+                        .unwrap();
+                    println!("wn-res-skip t={t} plane {plane}: max_abs {max_abs:.3e}");
+                    assert!(max_abs == 0.0, "t={t} plane {plane} max_abs {max_abs:.3e}");
+                }
+            }
+        }
     }
 }

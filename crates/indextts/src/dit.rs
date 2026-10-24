@@ -173,9 +173,10 @@ fn find_multiple(n: usize, k: usize) -> usize {
     }
 }
 
-/// RoPE tables `(cos, sin)` of shape `(1, T, 1, head_dim/2)`, matching
-/// `precompute_freqs_cis(block_size, head_dim, 10000)` restricted to the
-/// first `T` positions (f32 like the f32 checkpoint).
+/// RoPE tables `(cos, sin)` of shape `(T, head_dim/2)` for
+/// `candle_nn::rotary_emb::rope_i`, matching `precompute_freqs_cis(block_size,
+/// head_dim, 10000)` restricted to the first `T` positions (f32 like the f32
+/// checkpoint).
 fn rope_tables(
     t_len: usize,
     head_dim: usize,
@@ -188,26 +189,9 @@ fn rope_tables(
     let inv = Tensor::from_vec(inv, (1, half), device)?;
     let pos = Tensor::arange(0f32, t_len as f32, device)?.reshape((t_len, 1))?;
     let angles = pos.matmul(&inv)?; // (T, half)
-    let cos = angles.cos()?.unsqueeze(0)?.unsqueeze(2)?;
-    let sin = angles.sin()?.unsqueeze(0)?.unsqueeze(2)?;
+    let cos = angles.cos()?;
+    let sin = angles.sin()?;
     Ok((cos, sin))
-}
-
-/// `apply_rotary_emb`: adjacent-element pairs `(x0, x1)` rotated by
-/// `(cos θ, sin θ)`; input/output `(B, T, H, head_dim)`.
-fn apply_rope(x: &Tensor, cos: &Tensor, sin: &Tensor) -> Result<Tensor> {
-    let (b, t, h, d) = x.dims4()?;
-    let half = d / 2;
-    let xr = x.reshape((b, t, h, half, 2))?;
-    let x0 = xr.narrow(4, 0, 1)?.squeeze(4)?;
-    let x1 = xr.narrow(4, 1, 1)?.squeeze(4)?;
-    let o0 = x0
-        .broadcast_mul(cos)?
-        .broadcast_sub(&x1.broadcast_mul(sin)?)?;
-    let o1 = x1
-        .broadcast_mul(cos)?
-        .broadcast_add(&x0.broadcast_mul(sin)?)?;
-    Tensor::stack(&[o0, o1], 4)?.flatten(3, 4)
 }
 
 impl Dit {
@@ -464,10 +448,14 @@ impl Dit {
                 skip_stack.push(x.clone());
             }
         }
-        let mut x_res = self.norm.forward(&x, &c)?;
+        let mut x_res = {
+            let _g = crate::profile::scope(Some(x.device()), "dit.norm");
+            self.norm.forward(&x, &c)?
+        };
 
         // Long skip over the noisy mel.
         if self.long_skip_connection {
+            let _g = crate::profile::scope(Some(x.device()), "dit.long_skip");
             let skip_in = Tensor::cat(&[&x_res, &noisy], 2)?;
             x_res = self
                 .skip_linear
@@ -477,14 +465,17 @@ impl Dit {
         }
 
         // WaveNet final layer with its own timestep embedding.
+        let _g_wn = crate::profile::scope(Some(x.device()), "dit.wavenet");
         let h = self.conv1.forward(&x_res)?.transpose(1, 2)?.contiguous()?; // (B, wn_h, T)
         let t2 = self.t_embedder2.forward(t)?; // (B, wn_h)
         let wn = self.wavenet.forward(&h, &t2.unsqueeze(2)?)?; // (B, wn_h, T)
+        drop(_g_wn);
         let mut x_final = wn
             .transpose(1, 2)?
             .broadcast_add(&self.res_projection.forward(&x_res)?)?;
 
         // FinalLayer: affine-free LayerNorm (eps 1e-6) modulated by t1.
+        let _g = crate::profile::scope(Some(x.device()), "dit.final_head");
         let shift_scale = self.final_adaln.forward(&t1.silu()?)?; // (B, 2*hidden)
         let shift = shift_scale.narrow(1, 0, self.hidden)?.unsqueeze(1)?;
         let scale = shift_scale
@@ -497,11 +488,14 @@ impl Dit {
             .broadcast_mul(&scale.affine(1.0, 1.0)?)?
             .broadcast_add(&shift)?;
         x_final = self.final_linear.forward(&modulated)?;
+        drop(_g);
 
         // conv2: Conv1d(wn_h -> in_channels, k1) over (B, wn_h, T).
+        let _g = crate::profile::scope(Some(x.device()), "dit.conv2");
         let out = self
             .conv2
             .forward(&x_final.transpose(1, 2)?.contiguous()?)?;
+        drop(_g);
         Ok(out)
     }
 
@@ -517,49 +511,90 @@ impl Dit {
     ) -> Result<Tensor> {
         let hidden = self.hidden;
         let (b, t_len, _) = x.dims3()?;
+        let _g_adaln = crate::profile::scope(Some(x.device()), "dit.adaln");
         let attn_in = block.attention_norm.forward(x, c)?; // (B, T, H)
+        drop(_g_adaln);
+        let _g_qkv = crate::profile::scope(Some(x.device()), "dit.qkv");
         let qkv = block.wqkv.forward(&attn_in)?; // (B, T, 3H)
-        let q = qkv.narrow(2, 0, hidden)?.contiguous()?.reshape((
-            b,
-            t_len,
-            self.heads,
-            self.head_dim,
-        ))?;
-        let k = qkv.narrow(2, hidden, hidden)?.contiguous()?.reshape((
-            b,
-            t_len,
-            self.heads,
-            self.head_dim,
-        ))?;
-        let v = qkv.narrow(2, 2 * hidden, hidden)?.contiguous()?.reshape((
-            b,
-            t_len,
-            self.heads,
-            self.head_dim,
-        ))?;
-        let q = apply_rope(&q, cos, sin)?.transpose(1, 2)?.contiguous()?; // (B, H, T, D)
-        let k = apply_rope(&k, cos, sin)?.transpose(1, 2)?.contiguous()?;
-        let v = v.transpose(1, 2)?.contiguous()?;
+        drop(_g_qkv);
+        // Split q/k/v into the head-major (B, H, T, D) layout the attention
+        // wants and apply the interleaved RoPE to q/k. On Metal the whole
+        // chain collapses into one hosted custom-op kernel reading qkv
+        // directly (`metal_fused::qkv_split_rope`, bit-identical, gated in
+        // tests); the fallback chain below covers CPU and unusual shapes.
+        // The fused kernel replaces six strided copies (narrow/transpose ×3)
+        // plus two rope_i dispatches per block per Euler step.
+        let _g_split = crate::profile::scope(Some(x.device()), "dit.split");
+        let split = |offset: usize| -> Result<Tensor> {
+            qkv.narrow(2, offset, hidden)?
+                .contiguous()?
+                .reshape((b, t_len, self.heads, self.head_dim))?
+                .transpose(1, 2)?
+                .contiguous()
+        };
+        let chain = || -> Result<(Tensor, Tensor, Tensor)> {
+            let _g_rope = crate::profile::scope(Some(x.device()), "dit.rope");
+            let q = candle_nn::rotary_emb::rope_i(&split(0)?, cos, sin)?;
+            let k = candle_nn::rotary_emb::rope_i(&split(hidden)?, cos, sin)?;
+            drop(_g_rope);
+            Ok((q, k, split(2 * hidden)?))
+        };
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        let (q, k, v) = if x.device().is_metal() {
+            let fused = {
+                let _g = crate::profile::scope(Some(x.device()), "dit.split_rope_fused");
+                crate::metal_fused::qkv_split_rope(&qkv, cos, sin, self.heads, self.head_dim)
+            };
+            match fused {
+                Ok(qkv3) => (
+                    qkv3.narrow(0, 0, 1)?.squeeze(0)?,
+                    qkv3.narrow(0, 1, 1)?.squeeze(0)?,
+                    qkv3.narrow(0, 2, 1)?.squeeze(0)?,
+                ),
+                Err(_) => chain()?,
+            }
+        } else {
+            chain()?
+        };
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        let (q, k, v) = chain()?;
+        drop(_g_split);
         // Full attention with the SDPA scale 1/sqrt(head_dim); the x_lens key
         // mask is all-ones for the shipped inference caller.
-        let kt = k.transpose(2, 3)?.contiguous()?;
-        let scores = q
-            .matmul(&kt)?
-            .affine(1.0 / (self.head_dim as f64).sqrt(), 0.0)?;
-        let probs = candle_nn::ops::softmax_last_dim(&scores)?;
-        let y = probs
-            .matmul(&v)?
-            .transpose(1, 2)?
-            .contiguous()?
-            .flatten(2, 3)?; // (B, T, H)
+        let scale = 1.0 / (self.head_dim as f64).sqrt();
+        let y = if x.device().is_metal()
+            && matches!(self.head_dim, 32 | 64 | 72 | 80 | 96 | 128 | 256 | 512)
+        {
+            // candle_nn::ops::sdpa has no CPU implementation.
+            let _g = crate::profile::scope(Some(x.device()), "dit.attn_sdpa");
+            candle_nn::ops::sdpa(&q, &k, &v, None, false, scale as f32, 1.0)?
+                .transpose(1, 2)?
+                .contiguous()?
+                .flatten(2, 3)?
+        } else {
+            let _g = crate::profile::scope(Some(x.device()), "dit.attn_scores");
+            let kt = k.transpose(2, 3)?.contiguous()?;
+            let scores = q.matmul(&kt)?.affine(scale, 0.0)?;
+            let probs = candle_nn::ops::softmax_last_dim(&scores)?;
+            probs
+                .matmul(&v)?
+                .transpose(1, 2)?
+                .contiguous()?
+                .flatten(2, 3)? // (B, T, H)
+        };
+        let _g_out = crate::profile::scope(Some(x.device()), "dit.attn_out");
         let h = x.broadcast_add(&block.wo.forward(&y)?)?;
+        drop(_g_out);
+        let _g_ffn = crate::profile::scope(Some(x.device()), "dit.ffn");
         let ffn_in = block.ffn_norm.forward(&h, c)?;
         let gated = block
             .w1
             .forward(&ffn_in)?
             .silu()?
             .broadcast_mul(&block.w3.forward(&ffn_in)?)?;
-        h.broadcast_add(&block.w2.forward(&gated)?)
+        let out = h.broadcast_add(&block.w2.forward(&gated)?);
+        drop(_g_ffn);
+        out
     }
 }
 
@@ -569,6 +604,25 @@ mod tests {
     use crate::config::{DiTConfig, WavenetConfig};
     use candle_core::Device;
     use candle_nn::VarMap;
+
+    /// The pre-optimization token-major RoPE: adjacent-element pairs `(x0, x1)`
+    /// rotated by `(cos θ, sin θ)` on `(B, T, H, head_dim)` with broadcast
+    /// `(1, T, 1, head_dim/2)` tables. Kept as the numeric reference for the
+    /// fused `rope_i` switch.
+    fn apply_rope(x: &Tensor, cos: &Tensor, sin: &Tensor) -> Result<Tensor> {
+        let (b, t, h, d) = x.dims4()?;
+        let half = d / 2;
+        let xr = x.reshape((b, t, h, half, 2))?;
+        let x0 = xr.narrow(4, 0, 1)?.squeeze(4)?;
+        let x1 = xr.narrow(4, 1, 1)?.squeeze(4)?;
+        let o0 = x0
+            .broadcast_mul(cos)?
+            .broadcast_sub(&x1.broadcast_mul(sin)?)?;
+        let o1 = x1
+            .broadcast_mul(cos)?
+            .broadcast_add(&x0.broadcast_mul(sin)?)?;
+        Tensor::stack(&[o0, o1], 4)?.flatten(3, 4)
+    }
 
     /// VarMap initializes linears with kaiming noise; reset everything the
     /// load touched to zero so the "zero-weight graph" reasoning holds.
@@ -728,7 +782,7 @@ mod tests {
         let device = Device::Cpu;
         // freqs = 1 / 10000^(arange(0, 8, 2)/8) -> [1, 0.1778..]
         let (cos, sin) = rope_tables(3, 8, &device).unwrap();
-        assert_eq!(cos.dims(), vec![1, 3, 1, 4]);
+        assert_eq!(cos.dims(), vec![3, 4]);
         let cos = cos.flatten_all().unwrap().to_vec1::<f32>().unwrap();
         // Position 0 rotates by angle 0; Accelerate's cosf may differ by 1 ULP.
         assert!(
@@ -775,5 +829,456 @@ mod tests {
                 .iter()
                 .all(|v| v.is_finite())
         );
+    }
+
+    /// Metal probe at the real DiT attention shapes (B=2 CFG, 8 heads,
+    /// head_dim 64, F32): the manual materialized path used by
+    /// `forward_block` vs `candle_nn::ops::sdpa` (fused Metal kernel), at the
+    /// target-only length (~492 frames) and the full solve length (~1024 =
+    /// prompt + target). Numeric gate for the sdpa switch: both paths are
+    /// compared against an f64 CPU ground truth; timing is diagnostic only.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    #[ignore = "requires a Metal device; timing probe, no models"]
+    fn attention_sdpa_vs_manual_metal() {
+        let device = Device::new_metal(0).unwrap();
+        let (b, h, d) = (2usize, 8, 64);
+        for t in [492usize, 1024] {
+            let q = Tensor::randn(0f32, 1f32, (b, h, t, d), &device).unwrap();
+            let k = Tensor::randn(0f32, 1f32, (b, h, t, d), &device).unwrap();
+            let v = Tensor::randn(0f32, 1f32, (b, h, t, d), &device).unwrap();
+            let scale = 1.0f32 / (d as f32).sqrt();
+            let manual = |q: &Tensor, k: &Tensor, v: &Tensor| -> Result<Tensor> {
+                let kt = k.transpose(2, 3)?.contiguous()?;
+                let scores = q.matmul(&kt)?.affine(scale as f64, 0.0)?;
+                let probs = candle_nn::ops::softmax_last_dim(&scores)?;
+                probs
+                    .matmul(v)?
+                    .transpose(1, 2)?
+                    .contiguous()?
+                    .flatten(2, 3)
+            };
+            let fused = |q: &Tensor, k: &Tensor, v: &Tensor| -> Result<Tensor> {
+                candle_nn::ops::sdpa(q, k, v, None, false, scale, 1.0)?
+                    .transpose(1, 2)?
+                    .contiguous()?
+                    .flatten(2, 3)
+            };
+            let out_manual = manual(&q, &k, &v).unwrap();
+            let out_fused = fused(&q, &k, &v).unwrap();
+            let diff = (&out_manual - &out_fused).unwrap().abs().unwrap();
+            let max_abs = diff.max_all().unwrap().to_scalar::<f32>().unwrap();
+
+            // f64 ground truth on CPU: both paths must sit equally close to it
+            // for the gap to count as reduction-order noise, not semantics.
+            let q64 = q
+                .to_device(&Device::Cpu)
+                .unwrap()
+                .to_dtype(DType::F64)
+                .unwrap();
+            let k64 = k
+                .to_device(&Device::Cpu)
+                .unwrap()
+                .to_dtype(DType::F64)
+                .unwrap();
+            let v64 = v
+                .to_device(&Device::Cpu)
+                .unwrap()
+                .to_dtype(DType::F64)
+                .unwrap();
+            let truth = manual_f64(&q64, &k64, &v64, scale as f64);
+            fn err_vs(out: &Tensor, truth: &Tensor) -> Result<f64> {
+                let o = out.to_device(&Device::Cpu)?.to_dtype(DType::F64)?;
+                (&o - truth)?.abs()?.max_all()?.to_scalar::<f64>()
+            }
+            let e_manual = err_vs(&out_manual, &truth).unwrap();
+            let e_fused = err_vs(&out_fused, &truth).unwrap();
+            println!(
+                "T={t:4} max_abs {max_abs:.3e} | err-vs-f64 manual {e_manual:.3e} fused {e_fused:.3e}"
+            );
+            assert_eq!(out_manual.dims(), out_fused.dims().to_vec());
+            assert!(
+                e_fused <= e_manual.max(1e-5),
+                "fused strays from f64 truth: {e_fused:.3e} vs manual {e_manual:.3e}"
+            );
+
+            let warmup = 5;
+            let reps = 50;
+            let time = |f: &mut dyn FnMut() -> Result<Tensor>| -> f64 {
+                for _ in 0..warmup {
+                    std::mem::drop(f().unwrap());
+                }
+                device.synchronize().unwrap();
+                let start = std::time::Instant::now();
+                for _ in 0..reps {
+                    std::mem::drop(f().unwrap());
+                }
+                device.synchronize().unwrap();
+                start.elapsed().as_secs_f64() / reps as f64 * 1e3
+            };
+            let manual_ms = time(&mut || manual(&q, &k, &v));
+            let fused_ms = time(&mut || fused(&q, &k, &v));
+            let ratio = manual_ms / fused_ms;
+            println!(
+                "T={t:4} manual {manual_ms:.3} ms | sdpa {fused_ms:.3} ms | ratio {ratio:.2}x"
+            );
+        }
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    fn manual_f64(q: &Tensor, k: &Tensor, v: &Tensor, scale: f64) -> Tensor {
+        let kt = k.transpose(2, 3).unwrap().contiguous().unwrap();
+        let scores = q.matmul(&kt).unwrap().affine(scale, 0.0).unwrap();
+        let probs = candle_nn::ops::softmax_last_dim(&scores).unwrap();
+        probs
+            .matmul(v)
+            .unwrap()
+            .transpose(1, 2)
+            .unwrap()
+            .contiguous()
+            .unwrap()
+            .flatten(2, 3)
+            .unwrap()
+    }
+
+    /// Differential check of `rope_i` vs the reference `apply_rope`: CPU
+    /// rope_i must match apply_rope exactly, Metal (when built) within float
+    /// rounding. If the big probe trips, this isolates whether the divergence
+    /// is semantic or Metal-shape-specific.
+    #[test]
+    fn rope_i_matches_reference() {
+        let (b, h, t, d) = (2usize, 2, 5, 8);
+        let half = d / 2;
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        let devices = [Device::Cpu, Device::new_metal(0).unwrap()];
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        let devices = [Device::Cpu];
+        for device in devices {
+            let (cos, sin) = rope_tables(t, d, &device).unwrap();
+            let cos_b = cos.reshape((1, t, 1, half)).unwrap();
+            let sin_b = sin.reshape((1, t, 1, half)).unwrap();
+            let x = Tensor::randn(0f32, 1f32, (b, t, h, d), &device).unwrap();
+            let want = apply_rope(&x, &cos_b, &sin_b)
+                .unwrap()
+                .transpose(1, 2)
+                .unwrap()
+                .contiguous()
+                .unwrap();
+            let got = candle_nn::rotary_emb::rope_i(
+                &x.transpose(1, 2).unwrap().contiguous().unwrap(),
+                &cos,
+                &sin,
+            )
+            .unwrap();
+            let max_abs = (&want - &got)
+                .unwrap()
+                .abs()
+                .unwrap()
+                .max_all()
+                .unwrap()
+                .to_scalar::<f32>()
+                .unwrap();
+            println!("{:?}: rope_i vs apply_rope max_abs {max_abs:.3e}", device);
+            assert!(max_abs <= 1e-5, "{:?}: max_abs {max_abs:.3e}", device);
+        }
+    }
+
+    /// The shipped qkv split must carry identical data on CPU and Metal at
+    /// the real solve shapes. The head-major layout requires the (h, d) split
+    /// in token-major BEFORE the transpose — transposing the (B, T, H) view
+    /// first leaves no d dimension to reshape into. Guards that invariant and
+    /// the Metal strided-copy path.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    #[ignore = "requires a Metal device; no models"]
+    fn split_orders_match_metal() {
+        let (b, t) = (2usize, 1024);
+        let (hidden, heads) = (512usize, 8);
+        let head_dim = hidden / heads;
+        for device in [Device::Cpu, Device::new_metal(0).unwrap()] {
+            let qkv = Tensor::randn(0f32, 1f32, (b, t, 3 * hidden), &device).unwrap();
+            let reference = |offset: usize| -> Result<Tensor> {
+                let x = qkv
+                    .narrow(2, offset, hidden)?
+                    .contiguous()?
+                    .reshape((b, t, heads, head_dim))?;
+                x.flatten_all()
+            };
+            let split = |offset: usize| -> Result<Tensor> {
+                qkv.narrow(2, offset, hidden)?
+                    .contiguous()?
+                    .reshape((b, t, heads, head_dim))?
+                    .transpose(1, 2)?
+                    .contiguous()
+            };
+            for offset in [0usize, hidden, 2 * hidden] {
+                // Cross-check the token-major (b, t, h, d) reading against a
+                // direct gather: element [b][t][h][d] = qkv[b][t][off + h*d + d2].
+                let want = reference(offset).unwrap();
+                let got = split(offset).unwrap();
+                // Reorder the split back to token-major on CPU for comparison.
+                let got_tm = got
+                    .transpose(1, 2)
+                    .unwrap()
+                    .contiguous()
+                    .unwrap()
+                    .flatten_all()
+                    .unwrap()
+                    .to_device(&Device::Cpu)
+                    .unwrap();
+                let want_cpu = want.to_device(&Device::Cpu).unwrap();
+                let max_abs = (&want_cpu - &got_tm)
+                    .unwrap()
+                    .abs()
+                    .unwrap()
+                    .max_all()
+                    .unwrap()
+                    .to_scalar::<f32>()
+                    .unwrap();
+                println!("{:?} offset {offset}: max_abs {max_abs:.3e}", device);
+                assert!(max_abs == 0.0, "{:?}: max_abs {max_abs:.3e}", device);
+            }
+        }
+    }
+
+    /// Numeric gate for the fused qkv split+rope kernel: the rotation
+    /// expressions match candle's `ropei` kernel verbatim and the v plane is
+    /// a pure copy, so the single-dispatch result must be bit-identical to
+    /// the production split/rope_i chain (all heads rotate — IndexTTS ropes
+    /// the whole hidden dim). Also checks that sdpa accepts the offset
+    /// `narrow(0, i, 1)` plane views.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    #[ignore = "requires a Metal device; no models"]
+    fn fused_qkv_split_rope_matches_chain_metal() {
+        let device = match Device::new_metal(0) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("skipping, no metal device: {e}");
+                return;
+            }
+        };
+        let (b, heads, head_dim) = (2usize, 8, 64);
+        let hidden = heads * head_dim;
+        for t in [1024usize, 37] {
+            let qkv = Tensor::randn(0f32, 1f32, (b, t, 3 * hidden), &device).unwrap();
+            let cos = Tensor::randn(0f32, 1f32, (t, head_dim / 2), &device).unwrap();
+            let sin = Tensor::randn(0f32, 1f32, (t, head_dim / 2), &device).unwrap();
+
+            let split = |offset: usize| -> Result<Tensor> {
+                qkv.narrow(2, offset, hidden)?
+                    .contiguous()?
+                    .reshape((b, t, heads, head_dim))?
+                    .transpose(1, 2)?
+                    .contiguous()
+            };
+            let q = candle_nn::rotary_emb::rope_i(&split(0).unwrap(), &cos, &sin).unwrap();
+            let k = candle_nn::rotary_emb::rope_i(&split(hidden).unwrap(), &cos, &sin).unwrap();
+            let v = split(2 * hidden).unwrap();
+
+            let fused =
+                crate::metal_fused::qkv_split_rope(&qkv, &cos, &sin, heads, head_dim).unwrap();
+            assert_eq!(fused.dims(), &[3, b, heads, t, head_dim][..]);
+            for (plane, expect) in [&q, &k, &v].iter().enumerate() {
+                let got = fused.narrow(0, plane, 1).unwrap().squeeze(0).unwrap();
+                let max_abs = (&got - *expect)
+                    .unwrap()
+                    .abs()
+                    .unwrap()
+                    .max_all()
+                    .unwrap()
+                    .to_scalar::<f32>()
+                    .unwrap();
+                println!("qkv-split-rope t={t} plane {plane}: max_abs {max_abs:.3e}");
+                assert!(max_abs == 0.0, "plane {plane} t={t} max_abs {max_abs:.3e}");
+            }
+
+            // The production consumer: sdpa on the zero-copy plane views must
+            // match sdpa on the contiguous chain outputs bit-for-bit.
+            let scale = 1.0f32 / (head_dim as f32).sqrt();
+            let fq = fused.narrow(0, 0, 1).unwrap().squeeze(0).unwrap();
+            let fk = fused.narrow(0, 1, 1).unwrap().squeeze(0).unwrap();
+            let fv = fused.narrow(0, 2, 1).unwrap().squeeze(0).unwrap();
+            let from_views = candle_nn::ops::sdpa(&fq, &fk, &fv, None, false, scale, 1.0).unwrap();
+            let from_chain = candle_nn::ops::sdpa(&q, &k, &v, None, false, scale, 1.0).unwrap();
+            let max_abs = (&from_views - &from_chain)
+                .unwrap()
+                .abs()
+                .unwrap()
+                .max_all()
+                .unwrap()
+                .to_scalar::<f32>()
+                .unwrap();
+            println!("qkv-split-rope t={t} sdpa: max_abs {max_abs:.3e}");
+            assert!(max_abs == 0.0, "sdpa t={t} max_abs {max_abs:.3e}");
+        }
+    }
+
+    /// Metal per-stage probe of `forward_block` at the real solve shapes
+    /// (B=2 CFG, T≈1024 prompt+target, hidden 512, 8 heads, F32). Splits the
+    /// block into its GEMMs and the q/k/v slicing+RoPE chain so the stage
+    /// attribution behind any optimization candidate is measurable without
+    /// the sync overhead of the INDEXTTS_PROFILE run-level spans.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    #[ignore = "requires a Metal device; timing probe, no models"]
+    fn forward_block_stage_timing_metal() {
+        let device = Device::new_metal(0).unwrap();
+        let (b, t, hidden, heads) = (2usize, 1024, 512, 8);
+        let head_dim = hidden / heads;
+        let stage = |name: &str, f: &mut dyn FnMut() -> Result<Tensor>| {
+            for _ in 0..5 {
+                std::mem::drop(f().unwrap());
+            }
+            device.synchronize().unwrap();
+            let start = std::time::Instant::now();
+            let mut last = None;
+            for _ in 0..50 {
+                last = Some(f().unwrap());
+            }
+            device.synchronize().unwrap();
+            let ms = start.elapsed().as_secs_f64() / 50f64 * 1e3;
+            println!("{name:12} {ms:7.3} ms");
+            last.unwrap()
+        };
+
+        let x = Tensor::randn(0f32, 1f32, (b, t, hidden), &device).unwrap();
+        let w_qkv = Tensor::randn(0f32, 1f32, (hidden, 3 * hidden), &device).unwrap();
+        let w_o = Tensor::randn(0f32, 1f32, (hidden, hidden), &device).unwrap();
+        let w_ff = Tensor::randn(0f32, 1f32, (hidden, 4 * hidden), &device).unwrap();
+        let w_ff2 = Tensor::randn(0f32, 1f32, (4 * hidden, hidden), &device).unwrap();
+        let (cos, sin) = rope_tables(t, head_dim, &device).unwrap();
+        let half = head_dim / 2;
+        // The old token-major chain broadcast (1, T, 1, half) tables.
+        let cos_b = cos.reshape((1, t, 1, half)).unwrap();
+        let sin_b = sin.reshape((1, t, 1, half)).unwrap();
+
+        let split = |qkv: &Tensor, offset: usize| -> Result<Tensor> {
+            qkv.narrow(2, offset, hidden)?
+                .contiguous()?
+                .reshape((b, t, heads, head_dim))?
+                .transpose(1, 2)?
+                .contiguous()
+        };
+
+        let qkv = stage("qkv_gemm", &mut || {
+            x.flatten(0, 1)?.matmul(&w_qkv)?.reshape((b, t, 3 * hidden))
+        });
+        let q_old = stage("chain_old", &mut || {
+            let q = qkv
+                .narrow(2, 0, hidden)?
+                .contiguous()?
+                .reshape((b, t, heads, head_dim))?;
+            let k = qkv
+                .narrow(2, hidden, hidden)?
+                .contiguous()?
+                .reshape((b, t, heads, head_dim))?;
+            let v = qkv
+                .narrow(2, 2 * hidden, hidden)?
+                .contiguous()?
+                .reshape((b, t, heads, head_dim))?;
+            let q = apply_rope(&q, &cos_b, &sin_b)?
+                .transpose(1, 2)?
+                .contiguous()?;
+            let k = apply_rope(&k, &cos_b, &sin_b)?
+                .transpose(1, 2)?
+                .contiguous()?;
+            let v = v.transpose(1, 2)?.contiguous()?;
+            Tensor::cat(&[&q, &k, &v], 0) // keep all three alive
+        })
+        .narrow(0, 0, 3 * b)
+        .unwrap();
+
+        // Numeric gate: new split+rope_i chain vs the old chain on the same
+        // qkv. qkv entries are ~N(0, 22) here (512-deep randn GEMM), so the
+        // gate is relative: the fused kernel differs from the broadcast path
+        // only by float rounding (2-3 ULP).
+        let q_new = split(&qkv, 0).unwrap();
+        let k_new = split(&qkv, hidden).unwrap();
+        let v_new = split(&qkv, 2 * hidden).unwrap();
+        let q_new = candle_nn::rotary_emb::rope_i(&q_new, &cos, &sin).unwrap();
+        let k_new = candle_nn::rotary_emb::rope_i(&k_new, &cos, &sin).unwrap();
+        let q_old_s = q_old.narrow(0, 0, b).unwrap();
+        let k_old_s = q_old.narrow(0, b, b).unwrap();
+        let v_old_s = q_old.narrow(0, 2 * b, b).unwrap();
+        for (name, new, old) in [
+            ("v", &v_new, &v_old_s),
+            ("q", &q_new, &q_old_s),
+            ("k", &k_new, &k_old_s),
+        ] {
+            let max_abs = (new - old)
+                .unwrap()
+                .abs()
+                .unwrap()
+                .max_all()
+                .unwrap()
+                .to_scalar::<f32>()
+                .unwrap();
+            let mag = old
+                .abs()
+                .unwrap()
+                .max_all()
+                .unwrap()
+                .to_scalar::<f32>()
+                .unwrap();
+            let rel = max_abs / mag;
+            println!("{name} old-vs-new max_abs {max_abs:.3e} (|max| {mag:.1}, rel {rel:.3e})");
+            assert!(rel <= 1e-6, "{name} old-vs-new rel {rel:.3e}");
+        }
+
+        let _ = stage("chain_new", &mut || {
+            let q = candle_nn::rotary_emb::rope_i(&split(&qkv, 0)?, &cos, &sin)?;
+            let k = candle_nn::rotary_emb::rope_i(&split(&qkv, hidden)?, &cos, &sin)?;
+            let v = split(&qkv, 2 * hidden)?;
+            Tensor::cat(&[&q, &k, &v], 0)
+        });
+        let qh = split(&qkv, 0).unwrap();
+        let _ = stage("split_x3", &mut || {
+            let q = split(&qkv, 0)?;
+            let k = split(&qkv, hidden)?;
+            let v = split(&qkv, 2 * hidden)?;
+            Tensor::cat(&[&q, &k, &v], 0)
+        });
+        let _ = stage("rope_i_x2", &mut || {
+            let qr = candle_nn::rotary_emb::rope_i(&qh, &cos, &sin)?;
+            let kr = candle_nn::rotary_emb::rope_i(&qh, &cos, &sin)?;
+            Tensor::cat(&[&qr, &kr], 0)
+        });
+        // The production Metal path since the split+rope fusion round: one
+        // dispatch producing all three head-major planes. Bit-identical to
+        // chain_new (gated in fused_qkv_split_rope_matches_chain_metal);
+        // this stage is the region-level performance evidence.
+        let _ = stage("chain_fused", &mut || {
+            crate::metal_fused::qkv_split_rope(&qkv, &cos, &sin, heads, head_dim)
+        });
+
+        let q = q_new;
+        let k = k_new;
+        let v = v_new;
+        let _ = stage("attn_manual", &mut || {
+            let kt = k.transpose(2, 3)?.contiguous()?;
+            let scores = q.matmul(&kt)?.affine(1.0 / (head_dim as f64).sqrt(), 0.0)?;
+            candle_nn::ops::softmax_last_dim(&scores)?
+                .matmul(&v)?
+                .transpose(1, 2)?
+                .contiguous()?
+                .flatten(2, 3)
+        });
+        let _ = stage("attn_sdpa", &mut || {
+            candle_nn::ops::sdpa(&q, &k, &v, None, false, 1.0 / (head_dim as f32).sqrt(), 1.0)?
+                .transpose(1, 2)?
+                .contiguous()?
+                .flatten(2, 3)
+        });
+        let y = Tensor::randn(0f32, 1f32, (b, t, hidden), &device).unwrap();
+        let _ = stage("wo_gemm", &mut || {
+            y.flatten(0, 1)?.matmul(&w_o)?.reshape((b, t, hidden))
+        });
+        let _ = stage("ffn_gemm", &mut || {
+            let a = y.flatten(0, 1)?.matmul(&w_ff)?.silu()?;
+            let c = y.flatten(0, 1)?.matmul(&w_ff)?;
+            let gated = a.broadcast_mul(&c)?;
+            gated.matmul(&w_ff2)?.reshape((b, t, hidden))
+        });
     }
 }

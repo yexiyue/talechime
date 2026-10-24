@@ -116,6 +116,10 @@ struct FirFilter {
     /// Reversed odd/even taps for the two upsampling phases.
     conv_odd_rev: Tensor,
     conv_even_rev: Tensor,
+    /// `(2, half_k)` forward-order AA_RATIO-scaled phase taps `[odd; even]`
+    /// for the Metal fused up-FIR+snake kernel (row 0 odd, row 1 even).
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    fused_phases: Option<Tensor>,
 }
 
 impl FirFilter {
@@ -129,10 +133,30 @@ impl FirFilter {
         };
         let even: Vec<f32> = (0..taps.len()).step_by(2).map(|i| taps[i]).collect();
         let odd: Vec<f32> = (1..taps.len()).step_by(2).map(|i| taps[i]).collect();
+        // The upsample phases are pre-scaled by AA_RATIO so `fir_upsample`
+        // needs no full-tensor affine afterwards. Scaling by a power of two
+        // commutes with rounding, so this is bit-identical to scaling the
+        // accumulated phases afterwards on every device path.
+        let scale = |mut taps: Vec<f32>| {
+            taps.iter_mut().for_each(|v| *v *= AA_RATIO as f32);
+            taps
+        };
+        // Forward-order scaled phases for the fused up-FIR+snake kernel;
+        // only the (AA_KERNEL=12, AA_RATIO=2) hyperparameters it is gated to.
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        let fused_phases = if taps.len() == AA_KERNEL && AA_RATIO == 2 {
+            let mut rows = scale(odd.clone());
+            rows.extend(scale(even.clone()));
+            Some(Tensor::from_vec(rows, (2, AA_KERNEL / 2), device)?.to_dtype(dtype)?)
+        } else {
+            None
+        };
         Ok(Self {
             conv_direct: kernel(taps, false)?,
-            conv_odd_rev: kernel(&odd, true)?,
-            conv_even_rev: kernel(&even, true)?,
+            conv_odd_rev: kernel(&scale(odd), true)?,
+            conv_even_rev: kernel(&scale(even), true)?,
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            fused_phases,
         })
     }
 }
@@ -209,8 +233,8 @@ fn fir_upsample(x: &Tensor, filter: &FirFilter) -> Result<Tensor> {
     let xp = x.pad_with_same(2, pad, pad)?;
     let odd_phase = fir_conv_sum(&xp, &filter.conv_odd_rev, crop_left / 2, t)?;
     let even_phase = fir_conv_sum(&xp, &filter.conv_even_rev, crop_left.div_ceil(2), t)?;
-    let y = Tensor::stack(&[odd_phase, even_phase], 3)?.reshape((b, c, AA_RATIO * t))?;
-    y.affine(AA_RATIO as f64, 0.0)
+    // The AA_RATIO factor is folded into the phase kernels (see FirFilter).
+    Tensor::stack(&[odd_phase, even_phase], 3)?.reshape((b, c, AA_RATIO * t))
 }
 
 /// `Snake`: `x + (1/(a+eps)) * sin^2(a x)`, `SnakeBeta`:
@@ -226,6 +250,10 @@ struct Activation1d {
     logscale: bool,
     alpha: Tensor,        // (1, C, 1), raw storage scale
     beta: Option<Tensor>, // SnakeBeta only
+    /// `(2, C)` Metal preload `[a; 1/(beta+1e-9)]` for the fused
+    /// up-FIR+snake kernel (same expressions as `apply_activation`).
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    fused_acts: Option<Tensor>,
 }
 
 impl Activation1d {
@@ -238,10 +266,35 @@ impl Activation1d {
         } else {
             None
         };
+        // Metal preload for the fused up-FIR+snake kernel: identical
+        // expressions to `apply_activation`'s broadcast chain.
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        let fused_acts = if alpha.device().is_metal() {
+            let a = if logscale {
+                alpha.exp()?
+            } else {
+                alpha.clone()
+            };
+            let scale = match (&kind, &beta) {
+                (_, Some(b)) => {
+                    let b = if logscale { b.exp()? } else { b.clone() };
+                    (b + 1e-9)?.recip()?
+                }
+                _ => (a.clone() + 1e-9)?.recip()?,
+            };
+            Some(
+                Tensor::cat(&[a.reshape((channels,))?, scale.reshape((channels,))?], 0)?
+                    .reshape((2, channels))?,
+            )
+        } else {
+            None
+        };
         Ok(Self {
             logscale,
             alpha,
             beta,
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            fused_acts,
         })
     }
 
@@ -264,38 +317,97 @@ impl Activation1d {
 
     /// up-FIR -> snake -> down-FIR (`alias_free_activation/torch/act.py`).
     fn forward(&self, x: &Tensor, filter: &FirFilter) -> Result<Tensor> {
+        // Metal fused path: one kernel for pad+up-FIR+snake (bit-composed
+        // from the same tap order and snake expressions; gated at 1e-5
+        // relative in the bigvgan tests), then the stride-2 down-FIR.
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        let up = if x.device().is_metal() {
+            match (&filter.fused_phases, &self.fused_acts) {
+                (Some(phases), Some(acts)) => {
+                    let _g = crate::profile::scope(Some(x.device()), "bv.fir_up_snake");
+                    crate::metal_fused::fir_up_snake(x, phases, acts, AA_KERNEL / AA_RATIO)?
+                }
+                _ => self.up_snake_chain(x, filter)?,
+            }
+        } else {
+            self.up_snake_chain(x, filter)?
+        };
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        let up = self.up_snake_chain(x, filter)?;
+        let _g = crate::profile::scope(Some(x.device()), "bv.fir_down");
+        fir_downsample(&up, filter)
+    }
+
+    fn up_snake_chain(&self, x: &Tensor, filter: &FirFilter) -> Result<Tensor> {
         let up = {
             let _g = crate::profile::scope(Some(x.device()), "bv.fir_up");
             fir_upsample(x, filter)?
         };
-        let up = {
-            let _g = crate::profile::scope(Some(x.device()), "bv.snake");
-            self.apply_activation(&up)?
+        let _g = crate::profile::scope(Some(x.device()), "bv.snake");
+        self.apply_activation(&up)
+    }
+}
+
+/// A resblock conv plus its geometric parameters (`Conv1d` does not expose
+/// its config), so the Metal GEMM-direct path can be dispatched without
+/// re-deriving them.
+struct ResConv {
+    conv: Conv1d,
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    padding: usize,
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    dilation: usize,
+}
+
+impl ResConv {
+    fn forward(&self, x: &Tensor) -> Result<Tensor> {
+        let _g = crate::profile::scope(Some(x.device()), "bv.res_conv");
+        // candle's Metal conv1d pairs the (bit-identical) im2col kernel with
+        // a strided-B batched matmul plus a transpose-back copy; the
+        // GEMM-direct variant keeps the im2col and writes (c_out, l_out)
+        // directly. Reduction order is the matmul's; gated at 1e-5 relative
+        // in the bigvgan tests.
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        let fused = if x.device().is_metal() {
+            crate::metal_fused::conv1d_gemmdirect(
+                x,
+                self.conv.weight(),
+                self.conv.bias(),
+                self.padding,
+                self.dilation,
+            )
+        } else {
+            Err(candle_core::Error::Msg("cpu".into()))
         };
-        let _g = crate::profile::scope(Some(x.device()), "bv.fir_down");
-        fir_downsample(&up, filter)
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        {
+            match fused {
+                Ok(y) => Ok(y),
+                Err(_) => self.conv.forward(x),
+            }
+        }
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        {
+            self.conv.forward(x)
+        }
     }
 }
 
 /// AMPBlock (resblock "1" keeps the dilation-1 `convs2` pass, "2" does not).
 struct AmpBlock {
     variant2: bool,
-    convs1: Vec<Conv1d>,
-    convs2: Vec<Conv1d>,
+    convs1: Vec<ResConv>,
+    convs2: Vec<ResConv>,
     activations: Vec<Activation1d>,
 }
 
 impl AmpBlock {
     fn forward(&self, x: &Tensor, filter: &FirFilter) -> Result<Tensor> {
         let mut x = x.clone();
-        let conv = |xt: &Tensor, conv: &Conv1d| -> Result<Tensor> {
-            let _g = crate::profile::scope(Some(xt.device()), "bv.res_conv");
-            conv.forward(xt)
-        };
         if self.variant2 {
             for (c, act) in self.convs1.iter().zip(&self.activations) {
                 let xt = act.forward(&x, filter)?;
-                let xt = conv(&xt, c)?;
+                let xt = c.forward(&xt)?;
                 x = (xt + x)?;
             }
         } else {
@@ -307,9 +419,9 @@ impl AmpBlock {
                 let c1 = &self.convs1[i / 2];
                 let c2 = &self.convs2[i / 2];
                 let xt = a1.forward(&x, filter)?;
-                let xt = conv(&xt, c1)?;
+                let xt = c1.forward(&xt)?;
                 let xt = a2.forward(&xt, filter)?;
-                let xt = conv(&xt, c2)?;
+                let xt = c2.forward(&xt)?;
                 x = (xt + x)?;
                 i += 2;
             }
@@ -392,6 +504,9 @@ fn get_padding(kernel_size: usize, dilation: usize) -> usize {
 pub struct BigVgan {
     conv_pre: Conv1d,
     ups: Vec<ConvTranspose1d>,
+    /// (stride, padding) per upsample level, for the Metal GEMM+gather path.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    ups_cfg: Vec<(usize, usize)>,
     resblocks: Vec<AmpBlock>,
     activation_post: Activation1d,
     conv_post: Conv1d,
@@ -433,6 +548,8 @@ impl BigVgan {
         };
 
         let mut ups = Vec::with_capacity(cfg.upsample_rates.len());
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        let mut ups_cfg = Vec::with_capacity(cfg.upsample_rates.len());
         for (i, (&u, &k)) in cfg
             .upsample_rates
             .iter()
@@ -449,6 +566,8 @@ impl BigVgan {
                 u,
                 (k - u) / 2,
             )?);
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            ups_cfg.push((u, (k - u) / 2));
         }
 
         let num_kernels = cfg.resblock_kernel_sizes.len();
@@ -466,25 +585,37 @@ impl BigVgan {
                 let mut activations =
                     Vec::with_capacity(dilations.len() * if variant2 { 1 } else { 2 });
                 for (d_i, &d) in dilations.iter().enumerate() {
-                    convs1.push(load_conv1d_folded(
-                        &rb,
-                        &format!("convs1.{d_i}"),
-                        (ch, ch),
-                        k,
-                        get_padding(k, d),
-                        d,
-                        true,
-                    )?);
-                    if !variant2 {
-                        convs2.push(load_conv1d_folded(
+                    convs1.push(ResConv {
+                        #[cfg(all(feature = "metal", target_os = "macos"))]
+                        padding: get_padding(k, d),
+                        #[cfg(all(feature = "metal", target_os = "macos"))]
+                        dilation: d,
+                        conv: load_conv1d_folded(
                             &rb,
-                            &format!("convs2.{d_i}"),
+                            &format!("convs1.{d_i}"),
                             (ch, ch),
                             k,
-                            get_padding(k, 1),
-                            1,
+                            get_padding(k, d),
+                            d,
                             true,
-                        )?);
+                        )?,
+                    });
+                    if !variant2 {
+                        convs2.push(ResConv {
+                            #[cfg(all(feature = "metal", target_os = "macos"))]
+                            padding: get_padding(k, 1),
+                            #[cfg(all(feature = "metal", target_os = "macos"))]
+                            dilation: 1,
+                            conv: load_conv1d_folded(
+                                &rb,
+                                &format!("convs2.{d_i}"),
+                                (ch, ch),
+                                k,
+                                get_padding(k, 1),
+                                1,
+                                true,
+                            )?,
+                        });
                     }
                 }
                 let num_layers = dilations.len() * if variant2 { 1 } else { 2 };
@@ -527,6 +658,8 @@ impl BigVgan {
         Ok(Self {
             conv_pre,
             ups,
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            ups_cfg,
             resblocks,
             activation_post,
             conv_post,
@@ -548,7 +681,37 @@ impl BigVgan {
         for (i, up) in self.ups.iter().enumerate() {
             x = {
                 let _g = crate::profile::scope(Some(mel.device()), "bv.up_conv");
-                up.forward(&x)?
+                // The candle Metal conv_transpose1d falls into a naive
+                // per-output scalar kernel whenever padding != 0 (the col2im
+                // path is padding-0 only) — the shipped BigVGAN levels all
+                // use padding (k-u)/2 > 0. On Metal prefer the GEMM+gather
+                // factorization (`metal_fused::conv_transpose1d_fused`);
+                // its c_in reduction order is the matmul's, gated at 1e-5
+                // relative in the bigvgan tests.
+                #[cfg(all(feature = "metal", target_os = "macos"))]
+                let fused = if mel.device().is_metal() {
+                    let (stride, padding) = self.ups_cfg[i];
+                    crate::metal_fused::conv_transpose1d_fused(
+                        &x,
+                        up.weight(),
+                        up.bias(),
+                        stride,
+                        padding,
+                    )
+                } else {
+                    Err(candle_core::Error::Msg("cpu".into()))
+                };
+                #[cfg(all(feature = "metal", target_os = "macos"))]
+                {
+                    match fused {
+                        Ok(y) => y,
+                        Err(_) => up.forward(&x)?,
+                    }
+                }
+                #[cfg(not(all(feature = "metal", target_os = "macos")))]
+                {
+                    up.forward(&x)?
+                }
             };
             let mut sum: Option<Tensor> = None;
             for j in 0..self.num_kernels {
@@ -679,6 +842,542 @@ mod tests {
     #[ignore = "requires a CUDA device; no models"]
     fn fir_conv_batched_matches_per_tap_reference_cuda() {
         check_fir_conv(&Device::new_cuda(0).unwrap());
+    }
+
+    /// Offline Metal timing probe: batched-conv FIR vs the per-tap reference on
+    /// the real activation shapes of the six upsample stages (~492 mel frames).
+    /// Diagnostic only; not part of any acceptance gate.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    #[ignore = "requires a Metal device; timing probe, no models"]
+    fn fir_metal_conv_vs_tap_timing() {
+        let device = Device::new_metal(0).unwrap();
+        let taps = kaiser_sinc_filter1d(0.25, 0.3, AA_KERNEL);
+        let filter = FirFilter::new(&taps, &device, candle_core::DType::F32).unwrap();
+        let warmup = 5;
+        let reps = 30;
+        fn time(
+            device: &Device,
+            warmup: usize,
+            reps: usize,
+            mut f: impl FnMut() -> Result<Tensor>,
+        ) -> Result<(f64, Tensor)> {
+            for _ in 0..warmup {
+                std::mem::drop(f()?);
+            }
+            device.synchronize()?;
+            let start = std::time::Instant::now();
+            let mut last = None;
+            for _ in 0..reps {
+                last = Some(f()?);
+            }
+            device.synchronize()?;
+            Ok((
+                start.elapsed().as_secs_f64() / reps as f64 * 1e3,
+                last.unwrap(),
+            ))
+        }
+        println!("shape            | conv ms | taps ms | speedup | max_abs");
+        for (c, l) in [
+            (1536usize, 492usize),
+            (768, 1968),
+            (384, 7872),
+            (192, 15744),
+            (96, 31488),
+            (48, 62976),
+        ] {
+            let x = Tensor::randn(0f32, 1f32, (1, c, l), &device).unwrap();
+            let (conv_ms, out_conv) =
+                time(&device, warmup, reps, || fir_downsample(&x, &filter)).unwrap();
+            let (tap_ms, out_tap) = time(&device, warmup, reps, || {
+                fir_downsample_reference(&x, &taps)
+            })
+            .unwrap();
+            let diff = (&out_conv - &out_tap).unwrap().abs().unwrap();
+            let max_abs = diff
+                .flatten_all()
+                .unwrap()
+                .to_vec1::<f32>()
+                .unwrap()
+                .into_iter()
+                .fold(0f32, f32::max);
+            let ratio = conv_ms / tap_ms;
+            println!(
+                "{c:4}x{l:6} down | {conv_ms:7.2} | {tap_ms:7.2} | {ratio:6.2}x | {max_abs:.3e}"
+            );
+            let (conv_ms, out_conv) =
+                time(&device, warmup, reps, || fir_upsample(&x, &filter)).unwrap();
+            let (tap_ms, out_tap) =
+                time(&device, warmup, reps, || fir_upsample_reference(&x, &taps)).unwrap();
+            let diff = (&out_conv - &out_tap).unwrap().abs().unwrap();
+            let max_abs = diff
+                .flatten_all()
+                .unwrap()
+                .to_vec1::<f32>()
+                .unwrap()
+                .into_iter()
+                .fold(0f32, f32::max);
+            let ratio = conv_ms / tap_ms;
+            println!(
+                "{c:4}x{l:6} up   | {conv_ms:7.2} | {tap_ms:7.2} | {ratio:6.2}x | {max_abs:.3e}"
+            );
+        }
+    }
+
+    /// Offline Metal timing probe of the AMP-block convs (`bv.res_conv`) and
+    /// upsample transposed convs (`bv.up_conv`) on the real per-level shapes
+    /// (T_mel ≈ 527, B=1), each against the raw contiguous 2-D GEMM of the
+    /// equivalent im2col shape. Separates GEMM throughput from the
+    /// im2col/strided-B/transpose plumbing cost. Diagnostic only.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    #[ignore = "requires a Metal device; timing probe, no models"]
+    fn res_conv_stage_timing_metal() {
+        let device = Device::new_metal(0).unwrap();
+        fn time(device: &Device, mut f: impl FnMut() -> Result<Tensor>) -> Result<f64> {
+            for _ in 0..3 {
+                std::mem::drop(f()?);
+            }
+            device.synchronize()?;
+            let start = std::time::Instant::now();
+            let mut last = None;
+            for _ in 0..15 {
+                last = Some(f()?);
+            }
+            device.synchronize()?;
+            std::mem::drop(last);
+            Ok(start.elapsed().as_secs_f64() / 15f64 * 1e3)
+        }
+        // Levels after each upsample: (ch, L) with upsample_rates [4,4,2,2,2,2].
+        let levels: [(usize, usize); 6] = [
+            (768, 2108),
+            (384, 8432),
+            (192, 16864),
+            (96, 33728),
+            (48, 67456),
+            (24, 134912),
+        ];
+        // resblock "1": convs1 (k, d) over dilations [1,3,5], convs2 d=1.
+        println!("conv ch x L (k,d) | conv ms | gemm ms | conv TF | gemm TF");
+        for (li, &(ch, l)) in levels.iter().enumerate() {
+            let combos: &[(usize, usize)] = if li % 2 == 0 {
+                &[
+                    (3, 1),
+                    (3, 3),
+                    (3, 5),
+                    (7, 1),
+                    (7, 3),
+                    (7, 5),
+                    (11, 1),
+                    (11, 3),
+                    (11, 5),
+                ]
+            } else {
+                &[(3, 1), (7, 1), (11, 1)]
+            };
+            for &(k, d) in combos {
+                let x = Tensor::randn(0f32, 1f32, (1, ch, l), &device).unwrap();
+                let w =
+                    Tensor::randn(0f32, 1f32 / (ch as f32).sqrt(), (ch, ch, k), &device).unwrap();
+                let padding = get_padding(k, d);
+                let conv = candle_nn::Conv1d::new(
+                    w.clone(),
+                    None,
+                    candle_nn::Conv1dConfig {
+                        padding,
+                        #[cfg(all(feature = "metal", target_os = "macos"))]
+                        dilation: d,
+                        ..Default::default()
+                    },
+                );
+                let conv_ms = time(&device, || conv.forward(&x)).unwrap();
+                // Equivalent im2col GEMM: (L, ch*k) @ (ch*k, ch), both
+                // contiguous — the ceiling the plumbing should approach.
+                let m = Tensor::randn(0f32, 1f32, (l, ch * k), &device).unwrap();
+                let g =
+                    Tensor::randn(0f32, 1f32 / (ch as f32).sqrt(), (ch * k, ch), &device).unwrap();
+                let gemm_ms = time(&device, || m.matmul(&g)).unwrap();
+                let tflops = 2.0 * l as f64 * ch as f64 * ch as f64 * k as f64 / conv_ms / 1e9;
+                let gemm_tflops = 2.0 * l as f64 * ch as f64 * ch as f64 * k as f64 / gemm_ms / 1e9;
+                println!(
+                    "L{li} {ch:4}x{l:6} ({k:2},{d}) | {conv_ms:7.2} | {gemm_ms:7.2} | {tflops:6.2} | {gemm_tflops:6.2}"
+                );
+            }
+        }
+        println!("upconv in->out (k,s) L | conv ms");
+        let ups: [(usize, usize, usize, usize, usize); 6] = [
+            (1536, 768, 8, 4, 527),
+            (768, 384, 8, 4, 2108),
+            (384, 192, 4, 2, 8432),
+            (192, 96, 4, 2, 16864),
+            (96, 48, 4, 2, 33728),
+            (48, 24, 4, 2, 67456),
+        ];
+        for (li, &(cin, cout, k, s, l)) in ups.iter().enumerate() {
+            let x = Tensor::randn(0f32, 1f32, (1, cin, l), &device).unwrap();
+            let w =
+                Tensor::randn(0f32, 1f32 / (cin as f32).sqrt(), (cin, cout, k), &device).unwrap();
+            let conv = candle_nn::ConvTranspose1d::new(
+                w,
+                None,
+                candle_nn::ConvTranspose1dConfig {
+                    padding: (k - s) / 2,
+                    stride: s,
+                    ..Default::default()
+                },
+            );
+            let ms = time(&device, || conv.forward(&x)).unwrap();
+            println!("L{li} {cin:4}->{cout:3} ({k},{s}) x{l:6} | {ms:7.2}");
+        }
+    }
+
+    /// Numeric gate + region timing for the fused GEMM+gather
+    /// conv_transpose1d against candle's `ConvTranspose1d` (whose Metal
+    /// padding!=0 path is the naive per-output kernel) on the six real
+    /// upsample shapes. Same tap order; only the c_in reduction order
+    /// differs (matmul tiles), gated at 1e-5 relative.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    #[ignore = "requires a Metal device; no models"]
+    fn convt_gather_matches_conv_transpose_metal() {
+        let device = match Device::new_metal(0) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("skipping, no metal device: {e}");
+                return;
+            }
+        };
+        fn time(device: &Device, mut f: impl FnMut() -> Result<Tensor>) -> Result<f64> {
+            for _ in 0..3 {
+                std::mem::drop(f()?);
+            }
+            device.synchronize()?;
+            let start = std::time::Instant::now();
+            let mut last = None;
+            for _ in 0..15 {
+                last = Some(f()?);
+            }
+            device.synchronize()?;
+            std::mem::drop(last);
+            Ok(start.elapsed().as_secs_f64() / 15f64 * 1e3)
+        }
+        let ups: [(usize, usize, usize, usize, usize); 6] = [
+            (1536, 768, 8, 4, 527),
+            (768, 384, 8, 4, 2108),
+            (384, 192, 4, 2, 8432),
+            (192, 96, 4, 2, 16864),
+            (96, 48, 4, 2, 33728),
+            (48, 24, 4, 2, 67456),
+        ];
+        println!("convt c_in->c_out (k,s) x l_in | ref ms | fused ms | rel");
+        for (cin, cout, k, s, l) in ups {
+            let x = Tensor::randn(0f32, 1f32, (1, cin, l), &device).unwrap();
+            let w =
+                Tensor::randn(0f32, 1f32 / (cin as f32).sqrt(), (cin, cout, k), &device).unwrap();
+            // The shipped levels all carry a bias; the gate must cover it.
+            let bias = Tensor::randn(0f32, 1f32, (cout,), &device).unwrap();
+            let padding = (k - s) / 2;
+            let reference = candle_nn::ConvTranspose1d::new(
+                w.clone(),
+                Some(bias.clone()),
+                candle_nn::ConvTranspose1dConfig {
+                    padding,
+                    stride: s,
+                    ..Default::default()
+                },
+            );
+            let out_ref = reference.forward(&x).unwrap();
+            let fused = crate::metal_fused::conv_transpose1d_fused(&x, &w, Some(&bias), s, padding)
+                .unwrap();
+            assert_eq!(fused.dims(), out_ref.dims());
+            let max_abs = (&fused - &out_ref)
+                .unwrap()
+                .abs()
+                .unwrap()
+                .max_all()
+                .unwrap()
+                .to_scalar::<f32>()
+                .unwrap();
+            let mag = out_ref
+                .abs()
+                .unwrap()
+                .max_all()
+                .unwrap()
+                .to_scalar::<f32>()
+                .unwrap();
+            let rel = max_abs / mag;
+            let fused_ms = time(&device, || {
+                crate::metal_fused::conv_transpose1d_fused(&x, &w, Some(&bias), s, padding)
+            })
+            .unwrap();
+            let ref_ms2 = time(&device, || reference.forward(&x)).unwrap();
+            println!(
+                "convt {cin:4}->{cout:3} ({k},{s}) x{l:6} | {ref_ms2:7.2} | {fused_ms:7.2} | {rel:.3e}"
+            );
+            assert!(rel <= 1e-5, "{cin}->{cout} rel {rel:.3e}");
+        }
+    }
+
+    /// CPU scalar simulation of the GEMM+gather conv_transpose
+    /// factorization against candle's `ConvTranspose1d`, isolating the
+    /// gather semantics from any Metal kernel issue.
+    #[test]
+    fn convt_gather_semantics_cpu() {
+        let (cin, cout, k, s, p, l) = (3usize, 2usize, 4, 2, 1, 5);
+        let l_out = (l - 1) * s - 2 * p + k;
+        let x = Tensor::randn(0f32, 1f32, (1, cin, l), &Device::Cpu).unwrap();
+        let w = Tensor::randn(0f32, 1f32, (cin, cout, k), &Device::Cpu).unwrap();
+        let reference = candle_nn::ConvTranspose1d::new(
+            w.clone(),
+            None,
+            candle_nn::ConvTranspose1dConfig {
+                padding: p,
+                stride: s,
+                ..Default::default()
+            },
+        )
+        .forward(&x)
+        .unwrap();
+        // col = x^T @ reshape(w, (cin, cout*k)), col[i, oc*k + kk].
+        let xv = x.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+        let wv = w.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+        let mut out = vec![0f32; cout * l_out];
+        for oc in 0..cout {
+            for ox in 0..l_out {
+                let phase = (ox + p) % s;
+                let base = (ox + p - phase) / s;
+                let mut d = 0f32;
+                let mut kk = phase;
+                while kk < k {
+                    let j = (kk - phase) / s;
+                    let i = base as isize - j as isize;
+                    if i >= 0 && (i as usize) < l {
+                        // d += x[:, i] . w[:, oc, kk]
+                        let mut acc = 0f32;
+                        for c in 0..cin {
+                            acc += xv[c * l + i as usize] * wv[(c * cout + oc) * k + kk];
+                        }
+                        d += acc;
+                    }
+                    kk += s;
+                }
+                out[oc * l_out + ox] = d;
+            }
+        }
+        let got = Tensor::from_vec(out, (1, cout, l_out), &Device::Cpu).unwrap();
+        let max_abs = (&got - &reference)
+            .unwrap()
+            .abs()
+            .unwrap()
+            .max_all()
+            .unwrap()
+            .to_scalar::<f32>()
+            .unwrap();
+        println!("convt-gather cpu semantics max_abs {max_abs:.3e}");
+        assert_eq!(got.dims(), reference.dims());
+        assert!(max_abs <= 1e-5, "max_abs {max_abs:.3e}");
+    }
+
+    /// Numeric gate + region timing for the GEMM-direct conv1d against
+    /// candle's `Conv1d` (im2col + strided-B batched matmul + transpose
+    /// copy) on the real resblock shapes. The im2col buffer is candle's own
+    /// kernel (bit-identical); only the GEMM reduction order differs,
+    /// gated at 1e-5 relative.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    #[ignore = "requires a Metal device; no models"]
+    fn conv_gemmdirect_matches_conv1d_metal() {
+        let device = match Device::new_metal(0) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("skipping, no metal device: {e}");
+                return;
+            }
+        };
+        fn time(device: &Device, mut f: impl FnMut() -> Result<Tensor>) -> Result<f64> {
+            for _ in 0..3 {
+                std::mem::drop(f()?);
+            }
+            device.synchronize()?;
+            let start = std::time::Instant::now();
+            let mut last = None;
+            for _ in 0..15 {
+                last = Some(f()?);
+            }
+            device.synchronize()?;
+            std::mem::drop(last);
+            Ok(start.elapsed().as_secs_f64() / 15f64 * 1e3)
+        }
+        let levels: [(usize, usize); 6] = [
+            (768, 2108),
+            (384, 8432),
+            (192, 16864),
+            (96, 33728),
+            (48, 67456),
+            (24, 134912),
+        ];
+        println!("conv ch x l (k,d) | ref ms | fused ms | rel");
+        for (li, &(ch, l)) in levels.iter().enumerate() {
+            let combos: &[(usize, usize)] = if li % 2 == 0 {
+                &[
+                    (3, 1),
+                    (3, 3),
+                    (3, 5),
+                    (7, 1),
+                    (7, 3),
+                    (7, 5),
+                    (11, 1),
+                    (11, 3),
+                    (11, 5),
+                ]
+            } else {
+                &[(3, 1), (7, 1), (11, 1)]
+            };
+            for &(k, d) in combos {
+                let x = Tensor::randn(0f32, 1f32, (1, ch, l), &device).unwrap();
+                let w =
+                    Tensor::randn(0f32, 1f32 / (ch as f32).sqrt(), (ch, ch, k), &device).unwrap();
+                // The shipped resblock convs all carry a bias.
+                let bias = Tensor::randn(0f32, 1f32, (ch,), &device).unwrap();
+                let padding = get_padding(k, d);
+                let reference = candle_nn::Conv1d::new(
+                    w.clone(),
+                    Some(bias.clone()),
+                    candle_nn::Conv1dConfig {
+                        padding,
+                        #[cfg(all(feature = "metal", target_os = "macos"))]
+                        dilation: d,
+                        ..Default::default()
+                    },
+                );
+                let out_ref = reference.forward(&x).unwrap();
+                let fused =
+                    crate::metal_fused::conv1d_gemmdirect(&x, &w, Some(&bias), padding, d).unwrap();
+                assert_eq!(fused.dims(), out_ref.dims());
+                let max_abs = (&fused - &out_ref)
+                    .unwrap()
+                    .abs()
+                    .unwrap()
+                    .max_all()
+                    .unwrap()
+                    .to_scalar::<f32>()
+                    .unwrap();
+                let mag = out_ref
+                    .abs()
+                    .unwrap()
+                    .max_all()
+                    .unwrap()
+                    .to_scalar::<f32>()
+                    .unwrap();
+                let rel = max_abs / mag;
+                let fused_ms = time(&device, || {
+                    crate::metal_fused::conv1d_gemmdirect(&x, &w, Some(&bias), padding, d)
+                })
+                .unwrap();
+                let ref_ms = time(&device, || reference.forward(&x)).unwrap();
+                println!(
+                    "L{li} {ch:4}x{l:6} ({k:2},{d}) | {ref_ms:7.2} | {fused_ms:7.2} | {rel:.3e}"
+                );
+                assert!(rel <= 1e-5, "L{li} {ch} ({k},{d}) rel {rel:.3e}");
+            }
+        }
+    }
+
+    /// Numeric gate + region timing for the fused up-FIR+snake kernel
+    /// against the `fir_upsample` + `apply_activation` chain on the real
+    /// activation shapes (including odd T). Tap order and snake expressions
+    /// match; differences are float rounding only, gated at 1e-5 relative.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    #[ignore = "requires a Metal device; no models"]
+    fn fir_up_snake_matches_chain_metal() {
+        let device = match Device::new_metal(0) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("skipping, no metal device: {e}");
+                return;
+            }
+        };
+        fn time(device: &Device, mut f: impl FnMut() -> Result<Tensor>) -> Result<f64> {
+            for _ in 0..3 {
+                std::mem::drop(f()?);
+            }
+            device.synchronize()?;
+            let start = std::time::Instant::now();
+            let mut last = None;
+            for _ in 0..15 {
+                last = Some(f()?);
+            }
+            device.synchronize()?;
+            std::mem::drop(last);
+            Ok(start.elapsed().as_secs_f64() / 15f64 * 1e3)
+        }
+        let taps = kaiser_sinc_filter1d(0.25, 0.3, AA_KERNEL);
+        let filter = FirFilter::new(&taps, &device, candle_core::DType::F32).unwrap();
+        let phases = filter.fused_phases.as_ref().unwrap();
+        println!("shape (B,C,T) | chain ms | fused ms | rel");
+        for (c, t) in [
+            (768usize, 2108usize),
+            (384, 8432),
+            (192, 16864),
+            (96, 33728),
+            (48, 67456),
+            (24, 134912),
+            (48, 67455), // odd T
+        ] {
+            let x = Tensor::randn(0f32, 1f32, (1, c, t), &device).unwrap();
+            let a = Tensor::randn(0f32, 0.1, (1, c, 1), &device)
+                .unwrap()
+                .exp()
+                .unwrap();
+            let b = Tensor::randn(0f32, 0.1, (1, c, 1), &device)
+                .unwrap()
+                .exp()
+                .unwrap();
+            let scale = (b + 1e-9).unwrap().recip().unwrap();
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            let fused_acts = Tensor::cat(
+                &[&a.reshape((c,)).unwrap(), &scale.reshape((c,)).unwrap()],
+                0,
+            )
+            .unwrap()
+            .reshape((2, c))
+            .unwrap();
+            let chain = |x: &Tensor| -> Result<Tensor> {
+                let up = fir_upsample(x, &filter)?;
+                // same expressions as apply_activation with these a/b
+                let s = up.broadcast_mul(&a)?.sin()?.sqr()?;
+                up.broadcast_add(&s.broadcast_mul(&scale)?)
+            };
+            let out_chain = chain(&x).unwrap();
+            let fused =
+                crate::metal_fused::fir_up_snake(&x, phases, &fused_acts, AA_KERNEL / AA_RATIO)
+                    .unwrap();
+            assert_eq!(fused.dims(), out_chain.dims());
+            let max_abs = (&fused - &out_chain)
+                .unwrap()
+                .abs()
+                .unwrap()
+                .max_all()
+                .unwrap()
+                .to_scalar::<f32>()
+                .unwrap();
+            let mag = out_chain
+                .abs()
+                .unwrap()
+                .max_all()
+                .unwrap()
+                .to_scalar::<f32>()
+                .unwrap();
+            let rel = max_abs / mag;
+            let fused_ms = time(&device, || {
+                crate::metal_fused::fir_up_snake(&x, phases, &fused_acts, AA_KERNEL / AA_RATIO)
+            })
+            .unwrap();
+            let chain_ms = time(&device, || chain(&x)).unwrap();
+            println!("{c:4}x{t:6} | {chain_ms:7.2} | {fused_ms:7.2} | {rel:.3e}");
+            assert!(rel <= 1e-5, "{c}x{t} rel {rel:.3e}");
+        }
     }
 
     fn check_fir_conv(device: &Device) {
@@ -816,6 +1515,8 @@ mod tests {
             logscale,
             alpha: a,
             beta: b,
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            fused_acts: None,
         }
     }
 

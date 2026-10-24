@@ -38,6 +38,7 @@
 //!   [`StreamChunk::hit_token_limit`] set — never as plain success.
 
 use candle_core::{DType, Result, Tensor};
+use std::time::Instant;
 
 use crate::config::SamplingConfig;
 use crate::flow::CausalMaskedDiffWithDiT;
@@ -54,6 +55,76 @@ pub const STREAM_SCALE_FACTOR: usize = 2;
 pub const MAX_SILENT_TOKENS: u32 = 5;
 /// Official CV3 FSQ silent/breath token list.
 pub const SILENT_TOKENS: [u32; 11] = [1, 2, 28, 29, 55, 248, 494, 2241, 2242, 2322, 2323];
+
+/// Wall-clock stage attribution for one streaming session, enabled by
+/// `CV3_STREAM_PROFILE=1`. The pipeline is strictly sequential (LLM step →
+/// flow re-solve → HiFT re-decode), so per-stage wall time attributes
+/// without overlap. Zero cost when disabled: no `Instant` is taken and
+/// nothing is printed. Diagnostics only — never part of the timing contract.
+#[derive(Debug, Default)]
+pub(crate) struct StageProfile {
+    enabled: bool,
+    /// `StreamingTts` construction: LLM prefill of text+speech prompt.
+    prefill_ms: f64,
+    /// LLM decode steps (one token each).
+    llm_ms: f64,
+    /// Per-chunk flow solves (whole prefix each time).
+    flow_ms: f64,
+    /// Per-chunk HiFT decodes (whole accumulated mel each time) including
+    /// the PCM copy to CPU.
+    hift_ms: f64,
+    /// Everything else inside `next_pcm` (schedule, cat, narrow, sampling).
+    other_ms: f64,
+    chunks: usize,
+    tokens: usize,
+}
+
+impl StageProfile {
+    fn from_env() -> Self {
+        Self {
+            enabled: std::env::var("CV3_STREAM_PROFILE").is_ok_and(|v| v != "0"),
+            ..Default::default()
+        }
+    }
+
+    #[inline]
+    fn ms(start: Instant) -> f64 {
+        start.elapsed().as_secs_f64() * 1e3
+    }
+
+    fn chunk_line(&self, tokens_generated: usize, samples: usize) {
+        if !self.enabled {
+            return;
+        }
+        eprintln!(
+            "[cv3-stream] chunk {} tokens {tokens_generated} new_samples {samples} | prefill {:.0} llm {:.0} flow {:.0} hift {:.0} other {:.1} (cumulative ms)",
+            self.chunks, self.prefill_ms, self.llm_ms, self.flow_ms, self.hift_ms, self.other_ms,
+        );
+    }
+
+    fn summary_line(&self) {
+        if !self.enabled {
+            return;
+        }
+        let total = self.prefill_ms + self.llm_ms + self.flow_ms + self.hift_ms + self.other_ms;
+        let pct = |v: f64| if total > 0.0 { v / total * 100.0 } else { 0.0 };
+        eprintln!(
+            "[cv3-stream] TOTAL {total:.0} ms | prefill {:.0} ({:.0}%) llm {:.0} ({:.0}%) flow {:.0} ({:.0}%) hift {:.0} ({:.0}%) other {:.0} ({:.0}%) | chunks {} llm_tokens {}",
+            self.prefill_ms,
+            pct(self.prefill_ms),
+            self.llm_ms,
+            pct(self.llm_ms),
+            self.flow_ms,
+            pct(self.flow_ms),
+            self.hift_ms,
+            pct(self.hift_ms),
+            self.other_ms,
+            pct(self.other_ms),
+            self.chunks,
+            self.tokens,
+        );
+    }
+}
 
 /// One consumable PCM block.
 #[derive(Debug, Clone)]
@@ -208,6 +279,7 @@ pub struct TokenStreamDecoder<'a> {
     last_new_mel: Option<Tensor>,
     speech_offset: usize,
     device: candle_core::Device,
+    pub(crate) profile: StageProfile,
 }
 
 impl<'a> TokenStreamDecoder<'a> {
@@ -256,6 +328,7 @@ impl<'a> TokenStreamDecoder<'a> {
             speech_offset: 0,
             last_new_mel: None,
             device,
+            profile: StageProfile::from_env(),
         })
     }
 
@@ -300,6 +373,7 @@ impl<'a> TokenStreamDecoder<'a> {
             &self.device,
         )?;
 
+        let t_flow = Instant::now();
         let mel = self.flow.inference(
             &token_t,
             &self.flow_prompt_token,
@@ -315,6 +389,14 @@ impl<'a> TokenStreamDecoder<'a> {
             Some(c) => Tensor::cat(&[c, &mel], 2)?,
             None => mel.clone(),
         };
+        if self.profile.enabled {
+            // Sync first: flow leaves its GPU work queued; without this the
+            // drain lands in the next stage's CPU transfer and flow is
+            // under-counted (observed ~0.6s/chunk absorbed into hift f0).
+            self.device.synchronize().ok();
+            self.profile.flow_ms += StageProfile::ms(t_flow);
+        }
+        let t_hift = Instant::now();
         let pcm = self.hift.inference(&mel_all, plan.finalize)?;
         let pcm = pcm.to_dtype(DType::F32)?.flatten_all()?;
         let total = pcm.dim(0)?;
@@ -324,6 +406,12 @@ impl<'a> TokenStreamDecoder<'a> {
         let samples = pcm
             .narrow(0, self.speech_offset, new_len)?
             .to_vec1::<f32>()?;
+        if self.profile.enabled {
+            self.profile.hift_ms += StageProfile::ms(t_hift);
+            self.profile.chunks += 1;
+            self.profile
+                .chunk_line(self.schedule.tokens.len(), samples.len());
+        }
         // Commit only after every fallible synthesis/copy operation succeeded.
         self.last_new_mel = Some(mel);
         self.mel_cache = Some(mel_all);
@@ -420,14 +508,18 @@ impl<'a> StreamingTts<'a> {
         sampling: &SamplingConfig,
     ) -> Result<Self> {
         let device = flow.device().clone();
-        let decoder =
+        let mut decoder =
             TokenStreamDecoder::from_models(flow, hift, flow_prompt_token, prompt_feat, embedding)?;
+        let t_prefill = Instant::now();
         let llm_state = llm.start_incremental(
             &text_token.to_device(&device)?,
             &prompt_text_token.to_device(&device)?,
             &llm_prompt_speech_token.to_device(&device)?,
             sampling,
         )?;
+        if decoder.profile.enabled {
+            decoder.profile.prefill_ms += StageProfile::ms(t_prefill);
+        }
         Ok(Self {
             llm,
             llm_state,
@@ -482,16 +574,38 @@ impl<'a> StreamingTts<'a> {
     }
 
     fn next_pcm_inner(&mut self) -> Result<Option<StreamChunk>> {
-        loop {
+        let t_call = Instant::now();
+        let before = self
+            .decoder
+            .profile
+            .enabled
+            .then_some((self.decoder.profile.flow_ms, self.decoder.profile.hift_ms));
+        let mut llm_ms = 0f64;
+        let result = loop {
             if let Some(mut chunk) = self.decoder.next_pcm(self.llm_done)? {
                 chunk.hit_token_limit = chunk.final_chunk && self.hit_token_limit;
-                return Ok(Some(chunk));
+                break Ok(Some(chunk));
             }
             if self.llm_done {
-                return Ok(None);
+                self.decoder.profile.summary_line();
+                break Ok(None);
             }
-            self.llm_step()?;
+            let t_llm = Instant::now();
+            let step = self.llm_step();
+            if self.decoder.profile.enabled {
+                let d = StageProfile::ms(t_llm);
+                llm_ms += d;
+                self.decoder.profile.llm_ms += d;
+                self.decoder.profile.tokens += 1;
+            }
+            step?;
+        };
+        if let Some((f0, h0)) = before {
+            let p = &mut self.decoder.profile;
+            let wall = StageProfile::ms(t_call);
+            p.other_ms += wall - llm_ms - ((p.flow_ms - f0) + (p.hift_ms - h0));
         }
+        result
     }
 
     /// Whether the LLM side has finished producing tokens.

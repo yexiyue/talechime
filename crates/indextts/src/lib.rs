@@ -24,6 +24,8 @@ pub mod gpt;
 pub mod gpt2;
 pub mod length_regulator;
 pub mod mel;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) mod metal_fused;
 pub mod model;
 pub mod perceiver;
 pub(crate) mod profile;

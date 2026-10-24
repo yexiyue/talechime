@@ -8,7 +8,7 @@
 | huggingface/candle | `31f35b147389700ed2a178ee66a91c3cc25cc80d`（上游 tag `0.11.0`，"Bump candle version to 0.11.0 (#3658)"） | Apache-2.0 OR MIT | 全工作区统一的 Candle 计算运行时 |
 | yexiyue/candle（fork） | 分支 `talechime-perf`，基线同上 | Apache-2.0 OR MIT（与上游一致，未改许可） | 承载可上游化的性能补丁 |
 
-工作区固定 fork revision 为 `2266099d92265112ecc0d56ecee1761e3cc2ac00`。
+工作区固定 fork revision 为 `884b359895a16c8fbd3647789b1f7c7974894708`。
 `candle-metal-kernels` 也必须 patch：否则平台探测使用 registry 包，而 fork 的
 core/nn 使用 git 子 crate，形成同版本双来源。CUDA kernels 与 candle-ug 已由
 fork 内部路径依赖解析到同一 revision，不另写重复 patch。
@@ -43,20 +43,29 @@ registry 版本解析），因此该回退步骤目前未被触发，保留作�
 
 ## fork 是否真的被用到
 
-工作区固定 rev `2266099d92265112ecc0d56ecee1761e3cc2ac00` 相对上游有**一个**
-功能性补丁，登记在 fork 的 `FORK.md`：
+工作区固定 rev `884b359895a16c8fbd3647789b1f7c7974894708` 相对上游包含以下行为补丁及一项休眠实验内核，登记在 fork 的 `FORK.md`：
 
 | 补丁 | 位置 | 性质 | 实测 |
 | --- | --- | --- | --- |
 | skinny-M GEMM 用 32 行 tile | `candle-metal-kernels::mlx_gemm::select_tile_config` | 行为级，不改公开 API | VoxCPM LocDiT `m=22`：21.71 → 18.99 ms/帧（-12.5%），WAV 逐字节一致 |
+| 单通道共享 FIR 直卷 | Metal conv1d 的连续 F32 / 单输入输出通道分支 | 行为级，不改 core 公开 API | IndexTTS 固定输入误差 ≤9.5e-7；其余布局回退 |
+| rank-4 transpose(1,2) 连续化 | Metal copy 的精确 stride 签名分支 | 纯复制，不改 core 公开 API | CosyVoice3 / IndexTTS 转置，位级门；见下方记录 |
+| 二元广播快路径 | Metal binary 的 F32 rank-3 广播分支 | 行为级，不改 core 公开 API | 广播与窄视图位级门；其余布局回退 |
+| dense direct conv1d | Metal kernels 内核与 launcher | **未接入调度的休眠实验** | CosyVoice3 实测慢于 im2col，不能计为生产收益 |
 
-该补丁来自上游 #3313 引入的 `if m < 16 { return TILE_32_32_16_2_2 }` 守卫：
+其中 skinny-M 补丁来自上游 #3313 引入的 `if m < 16 { return TILE_32_32_16_2_2 }` 守卫：
 `16 <= m <= 32` 时 `ceil(m/32) == ceil(m/64) == 1`，即用 32 行 tile 不增加 M-tile
 数量，却被送进 64 行 tile 多算 32–42 行 padding。修正为 `m <= 32`。
 
 因此轨道 B（`publish = false`）仍**未触发**：`voxcpm` 等 crate 继续以
 `publish = true` 发布，只是下游从 crates.io 安装时会解析 registry 版 Candle，
-拿不到这个补丁的性能收益，直到它被上游合并。
+拿不到这些补丁的性能收益，直到相应补丁被上游合并。
+
+宿主融合内核使用 Candle 0.11.0 的公开 custom-op / Metal API，与上述 fork 内部
+launcher 分开维护。详细实现登记见固定 revision 的 `FORK.md`；验证边界见
+[转置记录](../../records/cosyvoice3/cosyvoice3-metal-transpose-copy-2026-10-24.md)、
+[广播记录](../../records/cosyvoice3/cosyvoice3-metal-broadcast-binary-2026-10-24.md) 与
+[宿主融合记录](../../records/indextts/indextts-metal-hosted-kernels-2026-10-24.md)。
 
 ## 退出条件
 

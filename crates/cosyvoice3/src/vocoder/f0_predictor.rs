@@ -56,9 +56,15 @@ impl CausalConvRnnF0Predictor {
 
     pub fn forward(&self, mel: &Tensor, finalize: bool) -> Result<Tensor> {
         // Float64 on CPU, per the official inference path.
+        let profile = std::env::var("CV3_HIFT_PROFILE").is_ok_and(|v| v != "0");
+        let t_all = std::time::Instant::now();
+        let t_cond = t_all;
+        let t_mv = std::time::Instant::now();
         let x = mel
             .to_device(&candle_core::Device::Cpu)?
             .to_dtype(candle_core::DType::F64)?;
+        let mv_ms = t_mv.elapsed().as_secs_f64() * 1e3;
+        let t_first = std::time::Instant::now();
         let mut x = if finalize {
             self.condnet[0].forward(&x)?
         } else {
@@ -71,13 +77,27 @@ impl CausalConvRnnF0Predictor {
                 self.condnet[0].forward(&x)?
             }
         };
+        let first_ms = t_first.elapsed().as_secs_f64() * 1e3;
+        let t_elu0 = std::time::Instant::now();
         x = self.elu.forward(&x)?;
+        let elu0_ms = t_elu0.elapsed().as_secs_f64() * 1e3;
         for conv in self.condnet.iter().skip(1) {
             x = self.elu.forward(&conv.forward(&x)?)?;
         }
+        let cond_ms = t_cond.elapsed().as_secs_f64() * 1e3;
+        let t_cls = std::time::Instant::now();
         let x = x.transpose(1, 2)?;
         let f0 = self.classifier.forward(&x)?.squeeze(2)?.abs()?;
         // Metal cannot convert f64 tensors; narrow on the owning CPU first.
-        f0.to_dtype(mel.dtype())?.to_device(mel.device())
+        let f0 = f0.to_dtype(mel.dtype())?.to_device(mel.device())?;
+        if profile {
+            eprintln!(
+                "[cv3-hift] f0 mv {mv_ms:.0} conv0 {first_ms:.0} elu0 {elu0_ms:.0} rest {:.0} cls {:.0} (total {:.0} ms)",
+                cond_ms - mv_ms - first_ms - elu0_ms,
+                t_cls.elapsed().as_secs_f64() * 1e3,
+                t_all.elapsed().as_secs_f64() * 1e3,
+            );
+        }
+        Ok(f0)
     }
 }

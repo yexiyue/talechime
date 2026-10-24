@@ -7,9 +7,26 @@
 CPU 读回后的队列同步是不同问题，分别做最小复现。
 不套用 CUDA 的 fast path 或调度阈值，也不因统一内存就假定主机往返没有同步成本。
 
+**分段计时必须"先同步再停表"**：Metal 命令队列是异步的，只 enqueue 的段
+（纯 GPU op 链）测出的"耗时"只是入队耗时；队列里第一个含 CPU 回读
+（`to_device`/`to_vec1`）的段会吸干全部排队的 GPU 工作——cv3 HiFT 首测
+把整条 GAN 卷积链 578ms 记到了 istft 头上，逐段加 `synchronize` 后 istft
+实为 16ms。**CPU 端、以设备传输开头的段同样会替前段买单**：cv3 f0 段以
+`mel.to_device(Cpu)` 开头，flow 留在队列里的 ~0.6s GPU 工作全记进了 f0
+"CPU f64 卷积"（真算力仅 ~10ms）——归因探针要在**每段开始前**（含前段
+结束后）同步，而不是只给 GPU 段收尾同步；跨 CPU/GPU 混合流水线尤其如此
+（参考 cv3 `CV3_HIFT_PROFILE`/`CV3_STREAM_PROFILE` 的最终实现）。
+
 涉及 GQA/RoPE、codec 转置卷积、1×1 卷积或贪心 confidence 的布局优化时，
 参照 [OmniVoice Metal 经验](omnivoice-metal.md)：先核消费者支持的 stride 和原生
 快路径条件，再决定是否物化；其中收益与回退条件是版本相关案例，不是通用阈值。
+
+**转置视图的 `contiguous()` 是隐形慢路径**：`transpose(1,2)` 后的
+rank-4 布局（如注意力 (B,T,H,D)↔(B,H,T,D)）使 `strided_blocks()` 返回
+`MultipleBlocks`，回退逐元素 gather（实测 11.6 GB/s ≈ 4% 带宽）；candle
+fork `5a7d251f` 起，精确 stride 签名 `(d1·d2·d3, d3, d1·d3, 1)` 的 F32
+拷贝走 `transpose2_contiguous_f32` 行块内核（≈113 GB/s，9.7×）。fork 外
+（upstream 0.11.0）此模式仍是慢路径——项目内若见类似形态先查布局签名。
 
 ## 排序与采样
 
@@ -37,6 +54,35 @@ Qwen 的局部替换仅适用于 unit stride/dilation、每组单输入、groups
 transpose/narrow 的非连续布局只在必要的消费边界物化，实测连续化成本和下游内核
 选择；删除 contiguous 不是天然优化。一次设备 tensor 简化若无明确收益，只能作为
 单独的可读性改动解释，不作性能宣传。
+
+广播元素级链一旦含 stride-2 视图（如交错 RoPE 的 `(…,half,2)` narrow），
+全部 kernel 落入非连续慢路径——IndexTTS 实测 ~2% 带宽、占 block 52%。
+先查 candle-nn 的 CustomOp 融合实现再自己写 kernel：`rotary_emb::rope_i`
+（interleaved，Metal 融合 `ropei`，cos/sin 为 (T,half) 2-D）与
+`ops::sdpa`（head_dim 32–512、F32/F16/BF16；CPU 均无实现，需设备分派）
+都是上游公开 API，换调用即得融合路径。[B,T,H] 想直接转 [B,H,T,D] 时
+注意：先 transpose 得到的行内只有 T 个元素、没有 d 维，必须先 reshape
+分出 (h,d) 再 transpose。
+
+`conv_transpose1d` 的 Metal col2im 快路径**仅 padding==0 分派**；带 padding
+的 ConvT（上采样 (k-u)/2>0 是常态）全部落入 naive per-output 标量核——
+IndexTTS L0 (1536→768,k8,s4) 仅 0.015 TFLOPS（340ms）。k%stride==0 且
+stride 为 2 幂时用 GEMM+gather 分解在应用侧重建：`(l_in,c_in)@
+(c_in,c_out·k)` 一次健康 GEMM + 每输出恰 k/stride 次读的散射核
+（~125×，rel≤2.6e-6）。多通道 `conv1d` 换直出布局 GEMM 仅 −5~10%：
+im2col 物化（k× 写放大 + 每 call 新 buffer）才是地板——**改 conv 编排前
+先拿等形纯 GEMM 探针对拍**，GEMM 与 conv 的差值才是编排的可用空间。
+
+----
+## 跨实现官方对照：当日 O-T-O-T 窗口交错，配对方向才是结论（2026-10-24，IndexTTS）
+
+官方（PyTorch/MPS）自身同日可漂移 ~27%（上午稳态 1.42–1.50、晚间同机
+1.11–1.15 与 1.38–1.63 两窗口——MPS 惰性编译深浅是主要嫌疑），隔日或单窗口
+读数对"谁更快"的判定完全不可用。可行协议：同日 O-T-O-T 窗口交错（O=官方
+进程 1 预热+10 轮取丢 2 轮惰性编译的稳态，T=我方 1 预热+5 热测），**看配对
+窗口的方向**：IndexTTS 四内核轮窗口 1 我方慢 5.5%、窗口 2 反超 2.9%（两臂
+同步进入慢态），全量区间重叠 → 判定 parity 而非"超过"。官方进程加载 ~200s
+是交错成本，两窗口足够翻转一次机器状态；结论必须附全部槽值与窗口时刻。
 
 ## 平台验证
 
@@ -91,6 +137,10 @@ Metal 有 Indirect Command Buffer，但 Candle 没有公开的 Metal 图式录�
 
 - 模块级（`VOXCPM_BENCH_PROFILE=1` 等）信噪比高得多，能在一次短跑内确认因果。
   副作用是边界同步会放大总时长，所以它只用来归因，不用来报吞吐。
+  逐算子 span 要注意守卫生命周期：guard 不及时 drop 会把后续嵌套 span
+  重复计入（IndexTTS 首测 dit.qkv "71%" 即此假象），且逐 span 同步对短算子
+  放大可达 ~36%——**逐算子归因以固定形状的独立探针为准**，run 级 span 只看
+  相对分布。
 - 若模块降了 X% 而它占帧成本 P%，端到端预期约 `X% × P%`。实测吻合
   （CFM -12.5% × 55.4% ≈ 端到端 -6.9%）说明改动确实落在预期位置；
   若对不上，说明还有别的分支没命中。
@@ -108,3 +158,49 @@ Metal 有 Indirect Command Buffer，但 Candle 没有公开的 Metal 图式录�
 - 设备注册不足以证明生成算子走该设备。开发探针可在 BaseLM prefill/step、ResidualLM
   prefill/step、编码器、CFM estimator 与 AudioVAE decode 的实际张量边界记录 device；这种
   hook 只作路径审计，不能放进无插桩吞吐数字。
+
+## 应用侧自定义 Metal 内核：CustomOp3 宿主路径（2026-10-24，cv3 第六轮）
+
+融合内核**不必进 fork 找现有算子挂钩**——candle 公开面足够把它们全部放在
+应用 crate 里（此路径已被 candle-nn 自身的 rope_i 采用）：
+
+- `impl CustomOp3`，在 `metal_fwd(&MetalStorage, &Layout, ×3)` 里拿原始缓冲；
+  设备从 `Tensor::device()` 的 `Device::Metal(d)` 取。`MetalDevice::{command_
+  encoder, new_buffer_builder, metal_device}`、`MetalStorage::new`、
+  `Tensor::apply_op3_no_bwd` 全公开。自有 .metal 源码用
+  `metal_device().new_library_with_source` 编译，进程内缓存（键含 DeviceId）。
+- 三个硬坑（每个都实测踩过）：
+  1. **内核写出的缓冲必须用 `candle_metal_kernels::Output::new` 绑定**。
+     普通输入式元组绑定绕过 hazard 追踪，回读与内核竞态——**读回全零且不报
+     错**，极像"内核没跑"。
+  2. **禁止用运行期非 2 幕常数 `%`/`/` 分解 tid**。GPU 整数除法是仿真指令
+     (~30 周期/线程)，简单内核里反客为主（微基准 4×）。用 3-D grid
+     `(channels, seq, batch)` + `[[threads_per_grid]]`，分解退化为移位/掩码。
+  3. MSL 属性参数类型必须同形：标量 `uint` 与 `uint3` 混用编译报错，标量从
+     `uint3 tpos.x` 取。
+- 双平面输出技巧：一个内核写 `(2,B,T,D)`（FFN 输入 + 残差基），消费侧
+  `narrow(0,i,1).squeeze(0)` 是零拷贝连续视图。
+- 调制参数若本就是某大张量的窄切片（如 AdaLN 的 `(B,1,6D)`），让内核按
+  通道偏移直读原始张量，免打包内核。
+- fma 收缩：内核里 `x + g*y` 会被收缩成一条 fma（一次舍入），与 CPU 链
+  mul+add（两次舍入）有 ~5e-8 相对差——数值门按 1e-6 设，别追位级。
+
+## 用 traffic 估算内核收益前，先问缓存驻留与算力比（2026-10-24，cv3 直卷证伪）
+
+"中间物化 N MB → 消掉它省 N/BW" 的推算曾两轮失真：
+- im2col 缓冲（~136MB 估算）实际 L2 常驻、GEMM 计算受限，直卷内核（朴素与
+  8 宽分块两版）反而慢 3–4×；且分块版的 `acc[8]` 被运行期循环界挡住展开，
+  溢出 local memory 更慢。**先拿 region 探针确认该算子真实占比，再写内核。**
+- 数值门只能证数值（两版直卷都 ≤1e-5 过门），性能门必须另做（region 探针
+  或微基准交错臂）。
+
+## 「持续负载」读数是环境变量，不是二进制属性（2026-10-24，cv3 第七轮）
+
+同一二进制、同一 ABAB 槽协议，不同日期的"持续态"读数差 ±15%（A 基线当日
+1.119–1.365、隔日 0.982–0.987）——机身降频取决于当日热背景而非代码。判定
+"<1.0" 类阈值时：当日做连续负载连跑（≥15 次背靠背、~60s 满载）确认 RTF 无
+爬升，并把双态幅度如实登记，而不是引用历史槽值。
+
+另：candle `Tensor::cat` 偶尔走转置回退分支返回非连续布局（strides
+(6D,12D,1)），喂给要求行主序的自定义内核前 `.contiguous()` 归一（连续时
+零拷贝）。

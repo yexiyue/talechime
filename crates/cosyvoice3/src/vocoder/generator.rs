@@ -7,6 +7,7 @@
 
 use candle_core::{Module, Result, Tensor};
 use candle_nn::VarBuilder;
+use std::time::Instant;
 
 use super::causal_conv::{
     CausalConv1d, CausalConv1dUpsample, CausalType, reflection_pad_1d, repeat_interleave_dim,
@@ -16,6 +17,68 @@ use super::source_module::SourceModuleHnNSF;
 use super::stft_istft::{HiFTStft, HiFTiStft};
 use crate::activations::{LeakyReLU, Snake};
 use crate::config::HiftConfig;
+
+/// Wall-clock stage attribution for one HiFT decode, enabled by
+/// `CV3_HIFT_PROFILE=1`. The decode is sequential, so per-stage wall time
+/// attributes without overlap. Zero cost when disabled. Diagnostics only —
+/// never part of the timing contract.
+#[derive(Debug, Default)]
+struct HiftProfile {
+    enabled: bool,
+    f0_ms: f64,
+    source_ms: f64,
+    pre_ms: f64,
+    up_ms: f64,
+    sbranch_ms: f64,
+    res_ms: f64,
+    post_ms: f64,
+    /// Finer split of `f0_ms`: condnet convs vs classifier.
+    f0_cond_ms: f64,
+    /// Finer split of `post_ms`: conv_post vs istft.
+    post_conv_ms: f64,
+    post_istft_ms: f64,
+}
+
+impl HiftProfile {
+    fn from_env() -> Self {
+        Self {
+            enabled: std::env::var("CV3_HIFT_PROFILE").is_ok_and(|v| v != "0"),
+            ..Default::default()
+        }
+    }
+
+    #[inline]
+    fn ms(start: Instant) -> f64 {
+        start.elapsed().as_secs_f64() * 1e3
+    }
+
+    fn line(&self, frames: usize) {
+        if !self.enabled {
+            return;
+        }
+        let total = self.f0_ms
+            + self.source_ms
+            + self.pre_ms
+            + self.up_ms
+            + self.sbranch_ms
+            + self.res_ms
+            + self.post_ms;
+        eprintln!(
+            "[cv3-hift] frames {frames} total {total:.0} ms | f0 {:.0} (cond {:.0} cls {:.0}) source {:.0} pre {:.0} up {:.0} sbranch {:.0} res {:.0} post {:.0} (conv {:.0} istft {:.0})",
+            self.f0_ms,
+            self.f0_cond_ms,
+            self.f0_ms - self.f0_cond_ms,
+            self.source_ms,
+            self.pre_ms,
+            self.up_ms,
+            self.sbranch_ms,
+            self.res_ms,
+            self.post_ms,
+            self.post_conv_ms,
+            self.post_istft_ms,
+        );
+    }
+}
 
 #[derive(Debug)]
 struct ResBlock {
@@ -301,16 +364,23 @@ impl CausalHiFtGenerator {
         let dtype = mel.dtype();
         let prod_rates: usize = self.cfg.upsample_rates.iter().product();
         let upsample_scale: usize = prod_rates * self.cfg.istft_hop_len;
+        let mut prof = HiftProfile::from_env();
 
         // 1. f0 in float64 (handled inside the predictor), then nearest
         //    upsample x upsample_scale: torch.nn.Upsample default mode.
+        let t_stage = Instant::now();
         let f0 = self.f0_predictor.forward(mel, finalize)?; // [B, T]
         if let Some(trace) = trace.as_deref_mut() {
             trace.push(("f0".into(), f0.to_dtype(dtype)?));
         }
         let f0_up = repeat_interleave_dim(&f0.to_dtype(dtype)?.unsqueeze(2)?, 1, upsample_scale)?; // [B, T*scale, 1]
+        if prof.enabled {
+            mel.device().synchronize()?;
+            prof.f0_ms += HiftProfile::ms(t_stage);
+        }
 
         // 2. harmonic source + STFT of the source branch.
+        let t_stage = Instant::now();
         let (source, _uv) = self.m_source.forward(&f0_up)?; // [B, Ts, 1]
         let source = source.squeeze(2)?.to_dtype(dtype)?;
         if let Some(trace) = trace.as_deref_mut() {
@@ -324,10 +394,15 @@ impl CausalHiFtGenerator {
             s_im = s_im.narrow(2, 0, s_im.dim(2)? - trim)?;
         }
         let s_stft = Tensor::cat(&[&s_re, &s_im], 1)?;
+        if prof.enabled {
+            mel.device().synchronize()?;
+            prof.source_ms += HiftProfile::ms(t_stage);
+        }
 
         // 3. mel branch: conv_pre (look-right) then up stages. In streamed
         // mode Python trims the mel fed to `decode` by the f0 predictor's
         // first look-right padding before splitting the conv_pre context.
+        let t_stage = Instant::now();
         let mut x = if finalize {
             self.conv_pre.forward(mel)?
         } else {
@@ -342,16 +417,30 @@ impl CausalHiFtGenerator {
         if let Some(trace) = trace.as_deref_mut() {
             trace.push(("x_pre".into(), x.clone()));
         }
+        if prof.enabled {
+            mel.device().synchronize()?;
+            prof.pre_ms += HiftProfile::ms(t_stage);
+        }
         for (i, up) in self.ups.iter().enumerate() {
+            let t_stage = Instant::now();
             x = self.lrelu.forward(&x)?;
             x = up.forward(&x)?;
             if i == self.ups.len() - 1 {
                 x = reflection_pad_1d(&x, 1, 0)?;
             }
+            if prof.enabled {
+                mel.device().synchronize()?;
+                prof.up_ms += HiftProfile::ms(t_stage);
+            }
+            let t_stage = Instant::now();
             let si = self.source_downs[i].forward(&s_stft)?;
             let si = self.source_resblocks[i].forward(&si)?;
             if let Some(trace) = trace.as_deref_mut() {
                 trace.push((format!("si_{i}"), si.clone()));
+            }
+            if prof.enabled {
+                mel.device().synchronize()?;
+                prof.sbranch_ms += HiftProfile::ms(t_stage);
             }
             if x.dim(2)? != si.dim(2)? {
                 candle_core::bail!(
@@ -361,6 +450,7 @@ impl CausalHiFtGenerator {
                 );
             }
             x = (x + si)?;
+            let t_stage = Instant::now();
             let mut acc: Option<Tensor> = None;
             for rb in &self.resblocks[i] {
                 let y = rb.forward(&x)?;
@@ -370,6 +460,10 @@ impl CausalHiFtGenerator {
                 });
             }
             x = (acc.unwrap() / self.resblocks[i].len() as f64)?;
+            if prof.enabled {
+                mel.device().synchronize()?;
+                prof.res_ms += HiftProfile::ms(t_stage);
+            }
             if let Some(trace) = trace.as_deref_mut() {
                 trace.push((format!("x_stage{i}"), x.clone()));
             }
@@ -377,12 +471,24 @@ impl CausalHiFtGenerator {
 
         // 4. post: leaky_relu with the PyTorch default slope 0.01 (not
         //    lrelu_slope), then magnitude/phase split and iSTFT.
+        let t_stage = Instant::now();
+        let t_conv = Instant::now();
         let x = candle_nn::ops::leaky_relu(&x, 0.01)?;
         let x = self.conv_post.forward(&x)?;
+        if prof.enabled {
+            mel.device().synchronize()?;
+            prof.post_conv_ms += HiftProfile::ms(t_conv);
+        }
         let half = self.cfg.istft_n_fft / 2 + 1;
         let magnitude = x.narrow(1, 0, half)?.exp()?;
         let phase = x.narrow(1, half, half)?.sin()?;
+        let t_istft = Instant::now();
         let wav = self.istft.forward(&magnitude, &phase)?;
+        if prof.enabled {
+            mel.device().synchronize()?;
+            prof.post_istft_ms += HiftProfile::ms(t_istft);
+            prof.post_ms += HiftProfile::ms(t_stage);
+        }
         let wav = if !finalize {
             // Trim is prod(upsample_rates) * istft hop samples.
             let trim = prod_rates * self.cfg.istft_hop_len;
@@ -390,6 +496,7 @@ impl CausalHiFtGenerator {
         } else {
             wav
         };
+        prof.line(frames);
         wav.clamp(-self.cfg.audio_limit, self.cfg.audio_limit)
     }
 }

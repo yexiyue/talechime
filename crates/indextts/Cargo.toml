@@ -14,7 +14,15 @@ cuda = ["candle-core/cuda", "candle-nn/cuda"]
 # BigVGAN / CAMPPlus stacks otherwise hit candle's strided-matmul conv
 # fallback, which rejects some layouts).
 cuda-cudnn = ["cuda", "candle-core/cudnn"]
-metal = ["candle-nn/metal"]
+# candle-metal-kernels/objc2-metal power the custom-op Metal kernels in
+# src/metal_fused.rs (hosted kernels, no candle fork); both are already in
+# the tree through candle.
+metal = [
+    "candle-nn/metal",
+    "candle-core/metal",
+    "dep:candle-metal-kernels",
+    "dep:objc2-metal",
+]
 
 [dependencies]
 candle-nn.workspace = true
@@ -32,3 +40,5 @@ clap.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 candle-core = { workspace = true, features = ["accelerate"] }
+candle-metal-kernels = { workspace = true, optional = true }
+objc2-metal = { workspace = true, optional = true }

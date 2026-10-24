@@ -6,6 +6,7 @@ pub fn device(name: &str) -> Result<candle_core::Device> {
     match name {
         "cpu" => Ok(candle_core::Device::Cpu),
         "cuda" => Ok(candle_core::Device::new_cuda(0)?),
+        "metal" => Ok(candle_core::Device::new_metal(0)?),
         other => bail!("unsupported device {other}"),
     }
 }

@@ -417,8 +417,16 @@ fn attention_sdpa(
                 ))
                 .into());
             }
+            // Candle 0.11 SDPA passes mask strides but omits its storage
+            // offset. Rebase sliced masks before expanding the shared head
+            // dimension; contiguous() alone keeps offsets for dense views.
+            let mask = if mask.layout().start_offset() != 0 {
+                mask.force_contiguous()?
+            } else {
+                mask.clone()
+            };
             if mask_heads == heads {
-                Some(mask.clone())
+                Some(mask)
             } else {
                 Some(mask.expand((batch, heads, mask_q, mask_k))?)
             }

@@ -313,3 +313,46 @@ fn fused_rms_norm_tracks_f64_host_reference() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn sdpa_preserves_sliced_mask_offsets() -> Result<()> {
+    let device = Device::new_metal(0)?;
+    let q = Tensor::zeros((1, 16, 2, 128), DType::F16, &device)?;
+    let k = Tensor::zeros((1, 8, 2, 128), DType::F16, &device)?;
+    let v = Tensor::cat(
+        &[
+            Tensor::zeros((1, 8, 1, 128), DType::F16, &device)?,
+            Tensor::ones((1, 8, 1, 128), DType::F16, &device)?,
+        ],
+        2,
+    )?;
+    for heads in [1, 16] {
+        let selected = Tensor::from_slice(
+            &[0f32, f32::NEG_INFINITY, 0., f32::NEG_INFINITY],
+            (1, 1, 2, 2),
+            &device,
+        )?
+        .to_dtype(DType::F16)?
+        .broadcast_as((1, heads, 2, 2))?
+        .contiguous()?;
+        let base = Tensor::cat(
+            &[
+                Tensor::zeros((1, heads, 2, 2), DType::F16, &device)?,
+                selected,
+            ],
+            0,
+        )?;
+        let mask = base.narrow(0, 1, 1)?;
+        assert!(mask.layout().start_offset() > 0);
+        let actual = attention_sdpa(&q, &k, &v, Some(&mask), 1.0)?;
+        assert!(
+            actual
+                .to_dtype(DType::F32)?
+                .flatten_all()?
+                .to_vec1::<f32>()?
+                .iter()
+                .all(|&v| v == 0.)
+        );
+    }
+    Ok(())
+}
