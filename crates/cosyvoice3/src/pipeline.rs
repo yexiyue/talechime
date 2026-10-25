@@ -17,7 +17,7 @@ use crate::vocoder::CausalHiFtGenerator;
 /// prompts; `<|endofprompt|>` is a hard requirement of the LLM input.
 pub const DEFAULT_PROMPT_PREFIX: &str = "You are a helpful assistant.<|endofprompt|>";
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Mode {
     /// prompt text + prompt speech tokens condition the LLM.
     #[default]
@@ -114,7 +114,26 @@ impl CosyVoice3 {
         prompt: &PromptFeatures,
         sampling: &SamplingConfig,
     ) -> Result<crate::StreamingTts<'_>> {
-        if text.trim().is_empty() || !prompt.text.contains("<|endofprompt|>") {
+        self.start_stream_with_mode(text, prompt, Mode::ZeroShot, None, sampling)
+    }
+
+    /// Stream zero-shot, cross-lingual or instructed speech. In instructed
+    /// mode, only the LLM speech prefix is removed; Flow/HiFT retain the
+    /// original reference features and the bounded streaming schedule.
+    pub fn start_stream_with_mode(
+        &mut self,
+        text: &str,
+        prompt: &PromptFeatures,
+        mode: Mode,
+        instruct_text: Option<&str>,
+        sampling: &SamplingConfig,
+    ) -> Result<crate::StreamingTts<'_>> {
+        let conditioning = llm_conditioning(prompt, mode, instruct_text)?;
+        let has_marker = match mode {
+            Mode::ZeroShot => prompt.text.contains("<|endofprompt|>"),
+            _ => conditioning.text.contains("<|endofprompt|>") || text.contains("<|endofprompt|>"),
+        };
+        if text.trim().is_empty() || !has_marker {
             candle_core::bail!("nonempty text and an end-of-prompt marker are required");
         }
         if prompt.speech_tokens.is_empty()
@@ -130,8 +149,13 @@ impl CosyVoice3 {
             candle_core::bail!("invalid zero-shot prompt features");
         }
         let text = u32_tensor(&self.encode(text)?, &self.device)?;
-        let prompt_text = u32_tensor(&self.encode(&prompt.text)?, &self.device)?;
+        let prompt_text = u32_tensor(&self.encode(conditioning.text)?, &self.device)?;
         let tokens = u32_tensor(&prompt.speech_tokens, &self.device)?;
+        let llm_tokens = if mode == Mode::ZeroShot {
+            tokens.clone()
+        } else {
+            u32_tensor(conditioning.speech_tokens, &self.device)?
+        };
         let mel = Tensor::from_slice(&prompt.mel, (1, prompt.mel_frames, 80), &self.device)?
             .to_dtype(self.dtype)?;
         let embedding =
@@ -142,6 +166,7 @@ impl CosyVoice3 {
             &mut self.hift,
             &text,
             &prompt_text,
+            &llm_tokens,
             &tokens,
             &mel,
             &embedding,
@@ -172,13 +197,8 @@ impl CosyVoice3 {
             );
         }
         let text_tokens = self.encode(text)?;
-        let prompt_text = match mode {
-            Mode::ZeroShot => prompt.text.as_str(),
-            Mode::CrossLingual => "",
-            Mode::Instruct => instruct_text.ok_or_else(|| {
-                candle_core::Error::Msg("instruct mode requires instruction text".into())
-            })?,
-        };
+        let conditioning = llm_conditioning(prompt, mode, instruct_text)?;
+        let prompt_text = conditioning.text;
         // The official LLM requires this marker in either text input.
         if !text.contains("<|endofprompt|>") && !prompt_text.contains("<|endofprompt|>") {
             candle_core::bail!("<|endofprompt|> is required in text or prompt text");
@@ -191,12 +211,7 @@ impl CosyVoice3 {
         } else {
             u32_tensor(&prompt_text_tokens, &self.device)?
         };
-        let llm_prompt_tokens = match mode {
-            // Zero-shot keeps the cloned prompt tokens; cross-lingual and
-            // instruct drop the LLM speech prompt (flow keeps using them).
-            Mode::ZeroShot => u32_tensor(&prompt.speech_tokens, &self.device)?,
-            _ => Tensor::zeros((1, 0), DType::U32, &self.device)?,
-        };
+        let llm_prompt_tokens = u32_tensor(conditioning.speech_tokens, &self.device)?;
 
         let speech_tokens =
             self.llm
@@ -297,6 +312,36 @@ fn io_msg(e: candle_core::Error) -> std::io::Error {
     std::io::Error::other(e.to_string())
 }
 
+/// Keep LLM conditioning selection identical for streaming and single-shot
+/// generation. Flow always receives the complete original prompt separately.
+struct LlmConditioning<'a> {
+    text: &'a str,
+    speech_tokens: &'a [u32],
+}
+
+fn llm_conditioning<'a>(
+    prompt: &'a PromptFeatures,
+    mode: Mode,
+    instruction: Option<&'a str>,
+) -> Result<LlmConditioning<'a>> {
+    let (text, speech_tokens) = match mode {
+        Mode::ZeroShot => (prompt.text.as_str(), prompt.speech_tokens.as_slice()),
+        Mode::CrossLingual => ("", &[][..]),
+        Mode::Instruct => (
+            instruction
+                .filter(|s| !s.trim().is_empty())
+                .ok_or_else(|| {
+                    candle_core::Error::msg("instruct mode requires instruction text")
+                })?,
+            &[][..],
+        ),
+    };
+    Ok(LlmConditioning {
+        text,
+        speech_tokens,
+    })
+}
+
 fn load_tokenizer(dir: &std::path::Path) -> std::io::Result<tokenizers::Tokenizer> {
     let tokenizer = tokenizers::Tokenizer::from_file(dir.join("tokenizer.json")).map_err(|e| {
         std::io::Error::other(format!("load tokenizer.json (run conversion first): {e}"))
@@ -328,6 +373,32 @@ pub fn mel_at_speed(mel: &Tensor, speed: f32) -> Result<Tensor> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn modes_separate_llm_and_acoustic_prompt_conditioning() -> Result<()> {
+        let prompt = PromptFeatures {
+            text: format!("{DEFAULT_PROMPT_PREFIX}原始参考文字"),
+            speech_tokens: vec![4, 5],
+            mel: vec![0.; 320],
+            mel_frames: 4,
+            embedding: vec![0.; 192],
+        };
+        let zero_shot = llm_conditioning(&prompt, Mode::ZeroShot, None)?;
+        assert_eq!(zero_shot.text, prompt.text);
+        assert_eq!(zero_shot.speech_tokens, &[4, 5]);
+        let instruction = "You are a helpful assistant. 请用悲伤的语气说。<|endofprompt|>";
+        let instructed = llm_conditioning(&prompt, Mode::Instruct, Some(instruction))?;
+        assert_eq!(instructed.text, instruction);
+        assert!(instructed.speech_tokens.is_empty());
+        let cross_lingual = llm_conditioning(&prompt, Mode::CrossLingual, None)?;
+        assert!(cross_lingual.text.is_empty() && cross_lingual.speech_tokens.is_empty());
+        assert!(llm_conditioning(&prompt, Mode::Instruct, None).is_err());
+        assert!(llm_conditioning(&prompt, Mode::Instruct, Some("  ")).is_err());
+        // The original Flow prompt remains available unchanged in all modes.
+        assert_eq!(prompt.speech_tokens, vec![4, 5]);
+        assert_eq!(prompt.mel_frames, 4);
+        Ok(())
+    }
 
     #[test]
     fn speed_two_halves_mel_length() -> Result<()> {

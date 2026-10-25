@@ -143,7 +143,7 @@ let options = talechime::PlanSessionOptions {
 性错读；`Pinned(u64)` 按 hash(seed, 合成序号, 重试次数) 派生，同计划可复现且重试仍
 变化。Pinned 复现以同一工具链与相同分段为前提（后端时长学习可能改变分段边界）。
 每后端的类型化构造器（`VoxCpmParams` / `QwenParams` / `OmniVoiceParams` /
-`MossParams`，`to_generation_params()` 转换）随对应后端 feature 从本 crate 导出。
+`MossParams` / `IndexTtsParams`，`to_generation_params()` 转换）随对应后端 feature 从本 crate 导出。
 
 会话 `speed` 在模型声明 `speed` 参数（当前仅 OmniVoice）且宿主未显式设置时自动路由
 到生成期无损变速，播放 sink 置 1.0；运行期 `configure_playback` 的改速按
@@ -153,6 +153,15 @@ let options = talechime::PlanSessionOptions {
 -> Streaming`；请求携带 text/voice/style/context、本次尝试的具体 `seed` 与已校验的
 `params`。不支持逐段风格或接续的后端用 `request.reject_unsupported(style, continuation)`
 显式拒绝，不要静默忽略。
+
+## 风格与情绪
+
+逐段 `SpeechSpan.style` 与直接合成的 style 由各模型解释：Qwen 1.7B CustomVoice、
+MOSS Local、CosyVoice3 使用指令；VoxCPM2 使用官方描述前缀；OmniVoice 使用其受限
+属性词表。IndexTTS 接受八种命名情绪，并通过 `IndexTtsParams` / 能力目录开放
+情绪向量、强度、随机锚点与独立情绪参考音色。未设置时沿用各模型默认表达。
+控制方法与边界见 [CosyVoice3](cosyvoice3.md#逐段风格) 和 [IndexTTS](indextts.md#情绪控制)。
+这些能力不要求开启接续，能力声明也不等同于所有情绪或语言的听感验收。
 
 ## 段落内接续
 

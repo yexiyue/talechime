@@ -2,7 +2,7 @@
 
 `cosyvoice3` / 模型 `0.5b` 已接入 Talechime Registry、Rust Engine、CLI 与 JSON Lines v7。
 当前为实验能力：零样本克隆、24 kHz 单声道原生流式输出；必须先导入参考 WAV 和准确转写。
-没有内置音色，不开放 style、执行级 continuation、文本正规化或生成参数。
+没有内置音色；支持逐段 style 指令，不开放执行级 continuation、文本正规化或生成参数。
 播放速度使用现有播放层，不声明流式模型原生 speed。
 
 LLM、Flow/DiT、HiFT 使用 Candle，参考语音 tokenizer 与 campplus 使用 ORT CPU。
@@ -80,3 +80,17 @@ Windows Ryzen 7 9700X CPU / RTX 5070 CUDA 的首轮计算库基准与被撤回�
 [Windows 性能调查](records/cosyvoice3/cosyvoice3-windows-performance-2026-10-19.md)。
 HF 原始权重摘要与 Mac 记录一致，但本轮 Windows 转换的 HiFT 与现有生产清单摘要
 不同，尚未通过 Engine 资源准备门禁；没有替换清单或将开发计算库测试当作后端验收。
+
+## 逐段风格
+
+CLI 的 `--style`、Rust 的 `SpeechSpan.style` / 直接合成 style，以及 JSON Lines v7
+的 `VoiceSpan.style` 进入同一 Instruct 链路。例如：
+
+```sh
+talechime --backend cosyvoice3 --voice custom:reader --style '请用悲伤的语气说。' chapter.txt
+```
+
+传入普通自然语言描述即可，不添加 `<|endofprompt|>` 等模板标记（显式拒绝）。
+后端将指令包装为官方 assistant 前缀：LLM 使用指令并去掉参考语音 token 前缀，
+Flow / HiFT 仍使用原音色参考，保持原生流式与取消边界。未提供 style 时继续使用原零样本路径。
+指令是否达到预期语气需模型试听确认；普通接线测试不代表情绪质量验收。

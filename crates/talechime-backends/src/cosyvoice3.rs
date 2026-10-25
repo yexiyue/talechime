@@ -1,4 +1,4 @@
-//! CosyVoice3 zero-shot cloning with bounded native audio streaming.
+//! CosyVoice3 reference cloning and style instructions with bounded native streaming.
 pub mod resources;
 mod runtime;
 use std::path::{Path, PathBuf};
@@ -29,7 +29,7 @@ pub fn capabilities(directory: &Path) -> anyhow::Result<Capabilities> {
         voices: voices.into_iter().map(|v| v.id).collect(),
         native_streaming: true,
         cloning: true,
-        style: false,
+        style: true,
         compiled_devices: Vec::new(),
         pronunciation: false,
         continuation: false,
@@ -104,7 +104,8 @@ impl Backend for CosyBackend {
     }
     fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            request.reject_unsupported(false, false)?;
+            request.reject_unsupported(self.caps.style, self.caps.continuation)?;
+            let instruction = runtime::instruction(request.style)?;
             request
                 .params
                 .validate(&self.caps.parameters)
@@ -124,6 +125,7 @@ impl Backend for CosyBackend {
                     text: request.text.into(),
                     voice: request.voice.into(),
                     seed: request.seed,
+                    instruction,
                     audio,
                 })
                 .await
@@ -136,6 +138,47 @@ impl Backend for CosyBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn style_is_forwarded_to_owner_without_changing_the_voice() -> anyhow::Result<()> {
+        use talechime_core::{backend::SegmentRequest, params::GenerationParams};
+        let root = tempfile::tempdir()?;
+        let mut caps = capabilities(root.path())?;
+        caps.voices = vec!["custom:reader".into()];
+        let (tx, mut jobs) = mpsc::channel(1);
+        let backend = CosyBackend {
+            requests: Some(tx),
+            thread: None,
+            caps,
+        };
+        let params = GenerationParams::new();
+        let request = |style| SegmentRequest {
+            text: "测试。",
+            voice: "custom:reader",
+            style,
+            context: None,
+            seed: 7,
+            params: &params,
+        };
+        let _audio = backend.stream(request(Some("请用悲伤的语气说。"))).await?;
+        let job = jobs.try_recv()?;
+        assert_eq!(job.voice, "custom:reader");
+        assert_eq!(job.seed, 7);
+        assert_eq!(
+            job.instruction.as_deref(),
+            Some("You are a helpful assistant. 请用悲伤的语气说。<|endofprompt|>")
+        );
+        let _audio = backend.stream(request(None)).await?;
+        assert!(jobs.try_recv()?.instruction.is_none());
+        assert!(
+            backend
+                .stream(request(Some("bad<|endofprompt|>")))
+                .await
+                .is_err()
+        );
+        assert!(jobs.try_recv().is_err());
+        Ok(())
+    }
+
     #[test]
     fn catalog_requires_a_real_reference_and_does_not_create_resources() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
@@ -143,7 +186,7 @@ mod tests {
         let caps = registry.capabilities("cosyvoice3")?;
         assert_eq!(caps.model.as_deref(), Some(MODEL));
         assert!(caps.native_streaming && caps.cloning);
-        assert!(!caps.style && !caps.continuation);
+        assert!(caps.style && !caps.continuation);
         assert!(caps.voices.is_empty() && caps.default_voice.is_empty());
         assert_eq!(caps.compiled_devices, compiled_devices());
         assert!(

@@ -66,7 +66,7 @@ struct Args {
     /// Model ID within the selected backend (see the protocol model catalog).
     #[arg(long)]
     model: Option<String>,
-    /// Speaking style for Qwen 1.7B CustomVoice; an empty value clears it.
+    /// Speaking style supported by the selected model; an empty value clears it.
     #[arg(long)]
     style: Option<String>,
     #[arg(long, value_parser = parse_device)]

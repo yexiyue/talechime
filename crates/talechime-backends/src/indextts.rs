@@ -1,10 +1,11 @@
-//! IndexTTS 2.5 reference-cloning adapter.
+//! IndexTTS 2.5 reference cloning with named emotions and reference/vector controls.
+pub mod params;
 pub mod resources;
 mod runtime;
 
 use std::path::{Path, PathBuf};
 use talechime_core::backend::{Backend, BackendError, Streaming};
-use talechime_protocol::{Capabilities, Device, ParamKind, ParamValue, ParameterSpec};
+use talechime_protocol::{Capabilities, Device};
 use tokio::sync::{mpsc, oneshot};
 
 pub const MODEL: &str = "2.5";
@@ -36,16 +37,11 @@ pub fn capabilities(directory: &Path) -> anyhow::Result<Capabilities> {
         voices: voices.into_iter().map(|voice| voice.id).collect(),
         native_streaming: false,
         cloning: true,
-        style: false,
+        style: true,
         compiled_devices: Vec::new(),
         pronunciation: false,
         continuation: false,
-        parameters: vec![ParameterSpec {
-            name: "language".into(),
-            kind: ParamKind::Text { max_len: 5 },
-            default: ParamValue::Text("zh".into()),
-            description: "文本语言：zh 或 en".into(),
-        }],
+        parameters: params::catalog(),
     })
 }
 
@@ -121,11 +117,8 @@ impl Backend for IndexBackend {
 
     fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            request.reject_unsupported(false, false)?;
-            request
-                .params
-                .validate(&self.caps.parameters)
-                .map_err(BackendError::Unsupported)?;
+            request.reject_unsupported(self.caps.style, self.caps.continuation)?;
+            let resolved = params::resolve(request.params, request.style, request.seed)?;
             if request.text.trim().is_empty()
                 || !self.caps.voices.iter().any(|voice| voice == request.voice)
             {
@@ -133,15 +126,13 @@ impl Backend for IndexBackend {
                     "IndexTTS needs nonempty text and an imported reference voice".into(),
                 ));
             }
-            let language = match request.params.get("language") {
-                Some(ParamValue::Text(value)) if value == "zh" || value == "en" => value.as_str(),
-                None => "zh",
-                _ => {
-                    return Err(BackendError::Unsupported(
-                        "IndexTTS language must be zh or en".into(),
-                    ));
-                }
-            };
+            if let Some(voice) = &resolved.emotion_voice
+                && !self.caps.voices.contains(voice)
+            {
+                return Err(BackendError::Unsupported(
+                    "emo_voice must name an imported IndexTTS reference voice".into(),
+                ));
+            }
             let (audio, receiver) = mpsc::channel(1);
             self.requests
                 .as_ref()
@@ -151,8 +142,7 @@ impl Backend for IndexBackend {
                     perf: crate::performance::OwnerContext::capture(),
                     text: request.text.into(),
                     voice: request.voice.into(),
-                    language: language.into(),
-                    seed: request.seed,
+                    resolved,
                     audio,
                 })
                 .await
@@ -166,13 +156,74 @@ impl Backend for IndexBackend {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn emotion_controls_are_request_local_and_invalid_requests_never_enqueue()
+    -> anyhow::Result<()> {
+        use talechime_core::{backend::SegmentRequest, params::GenerationParams};
+        let root = tempfile::tempdir()?;
+        let mut caps = capabilities(root.path())?;
+        caps.voices = vec!["custom:reader".into(), "custom:emotion".into()];
+        let (tx, mut jobs) = mpsc::channel(1);
+        let backend = IndexBackend {
+            requests: Some(tx),
+            thread: None,
+            caps,
+        };
+        let params = params::IndexTtsParams::default()
+            .emotion_voice("custom:emotion")
+            .emotion_strength(0.7)
+            .to_generation_params();
+        let request = |style| SegmentRequest {
+            text: "测试。",
+            voice: "custom:reader",
+            style,
+            context: None,
+            seed: 12,
+            params: &params,
+        };
+        let _audio = backend.stream(request(None)).await?;
+        let job = jobs.try_recv()?;
+        assert_eq!(
+            job.resolved.emotion_voice.as_deref(),
+            Some("custom:emotion")
+        );
+        assert_eq!(job.resolved.options.emo_alpha, 0.7);
+        assert_eq!(job.resolved.options.seed, Some(12));
+        assert!(backend.stream(request(Some("sad"))).await.is_err());
+        assert!(jobs.try_recv().is_err());
+        let defaults = GenerationParams::new();
+        let _audio = backend
+            .stream(SegmentRequest {
+                params: &defaults,
+                ..request(None)
+            })
+            .await?;
+        let job = jobs.try_recv()?;
+        assert!(job.resolved.emotion_voice.is_none() && job.resolved.options.emo_vector.is_none());
+        assert_eq!(job.resolved.options.emo_alpha, 1.0);
+        let missing = params::IndexTtsParams::default()
+            .emotion_voice("custom:missing")
+            .to_generation_params();
+        assert!(
+            backend
+                .stream(SegmentRequest {
+                    params: &missing,
+                    ..request(None)
+                })
+                .await
+                .is_err()
+        );
+        assert!(jobs.try_recv().is_err());
+        Ok(())
+    }
+
     #[test]
     fn catalog_reports_cloning_without_creating_files() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
         let registry = crate::Registry::new(Some(root.path().to_owned()))?;
         let caps = registry.capabilities("indextts")?;
         assert_eq!(caps.model.as_deref(), Some(MODEL));
-        assert!(caps.cloning && !caps.native_streaming && !caps.continuation);
+        assert!(caps.cloning && caps.style && !caps.native_streaming && !caps.continuation);
         assert!(caps.voices.is_empty() && caps.default_voice.is_empty());
         assert!(
             registry

@@ -8,8 +8,7 @@ pub(super) struct Request {
     pub(crate) perf: crate::performance::OwnerContext,
     pub text: String,
     pub voice: String,
-    pub language: String,
-    pub seed: u64,
+    pub resolved: super::params::Resolved,
     pub audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
 }
 
@@ -59,25 +58,32 @@ pub(super) fn run(
     }
 }
 
+fn load_reference(
+    store: &talechime_core::voices::VoiceStore,
+    voice: &str,
+) -> Result<talechime_indextts::Reference, BackendError> {
+    store
+        .load(voice)
+        .map_err(|e| BackendError::Unsupported(e.to_string()))?;
+    let path = store
+        .path(voice)
+        .map_err(|e| BackendError::Unsupported(e.to_string()))?;
+    let samples =
+        crate::reference::load(&path.join("reference.wav"), talechime_indextts::SAMPLE_RATE)
+            .map_err(|e| BackendError::Synthesis(e.to_string()))?;
+    talechime_indextts::Reference::from_pcm(&samples, talechime_indextts::SAMPLE_RATE)
+        .map_err(|e| BackendError::Synthesis(e.to_string()))
+}
+
 fn generate(
     model: &mut talechime_indextts::Model,
     directory: &Path,
     request: &Request,
 ) -> Result<(), BackendError> {
+    model.clear_emo_reference();
     let store = super::voice_store(directory)
         .map_err(|error| BackendError::Synthesis(error.to_string()))?;
-    store
-        .load(&request.voice)
-        .map_err(|error| BackendError::Unsupported(error.to_string()))?;
-    let wav = store
-        .path(&request.voice)
-        .map_err(|error| BackendError::Unsupported(error.to_string()))?
-        .join("reference.wav");
-    let samples = crate::reference::load(&wav, talechime_indextts::SAMPLE_RATE)
-        .map_err(|error| BackendError::Synthesis(error.to_string()))?;
-    let reference =
-        talechime_indextts::Reference::from_pcm(&samples, talechime_indextts::SAMPLE_RATE)
-            .map_err(|error| BackendError::Synthesis(error.to_string()))?;
+    let reference = load_reference(&store, &request.voice)?;
     if request.audio.is_closed() {
         return Ok(());
     }
@@ -87,14 +93,22 @@ fn generate(
     if request.audio.is_closed() {
         return Ok(());
     }
-    let options = talechime_indextts::Options {
-        seed: Some(request.seed),
-        ..Default::default()
-    };
+    if let Some(voice) = &request.resolved.emotion_voice {
+        let emotion = load_reference(&store, voice)?;
+        if request.audio.is_closed() {
+            return Ok(());
+        }
+        model
+            .prepare_emo_reference(&emotion)
+            .map_err(|e| BackendError::Synthesis(e.to_string()))?;
+    }
     let outcome = model
-        .generate_with_cancel(&request.text, &request.language, &options, &|| {
-            request.audio.is_closed()
-        })
+        .generate_with_cancel(
+            &request.text,
+            &request.resolved.language,
+            &request.resolved.options,
+            &|| request.audio.is_closed(),
+        )
         .map_err(|error| BackendError::Synthesis(error.to_string()))?;
     if request.audio.is_closed() {
         return Ok(());

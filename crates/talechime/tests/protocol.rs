@@ -274,6 +274,14 @@ fn backend_directory_and_switch_are_lightweight() {
             assert!(spec.has_valid_default(), "{}", spec.name);
         }
         match caps.backend.as_str() {
+            #[cfg(feature = "cosyvoice3")]
+            "cosyvoice3" => assert!(caps.style),
+            #[cfg(feature = "indextts")]
+            "indextts" => {
+                assert!(caps.style);
+                assert!(caps.parameters.iter().any(|spec| spec.name == "emo_alpha"));
+                assert!(caps.parameters.iter().any(|spec| spec.name == "emo_voice"));
+            }
             #[cfg(feature = "voxcpm")]
             "voxcpm" => assert!(caps.parameters.iter().any(|spec| spec.name == "steps")),
             #[cfg(feature = "omnivoice")]

@@ -68,8 +68,8 @@ cargo run --release -- --backend moss --model nano-candle --tts-device cpu chapt
 | Qwen3-TTS / `qwen` | 0.6B、1.7B CustomVoice；0.6B、1.7B Base | CustomVoice 预置音色；1.7B CustomVoice 支持风格；Base 可导入参考音频克隆 | Candle CPU；Metal / CUDA 需 `qwen-metal` / `qwen-cuda` |
 | VoxCPM2 / `voxcpm` | 2B Q8 GGUF；另有实验 BF16 路径 | 参考音色、音色设计与原生流式 PCM；风格和接续同时使用仍待验收 | Candle CPU；Metal / CUDA 需 `voxcpm-metal` / `voxcpm-cuda` |
 | OmniVoice / `omnivoice` | 0.6B | 参考音色、音色设计、风格和生成期语速；按语义段输出 | Candle CPU；Metal / CUDA 需 `omnivoice-metal` / `omnivoice-cuda`；当前不是模型原生实时流式 |
-| CosyVoice3 / `cosyvoice3` | 0.5B，实验性 | 导入参考音色进行零样本克隆，24 kHz 原生流式输出 | Candle + ORT CPU 前端；可启用 Metal / CUDA；须先[转换官方权重并放入本地目录](docs/cosyvoice3.md)，不自动下载 |
-| IndexTTS 2.5 / `indextts` | 2.5，实验性 | 导入参考音色进行中文或英文克隆，22.05 kHz 整段输出 | Candle CPU；Metal / CUDA 需显式 feature 和[本地转换文件](docs/indextts.md)；标准包暂未编入 |
+| CosyVoice3 / `cosyvoice3` | 0.5B，实验性 | 导入参考音色克隆，支持风格指令，24 kHz 原生流式输出 | Candle + ORT CPU 前端；可启用 Metal / CUDA；须先[转换官方权重并放入本地目录](docs/cosyvoice3.md)，不自动下载 |
+| IndexTTS 2.5 / `indextts` | 2.5，实验性 | 中文或英文参考克隆，支持命名情绪/向量/情绪参考，22.05 kHz 整段输出 | Candle CPU；Metal / CUDA 需显式 feature 和[本地转换文件](docs/indextts.md)；标准包暂未编入 |
 
 例如在 Apple Silicon 上编译 Qwen Metal，在 NVIDIA 设备上编译 Qwen CUDA：
 

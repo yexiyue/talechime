@@ -3,7 +3,7 @@ use talechime_core::backend::{AudioChunk, BackendError, Pcm};
 use talechime_cosyvoice3::{
     DEFAULT_PROMPT_PREFIX, SamplingConfig,
     frontend::ort_models::FrontendOnnx,
-    pipeline::{CosyVoice3, extract_prompt_features},
+    pipeline::{CosyVoice3, Mode, extract_prompt_features},
 };
 use talechime_protocol::Device;
 use tokio::sync::{mpsc, oneshot};
@@ -14,8 +14,24 @@ pub(super) struct Request {
     pub text: String,
     pub voice: String,
     pub seed: u64,
+    pub instruction: Option<String>,
     pub audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
 }
+/// Wrap a plain style in the official Instruct prompt format.
+pub(super) fn instruction(style: Option<&str>) -> Result<Option<String>, BackendError> {
+    let Some(style) = style.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    if style.chars().count() > 200 || style.contains("<|") || style.contains("|>") {
+        return Err(BackendError::Unsupported(
+            "CosyVoice3 style must be at most 200 characters without special prompt markers".into(),
+        ));
+    }
+    Ok(Some(format!(
+        "You are a helpful assistant. {style}<|endofprompt|>"
+    )))
+}
+
 pub(super) fn candle_device(device: Device) -> candle_core::Result<candle_core::Device> {
     match device {
         Device::Cpu => Ok(candle_core::Device::Cpu),
@@ -70,7 +86,18 @@ pub(super) fn run(
                 seed: Some(request.seed),
                 ..Default::default()
             };
-            let mut session = pipeline.start_stream(&request.text, &prompt, &sampling)?;
+            let mode = if request.instruction.is_some() {
+                Mode::Instruct
+            } else {
+                Mode::ZeroShot
+            };
+            let mut session = pipeline.start_stream_with_mode(
+                &request.text,
+                &prompt,
+                mode,
+                request.instruction.as_deref(),
+                &sampling,
+            )?;
             let delivery = deliver(&request.audio, || Ok(session.next_pcm()?));
             #[cfg(feature = "performance-tools")]
             let delivery = tracing::Instrument::instrument(delivery, request.perf.span());
@@ -141,6 +168,20 @@ mod tests {
             tokens_generated: 1,
         }
     }
+    #[test]
+    fn style_wraps_once_and_default_keeps_zero_shot() {
+        assert_eq!(instruction(None).unwrap(), None);
+        assert_eq!(instruction(Some("  ")).unwrap(), None);
+        assert_eq!(
+            instruction(Some(" 请用悲伤的语气说。 "))
+                .unwrap()
+                .as_deref(),
+            Some("You are a helpful assistant. 请用悲伤的语气说。<|endofprompt|>")
+        );
+        assert!(instruction(Some("bad<|endofprompt|>")).is_err());
+        assert!(instruction(Some(&"字".repeat(201))).is_err());
+    }
+
     #[tokio::test]
     async fn dropped_consumer_prevents_any_inference() {
         let (tx, rx) = mpsc::channel(1);
