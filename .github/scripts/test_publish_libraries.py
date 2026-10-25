@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import tarfile
+import tomllib
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -15,6 +16,26 @@ SPEC = importlib.util.spec_from_file_location(
 )
 release = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(release)
+
+
+class PublicationOrderTests(unittest.TestCase):
+    def test_workspace_dependencies_including_dev_dependencies_are_published_first(self):
+        root = Path(__file__).resolve().parents[2]
+        manifests = [tomllib.loads((root / 'crates' / directory / 'Cargo.toml').read_text(
+            encoding='utf-8')) for directory in release.PACKAGES]
+        order = {manifest['package']['name']: index for index, manifest in enumerate(manifests)}
+        workspace = tomllib.loads((root / 'Cargo.toml').read_text(encoding='utf-8'))['workspace']['dependencies']
+        for manifest in manifests:
+            groups = [manifest, *manifest.get('target', {}).values()]
+            for group in groups:
+                for kind in ['dependencies', 'dev-dependencies', 'build-dependencies']:
+                    for key, dependency in group.get(kind, {}).items():
+                        if isinstance(dependency, dict) and dependency.get('workspace'):
+                            dependency = workspace[key]
+                        name = dependency.get('package', key) if isinstance(dependency, dict) else key
+                        if name in order:
+                            self.assertLess(order[name], order[manifest['package']['name']],
+                                            f'{name} must precede {manifest["package"]["name"]}')
 
 
 class PublishedSourceTests(unittest.TestCase):

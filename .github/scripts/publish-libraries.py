@@ -1,6 +1,7 @@
 """Publish changed libraries while preserving verified, unchanged versions."""
 import io
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -10,9 +11,11 @@ import urllib.error
 import urllib.request
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(os.environ.get("TALECHIME_RELEASE_SOURCE", Path(__file__).resolve().parents[2])).resolve()
 PACKAGES = (
     "talechime-protocol",
+    # Cargo resolves dev-dependencies when packaging too (VoxCPM uses core).
+    "talechime-core",
     "moss-tts",
     "qwen3-tts",
     "qwen3-asr",
@@ -20,7 +23,6 @@ PACKAGES = (
     "omnivoice",
     "cosyvoice3",
     "indextts",
-    "talechime-core",
     "talechime-backends",
     "talechime",
 )

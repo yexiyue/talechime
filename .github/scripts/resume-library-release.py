@@ -17,11 +17,12 @@ def retry_deadline(output):
 
 
 def main():
+    publisher = sys.argv[1] if len(sys.argv) > 1 else ".github/scripts/publish-libraries.py"
     limit = time.monotonic() + 3600
     for _ in range(10):
         tail = deque(maxlen=80)
         with subprocess.Popen(
-            [sys.executable, ".github/scripts/publish-libraries.py"],
+            [sys.executable, publisher],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
