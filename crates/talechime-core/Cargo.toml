@@ -1,6 +1,6 @@
 [package]
 name = "talechime-core"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.89"
 description = "Session, synthesis and playback core for Talechime"
@@ -15,7 +15,7 @@ dirs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
-talechime-protocol = { path = "../talechime-protocol", version = "0.3.0" }
+talechime-protocol = { path = "../talechime-protocol", version = "0.3.1" }
 regex.workspace = true
 reqwest.workspace = true
 rodio.workspace = true

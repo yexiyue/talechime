@@ -38,10 +38,10 @@ jobs:
             }
             const required = [
               'Run cargo fmt --all --check',
-              'Run cargo test --locked --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/cosyvoice3,talechime/moss-candle,talechime/asr --lib --tests --examples',
-              'Run cargo clippy --locked --workspace --all-targets --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/cosyvoice3,talechime/moss-candle,talechime/asr -- -D warnings',
+              'Run cargo test --locked --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/cosyvoice3,talechime/indextts,talechime/moss-candle,talechime/asr --lib --tests --examples',
+              'Run cargo clippy --locked --workspace --all-targets --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/cosyvoice3,talechime/indextts,talechime/moss-candle,talechime/asr -- -D warnings',
               'Run cargo test --locked -p talechime --no-default-features',
-              'Run cargo doc --locked --no-deps --document-private-items --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/cosyvoice3,talechime/moss-candle,talechime/asr --examples',
+              'Run cargo doc --locked --no-deps --document-private-items --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/cosyvoice3,talechime/indextts,talechime/moss-candle,talechime/asr --examples',
             ];
             const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, { ...context.repo, run_id });
             const checked = jobs.some(job => job.name === 'publish' && required.every(name =>

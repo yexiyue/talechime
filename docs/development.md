@@ -76,9 +76,15 @@ MOSS Candle 的共用 codec 在注意力完成后才裁剪 K/V，避免提前丢
 
 `talechime-libs-v*` 标签触发独立库发布流程，不触发应用安装包构建。流程先完成 CPU
 模型组合的测试、Clippy、格式、rustdoc 和纯库检查，再按依赖顺序执行 `cargo publish`。
-协议 v7 使用 `talechime-protocol 0.3.0`（新增加法字段 `PlanRequest.continuation_boundary`
+协议 v7 使用 `talechime-protocol 0.3.1`（0.3.0 新增加法字段 `PlanRequest.continuation_boundary`
 与 `continuation_span`，缺省值保持 0.2.0 行为；旧宿主发出的计划仍被接受），不兼容已发布
 的 0.1.0 / 协议 v5。
+
+库发布批次 `talechime-libs-v0.5.0` 包含 facade/core 0.5.0、backends 0.3.0、
+protocol 0.3.1、Qwen3-TTS 0.4.0、Qwen3-ASR 0.1.1，以及五个首次使用品牌包名的
+模型库 0.1.0：MOSS、VoxCPM、OmniVoice、CosyVoice3、IndexTTS。
+协议 wire version 不变；protocol 补丁版不增加 wire 字段。各包在 Cargo 发布校验中
+使用 registry 依赖验证打包源码，不能以工作区 fork 下编译成功替代下游编译。
 所有对外模型计算库统一使用 `talechime-` 前缀，包括 MOSS、VoxCPM、OmniVoice、CosyVoice3、IndexTTS 和 Qwen；
 Rust 导入名统一使用 `talechime_` 前缀，依赖键与包名一致；目录保留短名。旧裸名包保留历史版本，新版本使用品牌包名。
 `tts-candle-platform` 与 `talechime-candle-cuda-graph` 已移除；GPU feature、Metal 探测及 CUDA recorder

@@ -151,6 +151,10 @@ Windows CUDA 的新声码器图已通过 Base 0.6B codes/PCM 逐位对照及取�
 `talechime-omnivoice`、`talechime-cosyvoice3` 和 `talechime-indextts`。
 源码目录保留短名，Rust 导入名统一使用 `talechime_` 前缀；GPU 平台配置及图回放作为内部实现维护，不单独发布辅助包。
 
+crates.io 的统一入口为 `talechime = "0.5.0"`；嵌入时关闭默认 feature，再按需选择模型。
+只接入 worker 协议的宿主使用 `talechime-protocol = "0.3.1"`。示例与各包版本见
+[Rust 库入口](docs/library.md)及[库发布说明](docs/development.md#rust-库发布)。
+
 Rust 应用可直接使用 `talechime::Engine` 的 `prepare`、`synthesize`、`synthesize_pcm` 和 `listen`。直接合成无需播放器或检查点；朗读计划可在同一模型内切换音色。无模型示例：
 
 ```sh

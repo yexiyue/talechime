@@ -8,11 +8,11 @@
 
 ```toml
 [dependencies]
-talechime = { version = "0.4.1", default-features = false, features = ["moss-nano-candle"] }
+talechime = { version = "0.5.0", default-features = false, features = ["moss-nano-candle"] }
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 ```
 
-JSON Lines 宿主只需 `talechime-protocol = "0.2.0"`（协议 v7），模型和音频继续留在独立进程。
+JSON Lines 宿主只需 `talechime-protocol = "0.3.1"`（协议 v7），模型和音频继续留在独立进程。
 计算库的发布包名为 `talechime-qwen3-tts` 和 `talechime-qwen3-asr`，Rust library 名仍为
 `qwen3_tts` / `qwen3_asr`；工作区使用 package 别名保留现有导入。
 

@@ -2,6 +2,7 @@
 
 ## 0.5.0 — 2026-10-25
 
+- Publish the facade/core 0.5.0, backends 0.3.0, protocol 0.3.1, Qwen3-TTS 0.4.0 and Qwen3-ASR 0.1.1 libraries, plus the first branded 0.1.0 MOSS, VoxCPM, OmniVoice, CosyVoice3 and IndexTTS packages. Protocol wire version remains v7.
 - Add experimental CosyVoice3 reference cloning and per-span styles; add IndexTTS 2.5 source-build support with named emotions, vectors and emotion references. Converted local resources are required for both backends; IndexTTS is not included in standard archives.
 - Optimize MOSS, Qwen, VoxCPM2, OmniVoice and IndexTTS CPU, Metal and CUDA paths, with model-specific ownership, cancellation and output checks. Performance results remain tied to their recorded model, device and revision.
 - Fix Qwen streaming chunk noise by retaining session-owned causal decoder history. Preserve the eager input layout during CUDA vocoder graph replay.
