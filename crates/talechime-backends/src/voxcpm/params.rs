@@ -5,10 +5,10 @@ use talechime_voxcpm::Options;
 
 /// One generated patch has four latents; decoder strides 8*6*5*2*2*2
 /// produce 7680 samples at 48 kHz (6.25 patches per second).
-const FRAME_HZ: f64 = 48_000.0 / 7680.0;
+const PATCHES_PER_SECOND: f64 = 48_000.0 / 7680.0;
 /// Playback-block budget caps any single segment at 30 seconds.
 const MAX_DURATION_SECONDS: f64 = 30.0;
-const DEFAULT_MAX_FRAMES: usize = (MAX_DURATION_SECONDS * FRAME_HZ) as usize;
+const DEFAULT_MAX_FRAMES: usize = (MAX_DURATION_SECONDS * PATCHES_PER_SECOND) as usize;
 
 pub(super) fn catalog() -> Vec<ParameterSpec> {
     vec![
@@ -39,7 +39,7 @@ pub(super) fn catalog() -> Vec<ParameterSpec> {
                 min: 1.0,
                 max: MAX_DURATION_SECONDS,
             },
-            default: ParamValue::Float(DEFAULT_MAX_FRAMES as f64 / FRAME_HZ),
+            default: ParamValue::Float(DEFAULT_MAX_FRAMES as f64 / PATCHES_PER_SECOND),
             description: "单段最长生成秒数，受 30 秒音频块预算钳制".into(),
         },
     ]
@@ -98,7 +98,10 @@ pub(super) fn resolve(params: &GenerationParams, seed: u64) -> Options {
             .and_then(ParamValue::as_f64)
             .unwrap_or(fallback)
     };
-    let max_duration = float("max_duration", DEFAULT_MAX_FRAMES as f64 / FRAME_HZ);
+    let max_duration = float(
+        "max_duration",
+        DEFAULT_MAX_FRAMES as f64 / PATCHES_PER_SECOND,
+    );
     Options {
         seed,
         steps: match params.get("steps") {
@@ -107,7 +110,7 @@ pub(super) fn resolve(params: &GenerationParams, seed: u64) -> Options {
         },
         cfg: float("cfg", 2.0),
         temperature: float("temperature", 1.0),
-        max_frames: (max_duration.min(MAX_DURATION_SECONDS) * FRAME_HZ)
+        max_frames: (max_duration.min(MAX_DURATION_SECONDS) * PATCHES_PER_SECOND)
             .floor()
             .max(1.0) as usize,
         measure_modules: false,

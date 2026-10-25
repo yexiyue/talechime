@@ -13,6 +13,7 @@ enum Mode {
     #[cfg(test)]
     Codes,
     Vocoder,
+    TransposedVocoder,
 }
 
 impl Mode {
@@ -21,6 +22,7 @@ impl Mode {
             #[cfg(test)]
             Self::Codes => decoder.decode(input),
             Self::Vocoder => decoder.vocode(input),
+            Self::TransposedVocoder => decoder.vocode(&input.transpose(1, 2)?),
         }
     }
 
@@ -28,7 +30,7 @@ impl Mode {
         match self {
             #[cfg(test)]
             Self::Codes => channels == 16 && dtype == DType::I64,
-            Self::Vocoder => channels == 1024 && dtype == DType::F32,
+            Self::Vocoder | Self::TransposedVocoder => channels == 1024 && dtype == DType::F32,
         }
     }
 }
@@ -63,11 +65,27 @@ impl DecoderGraphs {
     }
 
     pub(super) fn vocode(&mut self, decoder: &Decoder12Hz, features: &Tensor) -> Result<Tensor> {
-        self.run(decoder, features, Mode::Vocoder)
+        if features.is_contiguous() {
+            self.run(decoder, features, Mode::Vocoder)
+        } else {
+            // Replay owns contiguous inputs. Pack the underlying time-major layout
+            // and restore its view inside capture, preserving eager cuDNN arithmetic.
+            let time_major = features.transpose(1, 2)?;
+            if time_major.is_contiguous() {
+                self.run(decoder, &time_major, Mode::TransposedVocoder)
+            } else {
+                decoder.vocode(features)
+            }
+        }
     }
 
     fn run(&mut self, decoder: &Decoder12Hz, input: &Tensor, mode: Mode) -> Result<Tensor> {
-        let (batch, channels, frames) = input.dims3()?;
+        let (batch, first, second) = input.dims3()?;
+        let (channels, frames) = if mode == Mode::TransposedVocoder {
+            (second, first)
+        } else {
+            (first, second)
+        };
         let key = (mode, frames);
         if self.disabled
             || cfg!(feature = "profiling")
@@ -111,7 +129,7 @@ impl DecoderGraphs {
                 let tables = decoder.tables(frames)?;
                 vec![tables.cos.clone(), tables.sin.clone(), tables.mask.clone()]
             }
-            Mode::Vocoder => Vec::new(),
+            Mode::Vocoder | Mode::TransposedVocoder => Vec::new(),
         };
         let _guard = device.enable_cuda_graph_htod_cache();
         let warmup = mode.run(decoder, input)?;
