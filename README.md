@@ -20,6 +20,13 @@ Talechime 是用 Rust 编写的本地语音合成与长文播放引擎。它提�
 
 正文和参考音频由本地模型处理。模型权重按需准备，安装包不包含权重；CosyVoice3 需要先转换并放置本地模型文件。
 
+## 0.5.0 更新
+
+本版加入 CosyVoice3 实验后端与风格控制，并提供 IndexTTS 2.5 的源码构建与情绪参数；
+同时合入多后端 CPU、Metal、CUDA 优化，修复 Qwen 分块解码的局部噪音及 CUDA 图布局差异，
+校正 VoxCPM2 的单段时长预算。协议仍为 JSON Lines v7，用户数据仍位于 `~/.talechime/`。
+完整变化见[更新日志](CHANGELOG.md)；安装包包含的后端与平台限制见下文。
+
 ## 快速开始
 
 ### 安装
@@ -132,6 +139,8 @@ OmniVoice 已有 [CPU / Metal 执行路径与对照记录](docs/knowledge/omnivo
 2026-10-25 为修复分块局部噪音，Qwen 流式 decoder 改为会话持有逐层状态，CUDA 图范围
 调整为无状态声码器。上述解码图数字来自修改前的历史路径，新路径的 CUDA 性能尚未复测；
 [噪音修复记录](docs/records/qwen/qwen-streaming-noise-2026-10-25.md)包含同码隔离与 Metal 数值验证。
+Windows CUDA 的新声码器图已通过 Base 0.6B codes/PCM 逐位对照及取消复用，
+见[合并审查记录](docs/records/platform/windows-main-review-2026-10-25.md)；这不替代新路径的性能或人工试听验收。
 
 **1.7B Base ICL 也已独立验收**：同一 RTX 5070 上，eager→两项图开启，完整 **2.8463→1.8713 s（减少 34.3%，RTF 0.684→0.450）**、流式 **3.3973→2.0698 s（减少 39.1%，RTF 0.817→0.498）**、首 PCM **0.7665→0.6138 s**。12 个独立进程比较 eager／CP／两图三种配置，各 1 预热＋5 热轮，360 份产物逐字节一致；模型按固定清单保存于 `~/.talechime`。这里只验收 1.7B Base，不外推到 CustomVoice/VoiceDesign；[完整报告](docs/records/qwen/qwen17-cuda-acceptance-2026-10-18.md)包含配置、显存与磁盘清理记录。
 

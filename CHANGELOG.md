@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0 — 2026-10-25
+
+- Add experimental CosyVoice3 reference cloning and per-span styles; add IndexTTS 2.5 source-build support with named emotions, vectors and emotion references. Converted local resources are required for both backends; IndexTTS is not included in standard archives.
+- Optimize MOSS, Qwen, VoxCPM2, OmniVoice and IndexTTS CPU, Metal and CUDA paths, with model-specific ownership, cancellation and output checks. Performance results remain tied to their recorded model, device and revision.
+- Fix Qwen streaming chunk noise by retaining session-owned causal decoder history. Preserve the eager input layout during CUDA vocoder graph replay.
+- Correct VoxCPM2 duration limits to count output patches, bounding each segment to the requested duration and the 30-second playback budget.
+- Keep standard Linux/Windows archives on CPU and enable Metal only on macOS; CUDA and dynamic ORT remain explicit source-build options. Preserve JSON Lines v7 and the existing data paths.
+- Gate application releases on CPU checks, cross-platform performance contracts, and model-free archive/installer smoke tests. Use fresh CI evidence directories and check Windows commit budgets before GPU inspection.
+
 ## 0.4.1 — 2026-10-14
 
 - Automatically migrate default legacy settings, checkpoints and resources without overwriting current data or removing originals. Custom paths and library path resolution remain explicit.

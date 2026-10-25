@@ -2,6 +2,9 @@
   uses: actions/setup-python@v5
   with:
     python-version: '3.x'
+- name: Select native release features
+  shell: bash
+  run: python .github/scripts/configure-release.py
 - name: Collect third-party license notices
   shell: bash
   run: python .github/scripts/prepare-notices.py

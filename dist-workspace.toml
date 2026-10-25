@@ -12,15 +12,18 @@ targets = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-window
 tag-namespace = "talechime-v"
 tap = "yexiyue/homebrew-tap"
 publish-jobs = ["homebrew"]
+plan-jobs = ["./ci", "./performance-contracts"]
+global-artifacts-jobs = ["./release-smoke"]
 install-path = "CARGO_HOME"
 install-updater = false
 msvc-crt-static = false
-features = ["asr", "qwen-metal", "voxcpm-metal", "omnivoice-metal", "cosyvoice3-metal", "moss-candle-metal", "moss-nano-candle-metal"]
+features = ["asr", "qwen", "voxcpm", "omnivoice", "cosyvoice3", "moss-candle", "moss-nano-candle"]
 include = ["LICENSE", "SOURCE.md", "docs", "assets", "target/third-party-licenses"]
 github-build-setup = "../build-setup.yml"
 pr-run-mode = "plan"
 
 [dist.github-custom-runners]
+global = "ubuntu-24.04"
 aarch64-apple-darwin = "macos-15"
 x86_64-unknown-linux-gnu = "ubuntu-24.04"
 
@@ -31,3 +34,8 @@ x86_64-unknown-linux-gnu = "2.39"
 libasound2-dev = "*"
 libssl-dev = "*"
 pkg-config = "*"
+
+# cargo-dist 0.32 has one Cargo feature list. The build-setup selector adds
+# these features only on the native macOS builder, before notices/builds.
+[talechime-release]
+macos-features = ["qwen-metal", "voxcpm-metal", "omnivoice-metal", "cosyvoice3-metal", "moss-candle-metal", "moss-nano-candle-metal"]

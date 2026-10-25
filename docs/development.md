@@ -127,6 +127,24 @@ Qwen 的设备传输与 CPU 采样策略分别负责；depthwise fast path 封�
 
 只保留 dist-workspace.toml，使用 cargo-dist 0.32.0 的原生 Cargo 构建。运行 `dist generate`、`dist generate --check` 和 `dist plan`。`.github/workflows/ci.yml` 在三个平台构建标准包、解压至隔离目录并执行无模型、无 CUDA 的帮助/握手检查；Mac 标准包编译全部 Metal 路径。许可证由 `.github/scripts/prepare-notices.py` 汇集到 target/third-party-licenses 并随包分发。
 
+应用 0.5.0 的发布入口为 `talechime-v0.5.0` 标签。此次仅更新应用安装包版本，
+不自动发布 crates.io 库或移动既有标签。发布流水线先运行 CPU CI 与三平台性能契约，
+再构建安装包；发布前的 `release-smoke.yml` 下载实际归档，在原生平台验证帮助、
+v7 握手与本地生成的同版本 shell/PowerShell 安装器，检查无模型权重及 CUDA 库。
+各阶段通过后才公开 GitHub Release 并更新 Homebrew tap。
+
+cargo-dist 0.32.0 只有一份 Cargo feature 列表，`dist-workspace.toml` 的基础列表因此
+使用 CPU 模型 feature；同文件的 `[talechime-release].macos-features` 保存 Metal 列表。
+`.github/scripts/configure-release.py` 在原生构建前确定性选择并写入本次平台的 feature，
+随后收集该组合的许可证并交给原生 Cargo 构建；不会调整依赖版本、模型或 CRT。
+本地复现可执行 `python .github/scripts/distribution-smoke.py talechime <target>`；
+脚本自动选择平台、准备 notices、构建并验证归档和安装器。平台选择会修改工作区的
+`dist.features`，本地 Mac 构建结束后应恢复该列表的 CPU 基础值，再提交源码。
+
+性能契约 CI 将证据写入 runner 临时目录中的 run ID/attempt 专属目录，避免 Cargo 缓存
+恢复已存在的冻结结果。Windows 的显式 commit 预算先于 GPU 环境采集检查，
+因此预算拒绝测试不要求托管 runner 安装 NVIDIA 工具。
+
 协议库单独发布 `talechime-protocol-v*` 标签到 crates.io，应用标签使用 `talechime-v*`。CARGO_REGISTRY_TOKEN 与 HOMEBREW_TAP_TOKEN 由 GitHub Secrets 管理；Homebrew 发布到 yexiyue/homebrew-tap。正式应用标签需发布时再创建，普通验证不下载模型、不代替试听。
 
 GNU release runner 为 Ubuntu 24.04，最低 glibc 2.39，ORT 1.28 预编译库不能在 Ubuntu 22.04 链接。Mac 标准包 macOS 15+，构建设置 MACOSX_DEPLOYMENT_TARGET=15.0；Metal 探测先枚举设备，避免无 GPU 的 hosted VM 调用 Candle 0.11 构造函数时 abort。非空 HOME 可用于隔离主目录。许可收集包括 Cargo registry 依赖和 pinned ONNX Runtime 的完整 notices。

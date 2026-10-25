@@ -4,11 +4,16 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      plan:
+        required: false
+        type: string
 permissions:
   contents: read
 jobs:
   cpu:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Install audio and native build dependencies
@@ -17,17 +22,18 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - run: python3 -m unittest discover -s .github/scripts -p "test_*.py"
       - run: cargo fmt --all --check
-      - run: cargo test --locked --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/cosyvoice3,talechime/moss-candle,talechime/asr --lib --tests --examples
-      - run: cargo clippy --locked --workspace --all-targets --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/cosyvoice3,talechime/moss-candle,talechime/asr -- -D warnings
+      - run: cargo test --locked --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/cosyvoice3,talechime/moss-candle,talechime/asr,talechime/indextts,talechime-backends/performance-tools --lib --tests --examples
+      - run: cargo clippy --locked --workspace --all-targets --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/cosyvoice3,talechime/moss-candle,talechime/asr,talechime/indextts,talechime-backends/performance-tools -- -D warnings
       - name: Check isolated feature selections
         shell: bash
         run: |
           cargo clippy --locked -p talechime --no-default-features --all-targets -- -D warnings
-          for feature in moss qwen voxcpm omnivoice cosyvoice3 moss-candle moss-nano-candle asr; do
+          for feature in moss qwen voxcpm omnivoice cosyvoice3 moss-candle moss-nano-candle asr indextts; do
             cargo clippy --locked -p talechime --no-default-features --features "$feature" --all-targets -- -D warnings
           done
-      - run: cargo doc --locked --no-deps --document-private-items --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/cosyvoice3,talechime/moss-candle,talechime/asr --examples
+      - run: cargo doc --locked --no-deps --document-private-items --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/cosyvoice3,talechime/moss-candle,talechime/asr,talechime/indextts,talechime-backends/performance-tools --examples
         env:
           RUSTDOCFLAGS: -D warnings
       - run: cargo build --locked -p talechime --bins
@@ -68,7 +74,6 @@ jobs:
         env:
           MACOSX_DEPLOYMENT_TARGET: '15.0'
         run: |
-          python .github/scripts/prepare-notices.py
           python .github/scripts/distribution-smoke.py talechime ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:

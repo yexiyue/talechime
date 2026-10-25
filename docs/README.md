@@ -7,6 +7,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [项目 README](../README.md) | 安装、模型能力、CLI 与宿主集成 |
+| [更新日志](../CHANGELOG.md) | 0.5.0 版本变化、兼容与发行范围 |
 | [Rust 库入口](library.md) | 模型准备、直接 PCM、可选播放/检查点、控制与关闭 |
 | [ASR 回读校验](readback.md) | 可选模型组、独立报告、逐片段门禁、重试与 CLI |
 | [配置与手工搬迁](migration.md) | 数据归属、新目录与旧资源复用 |
@@ -84,4 +85,6 @@ Metal tile 优化已保留；原始权重与 Accelerate 实验不能作为生产
 
 ### 平台与依赖（platform/）
 
+- [Windows 合并审查与简化](records/platform/windows-main-review-2026-10-25.md)：main 合并、Qwen 图布局修复及 CPU/CUDA 检查。
+- [Windows 优化验收范围](records/platform/windows-acceptance-2026-10-25.md)：各后端已覆盖路径、资源阻塞与人工试听待办。
 - [Metal TTS 效率](records/platform/metal-tts-efficiency.md)、[ORT rc.13 升级](records/platform/ort-rc13-upgrade.md)。

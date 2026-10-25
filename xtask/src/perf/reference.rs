@@ -216,10 +216,6 @@ fn run_mode(job_path: &Path, output: &Path, diagnostic: bool) -> anyhow::Result<
     let _lock = RunLock::acquire(output)?;
     let output = output.canonicalize()?;
     publish_json(&output.join("job.json"), &job)?;
-    publish_json(
-        &output.join("environment.json"),
-        &super::environment::capture_environment("cuda")?,
-    )?;
     let mut summaries = Vec::new();
     for index in 0..job.processes {
         ensure!(!super::cancellation::requested(), "reference cancelled");
@@ -227,6 +223,12 @@ fn run_mode(job_path: &Path, output: &Path, diagnostic: bool) -> anyhow::Result<
         let directory = output.join(format!("process-{index}"));
         std::fs::create_dir(&directory)?;
         commit_preflight(&directory, job.minimum_available_commit_bytes)?;
+        if index == 0 {
+            publish_json(
+                &output.join("environment.json"),
+                &super::environment::capture_environment("cuda")?,
+            )?;
+        }
         let attempt = format!("reference-{index}");
         let request = serde_json::json!({"attempt_id":attempt,"warmup_rounds":job.warmup_rounds,"hot_rounds":job.hot_rounds,"request":job.request});
         let request_path = directory.join("request.json");
@@ -319,7 +321,10 @@ mod tests {
         publish_json(&path, &job)?;
         let output = root.path().join("run");
         let error = run(&path, &output).unwrap_err();
-        assert!(error.to_string().contains("commit budget unmet"));
+        assert!(
+            error.to_string().contains("commit budget unmet"),
+            "{error:#}"
+        );
         let check: serde_json::Value = read_json(&output.join("process-0/commit-preflight.json"))?;
         assert_eq!(check["status"], "blocked");
         assert!(check["available_commit_bytes"].as_u64().is_some());

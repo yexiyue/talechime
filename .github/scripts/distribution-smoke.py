@@ -1,5 +1,6 @@
 """Build cargo-dist artifacts and exercise an isolated, model-free installation."""
 import json
+import hashlib
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import os
@@ -8,8 +9,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 from threading import Thread
 from smoke import protocol_version
+import argparse
 
 
 def run(*args, **kwargs):
@@ -23,12 +26,24 @@ def run(*args, **kwargs):
         raise
 
 
-def main(app, target):
-    run('dist', 'generate', '--check')
-    subprocess.run(['dist', 'build', '--artifacts', 'local', '--target', target], check=True)
-    run('dist', 'build', '--artifacts', 'global')
+def main(app, target, skip_build=False, build_installers=False):
+    if app != 'talechime':
+        raise ValueError('Only the Talechime distribution is supported')
+    if not skip_build:
+        run(sys.executable, '.github/scripts/configure-release.py', target)
+        run('dist', 'generate', '--check')
+        subprocess.run([sys.executable, '.github/scripts/prepare-notices.py'], check=True)
+        subprocess.run(['dist', 'build', '--artifacts', 'local', '--target', target], check=True)
+        run('dist', 'build', '--artifacts', 'global')
+    elif build_installers:
+        # Global artifacts are deterministic from this source/tag and the local
+        # manifests. Generate them here while the release's global job runs.
+        run('dist', 'build', '--artifacts', 'global', '--tag', os.environ['RELEASE_TAG'])
     archives = list(Path('target/distrib').glob(f'{app}-{target}.*'))
     archive = next(path for path in archives if path.suffix == '.zip' or path.name.endswith('.tar.xz'))
+    expected_hash = Path(str(archive) + '.sha256').read_text(encoding='utf-8').split()[0]
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == expected_hash, 'Archive checksum mismatch'
+    version = tomllib.loads(Path('crates/talechime/Cargo.toml').read_text(encoding='utf-8'))['package']['version']
     with tempfile.TemporaryDirectory(prefix='isolated install ') as temporary:
         base = Path(temporary)
         shutil.unpack_archive(archive, base / 'install')
@@ -36,6 +51,8 @@ def main(app, target):
         programs = [app] if app == 'talechime' else ['trnovel', 'trn']
         installed = next((base / 'install').rglob(app + suffix)).parent
         files = list((base / 'install').rglob('*'))
+        assert not any('cuda' in path.name.lower() or 'cudnn' in path.name.lower()
+                       for path in files), 'Standard archive contains CUDA libraries'
         assert not any(path.name in ['novel-tts', 'novel-tts.exe'] for path in files)
         assert not any(path.suffix in ['.onnx', '.gguf', '.safetensors'] for path in files)
         if app == 'trnovel':
@@ -57,7 +74,9 @@ def main(app, target):
                 path.write_text('sentinel', encoding='utf-8')
         for program in programs:
             binary = str(installed / (program + suffix))
-            run(binary, '--version', env=env, cwd=home)
+            installed_version = run(binary, '--version', env=env, cwd=home,
+                                    capture_output=True, text=True, encoding='utf-8').stdout.strip()
+            assert installed_version == f'talechime {version}', installed_version
             help_text = run(binary, '--help', env=env, cwd=home, capture_output=True,
                             text=True, encoding='utf-8').stdout
             if app == 'trnovel':
@@ -68,13 +87,13 @@ def main(app, target):
                 assert not history.exists()
                 assert all(path.read_text() == 'sentinel' for path in preserved)
             else:
-                version = protocol_version()
-                requests = ''.join(json.dumps(dict(protocol_version=version, request_id=kind,
+                wire_version = protocol_version()
+                requests = ''.join(json.dumps(dict(protocol_version=wire_version, request_id=kind,
                     session_id=None, type=kind)) + '\n' for kind in ['hello', 'shutdown'])
                 result = run(binary, '--protocol', input=requests, capture_output=True,
                     text=True, encoding='utf-8', env=env, cwd=home)
                 messages = [json.loads(line) for line in result.stdout.splitlines()]
-                assert messages[0]['type'] == 'ready' and messages[0]['protocol_version'] == version
+                assert messages[0]['type'] == 'ready' and messages[0]['protocol_version'] == wire_version
                 assert messages[-1]['type'] == 'accepted'
         assert not list(home.rglob('*.onnx')), 'Handshake downloaded weights'
         assert not list(home.rglob('config.json')), 'Handshake persisted configuration'
@@ -108,4 +127,12 @@ def main(app, target):
 
 
 if __name__ == '__main__':
-    main(*sys.argv[1:])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('app', choices=['talechime'])
+    parser.add_argument('target')
+    parser.add_argument('--skip-build', action='store_true',
+                        help='Verify downloaded release artifacts without rebuilding')
+    parser.add_argument('--build-installers', action='store_true',
+                        help='Generate installers for downloaded local artifacts')
+    arguments = parser.parse_args()
+    main(arguments.app, arguments.target, arguments.skip_build, arguments.build_installers)
