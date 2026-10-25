@@ -345,8 +345,8 @@ impl<'a> StreamingSession<'a> {
     }
 
     fn decode_buffer(&mut self) -> Result<AudioBuffer> {
-        self.decoder.decode(|codes| {
-            AudioBuffer::from_tensor(self.model.decoder.decode_streaming(codes)?, 24000)
+        self.decoder.decode(|codes, state| {
+            AudioBuffer::from_tensor(self.model.decoder.decode_incremental(codes, state)?, 24000)
         })
     }
 

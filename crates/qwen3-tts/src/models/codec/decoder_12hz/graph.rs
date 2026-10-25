@@ -8,10 +8,35 @@ use std::collections::VecDeque;
 const MAX_ENTRIES: usize = 4;
 const MAX_FRAMES: usize = 64;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mode {
+    #[cfg(test)]
+    Codes,
+    Vocoder,
+}
+
+impl Mode {
+    fn run(self, decoder: &Decoder12Hz, input: &Tensor) -> Result<Tensor> {
+        match self {
+            #[cfg(test)]
+            Self::Codes => decoder.decode(input),
+            Self::Vocoder => decoder.vocode(input),
+        }
+    }
+
+    fn accepts(self, channels: usize, dtype: DType) -> bool {
+        match self {
+            #[cfg(test)]
+            Self::Codes => channels == 16 && dtype == DType::I64,
+            Self::Vocoder => channels == 1024 && dtype == DType::F32,
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct DecoderGraphs {
     // Graphs must be destroyed before the decoder's weights.
-    entries: VecDeque<(usize, Option<Replay>)>,
+    entries: VecDeque<((Mode, usize), Option<Replay>)>,
     disabled: bool,
 }
 
@@ -24,31 +49,41 @@ impl DecoderGraphs {
             .count()
     }
 
+    #[cfg(test)]
     pub(super) fn decode(&mut self, decoder: &Decoder12Hz, codes: &Tensor) -> Result<Tensor> {
-        let (batch, quantizers, frames) = codes.dims3()?;
+        self.run(decoder, codes, Mode::Codes)
+    }
+
+    pub(super) fn vocode(&mut self, decoder: &Decoder12Hz, features: &Tensor) -> Result<Tensor> {
+        self.run(decoder, features, Mode::Vocoder)
+    }
+
+    fn run(&mut self, decoder: &Decoder12Hz, input: &Tensor, mode: Mode) -> Result<Tensor> {
+        let (batch, channels, frames) = input.dims3()?;
+        let key = (mode, frames);
         if self.disabled
             || cfg!(feature = "profiling")
             || std::env::var("QWEN_DECODE_GRAPH").as_deref() == Ok("0")
             || batch != 1
-            || quantizers != 16
-            || codes.dtype() != DType::I64
+            || !mode.accepts(channels, input.dtype())
+            || !input.device().is_cuda()
             || frames == 0
             || frames > MAX_FRAMES
         {
-            return decoder.decode(codes);
+            return mode.run(decoder, input);
         }
-        let Some(index) = self.entries.iter().position(|entry| entry.0 == frames) else {
+        let Some(index) = self.entries.iter().position(|entry| entry.0 == key) else {
             if self.entries.len() == MAX_ENTRIES {
                 self.entries.pop_front();
             }
-            self.entries.push_back((frames, None));
-            return decoder.decode(codes);
+            self.entries.push_back((key, None));
+            return mode.run(decoder, input);
         };
         let entry = self.entries.remove(index).expect("located graph entry");
         self.entries.push_back(entry);
         if let Some(replay) = &self.entries.back().expect("graph entry").1 {
             // Never expose mutable graph scratch across calls or sessions.
-            let result = replay.launch(&[codes]).and_then(|output| output.copy());
+            let result = replay.launch(&[input]).and_then(|output| output.copy());
             if result.is_err() {
                 self.disabled = true;
                 self.entries.clear();
@@ -57,23 +92,25 @@ impl DecoderGraphs {
             }
             return Ok(result?);
         }
-        let Device::Cuda(device) = codes.device() else {
+        let Device::Cuda(device) = input.device() else {
             unreachable!("CUDA entry point")
         };
-        let tables = decoder.tables(frames)?;
+        // Only the codes path reads RoPE/mask tables during capture. Vocoder
+        // capture reads model weights and its input, with no transformer state.
+        let parameters = match mode {
+            #[cfg(test)]
+            Mode::Codes => {
+                let tables = decoder.tables(frames)?;
+                vec![tables.cos.clone(), tables.sin.clone(), tables.mask.clone()]
+            }
+            Mode::Vocoder => Vec::new(),
+        };
         let _guard = device.enable_cuda_graph_htod_cache();
-        let warmup = decoder.decode(codes)?;
-        let record = Replay::record(
-            device,
-            &[codes],
-            &warmup,
-            vec![tables.cos.clone(), tables.sin.clone(), tables.mask.clone()],
-            |inputs| {
-                decoder
-                    .decode(&inputs[0])
-                    .map_err(|error| candle_core::Error::Msg(error.to_string()))
-            },
-        );
+        let warmup = mode.run(decoder, input)?;
+        let record = Replay::record(device, &[input], &warmup, parameters, |inputs| {
+            mode.run(decoder, &inputs[0])
+                .map_err(|error| candle_core::Error::Msg(error.to_string()))
+        });
         match record {
             Ok(replay) => self.entries.back_mut().expect("graph entry").1 = Some(replay),
             Err(error) => {

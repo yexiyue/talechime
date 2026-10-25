@@ -233,6 +233,16 @@ impl DecoderBlock {
         })
     }
 
+    /// Input history required to reproduce the requested output history.
+    pub(super) fn input_context(&self, output_context: usize) -> usize {
+        let mut context = output_context;
+        for residual in [&self.res3, &self.res2, &self.res1] {
+            context = residual.conv2.input_context(context);
+            context = residual.conv1.input_context(context);
+        }
+        self.upsample.input_context(context)
+    }
+
     /// Forward pass with upsampling.
     ///
     /// Input shape: [batch, in_channels, seq_len]

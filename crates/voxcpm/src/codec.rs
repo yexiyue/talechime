@@ -344,6 +344,118 @@ mod tests {
         }
     }
     #[test]
+    #[ignore = "requires explicit local GGUF and captured latents; never downloads"]
+    fn real_codec_preserves_full_output_across_patch_boundaries_and_reset() -> anyhow::Result<()> {
+        use anyhow::ensure;
+        use candle_core::Device;
+        use std::{cell::Cell, path::PathBuf};
+        let model = PathBuf::from(std::env::var("VOX_CODEC_TEST_MODEL")?);
+        let patch_file = std::env::var("VOX_CODEC_TEST_PATCHES")?;
+        let device = match std::env::var("VOX_CODEC_TEST_DEVICE")?.as_str() {
+            "cpu" => Device::Cpu,
+            #[cfg(feature = "metal")]
+            "metal" => Device::new_metal(0)?,
+            _ => anyhow::bail!("unsupported test device"),
+        };
+        let dtype = match std::env::var("VOX_CODEC_TEST_DTYPE").as_deref() {
+            Ok("f16") => DType::F16,
+            _ => DType::F32,
+        };
+        let bytes = std::fs::read(patch_file)?;
+        ensure!(
+            bytes.len().is_multiple_of(256 * 4),
+            "invalid latent patches"
+        );
+        let values: Vec<f32> = bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes(*b))
+            .collect();
+        ensure!(values.iter().all(|v| v.is_finite()), "non-finite latents");
+        let patches = values
+            .as_chunks::<256>()
+            .0
+            .iter()
+            .map(|patch| Tensor::from_slice(patch, (1, 64, 4), &device)?.to_dtype(dtype))
+            .collect::<Result<Vec<_>>>()?;
+        ensure!(patches.len() >= 8, "multiple history boundaries required");
+        let latents = Tensor::cat(&patches, 2)?;
+        let mut weights = Weights::open(&model.join("VoxCPM2-Acoustic-F16.gguf"), &device, dtype)?;
+        let mut codec = Codec::load(&mut weights)?;
+        let full = codec
+            .decode(&latents, &|| false)?
+            .to_dtype(DType::F32)?
+            .flatten_all()?
+            .to_vec1::<f32>()?;
+        for block_patches in [1, 2, 7] {
+            codec.reset();
+            let mut samples = Vec::new();
+            for block in patches.chunks(block_patches) {
+                let input = Tensor::cat(block, 2)?;
+                samples.extend(
+                    codec
+                        .decode(&input, &|| false)?
+                        .to_dtype(DType::F32)?
+                        .flatten_all()?
+                        .to_vec1::<f32>()?,
+                );
+            }
+            ensure!(
+                samples.len() == full.len(),
+                "stream sample coverage differs"
+            );
+            let rmse = (samples
+                .iter()
+                .zip(&full)
+                .map(|(a, b)| f64::from(a - b).powi(2))
+                .sum::<f64>()
+                / full.len() as f64)
+                .sqrt();
+            let max = samples
+                .iter()
+                .zip(&full)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f32, f32::max);
+            println!(
+                "dtype={dtype:?} patches={} block={block_patches} samples={} rmse={rmse} max={max}",
+                patches.len(),
+                samples.len()
+            );
+            let (rms_limit, max_limit) = if dtype == DType::F16 {
+                (2e-3, 3e-2)
+            } else {
+                (1e-5, 1e-3)
+            };
+            ensure!(
+                rmse < rms_limit && max < max_limit,
+                "stream/full decoder mismatch"
+            );
+        }
+        codec.reset();
+        let calls = Cell::new(0);
+        assert!(
+            codec
+                .decode(&patches[0], &|| {
+                    calls.set(calls.get() + 1);
+                    calls.get() >= 3
+                })
+                .is_err()
+        );
+        codec.reset();
+        let recovered = codec
+            .decode(&latents, &|| false)?
+            .to_dtype(DType::F32)?
+            .flatten_all()?
+            .to_vec1::<f32>()?;
+        assert_eq!(
+            recovered, full,
+            "reset must discard partial cancellation state"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn transposed_overlap_matches_torch_full_and_chunked() {
         let f: serde_json::Value =
             serde_json::from_str(include_str!("../tests/fixtures/causal-convolutions.json"))

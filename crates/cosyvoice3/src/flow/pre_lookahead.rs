@@ -97,6 +97,85 @@ mod tests {
     use candle_core::{DType, Device};
 
     #[test]
+    fn prefix_lookahead_preserves_history_and_matches_scalar_convolutions() -> Result<()> {
+        let device = Device::Cpu;
+        let weights = std::collections::HashMap::from([
+            (
+                "conv1.weight".into(),
+                Tensor::from_slice(&[0.5f32, -0.25, 0.125, 0.75], (1, 1, 4), &device)?,
+            ),
+            (
+                "conv1.bias".into(),
+                Tensor::from_slice(&[-0.1f32], 1, &device)?,
+            ),
+            (
+                "conv2.weight".into(),
+                Tensor::from_slice(&[0.25f32, -0.5, 0.75], (1, 1, 3), &device)?,
+            ),
+            (
+                "conv2.bias".into(),
+                Tensor::from_slice(&[0.2f32], 1, &device)?,
+            ),
+        ]);
+        let layer = PreLookaheadLayer::new(
+            1,
+            1,
+            1,
+            3,
+            2,
+            VarBuilder::from_tensors(weights, DType::F32, &device),
+        )?;
+        let values: Vec<f32> = (0..85).map(|i| ((i * 17 % 23) as f32 - 11.) / 8.).collect();
+        // Independent scalar oracle: right-looking conv, leaky ReLU,
+        // left-looking conv, residual, then two mel frames per token.
+        let hidden: Vec<f32> = (0..values.len())
+            .map(|i| {
+                let v = -0.1
+                    + [0.5, -0.25, 0.125, 0.75]
+                        .iter()
+                        .enumerate()
+                        .map(|(j, w)| w * values.get(i + j).copied().unwrap_or(0.))
+                        .sum::<f32>();
+                if v >= 0. { v } else { v * 0.01 }
+            })
+            .collect();
+        let expected: Vec<f32> = (0..values.len())
+            .flat_map(|i| {
+                let v = values[i]
+                    + 0.2
+                    + [0.25, -0.5, 0.75]
+                        .iter()
+                        .enumerate()
+                        .map(|(j, w)| w * (i + j).checked_sub(2).map(|k| hidden[k]).unwrap_or(0.))
+                        .sum::<f32>();
+                [v, v]
+            })
+            .collect();
+        for end in [25, 50, 75, 82, 85] {
+            let finalize = end == values.len();
+            let x = Tensor::from_slice(&values[..end], (1, end, 1), &device)?;
+            let context = if finalize {
+                None
+            } else {
+                Some(Tensor::from_slice(
+                    &values[end..end + 3],
+                    (1, 3, 1),
+                    &device,
+                )?)
+            };
+            let actual = layer
+                .forward(&x, context.as_ref())?
+                .flatten_all()?
+                .to_vec1::<f32>()?;
+            assert_eq!(actual.len(), end * 2);
+            for (i, (&a, &b)) in actual.iter().zip(&expected).enumerate() {
+                assert!((a - b).abs() < 1e-6, "end={end}, mel frame={i}: {a} != {b}");
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn repeat_interleave_doubles_each_frame() -> Result<()> {
         let device = Device::Cpu;
         let x = Tensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], (1, 3, 2), &device)?;

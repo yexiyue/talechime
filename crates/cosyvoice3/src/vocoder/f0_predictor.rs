@@ -101,3 +101,95 @@ impl CausalConvRnnF0Predictor {
         Ok(f0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use candle_core::{DType, Device};
+
+    #[test]
+    fn streamed_prefixes_match_scalar_history_and_final_padding() -> Result<()> {
+        let device = Device::Cpu;
+        let mut weights = std::collections::HashMap::new();
+        for i in 0..5 {
+            let kernel: &[f64] = if i == 0 {
+                &[0.5, -0.25, 0.125, 0.75]
+            } else {
+                &[0.25, -0.5, 0.75]
+            };
+            weights.insert(
+                format!("condnet.{}.weight", i * 2),
+                Tensor::from_slice(kernel, (1, 1, kernel.len()), &device)?,
+            );
+            weights.insert(
+                format!("condnet.{}.bias", i * 2),
+                Tensor::from_slice(&[-0.1f64], 1, &device)?,
+            );
+        }
+        weights.insert(
+            "classifier.weight".into(),
+            Tensor::from_slice(&[1.5f64], (1, 1), &device)?,
+        );
+        weights.insert(
+            "classifier.bias".into(),
+            Tensor::from_slice(&[0.2f64], 1, &device)?,
+        );
+        let predictor = CausalConvRnnF0Predictor::new(
+            1,
+            1,
+            VarBuilder::from_tensors(weights, DType::F64, &device),
+        )?;
+        let values: Vec<f64> = (0..85).map(|i| ((i * 17 % 23) as f64 - 11.) / 8.).collect();
+        // Scalar reference keeps the first conv's three future frames and
+        // all four subsequent convs' left history, including at the seam.
+        let mut expected = values.clone();
+        for layer in 0..5 {
+            let kernel: &[f64] = if layer == 0 {
+                &[0.5, -0.25, 0.125, 0.75]
+            } else {
+                &[0.25, -0.5, 0.75]
+            };
+            expected = (0..values.len())
+                .map(|i| {
+                    let v = -0.1
+                        + kernel
+                            .iter()
+                            .enumerate()
+                            .map(|(j, w)| {
+                                let index = if layer == 0 {
+                                    Some(i + j)
+                                } else {
+                                    (i + j).checked_sub(2)
+                                };
+                                w * index.and_then(|k| expected.get(k)).copied().unwrap_or(0.)
+                            })
+                            .sum::<f64>();
+                    if v >= 0. { v } else { v.exp() - 1. }
+                })
+                .collect();
+        }
+        let expected: Vec<f64> = expected.iter().map(|v| (1.5 * v + 0.2).abs()).collect();
+        for frames in [8, 25, 50, 75, 85] {
+            for finalize in [false, true] {
+                // Final padding is only comparable to the full scalar
+                // oracle at the actual end of the utterance.
+                if finalize && frames != values.len() {
+                    continue;
+                }
+                let mel = Tensor::from_slice(&values[..frames], (1, 1, frames), &device)?;
+                let actual = predictor
+                    .forward(&mel, finalize)?
+                    .flatten_all()?
+                    .to_vec1::<f64>()?;
+                assert_eq!(actual.len(), frames - if finalize { 0 } else { 3 });
+                for (i, (&a, &b)) in actual.iter().zip(&expected).enumerate() {
+                    assert!(
+                        (a - b).abs() < 1e-12,
+                        "frames={frames}, finalize={finalize}, frame={i}: {a} != {b}"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+}

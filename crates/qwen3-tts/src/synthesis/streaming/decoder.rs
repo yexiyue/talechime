@@ -1,16 +1,14 @@
-//! Bounded codec history and transactional PCM chunk decoding.
-//! Each chunk still decodes its full retained context; this is not a KV/conv cache.
+//! Pending codes and transactional, session-owned causal decoder state.
 
 use anyhow::Result;
 use candle_core::{DType, Tensor};
 
-use crate::AudioBuffer;
-
-const DECODER_LEFT_CONTEXT_FRAMES: usize = 25;
+use crate::{AudioBuffer, models::codec::decoder_12hz::DecoderState};
 
 pub(super) struct StreamingDecoder {
     pub(super) frames: Vec<Tensor>,
     context: Option<Tensor>,
+    state: DecoderState,
 }
 
 impl StreamingDecoder {
@@ -18,37 +16,29 @@ impl StreamingDecoder {
         Self {
             frames: Vec::new(),
             context,
+            state: DecoderState::default(),
         }
     }
 
     pub(super) fn decode(
         &mut self,
-        decode: impl FnOnce(&Tensor) -> Result<AudioBuffer>,
+        decode: impl FnOnce(&Tensor, &mut DecoderState) -> Result<AudioBuffer>,
     ) -> Result<AudioBuffer> {
         let context_len = self.context.as_ref().map_or(0, |codes| codes.dims()[0]);
         let codes = decoder_codes(&self.frames, self.context.as_ref())?;
         let total_frames = codes.dim(2)?;
-        let mut audio = decode(&codes)?;
+        let mut state = self.state.clone();
+        let mut audio = decode(&codes, &mut state)?;
         if context_len > 0 {
             let cut = context_len * audio.samples.len() / total_frames;
             audio.samples.drain(..cut);
         }
         // Keep pending frames and history intact if packing or decoding fails.
-        self.context = Some(decoder_context_tail(&codes)?);
+        self.state = state;
+        self.context = None;
         self.frames.clear();
         Ok(audio)
     }
-}
-
-/// Retain recent reference/generated codes in frame-major layout for the next block.
-fn decoder_context_tail(codes: &Tensor) -> Result<Tensor> {
-    let frames = codes.dim(2)?;
-    let keep = frames.min(DECODER_LEFT_CONTEXT_FRAMES);
-    Ok(codes
-        .narrow(2, frames - keep, keep)?
-        .squeeze(0)?
-        .transpose(0, 1)?
-        .contiguous()?)
 }
 
 /// Pack device-resident frames into the decoder's `[1, 16, T]` layout.
@@ -78,18 +68,18 @@ mod tests {
         decoder.frames.push(Tensor::new(&[3u32; 16], &Device::Cpu)?);
         assert!(
             decoder
-                .decode(|_| anyhow::bail!("decoder failure"))
+                .decode(|_, _| anyhow::bail!("decoder failure"))
                 .is_err()
         );
         assert_eq!(decoder.frames.len(), 1);
         assert_eq!(decoder.context.as_ref().unwrap().dim(0)?, 2);
-        let audio = decoder.decode(|codes| {
+        let audio = decoder.decode(|codes, _state| {
             assert_eq!(codes.dims(), &[1, 16, 3]);
             Ok(AudioBuffer::new(vec![1.0, 1.0, 2.0, 2.0, 3.0, 3.0], 24000))
         })?;
         assert_eq!(audio.samples, vec![3.0, 3.0]);
         assert!(decoder.frames.is_empty());
-        assert_eq!(decoder.context.as_ref().unwrap().dim(0)?, 3);
+        assert!(decoder.context.is_none());
         Ok(())
     }
 
@@ -103,7 +93,7 @@ mod tests {
                     .frames
                     .push(Tensor::new(&[frame; 16], &Device::Cpu)?);
             }
-            let audio = decoder.decode(|codes| {
+            let audio = decoder.decode(|codes, _state| {
                 let values = codes.to_vec3::<i64>()?[0][0]
                     .iter()
                     .flat_map(|&frame| [frame as f32; 2])
@@ -115,30 +105,87 @@ mod tests {
         let expected: Vec<f32> = (0..12).flat_map(|frame| [frame as f32; 2]).collect();
         assert_eq!(samples, expected);
         assert!(decoder.frames.is_empty());
-        assert_eq!(decoder.context.as_ref().unwrap().dims(), &[12, 16]);
+        assert!(decoder.context.is_none());
         Ok(())
     }
 
     #[test]
-    fn decoder_history_advances_across_chunk_boundaries() -> Result<()> {
-        let device = Device::Cpu;
-        let reference = Tensor::new((0..44u32).map(|v| vec![v; 16]).collect::<Vec<_>>(), &device)?;
-        let mut context = reference;
-        for start in [44, 54, 64, 74] {
-            let frames = (start..start + 10)
-                .map(|v| Tensor::new(&[v; 16], &device))
-                .collect::<candle_core::Result<Vec<_>>>()?;
-            let packed = decoder_codes(&frames, Some(&context))?;
-            assert_eq!(packed.dim(2)?, context.dim(0)? + 10);
-            context = decoder_context_tail(&packed)?;
-            let expected: Vec<Vec<i64>> = (start + 10 - 25..start + 10)
-                .map(|v| vec![i64::from(v); 16])
-                .collect();
-            assert_eq!(context.to_vec2::<i64>()?, expected);
+    #[ignore = "requires local model and saved codes; never downloads"]
+    fn real_model_wrapper_preserves_reference_and_rolls_back_partial_decode() -> Result<()> {
+        use crate::models::codec::Decoder12Hz;
+        let directory = std::env::var("QWEN_CODEC_TEST_MODEL")?;
+        let input = std::env::var("QWEN_CODEC_TEST_CODES")?;
+        let reference: usize = std::env::var("QWEN_CODEC_TEST_REFERENCE_FRAMES")?.parse()?;
+        let device = crate::parse_device(&std::env::var("QWEN_CODEC_TEST_DEVICE")?)?;
+        let weights = candle_core::safetensors::load(
+            std::path::Path::new(&directory).join("speech_tokenizer/model.safetensors"),
+            &device,
+        )?;
+        let codec = Decoder12Hz::from_weights(&weights, Default::default())?;
+        let frames: Vec<Vec<u32>> = serde_json::from_slice(&std::fs::read(input)?)?;
+        anyhow::ensure!(
+            reference + 10 < frames.len(),
+            "reference must leave multiple generated chunks"
+        );
+        let full = codec
+            .decode(&codes_to_tensor(&frames, &device)?)?
+            .flatten_all()?
+            .to_vec1::<f32>()?;
+        let context = Tensor::new(frames[..reference].to_vec(), &device)?;
+        let mut decoder = StreamingDecoder::new(Some(context));
+        for frame in &frames[reference..reference + 10] {
+            decoder.frames.push(Tensor::new(frame.as_slice(), &device)?);
         }
-        let first_frames = [Tensor::new(&[0u32; 16], &device)?];
-        let packed = decoder_codes(&first_frames, None)?;
-        assert_eq!(decoder_context_tail(&packed)?.dims(), &[1, 16]);
+        // Fail after all layer caches and convolution history have advanced.
+        assert!(
+            decoder
+                .decode(|codes, state| {
+                    codec.decode_incremental(codes, state)?;
+                    anyhow::bail!("injected PCM conversion failure")
+                })
+                .is_err()
+        );
+        assert_eq!(decoder.frames.len(), 10);
+        assert_eq!(decoder.context.as_ref().unwrap().dim(0)?, reference);
+        let mut output = decoder
+            .decode(|codes, state| {
+                AudioBuffer::from_tensor(codec.decode_incremental(codes, state)?, 24000)
+            })?
+            .samples;
+        for block in frames[reference + 10..].chunks(10) {
+            for frame in block {
+                decoder.frames.push(Tensor::new(frame.as_slice(), &device)?);
+            }
+            output.extend(
+                decoder
+                    .decode(|codes, state| {
+                        AudioBuffer::from_tensor(codec.decode_incremental(codes, state)?, 24000)
+                    })?
+                    .samples,
+            );
+        }
+        let expected = &full[reference * 1920..];
+        assert_eq!(output.len(), expected.len());
+        let rmse = (output
+            .iter()
+            .zip(expected)
+            .map(|(a, b)| f64::from(a - b).powi(2))
+            .sum::<f64>()
+            / output.len() as f64)
+            .sqrt();
+        let maximum = output
+            .iter()
+            .zip(expected)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        println!(
+            "wrapper reference={reference} samples={} rmse={rmse} max={maximum}",
+            output.len()
+        );
+        anyhow::ensure!(
+            rmse < 1e-5 && maximum < 1e-3,
+            "wrapper/full mismatch after retry"
+        );
         Ok(())
     }
 

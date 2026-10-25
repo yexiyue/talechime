@@ -500,3 +500,130 @@ impl CausalHiFtGenerator {
         wav.clamp(-self.cfg.audio_limit, self.cfg.audio_limit)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::{Context, ensure};
+    use candle_core::{DType, Device};
+    use std::path::PathBuf;
+
+    /// Same-mel replay only: this does not compare independently solved CFM mel
+    /// or establish official streaming/offline waveform parity.
+    #[test]
+    #[ignore = "requires explicitly scheduled local HiFT weights and same-mel fixture; never downloads"]
+    fn real_hift_same_mel_prefixes_preserve_emitted_samples() -> anyhow::Result<()> {
+        let model = PathBuf::from(std::env::var("CV3_HIFT_TEST_MODEL")?);
+        let fixture = PathBuf::from(std::env::var("CV3_HIFT_TEST_FIXTURE")?);
+        let device = match std::env::var("CV3_HIFT_TEST_DEVICE")?.as_str() {
+            "cpu" => Device::Cpu,
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            "metal" => Device::new_metal(0)?,
+            name => anyhow::bail!("unsupported compiled HiFT test device: {name}"),
+        };
+        let cfg = crate::config::CosyVoice3Config::from_model_dir(&model)?;
+        // SAFETY: the explicitly supplied local weights must remain immutable
+        // throughout this coordinated test run.
+        let vb = unsafe {
+            VarBuilder::from_mmaped_safetensors(
+                &[model.join("hift.safetensors")],
+                DType::F32,
+                &device,
+            )?
+        };
+        let mut hift = CausalHiFtGenerator::new(cfg.hift, 0, vb)?;
+        let tensors = candle_core::safetensors::load(&fixture, &Device::Cpu)?;
+        let tensor = |key: &str| -> anyhow::Result<Tensor> {
+            Ok(tensors
+                .get(key)
+                .with_context(|| format!("missing fixture tensor {key}"))?
+                .to_dtype(DType::F32)?
+                .to_device(&device)?)
+        };
+        let mel = tensor("mel")?;
+        hift.set_source_noise(tensor("rand_ini")?, tensor("source_noise")?)?;
+        let (batch, channels, frames) = mel.dims3()?;
+        ensure!(
+            batch == 1 && channels == hift.cfg.in_channels,
+            "invalid fixture mel shape"
+        );
+        let samples_per_frame =
+            hift.cfg.upsample_rates.iter().product::<usize>() * hift.cfg.istft_hop_len;
+        let withheld_frames =
+            hift.f0_predictor.first_causal_padding() + hift.cfg.conv_pre_look_right + 1;
+        ensure!(
+            frames > withheld_frames + 1,
+            "fixture too short for a non-final prefix and final short tail"
+        );
+        let pcm = |mel: &Tensor, finalize| -> anyhow::Result<Vec<f32>> {
+            let output = hift.inference(mel, finalize)?;
+            ensure!(output.dim(0)? == 1, "unexpected HiFT PCM batch");
+            let samples = output
+                .to_dtype(DType::F32)?
+                .flatten_all()?
+                .to_vec1::<f32>()?;
+            ensure!(
+                !samples.is_empty() && samples.iter().all(|v| v.is_finite()),
+                "empty or non-finite HiFT PCM"
+            );
+            Ok(samples)
+        };
+        let full = pcm(&mel, true)?;
+        ensure!(
+            full.len() == frames * samples_per_frame,
+            "full PCM sample coverage differs"
+        );
+        // Include the requested boundaries when available. Ending one frame
+        // before the full mel exercises a short final flush plus withheld audio.
+        let mut prefixes: Vec<usize> = [25, 50, 75, 100, frames - 1]
+            .into_iter()
+            .filter(|&end| end > withheld_frames && end < frames)
+            .collect();
+        prefixes.sort_unstable();
+        prefixes.dedup();
+        let mut assembled = Vec::new();
+        let mut measurements = Vec::new();
+        for end in prefixes.into_iter().chain(std::iter::once(frames)) {
+            let finalize = end == frames;
+            let prefix = pcm(&mel.narrow(2, 0, end)?, finalize)?;
+            let expected = (end - if finalize { 0 } else { withheld_frames }) * samples_per_frame;
+            ensure!(
+                prefix.len() == expected,
+                "prefix {end}, finalize={finalize}: {} samples != {expected}",
+                prefix.len()
+            );
+            ensure!(
+                prefix.len() > assembled.len() && prefix.len() <= full.len(),
+                "prefix coverage did not advance within full PCM"
+            );
+            let mut squared_error = 0f64;
+            let mut maximum = 0f64;
+            for (&actual, &reference) in prefix.iter().zip(&full) {
+                let delta = f64::from(actual) - f64::from(reference);
+                squared_error += delta * delta;
+                maximum = maximum.max(delta.abs());
+            }
+            let rmse = (squared_error / prefix.len() as f64).sqrt();
+            eprintln!(
+                "HiFT same-mel {device:?} F32 frames={end}/{frames} finalize={finalize} emitted_samples={} new_samples={} rmse={rmse:.17e} max_abs={maximum:.17e}",
+                prefix.len(),
+                prefix.len() - assembled.len()
+            );
+            measurements.push((end, finalize, rmse, maximum));
+            assembled.extend_from_slice(&prefix[assembled.len()..]);
+        }
+        ensure!(
+            assembled.len() == full.len(),
+            "final flush lost PCM samples"
+        );
+        // Fixed F32 tolerances; report every prefix before failing rather than
+        // concealing later boundary measurements behind the first mismatch.
+        for (end, finalize, rmse, maximum) in measurements {
+            ensure!(
+                rmse < 1e-5 && maximum < 1e-3,
+                "same-mel prefix instability: frames={end}/{frames} finalize={finalize} rmse={rmse:.17e} max_abs={maximum:.17e} (limits: RMSE < 1e-5, max < 1e-3)"
+            );
+        }
+        Ok(())
+    }
+}

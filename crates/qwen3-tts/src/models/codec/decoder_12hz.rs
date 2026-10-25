@@ -8,7 +8,9 @@ use candle_core::{D, DType, IndexOp, Tensor};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+mod streaming;
 mod tables;
+pub(crate) use streaming::DecoderState;
 #[cfg(test)]
 use tables::decoder_attention_mask;
 use tables::{DecoderTables, TableCache};
@@ -445,6 +447,12 @@ impl Decoder12Hz {
     /// # Returns
     /// Audio tensor of shape [batch, 1, samples]
     pub fn decode(&self, codes: &Tensor) -> Result<Tensor> {
+        let (_, _, seq_len) = codes.dims3()?;
+        let quantized = self.quantize(codes)?;
+        self.decode_quantized(&quantized, seq_len)
+    }
+
+    fn quantize(&self, codes: &Tensor) -> Result<Tensor> {
         #[cfg(feature = "profiling")]
         let _quantizer_span = tracing::info_span!("codec_quantizer").entered();
         let device = codes.device();
@@ -497,15 +505,15 @@ impl Decoder12Hz {
         let rest_proj = self.conv1d_1x1(&rest_embed_t, &self.rest_output_proj)?; // [batch, 512, seq]
 
         // Sum the two projected outputs
-        let quantized = (first_proj + rest_proj)?; // [batch, 512, seq]
-        #[cfg(feature = "profiling")]
-        drop(_quantizer_span);
+        Ok((first_proj + rest_proj)?)
+    }
 
+    fn decode_quantized(&self, quantized: &Tensor, seq_len: usize) -> Result<Tensor> {
         // 2. Pre-conv
         // quantized is already [batch, 512, seq] from projections
         #[cfg(feature = "profiling")]
         let _pre_conv_span = tracing::info_span!("codec_pre_conv").entered();
-        let hidden = self.pre_conv.forward(&quantized)?; // [batch, 1024, seq]
+        let hidden = self.pre_conv.forward(quantized)?; // [batch, 1024, seq]
         #[cfg(feature = "profiling")]
         drop(_pre_conv_span);
 
@@ -524,8 +532,13 @@ impl Decoder12Hz {
         #[cfg(feature = "profiling")]
         drop(_transformer_span);
 
+        let hidden = self.project_features(&hidden)?;
+        self.vocode(&hidden)
+    }
+
+    fn project_features(&self, hidden: &Tensor) -> Result<Tensor> {
         // Final norm before output projection
-        let hidden = self.rms_norm(&hidden, &self.final_norm_weight)?;
+        let hidden = self.rms_norm(hidden, &self.final_norm_weight)?;
 
         // Output projection
         let hidden = self.linear_3d(
@@ -535,8 +548,11 @@ impl Decoder12Hz {
         )?;
 
         // 4. Transpose for conv: [batch, seq, 1024] -> [batch, 1024, seq]
-        let mut hidden = hidden.transpose(1, 2)?;
+        Ok(hidden.transpose(1, 2)?)
+    }
 
+    fn vocode(&self, features: &Tensor) -> Result<Tensor> {
+        let mut hidden = features.clone();
         // 5. Upsample stages
         #[cfg(feature = "profiling")]
         let _upsample_span = tracing::info_span!("codec_upsample_stages").entered();
@@ -613,6 +629,7 @@ impl Decoder12Hz {
                 batch_size,
                 seq_len,
                 layer_idx,
+                None,
             )?;
         }
 
@@ -640,7 +657,12 @@ impl Decoder12Hz {
         self.graphs.lock().unwrap().recorded_shapes()
     }
 
-    /// Stateless history decode; graph scratch is copied before releasing its lock.
+    /// Historical stateless graph qualification; production owns causal state per session.
+    #[cfg(all(
+        test,
+        feature = "cuda",
+        any(target_os = "windows", target_os = "linux")
+    ))]
     pub(crate) fn decode_streaming(&self, codes: &Tensor) -> Result<Tensor> {
         #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
         if codes.device().is_cuda() {
@@ -665,6 +687,7 @@ impl Decoder12Hz {
         batch_size: usize,
         seq_len: usize,
         layer_idx: usize,
+        cache: Option<&mut streaming::LayerCache>,
     ) -> Result<Tensor> {
         // RMS Norm
         let normed = self.rms_norm(hidden, &layer.input_ln_weight)?;
@@ -703,6 +726,10 @@ impl Decoder12Hz {
         // Apply RoPE
         let q = self.apply_rope(&q, cos, sin)?;
         let k = self.apply_rope(&k, cos, sin)?;
+        let (k, v) = match cache {
+            Some(cache) => cache.append(k, v, self.config.sliding_window)?,
+            None => (k, v),
+        };
 
         // Attention
         let scale = (self.config.head_dim as f64).powf(-0.5);

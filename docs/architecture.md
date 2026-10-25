@@ -6,11 +6,13 @@ Talechime 拥有语音合成和播放；章节获取、阅读界面、角色识�
 不再单独发布平台和 CUDA graph 辅助包。Qwen 的 codes 历史解码与 VoxCPM 的有状态图回放各自封装，
 不将两种状态生命周期合并。共享边界与验证规则见 [TTS 性能优化方法](knowledge/tts-performance.md)。
 
-Qwen 12Hz 历史解码没有跨调用内部状态，CUDA 流式图可以由模型持有，按短块帧数
-有界缓存；锁覆盖回放与输出复制，图保活常量且先于权重销毁。模型算术、常量缓存、
-图策略分别放在 `decoder_12hz.rs`、私有 `tables.rs`、`graph.rs`；有请求 KV 的
-CodePredictor 图继续归 session。设备录制机制分别内联于两个模型的私有 `cuda_graph/replay.rs`，不进入宿主层；
-待上游能力满足缓冲及生命周期要求并通过验收后，再替换内部实现。
+Qwen 12Hz 解码的每层 K/V、卷积输入及声码器特征历史归合成会话所有，
+按模型注意力窗口和卷积感受野保留有界状态，取消或销毁会话即释放。
+模型持有权重、不可变常量与无会话状态的声码器 CUDA 图；图按短块帧数有界缓存，
+锁覆盖回放与输出复制，图先于权重销毁。模型算术、常量缓存、有状态增量解码、
+无状态图策略分别放在 `decoder_12hz.rs`、私有 `tables.rs`、`streaming.rs`、`graph.rs`。
+带请求 KV 的 CodePredictor 图继续归 session。设备录制机制分别内联于两个模型的私有
+`cuda_graph/replay.rs`，不进入宿主层。
 
 ```mermaid
 flowchart TD

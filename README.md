@@ -129,6 +129,10 @@ OmniVoice 已有 [CPU / Metal 执行路径与对照记录](docs/knowledge/omnivo
 
 后续在 **CP 图已开启**的条件下，流式解码图将耗时从 **2.4240 s 降至 2.1140 s（减少 12.8%，RTF 0.514→0.448）**，完整合成与首 PCM 没有明确变化。八进程、各 1 预热 + 5 热轮，240 份产物逐字节一致；CUDA 默认开启，`QWEN_DECODE_GRAPH=0` 关闭。该增量实验使用平衡电源计划，不能和前表不同条件的数字直接叠加；[设计、审查与原始口径](docs/records/qwen/qwen-decoder-graph-2026-10-18.md)另列。
 
+2026-10-25 为修复分块局部噪音，Qwen 流式 decoder 改为会话持有逐层状态，CUDA 图范围
+调整为无状态声码器。上述解码图数字来自修改前的历史路径，新路径的 CUDA 性能尚未复测；
+[噪音修复记录](docs/records/qwen/qwen-streaming-noise-2026-10-25.md)包含同码隔离与 Metal 数值验证。
+
 **1.7B Base ICL 也已独立验收**：同一 RTX 5070 上，eager→两项图开启，完整 **2.8463→1.8713 s（减少 34.3%，RTF 0.684→0.450）**、流式 **3.3973→2.0698 s（减少 39.1%，RTF 0.817→0.498）**、首 PCM **0.7665→0.6138 s**。12 个独立进程比较 eager／CP／两图三种配置，各 1 预热＋5 热轮，360 份产物逐字节一致；模型按固定清单保存于 `~/.talechime`。这里只验收 1.7B Base，不外推到 CustomVoice/VoiceDesign；[完整报告](docs/records/qwen/qwen17-cuda-acceptance-2026-10-18.md)包含配置、显存与磁盘清理记录。
 
 ## 接入应用

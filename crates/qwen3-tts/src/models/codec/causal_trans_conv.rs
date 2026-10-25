@@ -3,8 +3,7 @@
 //! A ConvTranspose1d that maintains causality by trimming output.
 //! Used for upsampling in the audio decoder.
 //!
-//! Matches the official Qwen3-TTS implementation which trims ceil(pad) from
-//! both left and right sides, where pad = kernel_size - stride.
+//! Trims `kernel_size - stride` from the right, preserving the left origin.
 
 use anyhow::Result;
 use candle_core::{Module, Tensor};
@@ -13,10 +12,8 @@ use candle_nn::{ConvTranspose1d, ConvTranspose1dConfig, VarBuilder, conv_transpo
 /// Causal Transposed 1D Convolution
 ///
 /// Applies ConvTranspose1d and trims the output to match the official model.
-/// The trim amount is `ceil(kernel_size - stride)` from both left and right.
-///
-/// Note: This produces output shorter than `input * stride` when kernel > stride.
-/// This matches the official Qwen3-TTS tokenizer behavior.
+/// Right-only trimming preserves exact `input * stride` output length when
+/// `kernel_size >= stride`, matching the tokenizer geometry.
 pub struct CausalTransConv1d {
     conv: ConvTranspose1d,
     /// Number of samples to trim from the right of output
@@ -81,6 +78,16 @@ impl CausalTransConv1d {
         Ok(Self { conv, right_trim })
     }
 
+    /// Input history required to reproduce the requested output history.
+    ///
+    /// Right-only cropping leaves the origin unchanged. At a stride-aligned
+    /// boundary, the earliest dependency is `ceil((context + kernel - stride) / stride)`.
+    pub(super) fn input_context(&self, output_context: usize) -> usize {
+        output_context
+            .saturating_add(self.right_trim)
+            .div_ceil(self.stride())
+    }
+
     /// Forward pass with causal output trimming.
     ///
     /// Input shape: [batch, in_channels, seq_len]
@@ -115,6 +122,37 @@ impl Module for CausalTransConv1d {
 mod tests {
     use super::*;
     use candle_core::{DType, Device};
+
+    #[test]
+    fn right_trim_context_reproduces_full_output_at_stride_boundary() -> Result<()> {
+        let device = Device::Cpu;
+        let conv = CausalTransConv1d::from_weights(
+            Tensor::ones((1, 1, 6), DType::F32, &device)?,
+            None,
+            3,
+        )?;
+        let input = Tensor::ones((1, 1, 12), DType::F32, &device)?;
+        let full = conv.forward(&input)?;
+        let context = conv.input_context(1);
+        assert_eq!(context, 2);
+        for keep in [context, context - 1] {
+            let replay = conv.forward(&input.narrow(2, 8 - keep, keep + 4)?)?;
+            let actual = replay
+                .narrow(2, keep * 3 - 1, 13)?
+                .flatten_all()?
+                .to_vec1::<f32>()?;
+            let expected = full.narrow(2, 23, 13)?.flatten_all()?.to_vec1::<f32>()?;
+            assert_eq!(actual == expected, keep == context);
+        }
+        let nonoverlapping = CausalTransConv1d::from_weights(
+            Tensor::ones((1, 1, 2), DType::F32, &device)?,
+            None,
+            2,
+        )?;
+        assert_eq!(nonoverlapping.input_context(0), 0);
+        assert_eq!(nonoverlapping.input_context(3), 2);
+        Ok(())
+    }
 
     #[test]
     fn test_causal_trans_conv_shape() {

@@ -64,6 +64,10 @@ Qwen/CosyVoice 的历史验收见[性能记录](records/cosyvoice3/cosyvoice3-pe
 
 Cargo 会统一同一计算库的 feature，可能使依赖同时拥有多个加速实现；各适配器仍按自己的开关报告设备，不能以底层 Candle 的统一 feature 推断模型可用性。MOSS 两种实现共用一个后端目录，`moss-candle` 依赖 `moss` 是当前设计；CPU Nano 与 GPU 实验模型的差异保留。
 
+MOSS Candle 的共用 codec 在注意力完成后才裁剪 K/V，避免提前丢失当前块早期 query
+需要的历史；Nano ONNX 使用自己的导出状态图，不复用 Candle 的缓存策略。各后端的
+流式边界、真实 codec 回放和未验收范围见[流式边界审查](records/tts-core/streaming-boundary-audit-2026-10-25.md)。
+
 ## Rust 库发布
 
 `talechime-libs-v*` 标签触发独立库发布流程，不触发应用安装包构建。流程先完成 CPU
@@ -93,8 +97,11 @@ Cargo 发布验证会从打包源码构建，不依赖兄弟 crate 的文件系�
 迁移不升级模型、不改 PCM、EOS、取消、用户数据和检查点语义。历史数值与人工试听结论位于 `docs/records/`，平台差异、未通过项与实验入口必须如实记录。迁移后仍应执行独立协议握手、配置隔离、默认/扩展 CPU 构建及 GPU 编译检查。
 
 Qwen ICL 直接使用调用方的 repetition penalty 和帧上限，不再隐式提升至 1.5 或按文本长度截断。
-12Hz codec 默认使用 72 帧滑动注意力；流式保持 10 帧新块与最近 25 帧 codes 上下文，首块保留完整参考。
-这会改变旧输出并增加流式解码开销；上下文样本只用于条件计算，不重复播放。
+12Hz codec 默认使用 72 帧滑动注意力；每个流式会话保留每层最近 71 帧 K/V，使用连续的
+RoPE 位置，并保留前置卷积所需输入。声码器仅重放按已加载卷积结构推导的历史特征
+（当前模型为 10 帧），输出时剔除历史样本。首块保留完整参考；解码和 PCM 转换成功后
+才提交会话状态。适配器仍默认输出 10 帧新块（CUDA 为 20 帧），不再用 25 帧 codes 重算
+近似的 transformer 历史。CUDA 图只录制无会话状态的声码器，新的 CUDA 音频/性能仍需实机验收。
 参考 encoder 加载 HF 权重时适配半组/交错 RoPE 布局；自定义音色使用新的
 `prompt-encoder-rope-v2.json` 缓存，保留旧 `prompt.json`，从原参考音频自动重建。
 参考与逐帧的 BF16/F16 codebook 向量统一在 F32 中累加，最后转换回原 dtype。

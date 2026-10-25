@@ -350,6 +350,17 @@ mod tests {
         for (actual, expected) in actual.iter().flatten().zip(oracle.waves.iter().flatten()) {
             assert!((actual - expected).abs() < 3e-7, "{actual} != {expected}");
         }
+        // HiFT replays each accumulated prefix from sample zero. Phase
+        // must stay anchored there rather than restart at the emitted tail.
+        for prefix_frames in 1..frames {
+            let count = prefix_frames * 480;
+            let (prefix, _) = sine.forward(&f0.narrow(1, 0, count)?)?;
+            assert_eq!(
+                prefix.flatten_all()?.to_vec1::<f32>()?,
+                waves.narrow(1, 0, count)?.flatten_all()?.to_vec1::<f32>()?,
+                "source phase changed for {prefix_frames} frames"
+            );
+        }
         Ok(())
     }
 

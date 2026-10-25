@@ -118,28 +118,28 @@ impl Layer {
             Some((pk, pv)) => (Tensor::cat(&[pk, &k], 2)?, Tensor::cat(&[pv, &v], 2)?),
             None => (k, v),
         };
-        // Upstream overwrites old ring-cache keys before attending to a chunk.
-        // Offline encoding keeps the full causal window.
+        // Early queries still need keys that expire by the end of this chunk.
+        // Attend before trimming; the per-query mask enforces the causal window.
+        let attended = attend(
+            &q,
+            &k,
+            &v,
+            self.offset,
+            self.offset - previous,
+            Some(self.context),
+        )?
+        .transpose(1, 2)?
+        .reshape((b, t, d))?;
         let length = k.dim(2)?;
         let keep = if streaming {
             length.min(self.context)
         } else {
             length
         };
-        let removed = length - keep;
-        let k = k.narrow(2, removed, keep)?.contiguous()?;
-        let v = v.narrow(2, removed, keep)?.contiguous()?;
-        let attended = attend(
-            &q,
-            &k,
-            &v,
-            self.offset,
-            self.offset - previous + removed,
-            Some(self.context),
-        )?
-        .transpose(1, 2)?
-        .reshape((b, t, d))?;
-        self.cache = Some((k, v));
+        self.cache = Some((
+            k.narrow(2, length - keep, keep)?.contiguous()?,
+            v.narrow(2, length - keep, keep)?.contiguous()?,
+        ));
         self.offset += t;
         let x = (x + self
             .output
@@ -536,8 +536,141 @@ impl AudioCodec {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fixture_codec() -> anyhow::Result<AudioCodec> {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/upstream.json"))?;
+        let config: StageConfig = serde_json::from_value(fixture["codec_config"].clone())?;
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/upstream.safetensors");
+        let device = Device::Cpu;
+        // SAFETY: checked-in fixtures are immutable throughout the test.
+        let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[path], DType::F32, &device)? };
+        let values: Vec<f32> = serde_json::from_value(fixture["codec_wrap_input"].clone())?;
+        let embeddings = Tensor::from_vec(values, (4, 21), &device)?
+            .t()?
+            .contiguous()?;
+        let identity = || -> candle_core::Result<Projection> {
+            Ok(Projection {
+                weight: Tensor::eye(4, DType::F32, &device)?,
+                bias: Tensor::zeros(4, DType::F32, &device)?,
+            })
+        };
+        // A tiny synthetic quantizer maps fixed codes onto the official stage fixture.
+        // The final patch exercises sample ordering as well as attention history.
+        Ok(AudioCodec {
+            encoder: Vec::new(),
+            decoder: vec![Stage::load(&config, 8, vb.pp("codec"))?, Stage::Patch(6)],
+            quantizer: Quantizer {
+                books: vec![Codebook {
+                    embedding: Embedding::new(embeddings, 4),
+                    input: identity()?,
+                    output: identity()?,
+                }],
+                input: None,
+                output: None,
+                dimension: 4,
+            },
+            device,
+            dtype: DType::F32,
+            hop: 6,
+            sample_rate: 24000,
+            channels: 1,
+        })
+    }
+
     #[test]
-    fn upstream_codec_matches_chunked_state() -> anyhow::Result<()> {
+    fn fixed_codes_decode_identically_across_boundaries_and_cancel_reset() -> anyhow::Result<()> {
+        let frames: Vec<_> = (0..63).map(|i| vec![(i * 5 % 21) as u32]).collect();
+        let mut codec = fixture_codec()?;
+        let full = codec.decode(&frames, &|| false)?;
+        for chunk_size in [1, 3, 5, 8, 13] {
+            codec.reset_decoder();
+            let mut chunked = Vec::new();
+            for chunk in frames.chunks(chunk_size) {
+                chunked.extend(codec.decode(chunk, &|| false)?);
+            }
+            assert_eq!(chunked.len(), frames.len() * 6);
+            assert!(chunked.iter().all(|v| v.is_finite()));
+            let maximum = full
+                .iter()
+                .zip(&chunked)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0f32, f32::max);
+            assert!(
+                maximum < 1e-5,
+                "fixed-code PCM chunks of {chunk_size}: {maximum}"
+            );
+        }
+        codec.reset_decoder();
+        let checks = std::cell::Cell::new(0);
+        assert!(
+            codec
+                .decode(&frames[..5], &|| {
+                    checks.set(checks.get() + 1);
+                    checks.get() == 3 // Cancel after the first layer has advanced its cache.
+                })
+                .is_err()
+        );
+        codec.reset_decoder();
+        let fresh = codec.decode(&frames, &|| false)?;
+        assert_eq!(fresh, full);
+        Ok(())
+    }
+
+    #[test]
+    fn decoder_chunks_preserve_each_queries_causal_window() -> anyhow::Result<()> {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/upstream.json"))?;
+        let config: StageConfig = serde_json::from_value(fixture["codec_config"].clone())?;
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/upstream.safetensors");
+        // SAFETY: checked-in fixtures are immutable throughout the test.
+        let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[path], DType::F32, &Device::Cpu)? };
+        let values: Vec<f32> = serde_json::from_value(fixture["codec_wrap_input"].clone())?;
+        let input = Tensor::from_vec(values, (1, 4, 21), &Device::Cpu)?;
+        // The offline path retains all keys and masks each query independently.
+        let mut reference = Stage::load(&config, 8, vb.pp("codec"))?;
+        let expected = reference
+            .forward(&input, true, &|| false)?
+            .flatten_all()?
+            .to_vec1::<f32>()?;
+        for chunks in [vec![1; 21], vec![5, 5, 5, 5, 1], vec![3, 8, 2, 8], vec![21]] {
+            let mut stage = Stage::load(&config, 8, vb.pp("codec"))?;
+            // Reusing the decoder after reset must be equivalent to a fresh utterance.
+            for _ in 0..2 {
+                stage.reset();
+                let mut start = 0;
+                let mut output = Vec::new();
+                for &length in &chunks {
+                    output.push(stage.forward(&input.narrow(2, start, length)?, false, &|| false)?);
+                    start += length;
+                    if let Stage::Transformer { layers, .. } = &stage {
+                        for layer in layers {
+                            assert!(layer.cache.as_ref().unwrap().0.dim(2)? <= 8);
+                            assert_eq!(layer.offset, start);
+                        }
+                    }
+                }
+                let actual = Tensor::cat(&output, 2)?.flatten_all()?.to_vec1::<f32>()?;
+                assert_eq!(actual.len(), expected.len());
+                assert!(
+                    actual.iter().all(|v| v.is_finite()),
+                    "non-finite output for {chunks:?}"
+                );
+                let maximum = actual
+                    .iter()
+                    .zip(&expected)
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0f32, f32::max);
+                assert!(maximum < 1e-5, "chunk windows {chunks:?}: error {maximum}");
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn upstream_codec_matches_before_cache_wrap() -> anyhow::Result<()> {
         let fixture: serde_json::Value =
             serde_json::from_str(include_str!("../tests/fixtures/upstream.json"))?;
         let config: StageConfig = serde_json::from_value(fixture["codec_config"].clone())?;
@@ -572,25 +705,9 @@ mod tests {
             .map(|(a, b)| (a - b).abs())
             .fold(0f32, f32::max);
         assert!(maximum < 1e-5, "codec streaming error: {maximum}");
-        stage.reset();
-        let input: Vec<f32> = serde_json::from_value(fixture["codec_wrap_input"].clone())?;
-        let input = Tensor::from_vec(input, (1, 4, 21), &dev)?;
-        let expected: Vec<f32> = serde_json::from_value(fixture["codec_wrap_output"].clone())?;
-        let mut chunks = Vec::new();
-        for start in (0..21).step_by(5) {
-            chunks.push(stage.forward(
-                &input.narrow(2, start, (21 - start).min(5))?,
-                false,
-                &|| false,
-            )?);
-        }
-        let output = Tensor::cat(&chunks, 2)?.flatten_all()?.to_vec1::<f32>()?;
-        let maximum = output
-            .iter()
-            .zip(&expected)
-            .map(|(a, b)| (a - b).abs())
-            .fold(0f32, f32::max);
-        assert!(maximum < 1e-5, "codec ring boundary error: {maximum}");
+        // codec_wrap_output records upstream's pre-attention ring overwrite.
+        // It is retained for provenance, but is not a chunk-invariant oracle.
+        // decoder_chunks_preserve_each_queries_causal_window covers wrapping.
         assert!(stage.forward(&input, false, &|| true).is_err());
         Ok(())
     }
@@ -599,6 +716,69 @@ mod tests {
 #[cfg(test)]
 mod nano_tests {
     use super::*;
+
+    /// Explicitly scheduled codec-only replay; never downloads or loads a TTS model.
+    #[test]
+    #[ignore = "requires a coordinated real-codec run and TALECHIME_MOSS_CODEC_DIR"]
+    fn real_codec_chunk_windows_match_full_decode() -> anyhow::Result<()> {
+        let directory = std::env::var_os("TALECHIME_MOSS_CODEC_DIR")
+            .ok_or_else(|| anyhow::anyhow!("set TALECHIME_MOSS_CODEC_DIR to a codec directory"))?;
+        let device = match std::env::var("TALECHIME_MOSS_CODEC_DEVICE").as_deref() {
+            Err(_) | Ok("cpu") => Device::Cpu,
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            Ok("metal") => Device::new_metal(0)?,
+            #[cfg(feature = "cuda")]
+            Ok("cuda") => Device::new_cuda(0)?,
+            Ok(name) => anyhow::bail!("unsupported compiled codec test device: {name}"),
+        };
+        let reference: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/nano-codec.json"))?;
+        let codes: Vec<Vec<u32>> = serde_json::from_value(reference["codes"].clone())?;
+        // 10.96 seconds crosses every pinned Nano and Local/Realtime layer window.
+        let frames: Vec<_> = codes.iter().cycle().take(137).cloned().collect();
+        let dtype = match std::env::var("TALECHIME_MOSS_CODEC_DTYPE").as_deref() {
+            Ok("f16") => DType::F16,
+            _ => DType::F32,
+        };
+        let mut codec = AudioCodec::load(Path::new(&directory), &device, dtype)?;
+        let full = codec.decode(&frames, &|| false)?;
+        for chunk_size in [3, 5] {
+            codec.reset_decoder();
+            let mut chunked = Vec::new();
+            for chunk in frames.chunks(chunk_size) {
+                chunked.extend(codec.decode(chunk, &|| false)?);
+            }
+            assert_eq!(chunked.len(), full.len());
+            assert!(chunked.iter().all(|v| v.is_finite()));
+            let maximum = chunked
+                .iter()
+                .zip(&full)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0f32, f32::max);
+            let rmse = (chunked
+                .iter()
+                .zip(&full)
+                .map(|(a, b)| f64::from(a - b).powi(2))
+                .sum::<f64>()
+                / full.len() as f64)
+                .sqrt();
+            eprintln!(
+                "MOSS {device:?} {dtype:?} chunks={chunk_size} samples={} max={maximum} rmse={rmse}",
+                full.len()
+            );
+            let (max_limit, rms_limit) = if dtype == DType::F16 {
+                (1e-2, 1e-3)
+            } else {
+                (3e-4, 3e-5)
+            };
+            assert!(
+                maximum < max_limit && rmse < rms_limit,
+                "real codec chunk-window error: max={maximum}, rmse={rmse}"
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn real_nano_codec_matches_pinned_onnx_stereo_and_streaming() -> anyhow::Result<()> {
         let Some(directory) = std::env::var_os("TRNOVEL_MOSS_NANO_CANDLE_DIR") else {

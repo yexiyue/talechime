@@ -631,6 +631,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn token_arrival_batching_does_not_change_prefixes_or_lookahead_ownership() -> Result<()> {
+        for prompt in 0..=25 {
+            for count in [1, 27, 28, 29, 77, 78, 79, 177, 178, 179, 283] {
+                let tokens: Vec<u32> = (0..count).map(|i| i as u32 + 100).collect();
+                let plans = |batch: usize| -> Result<Vec<(Vec<u32>, usize, bool)>> {
+                    let mut schedule = ChunkSchedule::new(prompt, 3, 2)?;
+                    let mut plans = Vec::new();
+                    for more in tokens.chunks(batch) {
+                        schedule.extend(more)?;
+                        while let Some(plan) = schedule.next(false)? {
+                            plans.push((
+                                schedule.tokens[..plan.take].to_vec(),
+                                plan.offset,
+                                plan.finalize,
+                            ));
+                            schedule.commit(plan);
+                        }
+                    }
+                    while let Some(plan) = schedule.next(true)? {
+                        plans.push((
+                            schedule.tokens[..plan.take].to_vec(),
+                            plan.offset,
+                            plan.finalize,
+                        ));
+                        schedule.commit(plan);
+                    }
+                    Ok(plans)
+                };
+                let single = plans(1)?;
+                assert_eq!(single, plans(17)?, "prompt={prompt}, count={count}");
+                assert_eq!(single, plans(count)?, "prompt={prompt}, count={count}");
+                let mut committed = 0;
+                for (prefix, offset, finalize) in single {
+                    assert_eq!(offset, committed);
+                    assert_eq!(prefix, tokens[..prefix.len()]);
+                    committed = prefix.len() - if finalize { 0 } else { 3 };
+                }
+                assert_eq!(committed, count);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn chunk_boundaries_cover_every_token_once_and_finish_once() -> Result<()> {
         for prompt in [0, 1, 25, 87, 100] {
             for n in [
