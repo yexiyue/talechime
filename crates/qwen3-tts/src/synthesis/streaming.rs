@@ -385,16 +385,16 @@ impl<'a> StreamingSession<'a> {
     }
 
     fn decode_buffer(&mut self) -> Result<AudioBuffer> {
-        self.decoder.decode(|codes| {
+        self.decoder.decode(|codes, state| {
             #[cfg(all(
                 test,
                 feature = "cuda",
                 any(target_os = "windows", target_os = "linux")
             ))]
-            if self.test_eager_decoder {
-                return AudioBuffer::from_tensor(self.model.decoder.decode(codes)?, 24000);
+            {
+                state.eager_vocoder = self.test_eager_decoder;
             }
-            AudioBuffer::from_tensor(self.model.decoder.decode_streaming(codes)?, 24000)
+            AudioBuffer::from_tensor(self.model.decoder.decode_incremental(codes, state)?, 24000)
         })
     }
 

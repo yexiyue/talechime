@@ -54,6 +54,11 @@ impl DepthwiseCausalConv1d {
         Ok(Self { stock, taps })
     }
 
+    /// Input history required to reproduce the requested output history.
+    pub(super) fn input_context(&self, output_context: usize) -> usize {
+        self.stock.input_context(output_context)
+    }
+
     pub(super) fn forward(&self, x: &Tensor) -> Result<Tensor> {
         let (batch, channels, length) = x.dims3()?;
         if let Some(taps) = &self.taps
@@ -165,6 +170,11 @@ impl CausalConv1d {
         })
     }
 
+    /// Input history required to reproduce the requested output history.
+    pub(super) fn input_context(&self, output_context: usize) -> usize {
+        output_context.saturating_add(self.causal_padding)
+    }
+
     /// Forward pass with causal (left-only) padding.
     ///
     /// Input shape: [batch, in_channels, seq_len]
@@ -203,6 +213,27 @@ mod tests {
                 ((state >> 8) & 0xffff) as f32 / 32768.0 - 1.0
             })
             .collect()
+    }
+
+    #[test]
+    fn loaded_dilated_context_reproduces_full_output() -> Result<()> {
+        let device = Device::Cpu;
+        let conv =
+            CausalConv1d::from_weights(Tensor::ones((1, 1, 3), DType::F32, &device)?, None, 3)?;
+        let input = Tensor::ones((1, 1, 16), DType::F32, &device)?;
+        let full = conv.forward(&input)?;
+        let context = conv.input_context(2);
+        assert_eq!(context, 8);
+        for keep in [context, context - 1] {
+            let replay = conv.forward(&input.narrow(2, 12 - keep, keep + 4)?)?;
+            let actual = replay
+                .narrow(2, keep - 2, 6)?
+                .flatten_all()?
+                .to_vec1::<f32>()?;
+            let expected = full.narrow(2, 10, 6)?.flatten_all()?.to_vec1::<f32>()?;
+            assert_eq!(actual == expected, keep == context);
+        }
+        Ok(())
     }
 
     #[test]

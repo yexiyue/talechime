@@ -453,8 +453,8 @@ fn decoder_graph_large_clone_preserves_codes_pcm_and_eos() -> Result<()> {
         assert_eq!(render(false)?, expected, "decode graph pass {pass}");
     }
     assert!(
-        model.decoder.recorded_frame_sizes().contains(&106),
-        "reference-prefix graph did not record"
+        model.decoder.recorded_shapes() > 0,
+        "incremental vocoder graph did not record"
     );
     eprintln!(
         "{} generated code frames and {} raw PCM F32 patterns match eager across miss/capture/replay; natural EOS observed",

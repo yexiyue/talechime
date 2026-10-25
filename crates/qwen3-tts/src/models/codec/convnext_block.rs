@@ -104,6 +104,11 @@ impl ConvNeXtBlock {
         })
     }
 
+    /// Input history required to reproduce the requested output history.
+    pub(super) fn input_context(&self, output_context: usize) -> usize {
+        self.dwconv.input_context(output_context)
+    }
+
     /// Forward pass.
     ///
     /// Input shape: [batch, channels, seq_len]
