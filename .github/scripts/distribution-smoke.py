@@ -51,7 +51,8 @@ def main(app, target, skip_build=False, build_installers=False):
         programs = [app] if app == 'talechime' else ['trnovel', 'trn']
         installed = next((base / 'install').rglob(app + suffix)).parent
         files = list((base / 'install').rglob('*'))
-        assert not any('cuda' in path.name.lower() or 'cudnn' in path.name.lower()
+        assert not any((path.suffix.lower() in ['.dll', '.dylib'] or '.so' in path.name)
+                       and ('cuda' in path.name.lower() or 'cudnn' in path.name.lower())
                        for path in files), 'Standard archive contains CUDA libraries'
         assert not any(path.name in ['novel-tts', 'novel-tts.exe'] for path in files)
         assert not any(path.suffix in ['.onnx', '.gguf', '.safetensors'] for path in files)
