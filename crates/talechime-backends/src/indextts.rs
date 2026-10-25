@@ -1,5 +1,6 @@
 //! IndexTTS 2.5 reference cloning with named emotions and reference/vector controls.
 pub mod params;
+mod reference_cache;
 pub mod resources;
 mod runtime;
 

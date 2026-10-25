@@ -19,7 +19,9 @@ struct Codes {
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.len() != 5 {
-        return Err("usage: stage1_probe MODEL CODES_JSON cpu|metal OUTPUT_DIR HOT_ROUNDS".into());
+        return Err(
+            "usage: stage1_probe MODEL CODES_JSON cpu|metal|cuda OUTPUT_DIR HOT_ROUNDS".into(),
+        );
     }
     let codes: Codes = serde_json::from_slice(&fs::read(&args[1])?)?;
     let tokens = GeneratedTokens::Single(I64Tensor2::new(
@@ -29,7 +31,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let spec = match args[2].as_str() {
         "cpu" => DeviceSpec::Cpu,
         "metal" => DeviceSpec::Metal,
-        _ => return Err("device must be cpu or metal".into()),
+        "cuda" => DeviceSpec::Cuda(0),
+        _ => return Err("device must be cpu, metal or cuda".into()),
     };
     let rounds: usize = args[4].parse()?;
     if !(1..=100).contains(&rounds) {

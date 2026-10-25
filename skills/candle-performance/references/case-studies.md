@@ -1,6 +1,7 @@
 # 案例与证据索引
 
-以下是 Talechime 截至 2026-10-23 的带边界记录，不是跨设备/跨项目的预期收益。
+以下是 Talechime 的带边界记录；首表为截至2026-10-23的历史案例，后续Windows
+更新见下节，不是跨设备/跨项目的预期收益。
 skill 的操作规则自包含；这里的仓库相对链接在移出 Talechime 后可能不可用，届时不
 依赖这些文件继续执行通用流程，也不把缺少原始产物记作重新验证通过。
 
@@ -28,6 +29,26 @@ skill 的操作规则自包含；这里的仓库相对链接在移出 Talechime 
 | IndexTTS 宿主 custom-op 四内核 | **candle Metal `conv_transpose1d` 的 col2im 快路径仅 padding==0**——带 padding 的 ConvT 全部落入 naive per-output 标量核（L0/L1 仅 0.015 TFLOPS，六级 879ms），k%s==0 且 s 为 2 幂时 ConvT=健康 GEMM`(l,c_in)@(c_in,c_out·k)`+gather 散射核（每输出恰 k/s 次读）→ 14.3ms（~125×，rel≤2.6e-6）；多通道 conv1d 的 im2col+GEMM 编排换直出布局仅 −5~10%——**im2col 物化本身是地板**（k× 写放大+每 call 新 buffer），strided-B/转置回拷不是瓶颈；pad 物化+双相位 FIR conv+snake 五算子链折单内核 ~8×（rel≤4.3e-7，参数加载期打包）；四内核合并 ABAB −25.35% 区间不重叠；零 fork（custom-op 宿主 `CustomOp{1,3}::metal_fwd` + `call_im2col1d_strided` 等 candle-metal-kernels 公开原语直接编排） | 「conv 慢=GEMM 编排烂」——先探针拆 conv vs 等形纯 GEMM 再动手（本轮 GEMM-direct 几乎白做）；越界写**不崩溃而是数值污染**（grid div_ceil 后无 guard，196 线程踩相邻 buffer，对拍 rel 0.85，CPU 标量模拟全对才定位到 Metal 侧）；Metal 内核三元 `cond ? 0 : size_t` 类型不匹配直接编译失败（先算 index 再取指针）；官方同日自身漂移 ~27%（惰性编译深浅），跨臂判定必须当日 O-T-O-T 窗口交错且看配对方向，单窗口/隔日结论皆不可用 |
 | IndexTTS wavenet 续轮 | **estimator 插桩各段合计 ≠ 总耗时应先找未插桩模块**（WaveNet 终层 2.29s 此前零归因，补 scope 一举定位）；门控激活 `tanh·sigmoid(+bias)` 与 res/skip 尾双平面折单内核均位级（表达式逐字取 candle：`precise::tanh`、`1/(1+exp(-x))`；`recip` 在 MSL 内核不可用）、wn.act 4.3×、estimator 5.07→4.39s；**candle 批 GEMM 在 rhs 广播（batch_stride 0）时把 batch 折进 M**——自建"直出布局"把广播换到 lhs 侧丢了 collapse，B=2 实测反退 22% 已回退；dual-plane 内核的平面 1 偏移是 `b_len·H·T+plane`（写 `plane+H·T` 在 B=2 越界踩平面 0，位级门当场拦截） | 自建数值参照必须复刻真实调用的全部参数（bias/dilation/padding）——首版 convT/conv 融合漏 bias，门用 `bias=None` 参照互拍"错对错"全绿（性能结论 −25% 复验成立、数值结论作废重测）；B≥2 的 token-major 批别用去广播 lhs 的直出布局 |
 | CosyVoice3 DiT rope_i+sdpa | 同一招移植前先核对旋转语义：cv3 是 **partial RoPE**（`RotaryEmbedding(dim_head)` 只旋转扁平 (B,T,1024) 的前 64 通道），rope_i 只能对 64 宽切片以 (B,1,T,64)+(T,32) 唯一频率表应用——「交错配对=可全维迁移」是误读，先看构造处 dim 再定迁移形态。物化注意力（33.5MB scores + mask/softmax 各一遍读写）占单 block 50%，sdpa -87%；mask 需每 solve 展开一次 [B,H,T,T]（内核拒收可广播形状）；端到端 ABBA -12.5%，组件节省 ×占比与端到端可对账。流水线级归因用内建 `CV3_STREAM_PROFILE=1`（串行流水线墙钟五桶，零开销门控）：Flow 56%/HiFT 26%/LLM 18%，逐段条件开销仅 ~1.5%——先排除"逐段零样本"这类直觉病灶再立项 | 探针输入 σ 校准到 post-scale scores O(1)：σ=1 时 scores σ≈10³，ULP 求和序翻转近并列 softmax 项，1e-4 量级"失配"是量级伪影非语义错误（σ=1/32 后同门 1e-6 通过）；相对门的自然舍入底随 softmax 分母项数增长（512 项 ~2e-6），门限设在语义错误（≥1e-2）与舍入底之间并写明理由；引用"过期数字"前先全文检索既有记录——accelerate 复测早已在案（1.19×），差点重复立项 |
+
+## Windows 当前实证（更新至2026-10-25）
+
+以下补充均链接本轮设备、条件和未完成项；不改写上表历史数据或Mac结论。
+
+- [Windows探针导出](../../../docs/records/platform/windows-artifact-export-2026-10-24.md)：WAV未缓冲逐样本写入约2.9s/格式，64KiB缓冲约4ms；36组完整字节与旧工件一致，write/flush失败仍拒绝。只计导出收益，模型A/B需统一导出策略。
+
+- [OmniVoice CUDA](../../../docs/records/omnivoice/omnivoice-windows-cuda-2026-10-24.md)：GQA、请求所有的前向图和保序F32 deconv的局部实证；完整codes/PCM与局部/整链边界分开，官方质量仍有未完成项。
+- [MOSS Nano Candle](../../../docs/records/moss/moss-windows-performance-2026-10-24.md)：阶段归因后复用已算embedding，有序相加、1026组逐位oracle及66轮PCM回归；按局部收益保留，稳定整链收益未证明。含有效seed/双声道布局、真实EOS与满队列取消回归；没有阶段证据的RoPE原型继续撤回。
+- [Nano forward交错RoPE](../../../docs/records/moss/moss-nano-windows-forward-rope-2026-10-25.md)：从1.7B复用经验重新验证布局/频率/层数，180组oracle、三seed codes/PCM/EOS和旧消费者回归后，短句/段落ABBA约−19.45%/−14.54%，96轮PCM保持；段落首PCM仍inconclusive。区别于此前扩大表长/矩阵形状的失败方案，不相加历史收益。
+- [IndexTTS Windows](../../../docs/records/indextts/indextts-windows-production-2026-10-24.md)：参考复用约−63.72%；SF0.8/pread隔离环境恢复官方GPT BF16正式GPU基线，真实EOS正负验证、匹配内容回读与同步阶段归因。Native F32/官方混合精度未强行排名，新F32失败仍单列。
+- [CosyVoice3生产资源门禁](../../../docs/records/cosyvoice3/cosyvoice3-windows-production-2026-10-24.md)：HiFT SHA仍不匹配，三种CPU dispatch重转换未解决；不绕过门禁或宣称生产已验收。
+- [MOSS Local/Realtime 1.7B](../../../docs/records/moss/moss17-windows-production-2026-10-24.md)：各3×(1+5)生产基线、官方加载/系统提交内存调查；不将非推荐兼容栈当公平官方性能基线。
+- [MOSS forward内RoPE复用](../../../docs/records/moss/moss-windows-forward-rope-reuse-2026-10-25.md)：保留原形状、单forward共享表；300组逐位oracle、三个模型9组codes/PCM及owner门禁后，Realtime ABBAABBA约−24.59%，Local整链仍inconclusive。Source稳定不证明Cargo缓存对应源码，旧mtime复制导致相同二进制的伪A已拒绝；比较器off误判修复，原始条件不重标记。
+- [MOSS ONNX RTX5070](../../../docs/records/moss/moss-nano-onnx-windows-2026-10-24.md)：DirectML cache/host约−21%；另一完整ORT1.28分发使专用动态构建的Native Registry完成18轮，均值0.694s，状态复用通过。同版本分发/实际模块/动态环境身份须分别验证；官方1.159s条件不同，未强行排名或宣称默认发行配置已恢复。
+- [MOSS Nano ONNX](../../../docs/records/moss/moss-nano-onnx-windows-2026-10-24.md)：本机两份CUDA provider缺少sm120/PTX；DLL静态覆盖、真实执行和fallback分开，不升级为所有ORT分发的结论。
+- [Qwen Windows](../../../docs/records/qwen/qwen-windows-production-2026-10-24.md)：CustomVoice双方基线、1.7B默认图组合约−49%及48轮PCM一致；EOS正反例、pread加载对照、共享prompt及prefill数值定位，不用长度差直接排名。
+- [VoxCPM Windows当前生产回归](../../../docs/records/voxcpm/voxcpm-windows-production-2026-10-24.md)：Q8图组合约−51%、48轮PCM一致，原始BF16另建基线及Job commit实测；漏绑磁盘缓存后新Job复测。固定C++适配器排除WAV写盘，短文本Candle/C++ RTF0.246/0.289，输出长度与RNG不同，质量等价pending。官方初始化失败、启动器RSS漏采及工程门禁另列。
+- [VoxCPM Windows官方控制版正式对照](../../../docs/records/voxcpm/voxcpm-windows-official-baseline-2026-10-25.md)：保留12GB门禁恢复3×(1+5)，对齐19patch与真实边界处理；区分WAV时间戳与PCM摘要，先做默认/同步eager逐位门禁再阶段归因。既有BF16 CFM图单变量补验约−33.08%、48轮PCM保持，原始F32 VAE成为下一热点；默认加载与跨框架质量未关闭。
+- [VoxCPM Windows F32 decoder图](../../../docs/records/voxcpm/voxcpm-windows-f32-decoder-graph-2026-10-25.md)：将官方对照发现的热点落实为另一dtype的真实状态/模型/owner门禁后扩大Windows BF16默认值；短句/段落21.33%/26.68%、96轮PCM一致，Qwen/Vox六模型组合回归通过。复核开关依赖链，防止默认变化后仍把关闭两张图误称CFM单变量。
 
 ## 仓库记录
 

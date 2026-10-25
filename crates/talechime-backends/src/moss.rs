@@ -2,6 +2,8 @@
 mod audio;
 #[cfg(feature = "moss-candle")]
 pub mod candle;
+#[cfg(all(test, feature = "ort-cuda"))]
+mod cuda_tests;
 pub mod diagnostics;
 #[cfg(all(windows, feature = "directml-probe"))]
 pub mod directml_probe;

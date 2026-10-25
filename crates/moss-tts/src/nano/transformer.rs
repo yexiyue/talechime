@@ -2,6 +2,8 @@
 use candle_core::{Module, Tensor};
 use candle_nn::{LayerNorm, Linear, VarBuilder, layer_norm, linear};
 use serde::Deserialize;
+#[cfg(all(test, feature = "cuda", target_os = "windows"))]
+mod cuda_rope_tests;
 #[derive(Clone, Deserialize)]
 pub(super) struct Config {
     pub vocab_size: usize,
@@ -73,23 +75,38 @@ impl Transformer {
     ) -> anyhow::Result<Tensor> {
         let (b, t, d) = input.dims3()?;
         let heads = self.config.n_head;
+        let reuse_tables =
+            cfg!(all(target_os = "windows", feature = "cuda")) && input.device().is_cuda();
+        #[cfg(all(test, feature = "cuda", target_os = "windows"))]
+        let reuse_tables = reuse_tables && !cuda_rope_tests::reference_enabled();
+        let tables = if reuse_tables {
+            crate::check_cancel(cancelled)?;
+            Some(crate::transformer::RotaryTables::new(
+                t,
+                d / heads,
+                self.offset,
+                self.config.rope_base,
+                input.dtype(),
+                input.device(),
+            )?)
+        } else {
+            None
+        };
+        #[cfg(all(test, feature = "cuda", target_os = "windows"))]
+        if tables.is_some() {
+            cuda_rope_tests::shared_table_built();
+        }
+        let rotate = |value: &Tensor| match &tables {
+            Some(tables) => tables.apply_interleaved(value),
+            None => crate::transformer::rope(value, self.offset, self.config.rope_base, true),
+        };
         let mut x = input.clone();
         for layer in &mut self.layers {
             crate::check_cancel(cancelled)?;
             let qkv = layer.qkv.forward(&layer.norm1.forward(&x)?)?;
             let shape = (b, t, heads, d / heads);
-            let q = crate::transformer::rope(
-                &qkv.narrow(2, 0, d)?.reshape(shape)?.transpose(1, 2)?,
-                self.offset,
-                self.config.rope_base,
-                true,
-            )?;
-            let k = crate::transformer::rope(
-                &qkv.narrow(2, d, d)?.reshape(shape)?.transpose(1, 2)?,
-                self.offset,
-                self.config.rope_base,
-                true,
-            )?;
+            let q = rotate(&qkv.narrow(2, 0, d)?.reshape(shape)?.transpose(1, 2)?)?;
+            let k = rotate(&qkv.narrow(2, d, d)?.reshape(shape)?.transpose(1, 2)?)?;
             let v = qkv.narrow(2, 2 * d, d)?.reshape(shape)?.transpose(1, 2)?;
             let (k, v) = match &layer.cache {
                 Some((pk, pv)) => (Tensor::cat(&[pk, &k], 2)?, Tensor::cat(&[pv, &v], 2)?),

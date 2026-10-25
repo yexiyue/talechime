@@ -2757,6 +2757,7 @@ version = "2.0.0-rc.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4336a1e2b38848325241c72889086886004e589b7c74f335e60a8e8db5138a0b"
 dependencies = [
+ "libloading 0.9.0",
  "ndarray",
  "ort-sys",
  "smallvec",
@@ -4194,6 +4195,7 @@ dependencies = [
  "candle-core",
  "candle-nn",
  "candle-transformers",
+ "cudarc 0.19.10",
  "half",
  "hound",
  "rand 0.9.5",
@@ -4278,6 +4280,7 @@ dependencies = [
  "rubato 0.16.2",
  "serde_json",
  "talechime-core",
+ "talechime-protocol",
  "tokenizers",
  "tracing",
 ]

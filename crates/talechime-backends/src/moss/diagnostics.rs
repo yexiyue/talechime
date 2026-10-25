@@ -12,6 +12,8 @@ pub enum GenerationEnd {
 pub(super) struct GenerationStats {
     pub frames: usize,
     pub audio_seconds: f64,
+    #[cfg(test)]
+    pub codes: Option<Vec<Vec<i32>>>,
 }
 #[derive(Debug, Serialize)]
 pub struct GenerationReport {

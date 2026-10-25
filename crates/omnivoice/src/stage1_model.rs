@@ -5,6 +5,14 @@ use candle_nn::Module;
 #[path = "stage1_model/cpu_attribution.rs"]
 mod cpu_attribution;
 
+#[cfg(all(
+    test,
+    feature = "cuda",
+    any(target_os = "windows", target_os = "linux")
+))]
+#[path = "stage1_model/cuda_graph_probe.rs"]
+mod cuda_graph_probe;
+
 use crate::{
     codec_layers::{
         CodecConv1d, CodecConvTranspose1d, CodecEmbedding, CodecLinear, CodecWeightSource,

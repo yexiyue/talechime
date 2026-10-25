@@ -806,6 +806,7 @@ mod tests {
                         exit_code: Some(0),
                         cleanup_verified: true,
                         errors: vec![],
+                        job_peak_memory: None,
                     },
                 )?;
                 super::super::storage::commit(&directory, attempt)?;

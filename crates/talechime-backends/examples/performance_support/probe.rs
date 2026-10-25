@@ -9,6 +9,9 @@ use std::{
 };
 use talechime_core::{SynthesisOptions, SynthesisState, SynthesisStream, backend::Backend};
 use tracing::Instrument;
+#[cfg(test)]
+#[path = "wav_tests.rs"]
+mod wav_tests;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -487,8 +490,24 @@ fn write_wav(
         .write(true)
         .create_new(true)
         .open(path)?;
+    write_wav_to(
+        std::io::BufWriter::with_capacity(64 * 1024, file),
+        samples,
+        rate,
+        channels,
+        pcm16,
+    )
+}
+
+fn write_wav_to(
+    output: impl std::io::Write + std::io::Seek,
+    samples: &[f32],
+    rate: u32,
+    channels: u16,
+    pcm16: bool,
+) -> anyhow::Result<()> {
     let mut writer = hound::WavWriter::new(
-        file,
+        output,
         hound::WavSpec {
             channels,
             sample_rate: rate,

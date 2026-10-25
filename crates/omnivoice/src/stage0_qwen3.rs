@@ -302,12 +302,21 @@ impl Stage0Qwen3Attention {
         flash_seqlens: Option<&[usize]>,
     ) -> Result<Tensor> {
         let _ = flash_seqlens;
+        #[cfg(all(
+            test,
+            feature = "cuda",
+            any(target_os = "windows", target_os = "linux")
+        ))]
+        cuda_attribution::capture(&q, &k, &v, attention_mask)?;
         let scale = 1.0f64 / (self.head_dim as f64).sqrt();
         // The fused SDPA kernel only exists on Metal; CPU keeps the manual
         // score-matrix path.
         if q.device().is_metal() {
             // Metal SDPA maps query heads to KV heads directly for GQA.
             return attention_sdpa(&q, &k, &v, attention_mask, scale as f32);
+        }
+        if let Some(context) = cuda_grouped_attention(&q, &k, &v, attention_mask, scale)? {
+            return Ok(context);
         }
         if let Some(context) = cpu_grouped_attention(&q, &k, &v, attention_mask, scale)? {
             return Ok(context);
@@ -317,6 +326,47 @@ impl Stage0Qwen3Attention {
         let v = candle_transformers::utils::repeat_kv(v, repeats)?;
         attention_manual(&q, &k, &v, attention_mask, scale)
     }
+}
+
+fn cuda_grouped_attention(
+    q: &Tensor,
+    k: &Tensor,
+    v: &Tensor,
+    mask: Option<&Tensor>,
+    scale: f64,
+) -> Result<Option<Tensor>> {
+    if !q.device().is_cuda() || q.dtype() != DType::F16 || !q.is_contiguous() || !k.is_contiguous()
+    {
+        return Ok(None);
+    }
+    let (batch, heads, seq, dim) = q.dims4()?;
+    let (kb, kv_heads, ks, kd) = k.dims4()?;
+    // Keep this change within the validated F16, 2:1 short-sequence regime.
+    // Larger reference/target combinations and other dtypes retain their path.
+    if !(8..=512).contains(&seq)
+        || dim != 128
+        || kv_heads == 0
+        || heads != 2 * kv_heads
+        || (kb, ks, kd) != (batch, seq, dim)
+        || v.dims() != k.dims()
+        || k.dtype() != q.dtype()
+        || v.dtype() != q.dtype()
+    {
+        return Ok(None);
+    }
+    let grouped_q = q.reshape((batch, kv_heads, 2 * seq, dim))?;
+    let mut scores = grouped_q
+        .matmul(&k.transpose(2, 3)?.contiguous()?)?
+        .affine(scale, 0.0)?
+        .reshape((batch, heads, seq, seq))?;
+    if let Some(mask) = mask {
+        scores = scores.broadcast_add(mask)?;
+    }
+    let context = candle_nn::ops::softmax_last_dim(&scores)?
+        .reshape((batch, kv_heads, 2 * seq, seq))?
+        .matmul(&v.contiguous()?)?
+        .reshape((batch, heads, seq, dim))?;
+    Ok(Some(context))
 }
 
 fn cpu_grouped_attention(
@@ -597,6 +647,23 @@ fn apply_rms_norm(norm: &RmsNorm, xs: &Tensor) -> Result<Tensor> {
 #[cfg(test)]
 #[path = "stage0_qwen3/cpu_tests.rs"]
 mod cpu_tests;
+
+#[cfg(all(
+    test,
+    feature = "cuda",
+    any(target_os = "windows", target_os = "linux")
+))]
+#[path = "stage0_qwen3/cuda_attribution.rs"]
+mod cuda_attribution;
+
+#[cfg(all(
+    test,
+    feature = "cuda",
+    any(target_os = "windows", target_os = "linux")
+))]
+pub(crate) fn cuda_trace_active() -> bool {
+    cuda_attribution::active()
+}
 
 #[cfg(all(test, feature = "metal"))]
 #[path = "stage0_qwen3/metal_tests.rs"]

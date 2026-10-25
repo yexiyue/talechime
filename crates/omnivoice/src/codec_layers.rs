@@ -21,6 +21,18 @@ mod cpu_pointwise;
 #[path = "codec_layers/cpu_conv7.rs"]
 mod cpu_conv7;
 
+#[cfg(all(
+    test,
+    feature = "cuda",
+    any(target_os = "windows", target_os = "linux")
+))]
+#[path = "codec_layers/cuda_deconv_probe.rs"]
+pub(crate) mod cuda_deconv_probe;
+
+#[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+#[path = "codec_layers/cuda_ordered_deconv.rs"]
+pub(crate) mod cuda_ordered_deconv;
+
 /// Lookup table that stays in GGUF storage and gathers rows on demand.
 ///
 /// Float GGML blobs (F32/F16/BF16) are materialized as a dense tensor once at
@@ -356,6 +368,10 @@ impl Module for CodecConvTranspose1d {
 }
 
 fn forward_dense_conv_transpose1d(layer: &ConvTranspose1d, xs: &Tensor) -> CandleResult<Tensor> {
+    #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+    if let Some(output) = cuda_ordered_deconv::forward(layer, xs)? {
+        return Ok(output);
+    }
     let config = layer.config();
     if !xs.device().is_metal()
         || xs.dtype() != DType::F32

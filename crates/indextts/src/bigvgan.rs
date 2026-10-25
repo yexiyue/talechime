@@ -194,12 +194,16 @@ fn fir_downsample(x: &Tensor, filter: &FirFilter) -> Result<Tensor> {
     let k = filter.conv_direct.dim(2)?;
     let pad_left = k / 2 - usize::from(k.is_multiple_of(2));
     let pad_right = k / 2;
-    let x = x.pad_with_same(2, pad_left, pad_right)?;
+    let x = {
+        let _scope = crate::profile::scope(Some(x.device()), "bv.fir_down.pad");
+        x.pad_with_same(2, pad_left, pad_right)?
+    };
     let l = l + pad_left + pad_right;
     if l < k {
         candle_core::bail!("fir input length {l} shorter than kernel {k}");
     }
     let out_len = (l - k) / 2 + 1;
+    let _scope = crate::profile::scope(Some(x.device()), "bv.fir_down.conv");
     let conv = x.reshape((b * c, 1, l))?.conv1d_with_algo(
         &filter.conv_direct,
         0,
@@ -230,10 +234,20 @@ fn fir_upsample(x: &Tensor, filter: &FirFilter) -> Result<Tensor> {
     // L_out of the uncropped conv_transpose; the crops leave exactly 2T.
     let l_out = (t + 2 * pad - 1) * AA_RATIO + AA_KERNEL;
     debug_assert_eq!(l_out - crop_left - crop_right, AA_RATIO * t);
-    let xp = x.pad_with_same(2, pad, pad)?;
-    let odd_phase = fir_conv_sum(&xp, &filter.conv_odd_rev, crop_left / 2, t)?;
-    let even_phase = fir_conv_sum(&xp, &filter.conv_even_rev, crop_left.div_ceil(2), t)?;
-    // The AA_RATIO factor is folded into the phase kernels (see FirFilter).
+    let xp = {
+        let _scope = crate::profile::scope(Some(x.device()), "bv.fir_up.pad");
+        x.pad_with_same(2, pad, pad)?
+    };
+    let odd_phase = {
+        let _scope = crate::profile::scope(Some(x.device()), "bv.fir_up.odd_conv");
+        fir_conv_sum(&xp, &filter.conv_odd_rev, crop_left / 2, t)?
+    };
+    let even_phase = {
+        let _scope = crate::profile::scope(Some(x.device()), "bv.fir_up.even_conv");
+        fir_conv_sum(&xp, &filter.conv_even_rev, crop_left.div_ceil(2), t)?
+    };
+    let _scope = crate::profile::scope(Some(x.device()), "bv.fir_up.interleave_scale");
+    // AA_RATIO is folded into the phase kernels by FirFilter::new.
     Tensor::stack(&[odd_phase, even_phase], 3)?.reshape((b, c, AA_RATIO * t))
 }
 
@@ -742,6 +756,147 @@ impl BigVgan {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "cuda-cudnn")]
+    #[test]
+    #[ignore = "explicit real CUDA BigVGAN profiling; no downloads"]
+    fn real_cuda_fir_stage_diagnostic() -> anyhow::Result<()> {
+        use std::io::Write;
+        let dir = std::path::PathBuf::from(
+            std::env::var_os("INDEXTTS_CONVERTED_DIR")
+                .ok_or_else(|| anyhow::anyhow!("INDEXTTS_CONVERTED_DIR required"))?,
+        );
+        let output = std::path::PathBuf::from(
+            std::env::var_os("INDEXTTS_PROFILE_OUTPUT")
+                .ok_or_else(|| anyhow::anyhow!("INDEXTTS_PROFILE_OUTPUT required"))?,
+        );
+        std::fs::create_dir(&output)?;
+        let device = Device::new_cuda(0)?;
+        let config = std::fs::read_to_string(dir.join("bigvgan.config.json"))?;
+        let vb = unsafe {
+            VarBuilder::from_mmaped_safetensors(
+                &[dir.join("bigvgan.safetensors")],
+                DType::F32,
+                &device,
+            )?
+        };
+        let model = BigVgan::load(&vb, &config)?;
+        for (case, frames) in [8, 128, 224, 8].into_iter().enumerate() {
+            let width = frames + 7;
+            let data: Vec<f32> = (0..80 * width)
+                .map(|i| -4.0 + (i as f32 * 0.031).sin() * 3.0)
+                .collect();
+            let mel = Tensor::from_vec(data, (1, 80, width), &device)?.narrow(2, 3, frames)?;
+            let mut expected = None;
+            for round in 0..6 {
+                device.synchronize()?;
+                let start = std::time::Instant::now();
+                let pcm = {
+                    let _report = crate::profile::report();
+                    model.forward(&mel)?
+                };
+                device.synchronize()?;
+                let elapsed = start.elapsed().as_secs_f64();
+                let values = pcm.flatten_all()?.to_vec1::<f32>()?;
+                anyhow::ensure!(values.len() == frames * 256);
+                anyhow::ensure!(values.iter().all(|v| v.is_finite()));
+                let bits: Vec<_> = values.iter().map(|v| v.to_bits()).collect();
+                if let Some(expected) = &expected {
+                    assert_eq!(&bits, expected);
+                } else {
+                    expected = Some(bits);
+                }
+                let mut file = std::io::BufWriter::new(std::fs::File::create(
+                    output.join(format!("case-{case}-round-{round}.f32le")),
+                )?);
+                for value in values {
+                    file.write_all(&value.to_le_bytes())?;
+                }
+                file.flush()?;
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "diagnostic":"real_bigvgan_synthetic_mel_fir_stages",
+                        "case":case,"frames":frames,"round":round,"warmup":round==0,
+                        "profile_enabled":crate::profile::enabled(),"seconds":elapsed,
+                        "samples":frames*256,"production_request":false
+                    })
+                );
+            }
+        }
+        Ok(())
+    }
+    #[cfg(feature = "cuda")]
+    #[test]
+    #[ignore = "explicit CUDA constant-reuse diagnostic; no model download"]
+    fn cuda_snake_constant_reuse_diagnostic() -> candle_core::Result<()> {
+        let device = Device::new_cuda(0)?;
+        for (channels, frames) in [(512, 172), (128, 2756), (32, 22048)] {
+            let alpha = Tensor::from_vec(
+                (0..channels).map(|i| (i as f32 * 0.013).sin()).collect(),
+                (1, channels, 1),
+                &device,
+            )?;
+            let beta = (&alpha * -0.7)?;
+            let activation = Activation1d {
+                logscale: true,
+                alpha,
+                beta: Some(beta),
+            };
+            let a = activation.alpha.exp()?;
+            let scale = (activation.beta.as_ref().unwrap().exp()? + 1e-9)?.recip()?;
+            let x = Tensor::from_vec(
+                (0..channels * frames)
+                    .map(|i| (i as f32 * 0.017).sin() * 3.0)
+                    .collect(),
+                (1, channels, frames),
+                &device,
+            )?;
+            let cached = || -> candle_core::Result<Tensor> {
+                let s = x.broadcast_mul(&a)?.sin()?.sqr()?;
+                x.broadcast_add(&s.broadcast_mul(&scale)?)
+            };
+            let original = activation
+                .apply_activation(&x)?
+                .flatten_all()?
+                .to_vec1::<f32>()?;
+            let reused = cached()?.flatten_all()?.to_vec1::<f32>()?;
+            assert!(original.iter().all(|v| v.is_finite()));
+            assert!(
+                original
+                    .iter()
+                    .zip(&reused)
+                    .all(|(a, b)| a.to_bits() == b.to_bits())
+            );
+            for round in 0..6 {
+                let mut seconds = [0.0; 2];
+                // Alternate order; one warm round followed by five measured rounds.
+                for arm in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+                    device.synchronize()?;
+                    let start = std::time::Instant::now();
+                    for _ in 0..40 {
+                        let output = if arm == 0 {
+                            activation.apply_activation(&x)?
+                        } else {
+                            cached()?
+                        };
+                        std::hint::black_box(output);
+                    }
+                    device.synchronize()?;
+                    seconds[arm] = start.elapsed().as_secs_f64() / 40.0;
+                }
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "diagnostic": "synthetic_snake_constant_reuse", "channels": channels,
+                        "frames": frames, "round": round, "warmup": round == 0,
+                        "original_seconds": seconds[0], "cached_seconds": seconds[1],
+                        "pcm_claim": false, "activation_bits_equal": true
+                    })
+                );
+            }
+        }
+        Ok(())
+    }
     use super::*;
     use candle_core::{DType, Device};
     use candle_nn::VarMap;

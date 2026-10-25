@@ -116,9 +116,13 @@ fn decoder_graph_preserves_outputs_across_shapes_and_sessions() -> Result<()> {
             .collect())
     };
     let mut retained = None;
-    for (seed, frames) in [35, 35, 35, 34, 34, 35, 33, 33, 32, 32, 31, 31, 35, 35, 35]
-        .into_iter()
-        .enumerate()
+    let mut large_visits = std::collections::HashMap::new();
+    for (seed, frames) in [
+        35, 35, 35, 34, 34, 35, 33, 33, 32, 32, 31, 31, 35, 35, 35, 106, 106, 106, 128, 128, 128,
+        129, 129, 106, 106,
+    ]
+    .into_iter()
+    .enumerate()
     {
         let codes = Tensor::from_vec(
             (0..16 * frames)
@@ -141,6 +145,17 @@ fn decoder_graph_preserves_outputs_across_shapes_and_sessions() -> Result<()> {
             retained = Some((actual, expected));
         }
         assert!(model.decoder.recorded_shapes() <= 4);
+        if [106, 128].contains(&frames) {
+            let visits = large_visits.entry(frames).or_insert(0);
+            *visits += 1;
+            if *visits >= 2 {
+                assert!(
+                    model.decoder.recorded_frame_sizes().contains(&frames),
+                    "large shape {frames} did not record"
+                );
+            }
+        }
+        assert!(!model.decoder.recorded_frame_sizes().contains(&129));
     }
     assert!(
         model.decoder.recorded_shapes() > 0,
@@ -397,5 +412,54 @@ fn cuda_graph_headroom_probe() -> Result<()> {
                 "eager_ms": [eager_a, eager_b], "replay_ms": [replay_a, replay_b]})
         );
     }
+    Ok(())
+}
+
+#[test]
+#[ignore = "explicit CUDA Base model and cached ICL prompt; no downloads"]
+fn decoder_graph_large_clone_preserves_codes_pcm_and_eos() -> Result<()> {
+    let path = std::env::var("QWEN_CP_TEST_MODEL")?;
+    let prompt_path = std::env::var("QWEN_CP_TEST_PROMPT")?;
+    let model = Qwen3TTS::from_pretrained(&path, Device::new_cuda(0)?)?;
+    let prompt = VoiceClonePrompt::load(Path::new(&prompt_path), model.device())?;
+    let options = SynthesisOptions {
+        seed: Some(7_330_414_270_409_262_323),
+        chunk_frames: 20,
+        repetition_penalty: 1.5,
+        max_length: 375,
+        ..Default::default()
+    };
+    let render = |eager_decoder| -> Result<_> {
+        let mut stream = model.synthesize_voice_clone_streaming(
+            "你好，欢迎收听今天的故事。",
+            &prompt,
+            Language::Chinese,
+            options.clone(),
+        )?;
+        stream.capture_codes_for_test(eager_decoder);
+        let mut pcm = Vec::new();
+        while let Some(audio) = stream.next_chunk()? {
+            anyhow::ensure!(audio.samples.iter().all(|v| v.is_finite()));
+            pcm.extend(audio.samples.iter().map(|v| v.to_bits()));
+        }
+        anyhow::ensure!(stream.is_done(), "missing natural EOS");
+        let codes = stream.captured_codes_for_test().to_vec();
+        assert_eq!(codes.len(), stream.frames_generated());
+        assert_eq!(pcm.len(), codes.len() * SAMPLES_PER_FRAME);
+        Ok((codes, pcm))
+    };
+    let expected = render(true)?;
+    for pass in 0..3 {
+        assert_eq!(render(false)?, expected, "decode graph pass {pass}");
+    }
+    assert!(
+        model.decoder.recorded_frame_sizes().contains(&106),
+        "reference-prefix graph did not record"
+    );
+    eprintln!(
+        "{} generated code frames and {} raw PCM F32 patterns match eager across miss/capture/replay; natural EOS observed",
+        expected.0.len(),
+        expected.1.len()
+    );
     Ok(())
 }

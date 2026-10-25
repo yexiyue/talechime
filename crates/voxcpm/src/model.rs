@@ -7,6 +7,11 @@ use crate::{
 use candle_core::{DType, Device, Result, Tensor};
 use std::path::Path;
 
+#[cfg(all(test, feature = "cuda", target_os = "windows"))]
+mod cuda_decoder_tests;
+#[cfg(all(test, feature = "cuda", target_os = "windows"))]
+mod cuda_profile_tests;
+
 #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
 use crate::cuda_graph::CfmGraphs;
 
@@ -254,7 +259,10 @@ impl Model {
             #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
             graphs: CfmGraphs::new(device),
             #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
-            decoder_graph: crate::cuda_graph::decoder::DecoderGraph::for_device(device, false),
+            decoder_graph: crate::cuda_graph::decoder::DecoderGraph::for_device(
+                device,
+                cfg!(target_os = "windows") && dtype == DType::BF16,
+            ),
         })
     }
     /// Measurements for the latest request when module timing is enabled.
@@ -599,6 +607,12 @@ impl Model {
             })?;
             self.timings.cfm += elapsed;
             patch_capture(&patch)?;
+            #[cfg(all(
+                test,
+                feature = "cuda",
+                any(target_os = "windows", target_os = "linux")
+            ))]
+            crate::attention::cuda_tests::capture_patch(&patch)?;
             let (decoded, elapsed) = measure(o.measure_modules, &self.device, || {
                 #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
                 if let Some(graph) = &mut self.decoder_graph

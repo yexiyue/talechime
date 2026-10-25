@@ -103,6 +103,12 @@ pub fn verify(registry: &crate::Registry, backend: &str, model: &str) -> anyhow:
             &crate::cosyvoice3::directory(root),
             include_str!("cosyvoice3/resources.json"),
         )?,
+        #[cfg(feature = "indextts")]
+        "indextts" => manifest(
+            root,
+            &crate::indextts::directory(root),
+            include_str!("indextts/conversion-manifest.json"),
+        )?,
         #[cfg(feature = "moss")]
         "moss" => match model {
             #[cfg(feature = "moss-nano-candle")]
@@ -134,7 +140,6 @@ pub fn verify(registry: &crate::Registry, backend: &str, model: &str) -> anyhow:
             }
             _ => anyhow::bail!("model is not compiled"),
         },
-        // IndexTTS has no production digest manifest. Do not invent an oracle.
         _ => Vec::new(),
     };
     anyhow::ensure!(
@@ -146,7 +151,11 @@ pub fn verify(registry: &crate::Registry, backend: &str, model: &str) -> anyhow:
         backend: backend.into(),
         model: model.into(),
         resources_root: root.to_owned(),
-        verification: "production_manifest",
+        verification: if backend == "indextts" {
+            "verified_conversion_manifest"
+        } else {
+            "production_manifest"
+        },
         files,
     })
 }

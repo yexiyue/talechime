@@ -63,6 +63,59 @@ fn cpu_greedy_confidence_gather_matches_full_reduction() -> Result<()> {
     check_greedy_confidence(&Device::Cpu)
 }
 
+#[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+#[test]
+#[ignore = "requires an actual CUDA device; no model downloads"]
+fn cuda_greedy_confidence_gather_matches_full_reduction() -> Result<()> {
+    check_greedy_confidence(&Device::new_cuda(0)?)
+}
+
+#[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+#[test]
+#[ignore = "synthetic CUDA boundary timing; run a frozen release binary serially"]
+fn cuda_greedy_confidence_boundary_timing() -> Result<()> {
+    let device = Device::new_cuda(0)?;
+    for frames in [41, 130] {
+        let values = Tensor::arange(0u32, (8 * frames * 1025) as u32, &device)?
+            .to_dtype(DType::F32)?
+            .sin()?
+            .reshape((1, 8, frames, 1025))?;
+        let original = || -> Result<(Tensor, Tensor)> {
+            let tokens = values
+                .argmax(candle_core::D::Minus1)?
+                .to_dtype(DType::I64)?;
+            Ok((tokens, values.max(candle_core::D::Minus1)?))
+        };
+        let candidate = || -> Result<(Tensor, Tensor)> {
+            let tokens = values.argmax(candle_core::D::Minus1)?;
+            let confidence = values
+                .gather(
+                    &tokens.unsqueeze(candle_core::D::Minus1)?,
+                    candle_core::D::Minus1,
+                )?
+                .squeeze(candle_core::D::Minus1)?;
+            Ok((tokens.to_dtype(DType::I64)?, confidence))
+        };
+        std::hint::black_box(original()?);
+        std::hint::black_box(candidate()?);
+        for group in 0..5 {
+            for (slot, fast) in [false, true, true, false].into_iter().enumerate() {
+                device.synchronize()?;
+                let started = std::time::Instant::now();
+                for _ in 0..20 {
+                    std::hint::black_box(if fast { candidate()? } else { original()? });
+                }
+                device.synchronize()?;
+                println!(
+                    "CUDA_CONFIDENCE {}",
+                    serde_json::json!({"frames":frames,"group":group,"slot":slot,"candidate":fast,"seconds_per_call":started.elapsed().as_secs_f64()/20.0,"input":"synthetic_f32_not_real_model"})
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn cpu_greedy_confidence_preserves_nonfinite_and_signed_zero_results() -> Result<()> {
     for values in [

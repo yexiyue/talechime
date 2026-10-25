@@ -13,6 +13,7 @@ pub mod prepare;
 pub mod process;
 pub mod profiling;
 pub mod records;
+pub mod reference;
 pub mod report;
 pub mod resources;
 pub mod runner;
@@ -33,6 +34,16 @@ pub struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Run an explicitly pinned reference adapter under the native process owner.
+    Reference {
+        #[arg(long)]
+        job: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        /// Audit diagnostic artifacts without accepting them as TTS timing rounds.
+        #[arg(long)]
+        diagnostic: bool,
+    },
     /// Inspect optional native tools; missing tools do not block baseline runs.
     ProfileTools,
     /// Attach an externally collected native profile to a profile-mode run.
@@ -165,11 +176,25 @@ enum Command {
 pub fn run(args: Args) -> anyhow::Result<()> {
     let _handler = matches!(
         args.command,
-        Command::Run { .. } | Command::Resume { .. } | Command::Overhead { .. }
+        Command::Run { .. }
+            | Command::Resume { .. }
+            | Command::Overhead { .. }
+            | Command::Reference { .. }
     )
     .then(cancellation::install)
     .transpose()?;
     match args.command {
+        Command::Reference {
+            job,
+            output,
+            diagnostic,
+        } => {
+            if diagnostic {
+                reference::run_diagnostic(&job, &output)
+            } else {
+                reference::run(&job, &output)
+            }
+        }
         Command::ProfileTools => {
             println!("{}", serde_json::to_string_pretty(&profiling::tools())?);
             Ok(())

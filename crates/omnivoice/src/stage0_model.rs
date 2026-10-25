@@ -735,6 +735,25 @@ impl Stage0RuntimePlan {
         };
 
         let mut step_captures = Vec::new();
+        #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+        let mut forward_graph = {
+            let enabled = self.device.is_cuda()
+                && self.runtime_dtype == DType::F16
+                && matches!(model.backbone, Stage0BackboneKind::Dense(_))
+                && prepared.input_ids.dims()[..2] == [2, 8]
+                && (8..=512).contains(&prepared.input_ids.dim(2)?)
+                && config.num_step >= 2
+                && !debug_enabled
+                && !sync_probe_enabled()
+                && !std::env::var("OMNIVOICE_STAGE_TIME").is_ok_and(|v| v == "1");
+            #[cfg(test)]
+            let enabled = enabled
+                && !cuda_graph_probe::active()
+                && !cuda_head_probe::active()
+                && !cuda_attribution::active()
+                && !crate::stage0_qwen3::cuda_trace_active();
+            enabled.then(|| cuda_forward_graph::ForwardGraph::new(model))
+        };
         for step in 0..config.num_step {
             if self.cancellation_requested() {
                 return Err(OmniVoiceError::InvalidRequest(
@@ -762,20 +781,59 @@ impl Stage0RuntimePlan {
                     );
                 }
                 let started = probe.begin(&self.device)?;
-                let out = model.forward_with_text_cache(
-                    &batch_input_ids,
-                    &prepared.audio_mask,
-                    &attention_mask,
-                    &empty_capture_layers,
-                    Some(&cached_text_embeds),
-                    Some(flash_seqlens.as_slice()),
-                )?;
+                let eager = || {
+                    model
+                        .forward_with_text_cache(
+                            &batch_input_ids,
+                            &prepared.audio_mask,
+                            &attention_mask,
+                            &empty_capture_layers,
+                            Some(&cached_text_embeds),
+                            Some(flash_seqlens.as_slice()),
+                        )
+                        .map(|out| out.logits)
+                };
+                #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+                let out = if let Some(graph) = forward_graph.as_mut() {
+                    graph.forward(
+                        [
+                            &batch_input_ids,
+                            &prepared.audio_mask,
+                            &attention_mask,
+                            &cached_text_embeds,
+                        ],
+                        &flash_seqlens,
+                    )?
+                } else {
+                    eager()?
+                };
+                #[cfg(not(all(
+                    feature = "cuda",
+                    any(target_os = "windows", target_os = "linux")
+                )))]
+                let out = eager()?;
                 probe.end(&self.device, started, "stage0_forward_sync")?;
+                #[cfg(all(
+                    test,
+                    feature = "cuda",
+                    any(target_os = "windows", target_os = "linux")
+                ))]
+                cuda_graph_probe::check(
+                    model,
+                    [
+                        &batch_input_ids,
+                        &prepared.audio_mask,
+                        &attention_mask,
+                        &cached_text_embeds,
+                    ],
+                    &flash_seqlens,
+                    &out,
+                )?;
                 out
             };
             // Keep full logits in runtime dtype; only cast the (small) target
             // slices to f32 for scoring — avoids a full (2B,C,S,V) materialization.
-            let batch_logits = &forward.logits;
+            let batch_logits = &forward;
             let step_needs_noise = schedules
                 .iter()
                 .take(batch_size)
@@ -1171,6 +1229,12 @@ impl Stage0Model {
                 self.audio_vocab_size,
             ))?
             .permute((0, 2, 1, 3))?;
+        #[cfg(all(
+            test,
+            feature = "cuda",
+            any(target_os = "windows", target_os = "linux")
+        ))]
+        cuda_head_probe::check(self, &final_hidden, &logits, flash_seqlens)?;
         Ok(Stage0ForwardOutputs {
             inputs_embeds,
             backbone,
@@ -1238,6 +1302,12 @@ fn predict_tokens_with_scoring_from_tensors(
         candle_nn::ops::log_softmax(c_logits, candle_core::D::Minus1)?
     };
     let log_probs = mask_audio_token(&log_probs, audio_mask_id)?;
+    #[cfg(all(
+        test,
+        feature = "cuda",
+        any(target_os = "windows", target_os = "linux")
+    ))]
+    cuda_attribution::capture(c_logits, u_logits, &log_probs)?;
     if log_probs.device().is_cpu() && class_temperature > 0.0 {
         let filtered = filter_top_k(&log_probs, 0.1)?;
         let pred_tokens = gumbel_argmax_cpu(&filtered, class_temperature, cpu_rng)?;
@@ -1248,6 +1318,7 @@ fn predict_tokens_with_scoring_from_tensors(
         let filtered = filter_top_k(&log_probs, 0.1)?;
         gumbel_argmax(&filtered, class_temperature)?
     } else if log_probs.device().is_metal()
+        || log_probs.device().is_cuda()
         || (log_probs.device().is_cpu()
             && log_probs.dtype() == DType::F32
             && log_probs.is_contiguous())
@@ -1992,6 +2063,43 @@ pub(crate) fn tensor_to_i64_tensor2(tensor: &Tensor) -> Result<I64Tensor2> {
 #[cfg(test)]
 #[path = "stage0_model/scoring_tests.rs"]
 mod scoring_tests;
+
+#[cfg(all(
+    test,
+    feature = "cuda",
+    any(target_os = "windows", target_os = "linux")
+))]
+#[path = "stage0_model/cuda_attribution.rs"]
+mod cuda_attribution;
+
+#[cfg(all(
+    test,
+    feature = "cuda",
+    any(target_os = "windows", target_os = "linux")
+))]
+#[path = "stage0_model/cuda_graph_probe.rs"]
+mod cuda_graph_probe;
+
+#[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]
+#[path = "stage0_model/cuda_forward_graph.rs"]
+mod cuda_forward_graph;
+
+#[cfg(all(
+    test,
+    feature = "cuda",
+    any(target_os = "windows", target_os = "linux")
+))]
+pub(crate) use cuda_forward_graph::replay::{
+    Replay as CudaTestReplay, is_capturing as cuda_test_is_capturing,
+};
+
+#[cfg(all(
+    test,
+    feature = "cuda",
+    any(target_os = "windows", target_os = "linux")
+))]
+#[path = "stage0_model/cuda_head_probe.rs"]
+mod cuda_head_probe;
 
 #[cfg(test)]
 #[path = "stage0_model/probe_tests.rs"]

@@ -1,7 +1,11 @@
-//! Qwen3 global and position-free local transformers.
+//! Qwen3 global and local transformers with optional rotary positions.
 use crate::config::TransformerConfig;
 use candle_core::{DType, Module, Result, Tensor};
 use candle_nn::{Linear, RmsNorm, VarBuilder, linear_no_bias, rms_norm};
+#[cfg(all(test, feature = "cuda", target_os = "windows"))]
+mod cuda_rope_tests;
+mod rotary;
+pub(crate) use rotary::RotaryTables;
 
 pub(crate) struct Mlp {
     gate: Linear,
@@ -36,24 +40,39 @@ pub(crate) fn attend(
     key_offset: usize,
     context: Option<usize>,
 ) -> Result<Tensor> {
+    #[cfg(all(test, feature = "cuda"))]
+    if cuda_mask_tests::FORCE_MASKED.get() {
+        return cuda_mask_tests::masked_reference(q, k, v, query_offset, key_offset, context);
+    }
     let (_, _, qlen, dim) = q.dims4()?;
     let klen = k.dim(2)?;
     let scores =
         (q.contiguous()?.matmul(&k.transpose(2, 3)?.contiguous()?)? / (dim as f64).sqrt())?;
-    let mask: Vec<u8> = (0..qlen)
-        .flat_map(|i| {
-            (0..klen).map(move |j| {
-                let qp = query_offset + i;
-                let kp = key_offset + j;
-                u8::from(kp > qp || context.is_some_and(|c| qp.saturating_sub(kp) >= c))
+    // A single query at the cache end can attend to every cached key.
+    // Keep windowed attention and other devices on the existing masked path.
+    let scores = if q.device().is_cuda()
+        && qlen == 1
+        && klen > 0
+        && context.is_none()
+        && query_offset.checked_sub(key_offset) == Some(klen - 1)
+    {
+        scores
+    } else {
+        let mask: Vec<u8> = (0..qlen)
+            .flat_map(|i| {
+                (0..klen).map(move |j| {
+                    let qp = query_offset + i;
+                    let kp = key_offset + j;
+                    u8::from(kp > qp || context.is_some_and(|c| qp.saturating_sub(kp) >= c))
+                })
             })
-        })
-        .collect();
-    let mask =
-        Tensor::from_vec(mask, (1, 1, qlen, klen), q.device())?.broadcast_as(scores.shape())?;
-    let negative = Tensor::full(f32::NEG_INFINITY, scores.shape(), scores.device())?
-        .to_dtype(scores.dtype())?;
-    let scores = mask.where_cond(&negative, &scores)?;
+            .collect();
+        let mask =
+            Tensor::from_vec(mask, (1, 1, qlen, klen), q.device())?.broadcast_as(scores.shape())?;
+        let negative = Tensor::full(f32::NEG_INFINITY, scores.shape(), scores.device())?
+            .to_dtype(scores.dtype())?;
+        mask.where_cond(&negative, &scores)?
+    };
     candle_nn::ops::softmax_last_dim(&scores)?.matmul(&v.contiguous()?)
 }
 
@@ -107,7 +126,13 @@ impl Layer {
             cfg: cfg.clone(),
         })
     }
-    fn forward(&mut self, x: &Tensor, offset: usize, rotary: bool) -> Result<Tensor> {
+    fn forward(
+        &mut self,
+        x: &Tensor,
+        offset: usize,
+        rotary: bool,
+        tables: Option<&RotaryTables>,
+    ) -> Result<Tensor> {
         let (b, t, _) = x.dims3()?;
         let c = &self.cfg;
         let norm = self.prenorm.forward(x)?;
@@ -134,7 +159,9 @@ impl Layer {
             .forward(&norm)?
             .reshape((b, t, c.num_key_value_heads, c.head_dim))?
             .transpose(1, 2)?;
-        let (q, k) = if rotary {
+        let (q, k) = if let Some(tables) = tables {
+            (tables.apply(&q)?, tables.apply(&k)?)
+        } else if rotary {
             (
                 rope(&q, offset, c.rope_theta, false)?,
                 rope(&k, offset, c.rope_theta, false)?,
@@ -191,10 +218,32 @@ impl Transformer {
         x: &Tensor,
         cancelled: &impl Fn() -> bool,
     ) -> anyhow::Result<Tensor> {
+        let reuse_tables = cfg!(all(target_os = "windows", feature = "cuda"))
+            && x.device().is_cuda()
+            && self.rotary;
+        #[cfg(all(test, feature = "cuda", target_os = "windows"))]
+        let reuse_tables = reuse_tables && !cuda_rope_tests::reference_enabled();
+        let tables = if reuse_tables && let Some(layer) = self.layers.first() {
+            crate::check_cancel(cancelled)?;
+            Some(RotaryTables::new(
+                x.dim(1)?,
+                layer.cfg.head_dim,
+                self.offset,
+                layer.cfg.rope_theta,
+                x.dtype(),
+                x.device(),
+            )?)
+        } else {
+            None
+        };
+        #[cfg(all(test, feature = "cuda", target_os = "windows"))]
+        if tables.is_some() {
+            cuda_rope_tests::shared_table_built();
+        }
         let mut x = x.clone();
         for layer in &mut self.layers {
             crate::check_cancel(cancelled)?;
-            x = layer.forward(&x, self.offset, self.rotary)?;
+            x = layer.forward(&x, self.offset, self.rotary, tables.as_ref())?;
         }
         self.offset += x.dim(1)?;
         Ok(self.norm.forward(&x)?)
@@ -255,6 +304,23 @@ mod tests {
         Ok(())
     }
     #[test]
+    fn single_query_preserves_causality_with_absolute_key_offsets() -> Result<()> {
+        let dev = Device::Cpu;
+        let q = Tensor::zeros((1, 1, 1, 2), DType::F32, &dev)?;
+        let k = Tensor::zeros((1, 1, 3, 2), DType::F32, &dev)?;
+        let v = Tensor::from_vec(vec![2f32, 2., 4., 4., 12., 12.], (1, 1, 3, 2), &dev)?;
+        for (query, key, expected) in [(9, 7, 6.), (8, 7, 3.), (7, 7, 2.)] {
+            assert_eq!(
+                attend(&q, &k, &v, query, key, None)?
+                    .flatten_all()?
+                    .to_vec1::<f32>()?,
+                vec![expected, expected]
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn causal_window_uses_absolute_positions() -> Result<()> {
         let dev = Device::Cpu;
         let q = Tensor::zeros((1, 1, 1, 2), DType::F32, &dev)?;
@@ -266,6 +332,125 @@ mod tests {
                 .to_vec1::<f32>()?,
             vec![4., 4.]
         );
+        Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "cuda"))]
+pub(crate) mod cuda_mask_tests {
+    use super::*;
+    use candle_core::Device;
+
+    thread_local! {
+        pub(super) static FORCE_MASKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    pub(crate) fn with_original_mask<T>(operation: impl FnOnce() -> T) -> T {
+        struct Reset(bool);
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                FORCE_MASKED.set(self.0);
+            }
+        }
+        let _reset = Reset(FORCE_MASKED.replace(true));
+        operation()
+    }
+
+    pub(super) fn masked_reference(
+        q: &Tensor,
+        k: &Tensor,
+        v: &Tensor,
+        query_offset: usize,
+        key_offset: usize,
+        context: Option<usize>,
+    ) -> Result<Tensor> {
+        let (_, _, qlen, dim) = q.dims4()?;
+        let klen = k.dim(2)?;
+        let scores =
+            (q.contiguous()?.matmul(&k.transpose(2, 3)?.contiguous()?)? / (dim as f64).sqrt())?;
+        let mask: Vec<u8> = (0..qlen)
+            .flat_map(|i| {
+                (0..klen).map(move |j| {
+                    let qp = query_offset + i;
+                    let kp = key_offset + j;
+                    u8::from(kp > qp || context.is_some_and(|c| qp.saturating_sub(kp) >= c))
+                })
+            })
+            .collect();
+        let mask =
+            Tensor::from_vec(mask, (1, 1, qlen, klen), q.device())?.broadcast_as(scores.shape())?;
+        let negative = Tensor::full(f32::NEG_INFINITY, scores.shape(), scores.device())?
+            .to_dtype(scores.dtype())?;
+        let scores = mask.where_cond(&negative, &scores)?;
+        candle_nn::ops::softmax_last_dim(&scores)?.matmul(&v.contiguous()?)
+    }
+
+    #[test]
+    #[ignore = "explicit CUDA numeric oracle; no model downloads"]
+    fn real_cuda_unmasked_decode_matches_original_mask_bits() -> anyhow::Result<()> {
+        let device = Device::new_cuda(0)?;
+        let mut checked = 0;
+        for klen in [1, 2, 17, 226, 269] {
+            for qlen in [1, 3] {
+                for key_offset in [0, 7] {
+                    let q = Tensor::from_vec(
+                        (0..4 * qlen * 64)
+                            .map(|i| ((i * 17 % 101) as f32 - 50.) / 50.)
+                            .collect(),
+                        (1, 4, qlen, 64),
+                        &device,
+                    )?;
+                    let k = Tensor::from_vec(
+                        (0..4 * klen * 64)
+                            .map(|i| ((i * 13 % 97) as f32 - 48.) / 48.)
+                            .collect(),
+                        (1, 4, klen, 64),
+                        &device,
+                    )?;
+                    let v = Tensor::from_vec(
+                        (0..4 * klen * 64)
+                            .map(|i| ((i * 23 % 89) as f32 - 44.) / 44.)
+                            .collect(),
+                        (1, 4, klen, 64),
+                        &device,
+                    )?;
+                    for dtype in [DType::F32, DType::F16, DType::BF16] {
+                        let q = q.to_dtype(dtype)?;
+                        let k = k.to_dtype(dtype)?;
+                        let v = v.to_dtype(dtype)?;
+                        for query_offset in [key_offset, key_offset + klen - 1, key_offset + klen] {
+                            for context in [None, Some(1), Some(8)] {
+                                let a = attend(&q, &k, &v, query_offset, key_offset, context)?
+                                    .flatten_all()?
+                                    .to_dtype(DType::F32)?
+                                    .to_vec1::<f32>()?;
+                                let b = masked_reference(
+                                    &q,
+                                    &k,
+                                    &v,
+                                    query_offset,
+                                    key_offset,
+                                    context,
+                                )?
+                                .flatten_all()?
+                                .to_dtype(DType::F32)?
+                                .to_vec1::<f32>()?;
+                                if context.is_none() {
+                                    assert!(a.iter().all(|x| x.is_finite()));
+                                }
+                                assert_eq!(
+                                    a.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+                                    b.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+                                    "k={klen} q={qlen} key={key_offset} query={query_offset} context={context:?}"
+                                );
+                                checked += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("{checked} CUDA attention cases match original masked implementation bitwise");
         Ok(())
     }
 }

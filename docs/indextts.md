@@ -20,7 +20,7 @@ cargo build --release --locked -p talechime --features indextts-cuda-cudnn
 ROOT/indextts/models/2.5/c39ce5ba-candle-v1/
 ```
 
-该目录需包含 `config.json`、`gpt.safetensors`、`codec.safetensors`、`s2mel.safetensors`、`campplus.safetensors`、`bigvgan.safetensors`、`bigvgan.config.json`、`feats.safetensors`、`multilingual_zh_ja_yue_char_del.tiktoken`，以及 `w2v-bert-2.0/{model.safetensors,config.json}`。准备入口检查文件非空，模型加载再校验结构；目前没有已发布转换产物的固定 SHA-256 清单，来源身份须由操作者按上游 revision 核验。模型权重和用户音频不提交仓库。
+该目录需包含 `config.json`、`gpt.safetensors`、`codec.safetensors`、`s2mel.safetensors`、`campplus.safetensors`、`bigvgan.safetensors`、`bigvgan.config.json`、`feats.safetensors`、`multilingual_zh_ja_yue_char_del.tiktoken`，以及 `w2v-bert-2.0/{model.safetensors,config.json}`。准备入口检查文件非空，模型加载再校验结构。开发性能工具另外使用已核验转换版本的 [固定摘要清单](../crates/talechime-backends/src/indextts/conversion-manifest.json)，校验全部文件且拒绝逃出自定义资源根的联接；序列化不同但数值相同的自定义转换不会自动获此性能收据。来源与逐张量核验见 [Windows 调查](records/indextts/indextts-windows-production-2026-10-24.md)。不提供转换权重下载，模型权重和用户音频不提交仓库。
 
 ## 导入并朗读
 

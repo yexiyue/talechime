@@ -173,6 +173,7 @@ impl Engine {
                                     tokens,
                                     "Weiguo",
                                     Some(42),
+                                    None,
                                     &tx,
                                     &mut GenerationStats::default(),
                                 )
@@ -236,8 +237,11 @@ fn synthesize(
                 format = Some(current);
                 first.get_or_insert(began.elapsed().as_secs_f64() * 1000.0);
                 if writer.is_none() {
-                    writer = Some(hound::WavWriter::create(
-                        output,
+                    writer = Some(hound::WavWriter::new(
+                        std::io::BufWriter::with_capacity(
+                            64 * 1024,
+                            std::fs::File::create_new(output)?,
+                        ),
                         hound::WavSpec {
                             channels: pcm.channels,
                             sample_rate: pcm.sample_rate,
@@ -344,6 +348,7 @@ fn evaluate(args: &[String], rounds: usize, summary: &mut serde_json::Value) -> 
         })
         .collect::<anyhow::Result<_>>()?;
     anyhow::ensure!(!segments.is_empty(), "empty corpus");
+    summary["tokenized_segments"] = serde_json::to_value(&segments)?;
     let profile = summary["profiled"]
         .as_bool()
         .unwrap()

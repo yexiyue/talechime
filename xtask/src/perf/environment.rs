@@ -2,6 +2,7 @@
 use super::prepare::capture;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, process::Command, time::Duration};
+mod ort_identity;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Environment {
@@ -13,8 +14,8 @@ pub struct Environment {
     pub flags: BTreeMap<String, Option<String>>,
 }
 
-pub fn flags() -> BTreeMap<String, Option<String>> {
-    [
+pub fn flags() -> anyhow::Result<BTreeMap<String, Option<String>>> {
+    let mut flags = [
         "CUDA_VISIBLE_DEVICES",
         "CUDA_DEVICE_ORDER",
         "CUBLAS_WORKSPACE_CONFIG",
@@ -29,7 +30,9 @@ pub fn flags() -> BTreeMap<String, Option<String>> {
     ]
     .into_iter()
     .map(|name| (name.into(), std::env::var(name).ok()))
-    .collect()
+    .collect();
+    ort_identity::record(&mut flags, std::env::var_os("ORT_DYLIB_PATH").as_deref())?;
+    Ok(flags)
 }
 
 pub fn capture_environment(provider: &str) -> anyhow::Result<Environment> {
@@ -77,7 +80,7 @@ pub fn capture_environment(provider: &str) -> anyhow::Result<Environment> {
         arch: std::env::consts::ARCH.into(),
         hardware,
         driver,
-        flags: flags(),
+        flags: flags()?,
     })
 }
 

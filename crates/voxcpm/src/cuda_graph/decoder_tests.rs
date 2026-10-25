@@ -15,11 +15,11 @@ use crate::{codec::Codec, weights::Weights};
 use candle_core::{DType, Device, Result, Tensor};
 use std::path::PathBuf;
 
-fn frame(seed: usize, device: &Device) -> Result<Tensor> {
+fn frame(seed: usize, device: &Device, dtype: DType) -> Result<Tensor> {
     let values: Vec<f32> = (0..64 * 4)
         .map(|i| ((i * 17 + seed * 29) as f32 * 0.13).sin() * 0.25)
         .collect();
-    Tensor::from_vec(values, (1, 64, 4), device)?.to_dtype(DType::F16)
+    Tensor::from_vec(values, (1, 64, 4), device)?.to_dtype(dtype)
 }
 
 fn bits(tensor: &Tensor) -> Result<Vec<u32>> {
@@ -35,10 +35,29 @@ fn bits(tensor: &Tensor) -> Result<Vec<u32>> {
 #[test]
 #[ignore = "requires local Acoustic-F16 GGUF and CUDA; run serially"]
 fn full_decoder_replay_preserves_state_and_reset() -> Result<()> {
-    let root =
-        PathBuf::from(std::env::var_os("VOXCPM_TEST_MODELS").expect("set VOXCPM_TEST_MODELS"));
+    decoder_state_gate(false)
+}
+
+#[test]
+#[ignore = "requires local original AudioVAE F32 weights and CUDA; run serially"]
+fn original_f32_decoder_replay_preserves_state_and_reset() -> Result<()> {
+    decoder_state_gate(true)
+}
+
+fn decoder_state_gate(original: bool) -> Result<()> {
+    let variable = if original {
+        "VOXCPM_TEST_ORIGINAL_MODELS"
+    } else {
+        "VOXCPM_TEST_MODELS"
+    };
+    let root = PathBuf::from(std::env::var_os(variable).expect("local model directory required"));
     let device = Device::new_cuda(0)?;
-    let mut weights = Weights::open(&root.join("VoxCPM2-Acoustic-F16.gguf"), &device, DType::F16)?;
+    let dtype = if original { DType::F32 } else { DType::F16 };
+    let mut weights = if original {
+        Weights::native(&root.join("audiovae.pth"), &device, dtype)?
+    } else {
+        Weights::open(&root.join("VoxCPM2-Acoustic-F16.gguf"), &device, dtype)?
+    };
     let mut eager = Codec::load(&mut weights)?;
     let mut captured = Codec::load(&mut weights)?;
     let mut graph = DecoderGraph::default();
@@ -47,12 +66,42 @@ fn full_decoder_replay_preserves_state_and_reset() -> Result<()> {
         captured.reset();
         graph.reset();
         for seed in 0..8 {
-            let input = frame(seed + request * 8, &device)?;
+            let input = frame(seed + request * 8, &device, dtype)?;
             let expected = bits(&eager.decode(&input, &|| false)?)?;
             let output = graph.decode(&mut captured, &input, &|| false)?;
             assert_eq!(bits(&output)?, expected, "request {request} frame {seed}");
             assert!(graph.active(), "decoder capture fell back");
         }
+    }
+    // Cancellation before launch must not consume a decoder frame.
+    let input = frame(99, &device, dtype)?;
+    assert!(graph.decode(&mut captured, &input, &|| true).is_err());
+    let expected = bits(&eager.decode(&input, &|| false)?)?;
+    assert_eq!(
+        bits(&graph.decode(&mut captured, &input, &|| false)?)?,
+        expected
+    );
+    // Cancellation after replay discards PCM but may have advanced device state.
+    // A new request must reset that state before any output is delivered.
+    let polls = std::cell::Cell::new(0);
+    let cancel = || {
+        polls.set(polls.get() + 1);
+        polls.get() > 1
+    };
+    assert!(graph.decode(&mut captured, &input, &cancel).is_err());
+    assert_eq!(polls.get(), 2);
+    assert!(graph.active(), "cancellation disabled a reusable graph");
+    eager.reset();
+    captured.reset();
+    graph.reset();
+    for seed in 100..108 {
+        let input = frame(seed, &device, dtype)?;
+        let expected = bits(&eager.decode(&input, &|| false)?)?;
+        assert_eq!(
+            bits(&graph.decode(&mut captured, &input, &|| false)?)?,
+            expected
+        );
+        assert!(graph.active());
     }
     Ok(())
 }
@@ -88,7 +137,7 @@ fn decoder_conv1d_capture_feasibility() -> Result<()> {
     // Populate HTOD parameter caches and lazy convolution resources before
     // capture. Parameters are allocated outside capture and retained.
     let _guard = cuda.enable_cuda_graph_htod_cache();
-    let initial = frame(0, &device)?;
+    let initial = frame(0, &device, DType::F16)?;
     let warmup = convolution(&initial)?;
     assert_eq!(warmup.dims(), &[1, output_channels, 4]);
     // Reading the warmup also surfaces asynchronous eager convolution errors.
@@ -113,7 +162,7 @@ fn decoder_conv1d_capture_feasibility() -> Result<()> {
     };
     eprintln!("E3 dec_proj dense conv1d capture succeeded; checking eight replays");
     for seed in 1..=8 {
-        let input = frame(seed, &device)?;
+        let input = frame(seed, &device, DType::F16)?;
         // Materialize expected values before replay and actual values before the
         // next launch: Replay returns an alias of its reusable output buffer.
         let expected = bits(&convolution(&input)?)?;

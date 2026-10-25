@@ -430,7 +430,7 @@ impl Model {
                 Some((mat, weight_sum)) => {
                     let scale = Tensor::new(((1.0 - weight_sum) as f32) as f64, base.device())?
                         .to_dtype(base.dtype())?;
-                    (mat + &(&scale * &base)?)?
+                    (mat + &scale.broadcast_mul(&base)?)?
                 }
                 None => base,
             }

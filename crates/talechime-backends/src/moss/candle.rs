@@ -1,4 +1,6 @@
 //! GPU trial models share native computation and model-scoped reference voices.
+#[cfg(all(test, feature = "moss-candle-cuda", target_os = "windows"))]
+mod cuda_tests;
 pub mod design;
 pub mod params;
 pub mod resources;

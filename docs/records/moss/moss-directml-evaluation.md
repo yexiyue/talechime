@@ -8,14 +8,14 @@ Qwen/Vox/Omni/MOSS 1.7B remain Candle and are not accelerated by this probe.
 ## Reproduce
 
 ```text
-cargo build --release -p novel-tts-backends --no-default-features --features directml-probe --example moss_directml_probe
+cargo build --release -p talechime-backends --no-default-features --features directml-probe --example moss_directml_probe
 target/release/examples/moss_directml_probe.exe list
 target/release/examples/moss_directml_probe.exe MODEL_DIR TEXT_FILE OUTPUT_DIR cpu
 target/release/examples/moss_directml_probe.exe MODEL_DIR TEXT_FILE OUTPUT_DIR dml-host DXGI_INDEX 5
 target/release/examples/moss_directml_probe.exe MODEL_DIR TEXT_FILE OUTPUT_DIR dml-cache DXGI_INDEX 5
 ```
 
-`MODEL_DIR` is the existing `~/.novel-tts/moss` directory, containing `tts/` and
+`MODEL_DIR` is the existing `~/.talechime/resources/moss` directory, containing `tts/` and
 `codec/`, not the parent model root. Text is UTF-8, one semantic segment per line.
 The probe reads cached models and builtin Weiguo reference codes, with seed42.
 Round0 is warmup; subsequent five rounds are measured. Run paths serially without
@@ -25,11 +25,10 @@ again and check the saved identity. Software or incompatible devices reject.
 
 For a separate profiled run, append `DXGI_INDEX 1 profile`. CPU accepts an ignored
 index placeholder when specifying a round count, e.g. `cpu 0 1 profile`.
-Summarize the resulting profiles with the development-only command:
-
-```text
-python tools/tts/directml_profiles.py OUTPUT_DIR
-```
+The former `tools/tts/directml_profiles.py` helper is retired. Current pinned
+xtask jobs, profile summaries and RTX5070 evidence are documented in the
+[Windows provider record](moss-nano-onnx-windows-2026-10-24.md). The dated AMD
+measurements below retain their original executable and resource identities.
 
 Keep profiled timing separate from normal timing. Provider event counts are not
 operator-coverage percentages because DML graphs fuse nodes. CPU shape/control

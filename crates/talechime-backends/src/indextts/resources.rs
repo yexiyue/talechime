@@ -45,6 +45,26 @@ pub async fn prepare(directory: &Path, progress: mpsc::Sender<Event>) -> anyhow:
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn conversion_manifest_covers_required_layout() {
+        let manifest: serde_json::Value =
+            serde_json::from_str(include_str!("conversion-manifest.json")).unwrap();
+        assert_eq!(manifest["revision"], REVISION);
+        let files = manifest["resources"].as_array().unwrap();
+        let names: std::collections::BTreeSet<_> = files
+            .iter()
+            .map(|file| {
+                assert!(file["size"].as_u64().unwrap() > 0);
+                let hash = file["sha256"].as_str().unwrap();
+                assert_eq!(hash.len(), 64);
+                assert!(hash.bytes().all(|b| b.is_ascii_hexdigit()));
+                file["path"].as_str().unwrap()
+            })
+            .collect();
+        assert_eq!(files.len(), names.len());
+        assert_eq!(names, FILES.iter().copied().collect());
+    }
+
     #[tokio::test]
     async fn missing_conversion_does_not_create_resources() {
         let root = tempfile::tempdir().unwrap();

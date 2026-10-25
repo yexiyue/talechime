@@ -1,6 +1,8 @@
 //! Experimental native MOSS-TTS-Nano (GPT2 global/local, 16 RVQ channels).
 //! Architecture follows OpenMOSS/MOSS-TTS-Nano, with attention conventions
 //! cross-checked against ramishi/moss-tts-nano-rust-candle (Apache-2.0).
+#[cfg(all(test, feature = "cuda"))]
+mod cuda_profile;
 mod sampling;
 mod transformer;
 use candle_core::{DType, Device, IndexOp, Module, Tensor};
@@ -119,6 +121,10 @@ impl Nano {
                 return Ok(());
             }
             let mut x_local = self.text.forward(&Tensor::new(&[[9u32]], &self.device)?)?;
+            // Generated rows contain the slot token and all 16 valid audio
+            // codes. Reuse their embeddings, adding in embeds' channel order;
+            // the generic prompt path additionally handles masked channels.
+            let mut next_global = x_local.clone();
             let mut codes = Vec::with_capacity(16);
             for (i, previous) in history.iter_mut().enumerate() {
                 crate::check_cancel(cancelled)?;
@@ -128,11 +134,10 @@ impl Nano {
                 previous.push(code);
                 codes.push(code);
                 x_local = self.audio[i].forward(&Tensor::new(&[[code]], &self.device)?)?;
+                next_global = (&next_global + &x_local)?;
             }
-            let mut row = vec![9];
-            row.extend_from_slice(&codes);
             frame(codes)?;
-            x = self.embeds(&[row])?;
+            x = next_global;
         }
         anyhow::bail!("Nano frame limit reached before end-of-speech")
     }

@@ -6,7 +6,7 @@ use candle_core::{DType, Device, Tensor};
 use std::collections::VecDeque;
 
 const MAX_ENTRIES: usize = 4;
-const MAX_FRAMES: usize = 64;
+const MAX_FRAMES: usize = 128;
 
 #[derive(Default)]
 pub(super) struct DecoderGraphs {
@@ -22,6 +22,14 @@ impl DecoderGraphs {
             .iter()
             .filter(|entry| entry.1.is_some())
             .count()
+    }
+
+    #[cfg(test)]
+    pub(super) fn recorded_frame_sizes(&self) -> Vec<usize> {
+        self.entries
+            .iter()
+            .filter_map(|(frames, replay)| replay.as_ref().map(|_| *frames))
+            .collect()
     }
 
     pub(super) fn decode(&mut self, decoder: &Decoder12Hz, codes: &Tensor) -> Result<Tensor> {

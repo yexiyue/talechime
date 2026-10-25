@@ -194,6 +194,26 @@ fn rope_tables(
     Ok((cos, sin))
 }
 
+/// Preserve the separate rounded multiply/add chain used by the Windows CUDA
+/// baseline. CUDA's fused rope_i kernel changes the full CFM/PCM output.
+#[cfg(all(target_os = "windows", feature = "cuda"))]
+fn apply_rope_unfused(x: &Tensor, cos: &Tensor, sin: &Tensor) -> Result<Tensor> {
+    let (b, t, h, d) = x.dims4()?;
+    let half = d / 2;
+    let xr = x.reshape((b, t, h, half, 2))?;
+    let x0 = xr.narrow(4, 0, 1)?.squeeze(4)?;
+    let x1 = xr.narrow(4, 1, 1)?.squeeze(4)?;
+    let cos = cos.reshape((1, t, 1, half))?;
+    let sin = sin.reshape((1, t, 1, half))?;
+    let o0 = x0
+        .broadcast_mul(&cos)?
+        .broadcast_sub(&x1.broadcast_mul(&sin)?)?;
+    let o1 = x1
+        .broadcast_mul(&cos)?
+        .broadcast_add(&x0.broadcast_mul(&sin)?)?;
+    Tensor::stack(&[o0, o1], 4)?.flatten(3, 4)
+}
+
 impl Dit {
     /// Weight names under `models.cfm.estimator.*` in s2mel.pth.
     pub fn load(vb: &VarBuilder, dit_cfg: &DiTConfig, wavenet_cfg: &WavenetConfig) -> Result<Self> {
@@ -388,6 +408,7 @@ impl Dit {
         drop_style: bool,
     ) -> Result<Tensor> {
         let (b, channels, t_len) = x.dims3()?;
+        let input_scope = crate::profile::scope(Some(x.device()), "dit.input");
         if channels != 2 * self.in_channels {
             candle_core::bail!(
                 "DiT x must pack [noisy, prompt] mel halves ({} channels, got {channels})",
@@ -427,9 +448,14 @@ impl Dit {
         // path for a 3-D lhs against a 2-D weight internally builds a
         // strided view that its own matmul then rejects for this layout.
         let mut x = self.cond_x_merge_linear.forward(&x_in)?;
+        drop(input_scope);
 
         // Transformer with UViT skip connections (non-causal, full attention).
-        let (cos, sin) = rope_tables(t_len, self.head_dim, x.device())?;
+        let (cos, sin) = {
+            let _scope = crate::profile::scope(Some(x.device()), "dit.rope_tables");
+            rope_tables(t_len, self.head_dim, x.device())?
+        };
+        let transformer_scope = crate::profile::scope(Some(x.device()), "dit.transformer");
         let c = t1.unsqueeze(1)?; // (B, 1, hidden)
         let half = self.blocks.len() / 2;
         let mut skip_stack: Vec<Tensor> = Vec::new();
@@ -452,6 +478,8 @@ impl Dit {
             let _g = crate::profile::scope(Some(x.device()), "dit.norm");
             self.norm.forward(&x, &c)?
         };
+        drop(transformer_scope);
+        let wavenet_scope = crate::profile::scope(Some(x.device()), "dit.wavenet");
 
         // Long skip over the noisy mel.
         if self.long_skip_connection {
@@ -465,7 +493,7 @@ impl Dit {
         }
 
         // WaveNet final layer with its own timestep embedding.
-        let _g_wn = crate::profile::scope(Some(x.device()), "dit.wavenet");
+        let _g_wn = crate::profile::scope(Some(x.device()), "dit.wavenet.core");
         let h = self.conv1.forward(&x_res)?.transpose(1, 2)?.contiguous()?; // (B, wn_h, T)
         let t2 = self.t_embedder2.forward(t)?; // (B, wn_h)
         let wn = self.wavenet.forward(&h, &t2.unsqueeze(2)?)?; // (B, wn_h, T)
@@ -473,6 +501,8 @@ impl Dit {
         let mut x_final = wn
             .transpose(1, 2)?
             .broadcast_add(&self.res_projection.forward(&x_res)?)?;
+        drop(wavenet_scope);
+        let _final_scope = crate::profile::scope(Some(x.device()), "dit.final");
 
         // FinalLayer: affine-free LayerNorm (eps 1e-6) modulated by t1.
         let _g = crate::profile::scope(Some(x.device()), "dit.final_head");
@@ -534,6 +564,21 @@ impl Dit {
         };
         let chain = || -> Result<(Tensor, Tensor, Tensor)> {
             let _g_rope = crate::profile::scope(Some(x.device()), "dit.rope");
+            #[cfg(all(target_os = "windows", feature = "cuda"))]
+            if x.device().is_cuda() {
+                let rotate = |offset| {
+                    let input = qkv.narrow(2, offset, hidden)?.contiguous()?.reshape((
+                        b,
+                        t_len,
+                        self.heads,
+                        self.head_dim,
+                    ))?;
+                    apply_rope_unfused(&input, cos, sin)?
+                        .transpose(1, 2)?
+                        .contiguous()
+                };
+                return Ok((rotate(0)?, rotate(hidden)?, split(2 * hidden)?));
+            }
             let q = candle_nn::rotary_emb::rope_i(&split(0)?, cos, sin)?;
             let k = candle_nn::rotary_emb::rope_i(&split(hidden)?, cos, sin)?;
             drop(_g_rope);
@@ -1280,5 +1325,51 @@ mod tests {
             let gated = a.broadcast_mul(&c)?;
             gated.matmul(&w_ff2)?.reshape((b, t, hidden))
         });
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    #[ignore = "explicit real CUDA DiT stage diagnostic; requires local converted weights"]
+    fn real_cuda_stage_diagnostic() -> Result<()> {
+        assert!(
+            crate::profile::enabled(),
+            "set INDEXTTS_PROFILE=1 explicitly"
+        );
+        let root = std::env::var_os("INDEXTTS_CONVERTED_DIR").expect("local weights required");
+        let root = std::path::Path::new(&root);
+        let cfg = crate::config::Config::load(&root.join("config.json"))?;
+        let device = Device::new_cuda(0)?;
+        let vb = unsafe {
+            VarBuilder::from_mmaped_safetensors(
+                &[root.join("s2mel.safetensors")],
+                DType::F32,
+                &device,
+            )?
+        };
+        let model = Dit::load(
+            &vb.pp("models.cfm.estimator"),
+            &cfg.s2mel.dit,
+            &cfg.s2mel.wavenet,
+        )?;
+        for len in [64, 256] {
+            let x = Tensor::full(0.125f32, (2, 160, len), &device)?;
+            let cond = Tensor::full(0.25f32, (2, len, 512), &device)?;
+            let style = Tensor::full(0.125f32, (2, STYLE_DIM), &device)?;
+            let projected = model.project_condition(&cond)?;
+            for round in 0..6 {
+                let _report = crate::profile::report();
+                let t = Tensor::full(round as f32 / 25.0, 2, &device)?;
+                let output = model.forward_projected(&x, &t, &projected, &style, false)?;
+                let values = output.flatten_all()?.to_vec1::<f32>()?;
+                assert!(values.iter().all(|v| v.is_finite()));
+                println!(
+                    "{}",
+                    serde_json::json!({"diagnostic":"real_dit_synthetic_inputs",
+                    "length":len,"round":round,"warmup":round==0,"samples":values.len(),
+                    "production_request":false})
+                );
+            }
+        }
+        Ok(())
     }
 }

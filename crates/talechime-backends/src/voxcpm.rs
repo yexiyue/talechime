@@ -1,5 +1,7 @@
 //! Native VoxCPM2 streaming; the model never leaves its inference thread.
 mod cache;
+#[cfg(all(test, feature = "voxcpm-cuda"))]
+mod cuda_tests;
 pub mod design;
 pub mod models;
 pub mod params;

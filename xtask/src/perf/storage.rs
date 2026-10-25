@@ -149,6 +149,7 @@ mod tests {
                 exit_code: Some(0),
                 cleanup_verified: true,
                 errors: vec![],
+                job_peak_memory: None,
             },
         )?;
         std::fs::write(root.path().join("audio.wav"), b"synthetic test artifact")?;

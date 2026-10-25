@@ -1,4 +1,6 @@
 //! Candle adapter; model tensors remain on a dedicated inference thread.
+#[cfg(all(test, feature = "qwen-cuda"))]
+mod cuda_tests;
 pub mod design;
 pub mod models;
 pub mod params;

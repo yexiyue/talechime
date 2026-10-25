@@ -1,12 +1,37 @@
 //! MiniCPM4 reference attention; cache and RoPE ownership stay in Transformer.
 use candle_core::{DType, Result, Tensor};
 
+#[cfg(all(
+    test,
+    feature = "cuda",
+    any(target_os = "windows", target_os = "linux")
+))]
+pub(crate) mod cuda_tests;
+
 pub(crate) fn attention(
     q: &Tensor,
     k: &Tensor,
     v: &Tensor,
     causal: bool,
     offset: usize,
+) -> Result<Tensor> {
+    let packed = true;
+    #[cfg(all(
+        test,
+        feature = "cuda",
+        any(target_os = "windows", target_os = "linux")
+    ))]
+    let packed = packed && !cuda_tests::reference_enabled();
+    attention_impl(q, k, v, causal, offset, packed)
+}
+
+fn attention_impl(
+    q: &Tensor,
+    k: &Tensor,
+    v: &Tensor,
+    causal: bool,
+    offset: usize,
+    packed: bool,
 ) -> Result<Tensor> {
     let (batch, heads, tokens, width) = q.dims4()?;
     let (kv_batch, kv_heads, length, kv_width) = k.dims4()?;
@@ -18,6 +43,12 @@ pub(crate) fn attention(
     {
         candle_core::bail!("incompatible grouped attention shapes");
     }
+    #[cfg(all(
+        test,
+        feature = "cuda",
+        any(target_os = "windows", target_os = "linux")
+    ))]
+    cuda_tests::capture(q, k, v);
     let groups = heads / kv_heads;
     let repeat = |tensor: &Tensor| {
         tensor
@@ -25,13 +56,32 @@ pub(crate) fn attention(
             .broadcast_as((batch, kv_heads, groups, length, width))?
             .reshape((batch, heads, length, width))
     };
-    let k = repeat(k)?;
+    // Preserve GEMM dimensions and arithmetic; only fuse the two key copies.
+    // Other devices, prefill and unqualified shapes retain the reference path.
+    #[cfg(all(feature = "cuda", target_os = "windows"))]
+    let use_packed = packed
+        && q.device().is_cuda()
+        && tokens == 1
+        && heads == 16
+        && kv_heads == 2
+        && width == 128
+        && (2..=512).contains(&length);
+    #[cfg(not(all(feature = "cuda", target_os = "windows")))]
+    let use_packed = {
+        let _ = packed;
+        false
+    };
+    let k = if use_packed {
+        k.transpose(2, 3)?
+            .unsqueeze(2)?
+            .broadcast_as((batch, kv_heads, groups, width, length))?
+            .reshape((batch, heads, width, length))?
+            .contiguous()?
+    } else {
+        repeat(k)?.transpose(2, 3)?.contiguous()?
+    };
     let v = repeat(v)?;
-    let mut scores = (q
-        .contiguous()?
-        .matmul(&k.transpose(2, 3)?.contiguous()?)?
-        .to_dtype(DType::F32)?
-        / (width as f64).sqrt())?;
+    let mut scores = (q.contiguous()?.matmul(&k)?.to_dtype(DType::F32)? / (width as f64).sqrt())?;
     if causal && tokens > 1 {
         let mask: Vec<u8> = (0..tokens)
             .flat_map(|i| (0..length).map(move |j| u8::from(j > offset + i)))

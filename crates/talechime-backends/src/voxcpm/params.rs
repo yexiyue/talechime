@@ -3,11 +3,12 @@ use talechime_core::params::GenerationParams;
 use talechime_protocol::{ParamKind, ParamValue, ParameterSpec};
 use talechime_voxcpm::Options;
 
-/// One latent frame covers 2560 samples at 48 kHz (18.75 Hz).
-const FRAME_HZ: f64 = 48_000.0 / 2560.0;
+/// One generated patch has four latents; decoder strides 8*6*5*2*2*2
+/// produce 7680 samples at 48 kHz (6.25 patches per second).
+const FRAME_HZ: f64 = 48_000.0 / 7680.0;
 /// Playback-block budget caps any single segment at 30 seconds.
 const MAX_DURATION_SECONDS: f64 = 30.0;
-const DEFAULT_MAX_FRAMES: usize = 200;
+const DEFAULT_MAX_FRAMES: usize = (MAX_DURATION_SECONDS * FRAME_HZ) as usize;
 
 pub(super) fn catalog() -> Vec<ParameterSpec> {
     vec![
@@ -106,7 +107,9 @@ pub(super) fn resolve(params: &GenerationParams, seed: u64) -> Options {
         },
         cfg: float("cfg", 2.0),
         temperature: float("temperature", 1.0),
-        max_frames: (max_duration * FRAME_HZ).round().max(1.0) as usize,
+        max_frames: (max_duration.min(MAX_DURATION_SECONDS) * FRAME_HZ)
+            .floor()
+            .max(1.0) as usize,
         measure_modules: false,
     }
 }
@@ -136,16 +139,31 @@ mod tests {
         assert_eq!(options.steps, 64);
         assert_eq!(options.cfg, 1.5);
         assert_eq!(options.temperature, 0.8);
-        assert_eq!(options.max_frames, (12.0 * FRAME_HZ).round() as usize);
+        assert_eq!(options.max_frames, 75);
     }
 
     #[test]
-    fn empty_params_keep_previous_defaults_except_seed() {
+    fn empty_params_keep_sampling_defaults_and_bound_duration() {
         let options = resolve(&GenerationParams::new(), 99);
         assert_eq!(options.seed, 99);
         assert_eq!(options.steps, 10);
         assert_eq!(options.cfg, 2.0);
         assert_eq!(options.temperature, 1.0);
         assert_eq!(options.max_frames, DEFAULT_MAX_FRAMES);
+        assert_eq!(options.max_frames, 187);
+    }
+
+    #[test]
+    fn duration_budget_counts_output_patches_without_rounding_over_limit() {
+        for (seconds, patches) in [(1.0, 6), (12.0, 75), (30.0, 187)] {
+            let params = VoxCpmParams::default()
+                .max_duration_seconds(seconds)
+                .to_generation_params();
+            assert!(params.validate(&catalog()).is_ok());
+            let actual = resolve(&params, 42).max_frames;
+            assert_eq!(actual, patches);
+            assert!(actual as f64 * 7680.0 / 48000.0 <= seconds);
+            assert!((actual + 1) as f64 * 7680.0 / 48000.0 > seconds);
+        }
     }
 }

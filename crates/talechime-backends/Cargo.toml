@@ -37,6 +37,7 @@ omnivoice-cuda = ["omnivoice", "talechime-omnivoice/cuda"]
 omnivoice-metal = ["omnivoice", "talechime-omnivoice/metal", "dep:candle-metal-kernels"]
 ort-coreml = ["dep:ort", "ort/coreml"]
 ort-cuda = ["dep:ort", "ort/cuda"]
+ort-dynamic = ["dep:ort", "ort/load-dynamic"]
 directml-probe = ["moss", "ort/directml", "dep:windows"]
 
 [dependencies]
@@ -107,6 +108,10 @@ name = "performance_catalog"
 required-features = ["performance-tools"]
 
 [[example]]
+name = "qwen_design_reference"
+required-features = ["qwen", "performance-tools"]
+
+[[example]]
 name = "native_probe"
 required-features = ["qwen"]
 
@@ -116,6 +121,10 @@ required-features = ["voxcpm"]
 
 [[example]]
 name = "asr_readback"
+required-features = ["asr"]
+
+[[example]]
+name = "sensevoice_aux_readback"
 required-features = ["asr"]
 
 [[example]]

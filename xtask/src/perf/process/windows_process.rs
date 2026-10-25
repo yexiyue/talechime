@@ -112,6 +112,22 @@ impl Process {
         self.child.id()
     }
 
+    /// OS-maintained job commit high-water mark, including contained descendants.
+    pub fn peak_job_memory(&self) -> anyhow::Result<usize> {
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        // SAFETY: Correct typed output buffer and exclusively owned valid job.
+        unsafe {
+            QueryInformationJobObject(
+                self.job.0,
+                JobObjectExtendedLimitInformation,
+                &mut limits as *mut _ as _,
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                None,
+            )?;
+        }
+        Ok(limits.PeakJobMemoryUsed)
+    }
+
     pub fn take_stdout(&mut self) -> Option<std::process::ChildStdout> {
         self.child.stdout.take()
     }
@@ -168,5 +184,78 @@ impl Drop for Process {
             // call cleanup and gate further measurement on its successful result.
             let _ = self.cleanup();
         }
+    }
+}
+
+#[cfg(test)]
+mod memory_tests {
+    use super::*;
+    use std::{path::PathBuf, process::Stdio};
+
+    const FIXTURE: &str = "perf::process::windows_process::memory_tests::memory_fixture";
+
+    #[test]
+    fn memory_fixture() -> anyhow::Result<()> {
+        let Ok(mode) = std::env::var("TALECHIME_JOB_MEMORY_FIXTURE") else {
+            return Ok(());
+        };
+        if mode == "launcher" {
+            let status = Command::new(std::env::current_exe()?)
+                .args(["--exact", FIXTURE])
+                .env("TALECHIME_JOB_MEMORY_FIXTURE", "allocate")
+                .status()?;
+            ensure!(status.success(), "allocation fixture failed");
+        } else {
+            let memory = vec![0x5a_u8; 64 * 1024 * 1024];
+            std::hint::black_box(&memory);
+            std::fs::write(
+                PathBuf::from(std::env::var("TALECHIME_JOB_MEMORY_READY")?),
+                b"ready",
+            )?;
+            std::thread::sleep(Duration::from_secs(15));
+            std::hint::black_box(memory);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn job_peak_includes_launcher_descendant_allocation() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let ready = directory.path().join("ready");
+        let mut command = Command::new(std::env::current_exe()?);
+        command
+            .args(["--exact", FIXTURE])
+            .env("TALECHIME_JOB_MEMORY_FIXTURE", "launcher")
+            .env("TALECHIME_JOB_MEMORY_READY", &ready)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut process = Process::spawn(&mut command)?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !ready.exists() {
+            ensure!(Instant::now() < deadline, "descendant allocation timed out");
+            ensure!(
+                process.try_wait()?.is_none(),
+                "launcher exited before ready"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        ensure!(
+            process.active_processes()? >= 2,
+            "missing contained descendant"
+        );
+        ensure!(
+            process.peak_job_memory()? >= 64 * 1024 * 1024,
+            "descendant commit missing"
+        );
+        process.cleanup()?;
+        ensure!(
+            process.active_processes()? == 0,
+            "descendants survived cleanup"
+        );
+        ensure!(
+            process.peak_job_memory()? >= 64 * 1024 * 1024,
+            "job high-water lost after descendants exited"
+        );
+        Ok(())
     }
 }

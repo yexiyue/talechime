@@ -175,7 +175,10 @@ impl Runtime {
             directory: directory.to_owned(),
         })
     }
-    #[cfg(all(windows, feature = "directml-probe"))]
+    #[cfg(any(
+        all(windows, feature = "directml-probe"),
+        all(test, feature = "ort-cuda")
+    ))]
     pub(super) fn finish_profiles(&mut self) -> anyhow::Result<Vec<String>> {
         [
             &mut self.prefill,
@@ -487,6 +490,10 @@ impl Runtime {
                 seen[i * 1024 + token as usize] = 1;
             }
             stats.frames += 1;
+            #[cfg(test)]
+            if let Some(codes) = &mut stats.codes {
+                codes.push(data.to_vec());
+            }
             pending.extend_from_slice(data);
             if pending.len() >= 16 * 3 {
                 let pcm = self.audio(&pending, &mut codec_state, &mapping)?;

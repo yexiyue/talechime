@@ -640,6 +640,15 @@ impl Decoder12Hz {
         self.graphs.lock().unwrap().recorded_shapes()
     }
 
+    #[cfg(all(
+        test,
+        feature = "cuda",
+        any(target_os = "windows", target_os = "linux")
+    ))]
+    pub(crate) fn recorded_frame_sizes(&self) -> Vec<usize> {
+        self.graphs.lock().unwrap().recorded_frame_sizes()
+    }
+
     /// Stateless history decode; graph scratch is copied before releasing its lock.
     pub(crate) fn decode_streaming(&self, codes: &Tensor) -> Result<Tensor> {
         #[cfg(all(feature = "cuda", any(target_os = "windows", target_os = "linux")))]

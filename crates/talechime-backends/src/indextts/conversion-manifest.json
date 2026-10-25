@@ -1,0 +1,170 @@
+{
+  "schema": "talechime/indextts-conversion-manifest/1",
+  "revision": "c39ce5ba-candle-v1",
+  "exporter_commit": "e591c94",
+  "exporter_sha256": "9a97af7776d2f6f432bfb4b7a1cdca8c32f33d7e4ebeccd215ac4038253ae740",
+  "verification": "all checkpoint tensor bits and derived feature bits; copied files exact; resolved config equality",
+  "sources": [
+    {
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "path": "gpt.pth",
+      "bytes": 3259599833,
+      "sha256": "43a8f4c30eccdf201958d3b9713511482c19d56dc20b0b1c4ee1e6b080b19d85",
+      "verification": "upstream_lfs_sha256"
+    },
+    {
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "path": "codec.pth",
+      "bytes": 607290935,
+      "sha256": "d15cbed16a40f478438c961fb043f68dfa6353bf56c966761315db3433e9722c",
+      "verification": "upstream_lfs_sha256"
+    },
+    {
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "path": "s2mel.pth",
+      "bytes": 414908601,
+      "sha256": "9b1b0003fc189c94cc349758d7ebc25f903b7eb2de4602879959cc64ce816456",
+      "verification": "upstream_lfs_sha256"
+    },
+    {
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "path": "feat1.pt",
+      "bytes": 57170,
+      "sha256": "f219cb447d80216ba615666da2ff8d63ac544eee26657f3a7b278692bf7a67c4",
+      "verification": "upstream_lfs_sha256"
+    },
+    {
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "path": "feat2.pt",
+      "bytes": 374866,
+      "sha256": "9c4292e96dee535aea9a6206e9a0c856dd578dde9212acdb16dd3ada4d12bf80",
+      "verification": "upstream_lfs_sha256"
+    },
+    {
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "path": "wav2vec2bert_stats.pt",
+      "bytes": 9343,
+      "sha256": "c9c176c2b8850ab2e3ba828bbfa969deaf4566ce55db5f2687b8430b87526ad2",
+      "verification": "upstream_lfs_sha256"
+    },
+    {
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "path": "config.yaml",
+      "bytes": 2860,
+      "sha256": "18adf417be3e8f5e2e48e30f7420c719170a6870619436250f360d626877870e",
+      "verification": "upstream_git_blob_sha1_and_local_sha256"
+    },
+    {
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "path": "multilingual_zh_ja_yue_char_del.tiktoken",
+      "bytes": 907395,
+      "sha256": "747979631e813193436aabcff7c1c235d37de8097b71c563ec8b63b7a515c718",
+      "verification": "upstream_git_blob_sha1_and_local_sha256"
+    },
+    {
+      "repo": "funasr/campplus",
+      "revision": "e4b6ede7ce16997aff4ae69fbca1f0175e2afede",
+      "path": "campplus_cn_common.bin",
+      "bytes": 28036335,
+      "sha256": "3388cf5fd3493c9ac9c69851d8e7a8badcfb4f3dc631020c4961371646d5ada8",
+      "verification": "upstream_lfs_sha256"
+    },
+    {
+      "repo": "nvidia/bigvgan_v2_22khz_80band_256x",
+      "revision": "633ff708ed5b74903e86ff1298cf4a98e921c513",
+      "path": "bigvgan_generator.pt",
+      "bytes": 449228171,
+      "sha256": "e95ba25972d3de0628d99cd156e9315a9c018899bf739988959ebe3544080ced",
+      "verification": "upstream_lfs_sha256"
+    },
+    {
+      "repo": "nvidia/bigvgan_v2_22khz_80band_256x",
+      "revision": "633ff708ed5b74903e86ff1298cf4a98e921c513",
+      "path": "config.json",
+      "bytes": 1405,
+      "sha256": "88a1f47acf747db0b21e97a389d838566147f7a5464583ff5c8d819d870f03ee",
+      "verification": "upstream_git_blob_sha1_and_local_sha256"
+    },
+    {
+      "repo": "facebook/w2v-bert-2.0",
+      "revision": "da985ba0987f70aaeb84a80f2851cfac8c697a7b",
+      "path": "model.safetensors",
+      "bytes": 2322063736,
+      "sha256": "eb890c9660ed6e3414b6812e27257b8ce5454365d5490d3ad581ea60b93be043",
+      "verification": "upstream_lfs_sha256"
+    },
+    {
+      "repo": "facebook/w2v-bert-2.0",
+      "revision": "da985ba0987f70aaeb84a80f2851cfac8c697a7b",
+      "path": "config.json",
+      "bytes": 1874,
+      "sha256": "f5572bd5998b68182e9c328a43127ed21fed687f6910497136b91a4e3b0e3675",
+      "verification": "upstream_git_blob_sha1_and_local_sha256"
+    }
+  ],
+  "resources": [
+    {
+      "path": "bigvgan.config.json",
+      "size": 1405,
+      "sha256": "88a1f47acf747db0b21e97a389d838566147f7a5464583ff5c8d819d870f03ee"
+    },
+    {
+      "path": "bigvgan.safetensors",
+      "size": 449018644,
+      "sha256": "054e00342ad121da0b93f1fd2ecb0fcf99f7da6b5a0c03969d6b602e2c08e517"
+    },
+    {
+      "path": "campplus.safetensors",
+      "size": 27831904,
+      "sha256": "854ca12cb383f197547448db3a30bfb5598571ec8051d71e442de8e0ff0cbbf2"
+    },
+    {
+      "path": "codec.safetensors",
+      "size": 202358064,
+      "sha256": "b9714872797f7d48cce94a699463881eb9fa0c85d1c23033356a07ec8efa0e96"
+    },
+    {
+      "path": "config.json",
+      "size": 3413,
+      "sha256": "41c6d33f3a8316a64dcf03b9a301d51623408cccffeed3ac2cbc8f4dd894ddd1"
+    },
+    {
+      "path": "feats.safetensors",
+      "size": 438320,
+      "sha256": "fa67396639a74f61a061aff6a9b6628c5031026fc4d4bb43f28f33763490418b"
+    },
+    {
+      "path": "gpt.safetensors",
+      "size": 3259446504,
+      "sha256": "ec45786f1389e145bc05c27996d0b88be097252e7558fe48fb334e25e8d64f12"
+    },
+    {
+      "path": "multilingual_zh_ja_yue_char_del.tiktoken",
+      "size": 907395,
+      "sha256": "747979631e813193436aabcff7c1c235d37de8097b71c563ec8b63b7a515c718"
+    },
+    {
+      "path": "s2mel.safetensors",
+      "size": 414778712,
+      "sha256": "91a502f117d7e38f00652cb32b901e71cc43a60b00e4c9a651329bfce15117e2"
+    },
+    {
+      "path": "w2v-bert-2.0/config.json",
+      "size": 1874,
+      "sha256": "f5572bd5998b68182e9c328a43127ed21fed687f6910497136b91a4e3b0e3675"
+    },
+    {
+      "path": "w2v-bert-2.0/model.safetensors",
+      "size": 2322063736,
+      "sha256": "eb890c9660ed6e3414b6812e27257b8ce5454365d5490d3ad581ea60b93be043"
+    }
+  ]
+}

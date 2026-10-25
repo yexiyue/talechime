@@ -37,6 +37,8 @@ pub struct Capture {
     pub exit_code: Option<i32>,
     pub cleanup_verified: bool,
     pub errors: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_peak_memory: Option<super::evidence::Reading>,
 }
 
 pub fn events(
@@ -243,6 +245,29 @@ pub fn execute(
             std::thread::sleep(Duration::from_millis(10));
         }
         // No subsequent execution may proceed unless this succeeds.
+        #[cfg(windows)]
+        let job_peak_memory = Some(match process.peak_job_memory() {
+            Ok(value) => super::evidence::Reading {
+                value: Some(value as f64),
+                unit: "bytes".into(),
+                scope: "contained_job".into(),
+                source: "Windows JobObjectExtendedLimitInformation.PeakJobMemoryUsed; commit high-water, not RSS".into(),
+                interval_ms: None,
+                status: "available".into(),
+                reason: None,
+            },
+            Err(error) => super::evidence::Reading {
+                value: None,
+                unit: "bytes".into(),
+                scope: "contained_job".into(),
+                source: "Windows JobObjectExtendedLimitInformation.PeakJobMemoryUsed".into(),
+                interval_ms: None,
+                status: "unavailable".into(),
+                reason: Some(error.to_string()),
+            },
+        });
+        #[cfg(not(windows))]
+        let job_peak_memory = None;
         let cleanup = process.cleanup();
         if cleanup.is_err() {
             reader_abort.store(true, Ordering::Release);
@@ -276,6 +301,7 @@ pub fn execute(
             exit_code,
             cleanup_verified: cleanup.is_ok(),
             errors: failures,
+            job_peak_memory,
         })
     });
     if let Ok(capture) = &result {
@@ -331,7 +357,9 @@ fn competing_processes(
                 (competition.status == "available").then_some(competition.processes.len() as f64);
             (
                 competition.status.as_str(),
-                competition.reason.as_ref(),
+                // Name-encoding annotations belong to the detailed process list,
+                // not the numeric count's unavailable-reason field.
+                competition.reason.as_ref().filter(|_| value.is_none()),
                 value,
             )
         }
@@ -395,6 +423,27 @@ mod tests {
         assert_eq!(reading.status, "unavailable");
         Ok(())
     }
+    #[test]
+    fn available_process_count_keeps_encoding_annotation_only_in_details() -> anyhow::Result<()> {
+        let value = super::super::sampling::CompetingGpuProcesses {
+            status: "available".into(),
+            reason: Some("non-UTF-8 names escaped".into()),
+            processes: vec![super::super::sampling::GpuProcess {
+                pid: 123,
+                process_name: "tool\\x81.exe".into(),
+                used_gpu_memory_bytes: None,
+            }],
+        };
+        let details = serde_json::to_value(&value)?;
+        let reading = competing_processes(&Ok(value), 500);
+        reading.validate()?;
+        assert_eq!(reading.value, Some(1.0));
+        assert!(reading.reason.is_none());
+        assert_eq!(details["reason"], "non-UTF-8 names escaped");
+        assert_eq!(details["processes"][0]["process_name"], "tool\\x81.exe");
+        Ok(())
+    }
+
     #[test]
     fn sampling_frame_keeps_numeric_reading_and_process_details_separate() -> anyhow::Result<()> {
         let frame = sample_frame(std::process::id(), 500, false, 1.25)?;

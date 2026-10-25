@@ -209,7 +209,7 @@ pub fn run(job_path: &Path, root: &Path, resume: bool) -> anyhow::Result<PathBuf
             artifacts: vec![],
         };
         ensure!(
-            super::environment::flags() == job.conditions.environment,
+            super::environment::flags()? == job.conditions.environment,
             "performance flags changed between processes"
         );
         if resume && let Some(saved) = find_committed(&root, &expected)? {

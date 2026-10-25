@@ -69,7 +69,8 @@ pub fn compare(
                 reasons.push(format!("incompatible condition: {key}"));
             }
         }
-        if first.conditions.observation != "baseline" || second.conditions.observation != "baseline"
+        if !matches!(first.conditions.observation.as_str(), "baseline" | "off")
+            || !matches!(second.conditions.observation.as_str(), "baseline" | "off")
         {
             reasons.push("diagnostic observation mode cannot produce baseline verdict".into());
         }
@@ -201,6 +202,53 @@ mod tests {
             compare(&baseline, &different_pcm, policy())?.verdict,
             "incomparable"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn uninstrumented_off_runs_are_comparable_without_relabeling() -> anyhow::Result<()> {
+        let mut baseline = attempts(&[1.0; 3]);
+        let mut candidate = attempts(&[0.5; 3]);
+        for attempt in baseline.iter_mut().chain(&mut candidate) {
+            attempt.conditions.observation = "off".into();
+        }
+        let result = compare(&baseline, &candidate, policy())?;
+        assert_eq!(result.verdict, "pass");
+        assert!(result.output_equivalent);
+        assert_eq!(result.relative_delta, Some(-0.5));
+
+        // Accept each mode, but never erase differences between frozen conditions.
+        for attempt in &mut candidate {
+            attempt.conditions.observation = "baseline".into();
+        }
+        let result = compare(&baseline, &candidate, policy())?;
+        assert_eq!(result.verdict, "incomparable");
+        assert!(
+            result
+                .reasons
+                .iter()
+                .any(|reason| reason.ends_with("observation"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn matching_diagnostic_modes_still_cannot_produce_baseline_verdicts() -> anyhow::Result<()> {
+        for mode in ["trace", "profile"] {
+            let mut baseline = attempts(&[1.0; 3]);
+            let mut candidate = attempts(&[0.5; 3]);
+            for attempt in baseline.iter_mut().chain(&mut candidate) {
+                attempt.conditions.observation = mode.into();
+            }
+            let result = compare(&baseline, &candidate, policy())?;
+            assert_eq!(result.verdict, "incomparable");
+            assert!(
+                result
+                    .reasons
+                    .iter()
+                    .any(|reason| reason.contains("diagnostic observation"))
+            );
+        }
         Ok(())
     }
 }

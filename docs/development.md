@@ -5,6 +5,10 @@ Rust 性能开发入口、Windows 资源准备命令、任务复用及 Mac 接�
 
 ## 工具链
 
+Windows ONNX CUDA 可显式启用`ort-dynamic`，由`ORT_DYLIB_PATH`选择已验证的完整
+动态ORT分发；默认构建和标准CPU发行不变。主CLI构建命令、仅ONNX模型选择及
+真实静音播放验证见[Windows动态ORT主CLI](records/platform/windows-ort-cli-dynamic-2026-10-25.md)。
+
 Rust 2024，声明最低 Rust 1.89；当前 stable 验证不等于最低版本实机验收。Linux 安装 `libasound2-dev libssl-dev pkg-config`。CUDA 可选构建需要匹配 Toolkit；显式设备不可用时不能静默替代。ORT 固定 rc.13，Candle core/nn/transformers 固定 0.11.0；保持 Windows 动态 CRT。
 
 TTS 热路径修改先按 [性能优化方法](knowledge/tts-performance.md) 固定基线与输出门禁。

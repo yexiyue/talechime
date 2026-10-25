@@ -36,6 +36,7 @@ hound.workspace = true
 libc.workspace = true
 rubato.workspace = true
 talechime-core.workspace = true
+talechime-protocol.workspace = true
 
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
 cudarc = { workspace = true, optional = true }

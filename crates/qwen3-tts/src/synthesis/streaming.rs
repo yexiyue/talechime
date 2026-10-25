@@ -32,6 +32,18 @@ pub struct StreamingSession<'a> {
     suppression_mask: generation::SuppressionMask,
     // Per-stream acoustic code state: KV caches plus the CUDA frame graph
     cp_codes: CodePredictorSession<'a>,
+    #[cfg(all(
+        test,
+        feature = "cuda",
+        any(target_os = "windows", target_os = "linux")
+    ))]
+    test_codes: Option<Vec<Vec<i64>>>,
+    #[cfg(all(
+        test,
+        feature = "cuda",
+        any(target_os = "windows", target_os = "linux")
+    ))]
+    test_eager_decoder: bool,
 }
 
 impl<'a> StreamingSession<'a> {
@@ -213,6 +225,18 @@ impl<'a> StreamingSession<'a> {
             token_count: 1,
             suppression_mask,
             cp_codes,
+            #[cfg(all(
+                test,
+                feature = "cuda",
+                any(target_os = "windows", target_os = "linux")
+            ))]
+            test_codes: None,
+            #[cfg(all(
+                test,
+                feature = "cuda",
+                any(target_os = "windows", target_os = "linux")
+            ))]
+            test_eager_decoder: false,
         })
     }
 
@@ -277,6 +301,22 @@ impl<'a> StreamingSession<'a> {
                 &[&token_tensor.reshape(1)?, &acoustic_codes_tensor],
                 0,
             )?);
+
+            #[cfg(all(
+                test,
+                feature = "cuda",
+                any(target_os = "windows", target_os = "linux")
+            ))]
+            if let Some(codes) = &mut self.test_codes {
+                codes.push(
+                    self.decoder
+                        .frames
+                        .last()
+                        .expect("generated frame")
+                        .to_dtype(DType::I64)?
+                        .to_vec1::<i64>()?,
+                );
+            }
 
             // Build residual VQ sum + trailing text for next step
             let summed = self
@@ -346,8 +386,35 @@ impl<'a> StreamingSession<'a> {
 
     fn decode_buffer(&mut self) -> Result<AudioBuffer> {
         self.decoder.decode(|codes| {
+            #[cfg(all(
+                test,
+                feature = "cuda",
+                any(target_os = "windows", target_os = "linux")
+            ))]
+            if self.test_eager_decoder {
+                return AudioBuffer::from_tensor(self.model.decoder.decode(codes)?, 24000);
+            }
             AudioBuffer::from_tensor(self.model.decoder.decode_streaming(codes)?, 24000)
         })
+    }
+
+    #[cfg(all(
+        test,
+        feature = "cuda",
+        any(target_os = "windows", target_os = "linux")
+    ))]
+    pub(crate) fn capture_codes_for_test(&mut self, eager_decoder: bool) {
+        self.test_codes = Some(Vec::new());
+        self.test_eager_decoder = eager_decoder;
+    }
+
+    #[cfg(all(
+        test,
+        feature = "cuda",
+        any(target_os = "windows", target_os = "linux")
+    ))]
+    pub(crate) fn captured_codes_for_test(&self) -> &[Vec<i64>] {
+        self.test_codes.as_deref().expect("code capture enabled")
     }
 
     /// Returns the total number of frames generated so far.

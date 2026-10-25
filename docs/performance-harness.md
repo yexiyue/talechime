@@ -1,5 +1,12 @@
 # Rust 性能工具
 
+VoiceDesign的一次性参考导出可使用`qwen_design_reference` example，经`perf reference`
+的同一job协议调度；required-features为qwen与performance-tools，CUDA实测另启用
+qwen-cuda。每轮调用公开生产design::reference，完整加载/生成/PCM16文件交付/释放
+计时，摘要针对导出后PCM。它不是普通narration Backend或常驻热合成。官方对应
+`scripts/perf/qwen_design_cold_reference.py`保留加载控制与释放审计，冷/热、独立
+进程/重复加载矩阵差异须单列，见[Windows VoiceDesign实测](records/qwen/qwen-voicedesign-windows-2026-10-25.md)。
+
 实现验证、免模型端到端证据、已准备 Nano CPU 短 smoke 与未完成的浏览器视觉验收，见 [验证记录](records/2026-10-20-rust-performance-harness.md)。
 
 ## 当前入口
@@ -19,7 +26,12 @@ cargo xtask perf plan --platform macos --machine mac-m4-pro --output target/perf
 
 build 在 `target/perf-builds/<配置摘要>/` 用显式 feature 构建 release 探针，自动包含开发专用 `performance-tools`；默认不包含模型 feature。定位使用 Cargo artifact 消息，收据保留有效 features、源身份和二进制 SHA。构建期间源码改变会拒绝发布收据；增加 feature 用不同收据文件，不覆盖。
 
-prepare 消费构建收据并校验可执行文件摘要。无模型默认只返回生产 AppPaths/Registry 目录和 catalog，不创建自定义资源根。指定 `--backend qwen --model 0.6b-base` 可在编入对应 feature 后对已有模型进行只读生产清单校验，生成资源收据；失败保留文件，不下载、不重命名 `.corrupt`。IndexTTS 缺少生产摘要清单/转换来源收据时 blocked；缺 importer 不调用 Python 兜底。资源已验证不等于设备执行、精度和性能已验证。
+构建完成后，可执行文件按内容摘要复制到收据目录的 `binaries/<SHA-256>/`，以原子
+无覆盖方式发布，收据引用该副本。这样同 feature 的下一次 Cargo 构建不会覆盖 A/B
+的旧可执行文件。清理 Cargo 缓存时应保留这些副本及收据；旧版直接引用 target 的
+收据若摘要失配必须重建，不能修改摘要使旧实验冒充新构建。
+
+prepare 消费构建收据并校验可执行文件摘要。无模型默认只返回生产 AppPaths/Registry 目录和 catalog，不创建自定义资源根。指定 `--backend qwen --model 0.6b-base` 可在编入对应 feature 后对已有模型进行只读生产清单校验，生成资源收据；失败保留文件，不下载、不重命名 `.corrupt`。IndexTTS 使用经过官方原文件摘要和逐张量核验的固定转换清单，标记 `verified_conversion_manifest`；不匹配的自定义转换仍 blocked，不能把任意本地摘要当作来源证明。缺 importer 不调用 Python 兜底。资源已验证不等于设备执行、精度和性能已验证。
 
 Windows 资源准备使用三个显式命令，只复制或下载 pinned 文件，不做目录迁移、扫描或转换：
 
@@ -39,6 +51,25 @@ cargo xtask perf resource-download --plan resource-plan.json --resources-root "$
 正式测量链路的目标为纯 Rust：资源检查、构建、执行、恢复、采样、统计和报告。已有上游 Python-only 转换仅允许在显式准备阶段运行，必须记录解释器/脚本 revision、输入输出摘要，并通过生产校验；测量不隐式执行转换。历史官方 Python 对照脚本仅保留在 Git 历史中，当前树已删除 `tools/`。
 
 ## 与 Windows 基线的任务映射
+
+### 官方参考进程
+
+`cargo xtask perf reference --job reference-job.json --output NEW_DIRECTORY` 调度显式固定的
+参考适配器，复用 native owner、超时、取消、资源采样和有界事件日志。它与生产 Registry
+run 分开标识，不接受把参考结果伪装成生产构建收据。Job 字段见
+`xtask/src/perf/reference.rs::Job`：固定解释器与 SHA、无 shell 的 arguments、逐文件
+inputs/SHA、显式 environment、模型专用 request、进程数/预热/热轮及超时。
+
+输入在每进程开始与结束核验，既有 output 不覆盖；失败保留 capture 和原始资产并停止
+后续推理。适配器接收附加的 request JSON 和 output 目录，输出版本化 prepared/round/
+terminal 事件；每轮必须提供音频资产和摘要，通过覆盖率、轮序及资产校验才写最终结果。
+当前不支持 reference resume；重试用新目录，不补写旧 capture 或成功标记。
+
+`scripts/perf/omnivoice_cuda_reference.py` 是独立官方 CUDA 推理适配器：固定 seed、默认
+32 步/CFG=2/zh，记录实际 SDPA、主干 F16 和 decoder F32；同步 CUDA 计时，导出在计时外。
+用隔离环境安装官方依赖并把固定源码加入 Python 路径；下载和准备不在正式测量中执行。
+Job 应包含适配器、实际官方 Python 源码、语料和通过清单校验的权重/配置身份；依赖版本
+另由 runtime 记录。跨框架随机数、时长、分段、seed 派生和前处理差异仍须单独披露。
 
 `rust-performance-harness` 拥有唯一的 Rust 开发框架。`benchmark-windows-backends` 消费该框架，保留自己的模型矩阵、资源安全契约、真实测量与试听报告交付责任：
 
@@ -179,3 +210,59 @@ Metal 计时继续采用 production_synthesis_stream_consumer_start_to_completed
 接通证据见 [Mac 实施记录](records/2026-10-20-macos-performance-harness.md)。完整矩阵、资源补齐、正式重复协议、真实模型开销与人工听感属于后续独立基线任务。
 
 恢复前会在 run 锁内核对所有历史 attempt 的 cleanup 证据：缺失、损坏或 cleanup_verified=false 时拒绝 resume，不会忽略旧失败再启动推理。需先在工具外确认遗留进程已清理，再以新的 run 记录重新开始；工具不提供静默覆盖此门禁的开关。
+
+Windows `capture.json` 的可选 `job_peak_memory` 是本工具所拥有 Job Object 的
+OS commit 高水位，包含其后代，scope=`contained_job`、单位bytes，无采样间隔。
+它在清理前查询；失败保留 unavailable/reason，Mac不输出伪造等价项。它不是
+RSS/显存，不能与resource-samples中的单spawn PID RSS混排行。虚拟环境启动器
+可能另起解释器，因此root RSS不自动代表模型树；旧结果不回填此字段。当前
+通用内存图仍展示原单进程读数，Job高水位请从capture.json单独检查。实证与模型
+无关后代分配测试见[Windows VoxCPM调查](records/voxcpm/voxcpm-windows-production-2026-10-24.md)。
+
+Windows外部reference Job可显式设置正整数`minimum_available_commit_bytes`（省略时不检查）。
+每个reference进程启动前、输入身份验证后，查询系统可用commit，并在该process目录
+保留commit-preflight.json；不足或查询失败则拒绝启动参考程序，不创建request/stdout/
+results，也不伪造cleanup或成功轮次。预检可能使用环境查询辅助命令，“未启动”指
+目标reference进程。当前该预算查询仅支持Windows，其他平台显式配置会保留不可用
+原因并拒绝，不静默忽略。它是启动前快照，不是内存预留或运行期硬限制，不能保证
+进程启动后永不OOM；预算应按案例估计，失败峰值只是完整加载需求的下界。
+
+性能探针WAV导出使用64KiB缓冲，仍在热合成计时之外，显式finalize以传播写入/flush错误。
+Windows本地完整文件对照和模型无关门禁见[导出修复记录](records/platform/windows-artifact-export-2026-10-24.md)。
+导出策略会改变未计时的轮间空档；后续模型比较应统一两臂探针实现、重新冻结，
+不能把旧直写A与新缓冲B之间的模型耗时变化直接归因推理算法。既有原始收据保留。
+
+### 生产输出与模型原始PCM的边界
+
+performance_probe消费完整SynthesisStream。生产producer可能先做静音整理与渐进响度
+对齐，所以full/segment WAV不保证等于Backend或codec的原始PCM。正式链路基准保持
+这些生产行为；跨框架数值归因另收原始边界、真实prompt/codes和同配置的codec输出，
+不能把两种边界的差额直接称为GPU数值误差。临时采集的耗时不混入正式轮次。
+实例见[MOSS ONNX Windows](records/moss/moss-nano-onnx-windows-2026-10-24.md)最新控制实验。
+
+### 显式动态 ORT 的环境身份
+
+设置 ORT_DYLIB_PATH 时，Native Job 会冻结绝对路径与工具计算的
+ORT_RUNTIME_BUNDLE_SHA256（主库及同目录 ORT provider 动态库内容）。同路径替换或
+provider 增删后 run/Resume 拒绝旧条件；每进程及复用前重新检查。该快照不涵盖外部
+CUDA/cuDNN依赖，也不替代实际加载模块审计。未设置路径的旧静态身份不变。
+完整范围、无模型 CLI 负向回归及恢复命令见
+[Windows ORT 身份记录](records/platform/windows-ort-runtime-identity-2026-10-24.md)。
+
+
+动态 ORT 探针可通过 `perf build --features 'moss-nano-candle,ort-cuda,ort/load-dynamic'`
+生成标准 Native 收据。工具从实际 ORT 库的 Cargo artifact 核对 load-dynamic，
+不能以顶层 features 或命令行意图代替依赖构建身份。上述 Windows 记录包含正式
+3×(1+5) Native CUDA 请求和报告；默认分发是否可用仍需独立验收。
+
+## 不产生音频的参考组件诊断
+
+`perf reference --diagnostic --job JOB.json --output NEW_DIRECTORY`复用reference的
+源码/输入/可执行文件身份、进程归属、超时/取消、commit预检与资产审计。job的
+warmup_rounds必须0、hot_rounds必须1；这是每进程一次诊断调用，内部重复另记。
+适配器通过现有observation事件发送`diagnostic_result`：结构化summary及非空
+diagnostic_* artifacts（path/sha256/bytes/kind/derived_from），随后success terminal。
+该模式拒绝TTS round事件，输出kind为external_diagnostic_not_tts_performance，
+没有合成轮次、RTF或试听要求；普通reference路径仍强制音频与轮次覆盖。
+实例、负向门禁和实机验证见
+[IndexTTS CAMPPlus隔离记录](records/indextts/indextts-windows-campplus-isolation-2026-10-25.md)。

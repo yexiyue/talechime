@@ -472,6 +472,66 @@ fn send_audio(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "moss-nano-candle-cuda")]
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore = "explicit local Nano CUDA resources; no downloads"]
+    async fn real_cuda_cancel_full_queue_and_reuse_preserves_pcm() -> anyhow::Result<()> {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let root = PathBuf::from(
+                    std::env::var_os("TALECHIME_NANO_CUDA_ROOT")
+                        .ok_or_else(|| anyhow::anyhow!("TALECHIME_NANO_CUDA_ROOT required"))?,
+                );
+                let backend = NanoBackend::load_on(root, Device::Cuda).await?;
+                let text = "你好，欢迎使用叙铃。";
+                async fn collect(backend: &NanoBackend, text: &str) -> anyhow::Result<Vec<u32>> {
+                    let mut stream = backend.stream_seeded(text, "Weiguo", 42).await?;
+                    let mut bits = Vec::new();
+                    let mut ended = false;
+                    while let Some(chunk) = stream.recv().await {
+                        match chunk? {
+                            AudioChunk::Pcm(pcm) => {
+                                anyhow::ensure!(pcm.sample_rate == 48000 && pcm.channels == 2);
+                                anyhow::ensure!(pcm.samples.iter().all(|s| s.is_finite()));
+                                bits.extend(pcm.samples.into_iter().map(f32::to_bits));
+                            }
+                            AudioChunk::End => {
+                                ended = true;
+                                break;
+                            }
+                        }
+                    }
+                    anyhow::ensure!(ended && !bits.is_empty(), "incomplete Nano request");
+                    Ok(bits)
+                }
+                tokio::time::timeout(std::time::Duration::from_secs(60), async {
+                    let expected = collect(&backend, text).await?;
+                    // Drop before consuming any PCM, then verify the same owner recovers.
+                    drop(backend.stream_seeded(text, "Weiguo", 42).await?);
+                    assert_eq!(collect(&backend, text).await?, expected);
+                    let mut stream = backend.stream_seeded(text, "Weiguo", 42).await?;
+                    assert_eq!(stream.max_capacity(), 1);
+                    assert!(matches!(stream.recv().await, Some(Ok(AudioChunk::Pcm(_)))));
+                    // Observe a genuinely full bounded PCM queue before cancellation.
+                    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                        while stream.len() != 1 {
+                            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+                        }
+                    })
+                    .await?;
+                    drop(stream);
+                    assert_eq!(collect(&backend, text).await?, expected);
+                    assert!(backend.stream_seeded(text, "missing-voice", 42).await.is_err());
+                    assert_eq!(collect(&backend, text).await?, expected);
+                    eprintln!("Nano CUDA owner reused after unconsumed/full-queue cancellation and rejected voice; {} PCM samples identical", expected.len());
+                    Ok::<_, anyhow::Error>(())
+                })
+                .await??;
+                Ok(())
+            })
+            .await
+    }
+
     #[test]
     fn real_first_step_eos_recovers_without_skipping_text() -> anyhow::Result<()> {
         let Some(root) = std::env::var_os("TALECHIME_NANO_EMPTY_ROOT") else {

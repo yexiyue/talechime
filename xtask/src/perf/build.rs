@@ -59,6 +59,22 @@ pub fn artifact(line: &str, probe: &str) -> anyhow::Result<Option<(PathBuf, Vec<
     Ok(Some((PathBuf::from(path), features)))
 }
 
+const DYNAMIC_ORT_FEATURE: &str = "ort/load-dynamic";
+
+fn dynamic_ort_artifact(line: &str) -> anyhow::Result<bool> {
+    let value: serde_json::Value = serde_json::from_str(line)?;
+    if value["reason"] != "compiler-artifact"
+        || value["target"]["name"] != "ort"
+        || value["profile"]["test"] != false
+    {
+        return Ok(false);
+    }
+    let kinds: Vec<String> = serde_json::from_value(value["target"]["kind"].clone())?;
+    let features: Vec<String> = serde_json::from_value(value["features"].clone())?;
+    Ok(kinds.iter().any(|kind| kind == "lib")
+        && features.iter().any(|feature| feature == "load-dynamic"))
+}
+
 pub fn build(probe: &str, mut features: Vec<String>, output: &Path) -> anyhow::Result<()> {
     ensure!(
         ["performance_catalog", "performance_probe"].contains(&probe),
@@ -70,10 +86,11 @@ pub fn build(probe: &str, mut features: Vec<String>, output: &Path) -> anyhow::R
     features.dedup();
     for feature in &features {
         ensure!(
-            !feature.is_empty()
-                && feature
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'-'),
+            feature == DYNAMIC_ORT_FEATURE
+                || (!feature.is_empty()
+                    && feature
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')),
             "invalid feature name"
         );
     }
@@ -117,6 +134,7 @@ pub fn build(probe: &str, mut features: Vec<String>, output: &Path) -> anyhow::R
         .spawn()?;
     let stream = BufReader::new(child.stdout.take().context("Cargo stdout unavailable")?);
     let mut found = None;
+    let mut dynamic_ort = false;
     let parsed = (|| -> anyhow::Result<()> {
         for line in stream.lines() {
             let line = line?;
@@ -127,6 +145,7 @@ pub fn build(probe: &str, mut features: Vec<String>, output: &Path) -> anyhow::R
             if let Some(item) = artifact(&line, probe)? {
                 found = Some(item);
             }
+            dynamic_ort |= dynamic_ort_artifact(&line)?;
         }
         Ok(())
     })();
@@ -136,8 +155,19 @@ pub fn build(probe: &str, mut features: Vec<String>, output: &Path) -> anyhow::R
     let status = child.wait()?;
     parsed?;
     ensure!(status.success(), "probe build failed");
-    let (executable, effective_features) =
+    let (executable, mut effective_features) =
         found.context("Cargo did not emit requested example artifact")?;
+    if features
+        .iter()
+        .any(|feature| feature == DYNAMIC_ORT_FEATURE)
+    {
+        ensure!(dynamic_ort, "Cargo did not confirm ORT load-dynamic");
+    }
+    if dynamic_ort {
+        effective_features.push(DYNAMIC_ORT_FEATURE.into());
+        effective_features.sort();
+        effective_features.dedup();
+    }
     ensure!(
         features.iter().all(|f| effective_features.contains(f)),
         "requested features missing from artifact"
@@ -146,6 +176,9 @@ pub fn build(probe: &str, mut features: Vec<String>, output: &Path) -> anyhow::R
         Source::capture(root)? == source,
         "source changed while building; retry with stable sources"
     );
+    // Cargo overwrites the same example path on subsequent builds. Receipts
+    // must reference a preserved copy so an A/B rebuild cannot destroy A.
+    let executable = preserve_executable(&executable, output, probe)?;
     let receipt = Build {
         schema: VERSION.into(),
         source,
@@ -160,9 +193,82 @@ pub fn build(probe: &str, mut features: Vec<String>, output: &Path) -> anyhow::R
     publish_json(output, &receipt)
 }
 
+fn preserve_executable(source: &Path, receipt: &Path, probe: &str) -> anyhow::Result<PathBuf> {
+    let hash = file_digest(source)?;
+    let root = receipt.parent().unwrap_or(Path::new("."));
+    let directory = root.join("binaries").join(&hash);
+    std::fs::create_dir_all(&directory)?;
+    let name = format!(
+        "{probe}{}",
+        source
+            .extension()
+            .map(|e| format!(".{}", e.to_string_lossy()))
+            .unwrap_or_default()
+    );
+    let destination = directory.join(name);
+    if !destination.exists() {
+        let stage = tempfile::NamedTempFile::new_in(&directory)?;
+        std::fs::copy(source, stage.path())?;
+        stage.as_file().sync_all()?;
+        ensure!(
+            file_digest(stage.path())? == hash,
+            "probe changed while preserving binary"
+        );
+        if let Err(error) = stage.persist_noclobber(&destination) {
+            ensure!(
+                error.error.kind() == std::io::ErrorKind::AlreadyExists,
+                "cannot publish preserved probe: {}",
+                error.error
+            );
+        }
+    }
+    ensure!(
+        file_digest(&destination)? == hash,
+        "preserved probe binary changed"
+    );
+    Ok(destination.canonicalize()?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dynamic_ort_requires_its_own_library_artifact() -> anyhow::Result<()> {
+        let mut value = serde_json::json!({"reason":"compiler-artifact","target":{"name":"ort","kind":["lib"]},"profile":{"test":false},"features":["cuda","load-dynamic"]});
+        assert!(dynamic_ort_artifact(&value.to_string())?);
+        value["features"] = serde_json::json!(["cuda"]);
+        assert!(!dynamic_ort_artifact(&value.to_string())?);
+        value["features"] = serde_json::json!(["load-dynamic"]);
+        value["target"]["name"] = "performance_probe".into();
+        assert!(!dynamic_ort_artifact(&value.to_string())?);
+        value["target"]["name"] = "ort".into();
+        value["profile"]["test"] = true.into();
+        assert!(!dynamic_ort_artifact(&value.to_string())?);
+        value["profile"]["test"] = false.into();
+        value["target"]["kind"] = serde_json::json!(["example"]);
+        assert!(!dynamic_ort_artifact(&value.to_string())?);
+        Ok(())
+    }
+    #[test]
+    fn rebuild_preserves_both_executables_and_detects_tampering() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("cargo-probe.exe");
+        let receipt = root.path().join("build.json");
+        std::fs::write(&source, b"baseline")?;
+        let baseline = preserve_executable(&source, &receipt, "performance_probe")?;
+        std::fs::write(&source, b"candidate")?;
+        let candidate = preserve_executable(&source, &receipt, "performance_probe")?;
+        assert_ne!(baseline, candidate);
+        assert_eq!(std::fs::read(&baseline)?, b"baseline");
+        assert_eq!(std::fs::read(&candidate)?, b"candidate");
+        assert_eq!(
+            preserve_executable(&source, &receipt, "performance_probe")?,
+            candidate
+        );
+        std::fs::write(candidate, b"tampered")?;
+        assert!(preserve_executable(&source, &receipt, "performance_probe").is_err());
+        Ok(())
+    }
     #[test]
     fn changed_binary_cannot_reuse_build_identity() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;

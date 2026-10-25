@@ -104,7 +104,7 @@ pub fn process(pid: u32, interval_ms: u64) -> BTreeMap<String, Reading> {
 }
 
 #[cfg(windows)]
-fn system_available_private_bytes() -> anyhow::Result<u64> {
+pub(super) fn system_available_private_bytes() -> anyhow::Result<u64> {
     use windows::Win32::System::ProcessStatus::{K32GetPerformanceInfo, PERFORMANCE_INFORMATION};
     use windows::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
     let mut performance = PERFORMANCE_INFORMATION {
@@ -179,13 +179,36 @@ pub fn gpu_processes() -> Result<CompetingGpuProcesses, String> {
         "--format=csv,noheader,nounits",
     ]);
     capture(&mut command, Duration::from_secs(2))
-        .and_then(|bytes| parse_gpu_processes(std::str::from_utf8(&bytes)?))
-        .map(|processes| CompetingGpuProcesses {
-            status: "available".into(),
-            reason: None,
-            processes,
-        })
+        .and_then(|bytes| parse_gpu_process_output(&bytes))
         .map_err(|error| error.to_string())
+}
+
+fn parse_gpu_process_output(bytes: &[u8]) -> anyhow::Result<CompetingGpuProcesses> {
+    let (text, reason) = match std::str::from_utf8(bytes) {
+        Ok(text) => (text.to_owned(), None),
+        Err(_) => {
+            // Windows process paths may use a legacy encoding. Preserve their bytes
+            // without guessing a code page; PID/memory fields remain strictly parsed.
+            let text = bytes.iter().fold(String::new(), |mut text, &byte| {
+                use std::fmt::Write;
+                if byte.is_ascii() {
+                    text.push(char::from(byte));
+                } else {
+                    write!(text, "\\x{byte:02x}").expect("write to String");
+                }
+                text
+            });
+            (
+                text,
+                Some("non-UTF-8 nvidia-smi output; non-ASCII bytes escaped as \\xNN".into()),
+            )
+        }
+    };
+    Ok(CompetingGpuProcesses {
+        status: "available".into(),
+        reason,
+        processes: parse_gpu_processes(&text)?,
+    })
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
@@ -262,6 +285,31 @@ pub fn gpu(interval_ms: u64) -> BTreeMap<String, Reading> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_encoded_process_names_do_not_hide_gpu_processes() -> anyhow::Result<()> {
+        let result = parse_gpu_process_output(b"123, C:\\tool\x81\x40.exe, [N/A]\r\n")?;
+        assert_eq!(result.status, "available");
+        assert!(result.reason.is_some());
+        assert_eq!(result.processes[0].pid, 123);
+        assert_eq!(result.processes[0].process_name, "C:\\tool\\x81@.exe");
+        assert_eq!(result.processes[0].used_gpu_memory_bytes, None);
+        assert!(parse_gpu_process_output(b"\x81, model.exe, 10").is_err());
+        assert!(parse_gpu_process_output(b"123, model.exe, \x81").is_err());
+        let valid = parse_gpu_process_output("456, 中文.exe, 10\n".as_bytes())?;
+        assert_eq!(valid.processes[0].process_name, "中文.exe");
+        assert!(valid.reason.is_none());
+        assert!(parse_gpu_process_output(b"")?.processes.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires local nvidia-smi; no model"]
+    fn live_gpu_process_collection() -> anyhow::Result<()> {
+        let result = gpu_processes().map_err(anyhow::Error::msg)?;
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        assert_eq!(result.status, "available");
+        Ok(())
+    }
     #[test]
     fn gpu_readings_keep_units_scope_and_missing_fields() -> anyhow::Result<()> {
         let result = parse_gpu("GPU-fixture, 100, 2100, [N/A], 42", 500)?;
