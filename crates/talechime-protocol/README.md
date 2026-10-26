@@ -4,7 +4,7 @@
 
 ## 协议 v7
 
-v7 采用一个计划执行入口，不提供旧版本适配或扩展协商。单音色就是一个完整声音范围并封闭的计划。宿主集成留待 Talechime API 和 CastGlean 分别稳定后进行。
+v7 采用一个计划执行入口，不提供旧版本适配或扩展协商。单音色就是一个完整声音范围并封闭的计划。宿主负责业务标注，worker 负责本地合成与播放；协议不传 PCM。
 
 每个请求包含 `protocol_version`、唯一 `request_id`、可为空的 `session_id` 和 `type`。带参数的命令使用 `payload`，公开 Rust DTO 定义字段。
 
@@ -12,7 +12,9 @@ v7 采用一个计划执行入口，不提供旧版本适配或扩展协商。�
 {"protocol_version":7,"request_id":"hello-1","session_id":null,"type":"hello"}
 ```
 
-先 `hello` 查询模型目录，然后 `prepare_model` 等待 `model_ready`。模型身份使用所选能力中的 backend/model；计划身份精确匹配，`null` 不代表任意模型。查询与配置不准备模型，显式准备可能下载权重。
+先 `hello` 查询模型目录，然后 `prepare_model` 等待 `model_ready`。模型身份使用所选能力中的 backend/model；计划身份精确匹配，`null` 不代表任意模型。查询与配置不准备模型，显式准备可能下载权重。也可用 `talechime models --json` 只读查询目录。
+无合成后端的构建仍可握手（ready payload 为空数组）与读写播放偏好，模型准备明确报错。
+音色库 id 可以直接用于配置和计划，首次使用时自动物化；设计、准备和播放按有界队列互斥。
 
 | 命令 | payload / 作用 |
 | --- | --- |
@@ -25,7 +27,9 @@ v7 采用一个计划执行入口，不提供旧版本适配或扩展协商。�
 | `seek` | `{ "byte": 0, "new_session_id": "新的唯一ID" }`：保留计划/暂停状态，从原文重新生成 |
 | `get_status` / `get_config` | 无：查询状态或持久默认配置 |
 | `update_config` | `ConfigPatch`：音色/风格只作为未来计划默认值；音量/速度影响活动播放；模型/设备变更取消执行并释放模型 |
-| `cancel_prepare` / `shutdown` | 无：取消准备或关闭 worker |
+| `design_voice` | 名称/描述与可选引擎、文本、设备、seed、id；完成发 voice_ready |
+| `list_voices` / `remove_voice` | 列出库音色 / 按 payload.voice 删除库音色 |
+| `cancel_prepare` / `shutdown` | 无：取消准备/设计或关闭 worker |
 
 所有计划/播放命令要求 envelope 中非空 session_id。start 使用新 ID；后续命令使用活动 ID。start 全部验证后才替换旧执行。坏范围/摘要/音色、提前或重复 seal、旧 ID 都明确报错，非法追加不会使已有计划失败。
 

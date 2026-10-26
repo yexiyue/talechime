@@ -4,6 +4,7 @@ mod cli;
 #[path = "../tests/library/fixture.rs"]
 #[allow(dead_code)] // Binary adapter tests use only normal/long fixture modes.
 mod fixture;
+mod models;
 mod plan_input;
 mod preparation;
 mod protocol;
@@ -18,6 +19,16 @@ use std::path::PathBuf;
 
 #[derive(clap::Subcommand)]
 enum Commands {
+    /// List synthesis models, devices, built-in voices and generation parameters. No downloads.
+    Models {
+        #[arg(long)]
+        backend: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        /// Emit the complete capability catalog as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Compare existing PCM16 WAV to UTF-8 source without synthesis or playback.
     #[cfg(feature = "asr")]
     Verify {
@@ -26,6 +37,7 @@ enum Commands {
         #[arg(long)]
         report: PathBuf,
     },
+    /// Design, import and manage the cross-model voice library.
     Voices {
         #[command(subcommand)]
         command: voices::VoiceCommand,
@@ -44,7 +56,13 @@ enum VerifyMode {
 #[command(
     version,
     subcommand_negates_reqs = true,
-    about = "Read a UTF-8 file aloud, or serve JSON Lines on stdin/stdout"
+    about = "Read text aloud, manage voices, or serve JSON Lines",
+    after_help = "Examples:
+  talechime models
+  talechime chapter.txt --backend moss --tts-device cpu
+  talechime voices list
+  talechime voices design --description 'A warm, low male voice'
+  talechime --protocol"
 )]
 struct Args {
     #[command(subcommand)]
@@ -58,16 +76,19 @@ struct Args {
     /// Prepare the ASR model group with prepare_model in JSON Lines mode.
     #[arg(long, requires = "protocol")]
     readback_models: bool,
+    /// Synthesis backend; discover available models with `models`.
     #[arg(long)]
     backend: Option<String>,
+    /// Built-in voice (`models`) or library ID (`voices list`). Saved for later reads.
     #[arg(long)]
     voice: Option<String>,
-    /// Model ID within the selected backend (see the protocol model catalog).
+    /// Model ID within the selected backend; see `models`.
     #[arg(long)]
     model: Option<String>,
     /// Speaking style supported by the selected model; an empty value clears it.
     #[arg(long)]
     style: Option<String>,
+    /// Synthesis device: auto, cpu, metal, cuda or coreml; availability is model-specific.
     #[arg(long, value_parser = parse_device)]
     tts_device: Option<talechime_protocol::Device>,
     /// File to read. Interactive controls: space=pause/resume, s=stop, q=exit.
@@ -100,19 +121,19 @@ struct Args {
     #[arg(long, conflicts_with = "protocol")]
     restart: bool,
     /// Generation parameter for the prepared model, repeatable (name=value).
-    #[arg(long, value_parser = parse_param)]
+    #[arg(long, value_parser = parse_param, conflicts_with = "protocol")]
     param: Vec<(String, talechime_protocol::ParamValue)>,
     /// Pin sampling for a reproducible run; default draws fresh randomness.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "protocol")]
     seed: Option<u64>,
     /// Override the listening configuration path.
-    #[arg(long)]
+    #[arg(long, global = true)]
     config: Option<PathBuf>,
     /// Override the model directory (does not copy or delete existing models).
-    #[arg(long)]
+    #[arg(long, global = true)]
     model_dir: Option<PathBuf>,
     /// Override the independent listening checkpoint directory.
-    #[arg(long)]
+    #[arg(long, global = true)]
     checkpoint_dir: Option<PathBuf>,
 }
 
@@ -163,6 +184,19 @@ async fn main() -> anyhow::Result<()> {
         None => talechime_core::checkpoint::CheckpointStore::user_default()?,
     };
     let resources = Registry::new(args.model_dir)?;
+    if let Some(Commands::Models {
+        backend,
+        model,
+        json,
+    }) = args.command
+    {
+        return models::run(
+            resources.root(),
+            backend.or(args.backend).as_deref(),
+            model.or(args.model).as_deref(),
+            json,
+        );
+    }
     if let Some(Commands::Voices { command }) = args.command {
         // Asset operations depend on the config location, not synthesis settings.
         let voices = config
@@ -173,16 +207,44 @@ async fn main() -> anyhow::Result<()> {
         let studio = talechime::VoiceStudio::at(resources.root(), voices)?;
         return talechime::run_local(voices::run(command, studio)).await;
     }
+    let plan = match args.plan.as_deref() {
+        Some(path) => Some(plan_input::read_file(path).await?),
+        None => None,
+    };
+    if let Some(plan) = &plan {
+        anyhow::ensure!(
+            args.backend
+                .as_ref()
+                .is_none_or(|backend| backend == &plan.backend)
+                && args
+                    .model
+                    .as_ref()
+                    .is_none_or(|model| Some(model) == plan.model.as_ref()),
+            "CLI backend/model must match the plan"
+        );
+    }
+    let selected_backend = args
+        .backend
+        .as_deref()
+        .or_else(|| plan.as_ref().map(|plan| plan.backend.as_str()));
+    let selected_model = args
+        .model
+        .as_deref()
+        .or_else(|| plan.as_ref().and_then(|plan| plan.model.as_deref()));
     let config = if config.path().exists() {
         config
     } else {
-        let defaults = match args.backend.as_deref() {
+        let defaults = match selected_backend {
             Some(backend) => {
-                let caps = resources.capabilities_for(backend, args.model.as_deref())?;
+                let caps = resources.capabilities_for(backend, selected_model)?;
                 talechime_protocol::Config {
                     backend: caps.backend,
                     model: caps.model,
-                    voice: caps.default_voice,
+                    voice: plan
+                        .as_ref()
+                        .and_then(|plan| plan.voices.first())
+                        .cloned()
+                        .unwrap_or(caps.default_voice),
                     ..Default::default()
                 }
             }
@@ -197,30 +259,39 @@ async fn main() -> anyhow::Result<()> {
         resources.resolve(&stored.backend, stored.model.as_deref())?;
     }
     if args.command.is_none()
-        && (args.model.is_some()
+        && (plan.is_some()
+            || args.model.is_some()
             || args.style.is_some()
             || args.backend.is_some()
             || args.voice.is_some()
             || args.tts_device.is_some())
     {
         let current = config.load()?;
-        let target = args.backend.as_deref().unwrap_or(&current.backend);
-        let model = args.model.as_deref().or_else(|| {
+        let target = selected_backend.unwrap_or(&current.backend);
+        let model = selected_model.or_else(|| {
             (target == current.backend)
                 .then_some(current.model.as_deref())
                 .flatten()
         });
-        let caps = resources.capabilities_for(target, model)?;
+        let mut caps = resources.capabilities_for(target, model)?;
         let model_changed = resources
             .capabilities_for(&current.backend, current.model.as_deref())
             .is_ok_and(|old| old.model != caps.model);
-        let voice = args.voice.or_else(|| {
-            (target != current.backend || model_changed).then(|| caps.default_voice.clone())
-        });
+        let voice = args
+            .voice
+            .or_else(|| plan.as_ref().and_then(|plan| plan.voices.first()).cloned())
+            .or_else(|| {
+                (target != current.backend || model_changed).then(|| caps.default_voice.clone())
+            });
+        let studio = preparation::voice_studio(&config, &resources)?;
+        preparation::include_library_voice(
+            &mut caps,
+            voice.as_deref().unwrap_or(&current.voice),
+            &studio,
+        )?;
         let tts_device = args.tts_device.or_else(|| {
-            args.backend
-                .as_ref()
-                .filter(|id| *id != &current.backend)
+            selected_backend
+                .filter(|id| *id != current.backend)
                 .map(|_| talechime_protocol::Device::Auto)
         });
         if tts_device.is_some() || model_changed {
@@ -234,8 +305,8 @@ async fn main() -> anyhow::Result<()> {
         config.update(
             &talechime_protocol::ConfigPatch {
                 expected_revision: current.revision,
-                backend: args.backend.clone(),
-                model: args.model.clone(),
+                backend: selected_backend.map(str::to_owned),
+                model: selected_model.map(str::to_owned),
                 style: args.style.clone(),
                 tts_device,
                 voice,
@@ -259,7 +330,7 @@ async fn main() -> anyhow::Result<()> {
                 resources,
                 cli::CliOptions {
                     restore_checkpoint: !args.restart,
-                    plan_file: args.plan,
+                    plan,
                     after_chapter: args.after_chapter,
                     no_continuation: args.no_continuation,
                     continuation_boundary: args.continuation_boundary,
@@ -377,6 +448,8 @@ mod argument_tests {
         );
         for args in [
             vec!["talechime", "--protocol", "--after-chapter"],
+            vec!["talechime", "--protocol", "--seed", "7"],
+            vec!["talechime", "--protocol", "--param", "steps=32"],
             vec![
                 "talechime",
                 "chapter.txt",

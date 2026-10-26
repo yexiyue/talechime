@@ -81,6 +81,7 @@ pub struct NanoBackend {
     thread: Option<std::thread::JoinHandle<()>>,
     tokenizer: Option<Arc<SentencePieceProcessor>>,
     caps: Capabilities,
+    root: PathBuf,
     cache_identity: String,
 }
 impl NanoBackend {
@@ -92,6 +93,7 @@ impl NanoBackend {
             selected,
             &directory(&root),
         );
+        let voice_root = root.clone();
         let (requests, mut jobs) = mpsc::channel::<Request>(1);
         let (ready, loaded) = oneshot::channel();
         let thread = std::thread::Builder::new()
@@ -149,6 +151,7 @@ impl NanoBackend {
             thread: Some(thread),
             tokenizer: None,
             caps,
+            root: voice_root,
             cache_identity,
         };
         struct Loading {
@@ -189,7 +192,7 @@ impl NanoBackend {
         context: Option<&talechime_core::SpeechContext>,
     ) -> Result<talechime_core::backend::AudioStream, BackendError> {
         let text = super::text::normalize(text);
-        if text.is_empty() || !self.caps.voices.iter().any(|v| v == voice) {
+        if text.is_empty() || !self.capabilities().voices.iter().any(|v| v == voice) {
             return Err(BackendError::Unsupported(
                 "empty text or unknown Nano voice".into(),
             ));
@@ -248,7 +251,8 @@ impl Backend for NanoBackend {
         Some(self.cache_identity.clone())
     }
     fn capabilities(&self) -> Capabilities {
-        self.caps.clone()
+        // Library references can be installed after this model was prepared.
+        capabilities(&self.root).unwrap_or_else(|_| self.caps.clone())
     }
     fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
@@ -444,6 +448,38 @@ fn send_audio(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn prepared_capabilities_discover_references_installed_after_load() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let backend = super::NanoBackend {
+            requests: None,
+            thread: None,
+            tokenizer: None,
+            caps: super::capabilities(root.path())?,
+            root: root.path().into(),
+            cache_identity: "fixture".into(),
+        };
+        use talechime_core::backend::Backend;
+        assert!(
+            !backend
+                .capabilities()
+                .voices
+                .contains(&"custom:later".to_owned())
+        );
+        super::super::voices::VoiceStore::new(&super::directory(root.path())).save(
+            "custom:later".into(),
+            "Later".into(),
+            vec![vec![42; 16]; 3],
+        )?;
+        assert!(
+            backend
+                .capabilities()
+                .voices
+                .contains(&"custom:later".to_owned())
+        );
+        Ok(())
+    }
+
     use super::*;
     #[cfg(feature = "moss-nano-candle-cuda")]
     #[tokio::test(flavor = "current_thread")]
@@ -615,7 +651,8 @@ mod tests {
     }
 }
 
-/// Encode and publish one reference with the native CPU codec; resources must be prepared explicitly.
+/// Encode and publish one reference with the native CPU codec.
+/// Missing codec resources are prepared on demand; synthesis weights are not downloaded.
 pub async fn import_voice(
     root: PathBuf,
     id: String,
@@ -623,6 +660,23 @@ pub async fn import_voice(
     wav: PathBuf,
 ) -> anyhow::Result<()> {
     use std::sync::atomic::{AtomicBool, Ordering};
+    // Reject unreadable/invalid audio before preparing any codec resources.
+    let samples = super::audio::read_wav(&wav)?;
+    let resources: Vec<crate::resources::Resource> =
+        serde_json::from_str(include_str!("nano/resources.json"))?;
+    let codec = resources
+        .into_iter()
+        .filter(|resource| resource.path.starts_with("codec/"))
+        .collect();
+    let (progress, receiver) = mpsc::channel(1);
+    drop(receiver);
+    crate::resources::prepare(
+        &directory(&root),
+        "moss/nano-candle/reference",
+        codec,
+        progress,
+    )
+    .await?;
     let cancelled = Arc::new(AtomicBool::new(false));
     let signal = cancelled.clone();
     let (reply, result) = oneshot::channel();
@@ -631,7 +685,6 @@ pub async fn import_voice(
         .spawn(move || {
             let encoded = (|| {
                 let check = || signal.load(Ordering::Relaxed);
-                let samples = super::audio::read_wav(&wav)?;
                 anyhow::ensure!(!check(), "Nano voice import cancelled");
                 let mut codec = talechime_moss_tts::codec::AudioCodec::load(
                     &directory(&root).join("codec"),

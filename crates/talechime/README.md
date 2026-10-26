@@ -1,6 +1,6 @@
 # talechime
 
-文件朗读 CLI 与 JSON Lines worker。模型装配、准备、设备校准和音色命令归程序层；会话与播放归 `talechime-core`，模型实现归 `talechime-backends`。
+文件朗读 CLI 与 JSON Lines worker。对外同时提供 Rust facade；模型装配、准备、设备校准和音色命令归程序层；会话与播放归 `talechime-core`，模型实现归 `talechime-backends`。
 
 ## 文件朗读
 
@@ -8,6 +8,7 @@
 cargo run -p talechime -- --help
 cargo run --release -p talechime -- --backend moss --tts-device cpu book.txt
 cargo run --release -p talechime -- --restart book.txt
+cargo run -p talechime -- models
 cargo run -p talechime -- voices list
 ```
 
@@ -17,7 +18,7 @@ cargo run -p talechime -- voices list
 
 ```sh
 cargo build --release -p talechime --features qwen,voxcpm,omnivoice
-cargo build --release -p talechime --no-default-features --features qwen-cuda
+cargo build --release -p talechime --no-default-features --features cli,qwen-cuda
 cargo build --release -p talechime --features qwen-metal,voxcpm-metal,omnivoice-metal,moss-candle-metal
 cargo build --release -p talechime --features moss-nano-candle-metal
 ```
@@ -30,10 +31,10 @@ Candle 加速开关包含对应模型开关；MOSS 两档均使用 Candle，GPU 
 cargo run -p talechime -- --protocol
 ```
 
-stdin/stdout 使用协议 v6，stderr 为日志。先发送 `hello`：
+stdin/stdout 使用协议 v7，stderr 为日志。先发送 `hello`：
 
 ```json
-{"protocol_version":6,"request_id":"hello-1","session_id":null,"type":"hello"}
+{"protocol_version":7,"request_id":"hello-1","session_id":null,"type":"hello"}
 ```
 
 协议模式不接管终端。握手期限 5 秒，单行上限 16 MiB；未知版本关闭连接。EOF / shutdown 停止播放并保存可靠进度。控制命令保持串行，等待期间继续消费会话事件，避免有界队列死锁。
@@ -42,8 +43,8 @@ stdin/stdout 使用协议 v6，stderr 为日志。先发送 `hello`：
 
 ## 配置与资源
 
-配置位于 `~/.talechime/config.json`，检查点位于 `~/.talechime/checkpoints/`，模型与音色位于 `~/.talechime/resources/`。保留 `--config`、`--checkpoint-dir`、`--model-dir` 显式参数。不读取旧主目录，不自动迁移退休后端。
+配置位于 `~/.talechime/config.json`，检查点位于 `~/.talechime/checkpoints/`，模型与参考缓存位于 `~/.talechime/resources/`，用户音色库位于 `~/.talechime/voices/`。保留 `--config`、`--checkpoint-dir`、`--model-dir` 显式参数。不读取旧主目录，不自动迁移退休后端。
 
-模型在实际准备或朗读时按需下载。帮助、握手和音色目录查询不下载模型；参考音色按模型隔离。配置使用修订检查与原子替换，损坏数据不覆盖。
+模型在实际准备或朗读时按需下载。帮助、握手和音色目录查询不下载模型；库音色跨模型复用，参考缓存按模型隔离。配置使用修订检查与原子替换，损坏数据不覆盖。
 
 完整用法见[仓库 README](../../README.md)、[架构](../../docs/architecture.md)、[开发与验证](../../docs/development.md)、[协议](../talechime-protocol/README.md)。真实模型验收与普通测试分开记录。

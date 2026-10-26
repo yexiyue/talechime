@@ -44,7 +44,7 @@ impl Drop for TerminalGuard {
 
 pub struct CliOptions {
     pub restore_checkpoint: bool,
-    pub plan_file: Option<PathBuf>,
+    pub plan: Option<talechime_protocol::PlanRequest>,
     pub after_chapter: bool,
     pub no_continuation: bool,
     /// Chain-reset policy override; plan-file policy applies when absent.
@@ -84,7 +84,7 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     let CliOptions {
         restore_checkpoint,
-        plan_file,
+        plan: plan_input,
         after_chapter,
         no_continuation,
         continuation_boundary,
@@ -100,8 +100,17 @@ pub async fn run(
         .map_err(|error| anyhow::anyhow!("cannot read UTF-8 file {}: {error}", file.display()))?;
     let canonical = tokio::fs::canonicalize(&file).await?;
     let config = store.load()?;
-    let config =
-        store.initialize(&resources.capabilities_for(&config.backend, config.model.as_deref())?)?;
+    let studio = crate::preparation::voice_studio(&store, &resources)?;
+    let mut caps = resources.capabilities_for(&config.backend, config.model.as_deref())?;
+    crate::preparation::include_library_voice(&mut caps, &config.voice, &studio)?;
+    let config = store.initialize(&caps)?;
+    if !resources
+        .capabilities_for(&config.backend, config.model.as_deref())?
+        .voices
+        .contains(&config.voice)
+    {
+        eprintln!("Preparing voice reference; first use may download encoder resources");
+    }
     let source = SourceId {
         namespace: "cli-file".into(),
         book: canonical.to_string_lossy().into(),
@@ -113,24 +122,7 @@ pub async fn run(
     let mut continuation_span = continuation_span;
     let (mut generation_params, mut seed_policy) =
         generation_settings(&Default::default(), None, &params, seed);
-    let studio = store
-        .path()
-        .parent()
-        .map(|root| root.join("voices"))
-        .and_then(|voices| talechime::VoiceStudio::at(resources.root(), voices).ok());
-    let (plan, resume_byte, restore_checkpoint) = if let Some(path) = plan_file {
-        // Bound file reads before deserialization. Full plans only; stdin worker handles increments.
-        use tokio::io::AsyncReadExt;
-        let mut data = Vec::new();
-        tokio::fs::File::open(&path)
-            .await?
-            .take((talechime_protocol::MAX_MESSAGE_BYTES + 1) as u64)
-            .read_to_end(&mut data)
-            .await?;
-        if data.len() > talechime_protocol::MAX_MESSAGE_BYTES {
-            anyhow::bail!("plan file exceeds transport limit");
-        }
-        let input: talechime_protocol::PlanRequest = serde_json::from_slice(&data)?;
+    let (plan, resume_byte, restore_checkpoint) = if let Some(input) = plan_input {
         if input.text != text || !input.sealed {
             anyhow::bail!("CLI requires a sealed plan with the exact file text");
         }
@@ -148,7 +140,7 @@ pub async fn run(
             crate::plan_input::build(
                 &input,
                 &resources.capabilities_for(&config.backend, config.model.as_deref())?,
-                studio.as_ref(),
+                Some(&studio),
             )
             .await?,
             if restore_checkpoint {
@@ -161,19 +153,9 @@ pub async fn run(
     } else {
         let caps = resources.capabilities_for(&config.backend, config.model.as_deref())?;
         let source = talechime::SourceSnapshot::new(source, text.clone(), &text_hash(&text))?;
-        let voices = match &studio {
-            Some(studio) => {
-                studio
-                    .voice_snapshot(&caps, std::slice::from_ref(&config.voice))
-                    .await?
-            }
-            None => talechime::VoiceSnapshot::new(
-                &caps.backend,
-                caps.model.as_deref(),
-                &caps,
-                vec![config.voice.clone()],
-            )?,
-        };
+        let voices = studio
+            .voice_snapshot(&caps, std::slice::from_ref(&config.voice))
+            .await?;
         (
             talechime::SpeechPlan::single_voice(
                 source,
@@ -210,7 +192,10 @@ pub async fn run(
     };
     plan.validate_resume_byte(resume_byte.unwrap_or(0))?;
     let (progress, mut preparation) = mpsc::channel(16);
-    let settings = config.clone();
+    let mut settings = config.clone();
+    if let Some(voice) = plan.voices().voices().next() {
+        settings.voice = voice.to_owned();
+    }
     let mut task = tokio::task::spawn_local(async move {
         crate::preparation::prepare_models(resources, settings, progress, readback).await
     });

@@ -4,6 +4,33 @@ use talechime_backends::Registry;
 use talechime_core::backend::Backend;
 use talechime_protocol::{Config, Event};
 use tokio::sync::mpsc;
+/// Admit a validated library id as a saved selection without loading a model.
+/// Materialization remains deferred until the selected reference is actually used.
+pub fn include_library_voice(
+    caps: &mut talechime_protocol::Capabilities,
+    voice: &str,
+    studio: &talechime::VoiceStudio,
+) -> anyhow::Result<()> {
+    if !caps.voices.iter().any(|available| available == voice) {
+        anyhow::ensure!(caps.cloning, "this model does not support reference voices");
+        studio.get(voice)?;
+        caps.voices.push(voice.to_owned());
+    }
+    Ok(())
+}
+
+pub fn voice_studio(
+    store: &talechime_core::config::ConfigStore,
+    resources: &Registry,
+) -> anyhow::Result<talechime::VoiceStudio> {
+    let voices = store
+        .path()
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("config path needs a parent directory"))?
+        .join("voices");
+    Ok(talechime::VoiceStudio::at(resources.root(), voices)?)
+}
+
 pub fn validate_device(
     device: talechime_protocol::Device,
     backend: &str,

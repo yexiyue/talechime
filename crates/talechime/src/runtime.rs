@@ -340,7 +340,7 @@ impl Worker {
                     Err(error) => return Response::error("config_invalid", "config", error),
                 };
                 let target = patch.backend.as_deref().unwrap_or(&old.backend);
-                let caps = if patch.is_playback_only() {
+                let mut caps = if patch.is_playback_only() {
                     None
                 } else {
                     match self
@@ -353,6 +353,16 @@ impl Worker {
                         }
                     }
                 };
+                if let Some(caps) = caps.as_mut()
+                    && let Some(studio) = &self.voice_studio
+                    && let Err(error) = crate::preparation::include_library_voice(
+                        caps,
+                        patch.voice.as_deref().unwrap_or(&old.voice),
+                        studio,
+                    )
+                {
+                    return Response::error("voice_invalid", "config", error);
+                }
                 #[cfg(any(
                     feature = "moss",
                     feature = "qwen",
@@ -431,7 +441,7 @@ impl Worker {
                         Ok(config) => config,
                         Err(error) => return Response::error("config_invalid", "config", error),
                     };
-                    let caps = match self
+                    let mut caps = match self
                         .resources
                         .capabilities_for(&config.backend, config.model.as_deref())
                     {
@@ -440,11 +450,21 @@ impl Worker {
                             return Response::error("backend_unavailable", "model", error);
                         }
                     };
+                    if let Some(studio) = &self.voice_studio
+                        && let Err(error) = crate::preparation::include_library_voice(
+                            &mut caps,
+                            &config.voice,
+                            studio,
+                        )
+                    {
+                        return Response::error("voice_invalid", "config", error);
+                    }
                     let config = match self.store.initialize(&caps) {
                         Ok(config) => config,
                         Err(error) => return Response::error("config_invalid", "config", error),
                     };
                     let resources = self.resources.clone();
+                    let studio = self.voice_studio.clone();
                     self.disconnect_progress();
                     let (progress, mut updates) = mpsc::channel(16);
                     let outgoing = self.progress.clone();
@@ -458,6 +478,12 @@ impl Worker {
                     let readback = self.readback_models;
                     self.background = Some(BackgroundJob::Preparing(tokio::task::spawn_local(
                         async move {
+                            let mut config = config;
+                            if let Some(studio) = studio {
+                                let caps = resources
+                                    .capabilities_for(&config.backend, config.model.as_deref())?;
+                                config.voice = studio.resolve_voice(&caps, &config.voice).await?;
+                            }
                             crate::preparation::prepare_models(
                                 resources, config, progress, readback,
                             )

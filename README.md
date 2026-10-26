@@ -96,6 +96,8 @@ MOSS 两档均使用 Candle；各模型通过自己的 feature 启用 GPU。详�
 同一条音色可被所有支持参考克隆的模型使用，首次引用时自动物化进所选模型。
 
 ```sh
+talechime models                             # 模型、设备、内建音色和参数
+talechime models --backend qwen --json        # 完整能力与参数约束
 talechime voices list                        # 库内音色（与 --backend 无关）
 talechime voices engines                     # 可用设计引擎与代价
 talechime voices design --name "我的朗读音色" --description "低沉温和的中年男声"
@@ -186,6 +188,15 @@ talechime chapter.txt --plan chapter-plan.json
 ```
 
 Talechime 不获取章节、不分析角色，也不决定下一章。TRNovel 等宿主保留这些职责；CastGlean 的标注接入仍在规划中。[Rust 库用法](docs/library.md)和[回读校验](docs/readback.md)说明对应接口。
+
+## 接入与命令行技能
+
+根目录 `skills/` 提供两个面向使用方的独立技能，可复制各技能目录到所用 Agent 的技能目录：
+
+- [talechime-integration](skills/talechime-integration/SKILL.md)：Rust API、JSON Lines v7、音色、播放及取消的接入约束。
+- [talechime-cli](skills/talechime-cli/SKILL.md)：按当前构建查询能力、管理音色、朗读和排错。
+
+完整命令说明见 [CLI 指南](docs/cli.md)，Rust 接入见 [库入口](docs/library.md)。技能跟随本仓库源码，使用旧发行包时先核对实际帮助与 API。
 
 ## 数据与开发
 

@@ -128,6 +128,161 @@ fn query_and_update_do_not_prepare_resources_and_shutdown_drains_json() {
 }
 
 #[test]
+fn model_catalog_is_read_only_and_uses_global_paths_after_subcommands() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = directory.path().join("config.json");
+    std::fs::write(&config, "malformed configuration").unwrap();
+    let resources = directory.path().join("resources");
+    let output = ProcessCommand::new(env!("CARGO_BIN_EXE_talechime"))
+        .args(["models", "--json", "--config"])
+        .arg(&config)
+        .arg("--model-dir")
+        .arg(&resources)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let models: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        models
+            .iter()
+            .all(|model| model["capabilities"]["backend"].is_string()
+                && model["available_devices"].is_array())
+    );
+    assert!(!resources.exists());
+    assert_eq!(
+        std::fs::read_to_string(&config).unwrap(),
+        "malformed configuration"
+    );
+    let missing = ProcessCommand::new(env!("CARGO_BIN_EXE_talechime"))
+        .args(["models", "--backend", "no-such-backend", "--model-dir"])
+        .arg(&resources)
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("no matching model"));
+    assert!(!resources.exists());
+}
+
+#[cfg(feature = "moss-nano-candle")]
+#[test]
+fn library_voice_override_is_validated_without_materializing_or_loading_models() {
+    let directory = tempfile::tempdir().unwrap();
+    let resources = directory.path().join("resources");
+    let studio = talechime::VoiceStudio::at(&resources, directory.path().join("voices")).unwrap();
+    let mut wav = b"RIFF".to_vec();
+    wav.extend_from_slice(&38u32.to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    for value in [1u16, 1] {
+        wav.extend_from_slice(&value.to_le_bytes());
+    }
+    for value in [24000u32, 48000] {
+        wav.extend_from_slice(&value.to_le_bytes());
+    }
+    for value in [2u16, 16] {
+        wav.extend_from_slice(&value.to_le_bytes());
+    }
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&2u32.to_le_bytes());
+    wav.extend_from_slice(&100i16.to_le_bytes());
+    let recording = directory.path().join("reference.wav");
+    std::fs::write(&recording, wav).unwrap();
+    studio
+        .import_voice(Some("reader"), "朗读者", &recording, "你好")
+        .unwrap();
+    let config = directory.path().join("config.json");
+    let output = ProcessCommand::new(env!("CARGO_BIN_EXE_talechime"))
+        .arg(directory.path().join("missing.txt"))
+        .args([
+            "--backend",
+            "moss",
+            "--model",
+            "nano-candle",
+            "--voice",
+            "reader",
+            "--config",
+        ])
+        .arg(&config)
+        .arg("--model-dir")
+        .arg(&resources)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("cannot read UTF-8 file"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let saved: talechime_protocol::Config =
+        serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+    assert_eq!(saved.voice, "reader");
+    assert!(
+        !resources.exists(),
+        "validation must not prepare reference codecs or models"
+    );
+    let plan = talechime_protocol::PlanRequest {
+        source: talechime_protocol::SourceId {
+            namespace: "test".into(),
+            book: "book".into(),
+            chapter: "one".into(),
+        },
+        text: "你好".into(),
+        text_hash: talechime_protocol::text_hash("你好"),
+        backend: "moss".into(),
+        model: Some("nano-candle".into()),
+        voices: vec!["reader".into()],
+        spans: vec![talechime_protocol::VoiceSpan {
+            range: talechime_protocol::TextRange { start: 0, end: 6 },
+            voice: "reader".into(),
+            style: None,
+        }],
+        sealed: true,
+        playback: talechime_protocol::PlanPlayback::Streaming,
+        resume_byte: Some(0),
+        restore_checkpoint: false,
+        continuation: true,
+        continuation_boundary: Default::default(),
+        continuation_span: None,
+        params: Default::default(),
+        seed: None,
+        verification: Default::default(),
+    };
+    let plan_path = directory.path().join("plan.json");
+    std::fs::write(&plan_path, serde_json::to_vec(&plan).unwrap()).unwrap();
+    std::fs::remove_file(&config).unwrap();
+    let output = ProcessCommand::new(env!("CARGO_BIN_EXE_talechime"))
+        .arg(directory.path().join("missing.txt"))
+        .arg("--plan")
+        .arg(&plan_path)
+        .arg("--config")
+        .arg(&config)
+        .arg("--model-dir")
+        .arg(&resources)
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("cannot read UTF-8 file"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let saved: talechime_protocol::Config =
+        serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+    assert_eq!(
+        (
+            saved.backend.as_str(),
+            saved.model.as_deref(),
+            saved.voice.as_str()
+        ),
+        ("moss", Some("nano-candle"), "reader")
+    );
+    assert!(!resources.exists());
+}
+
+#[test]
 fn voice_commands_ignore_unavailable_or_malformed_synthesis_settings() {
     let directory = tempfile::tempdir().unwrap();
     let config = directory.path().join("config.json");

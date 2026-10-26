@@ -2,19 +2,32 @@
 
 `talechime` 包现在同时提供 library 和原有 executable。应用可只调用库，不需要解析 CLI 配置、发送 JSON Lines 或手动装配 Registry/SessionManager。首期一个 Engine 固定一个已准备的 backend/model/device，同时只拥有一个执行；多音色限同模型内。
 
+## 入口选择与能力发现
+
+- 需要 PCM：`Engine::prepare` → `synthesize`（有界流）或 `synthesize_pcm`（有限收集）。
+- 需要播放：同一个 Engine 构造计划，再 `listen` / `listen_with`；默认播放器需要 `playback` feature。
+- 设计/导入音色：独立 `VoiceStudio`，不用先创建合成 Engine。
+- 非 Rust 宿主控制播放：使用 JSON Lines v7 worker，协议不传 PCM。
+
+`model_catalog(resources)` 不下载权重、不读取 CLI 配置，返回 `Vec<ModelInfo>`：每项含
+`capabilities`（准确模型身份、内建/模型缓存音色、克隆、风格、参数）和 `available_devices`。
+`capabilities.compiled_devices` 是编入的设备，不能替代本机可用性；目录也不证明权重已准备。
+`VoiceDesigner`、`EngineInfo`、`DesignRequest`、`DesignOutput`、`InputConstraints` 与
+`DesignerHandle` 均从 facade 导出，宿主扩展设计引擎无需直接依赖 backends。
+
 ## 准备和直接合成
 
-在现有 workspace 外通过 path 依赖试用，模型 feature 沿用现有名称：
+当前说明对应本仓库源码；尚未发布的接口请通过本地 path 或固定 Git revision 试用，不假定同版本的 registry 包包含这些改动。模型 feature 沿用现有名称：
 
 ```toml
 [dependencies]
-talechime = { version = "0.5.0", default-features = false, features = ["moss-nano-candle"] }
+talechime = { path = "/path/to/talechime/crates/talechime", default-features = false, features = ["moss-nano-candle"] }
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 ```
 
 JSON Lines 宿主只需 `talechime-protocol = "0.3.1"`（协议 v7），模型和音频继续留在独立进程。
-计算库的发布包名为 `talechime-qwen3-tts` 和 `talechime-qwen3-asr`，Rust library 名仍为
-`qwen3_tts` / `qwen3_asr`；工作区使用 package 别名保留现有导入。
+计算库的发布包名为 `talechime-qwen3-tts` 和 `talechime-qwen3-asr`，Rust 导入名为
+`talechime_qwen3_tts` / `talechime_qwen3_asr`。
 
 ```rust,no_run
 use talechime::{Engine, ModelOptions, SynthesisState, run_local};
@@ -52,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```rust,no_run
 # use talechime::*;
-# fn plan(engine: &Engine, source: SourceSnapshot) -> Result<SpeechPlan, EngineError> {
+# async fn plan(engine: &Engine, source: SourceSnapshot) -> Result<SpeechPlan, EngineError> {
 let mut plan = engine.plan(source, vec!["A".into(), "B".into()], PlaybackPolicy::Streaming).await?;
 plan.append(vec![SpeechSpan::new(TextRange { start: 0, end: 3 }, "A", None)])
     .map_err(SessionError::from)?;
@@ -131,7 +144,7 @@ cargo run --locked -p talechime --example host_thread
 
 ```rust,ignore
 let mut params = talechime::GenerationParams::new();
-params.insert("steps", talechime_protocol::ParamValue::Int(32));
+params.insert("steps", talechime::ParamValue::Int(32));
 let options = talechime::PlanSessionOptions {
     params,
     seed: talechime::SeedPolicy::Pinned(7), // 默认 Auto：每次尝试独立随机
@@ -157,7 +170,7 @@ let options = talechime::PlanSessionOptions {
 ## 风格与情绪
 
 逐段 `SpeechSpan.style` 与直接合成的 style 由各模型解释：Qwen 1.7B CustomVoice、
-MOSS Local、CosyVoice3 使用指令；VoxCPM2 使用官方描述前缀；OmniVoice 使用其受限
+CosyVoice3 使用指令；VoxCPM2 使用官方描述前缀；OmniVoice 使用其受限
 属性词表。IndexTTS 接受八种命名情绪，并通过 `IndexTtsParams` / 能力目录开放
 情绪向量、强度、随机锚点与独立情绪参考音色。未设置时沿用各模型默认表达。
 控制方法与边界见 [CosyVoice3](cosyvoice3.md#逐段风格) 和 [IndexTTS](indextts.md#情绪控制)。
@@ -204,28 +217,34 @@ Qwen `0.6b-base` / `1.7b-base` 必须先导入带准确转写的参考音色，�
 可覆盖），一条音色 = 原始 WAV + 转写 + 描述 + 来源，可跨模型使用、单文件导出导入。
 `VoiceStudio` 与 `Engine` 相互独立——设计不需要先准备任何合成模型。
 
-```rust,ignore
-use talechime::{DesignOptions, VoiceStudio};
+```rust,no_run
+use talechime::{Engine, ModelOptions, SynthesisState, VoiceStudio, run_local};
 
-# #[tokio::main(flavor = "current_thread")]
-# async fn main() -> Result<(), Box<dyn std::error::Error>> {
-let studio = VoiceStudio::open(None, None)?;          // resources 与音色库取默认根
-let asset = studio.design("低沉温和的中年男声，语速慢").await?;   // 自动层：策略选引擎
-println!("{}", asset.id);
-let resources = std::path::PathBuf::from("/path/to/resources");
-let mut options = talechime::ModelOptions::new("qwen", resources);
-options.model = Some("1.7b-base".into());
-let engine = talechime::Engine::prepare(options, |_| {}).await?;
-let mut stream = engine.synthesize("你好。", asset.id.as_str(), None).await?;
-while let Some(event) = stream.recv().await { let _ = event?; } // 消费 PCM；流完成后可复用引擎
-# Ok(())
-# }
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    run_local(async {
+        let root = std::path::PathBuf::from("./my-app-speech");
+        let studio = VoiceStudio::at(root.join("resources"), root.join("voices"))?;
+        let asset = studio.design("低沉温和的中年男声").await?;
+        let mut options = ModelOptions::new("qwen", root.join("resources"));
+        options.model = Some("1.7b-base".into());
+        options.voices = Some(root.join("voices"));
+        let mut engine = Engine::prepare(options, |_| {}).await?;
+        let mut stream = engine.synthesize("你好。", &asset.id, None).await?;
+        while let Some(block) = stream.recv().await { let _ = block?; }
+        if stream.state() != SynthesisState::Completed {
+            return Err("synthesis did not complete".into());
+        }
+        engine.close().await?;
+        Ok::<_, Box<dyn std::error::Error>>(())
+    }).await
+}
 ```
 
 显式层暴露同一内部路径的全部控制点：`engines()`（设备/就绪/下载代价）、
 `design_with(DesignOptions { engine, id, name, text, device, seed, .. }, progress)`
 （future drop 即取消）、`install_voice_for(backend, model, id)`（显式物化，含 MOSS Nano
-的后台编码）、`import_voice` / `export` / `import_bundle` / `rename` / `remove`。
+的后台编码，缺失时仅准备编码器资源）、`import_voice` / `export` / `import_bundle` / `rename` / `remove`。
 `list()` 返回 `Result`；损坏、未知格式或不可读的库不会伪装成空清单。
 `Engine::synthesize`、`synthesize_verified`、`synthesize_with_options`、`plan` 与
 `single_voice_plan` 均为异步方法，调用时需要 `.await`。

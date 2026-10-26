@@ -1,0 +1,4 @@
+interface:
+  display_name: "Talechime 应用接入"
+  short_description: "Integrate Talechime Rust APIs and JSON Lines workers"
+  default_prompt: "使用 $talechime-integration 为我的应用接入本地语音合成、音色库和播放控制。"

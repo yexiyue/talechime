@@ -1,0 +1,4 @@
+interface:
+  display_name: "Talechime 命令行"
+  short_description: "Use Talechime CLI models, voice assets and file playback"
+  default_prompt: "使用 $talechime-cli 选择可用模型、准备音色并朗读本地文本。"

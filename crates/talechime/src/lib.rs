@@ -25,6 +25,7 @@
 //! # Ok(())
 //! # }
 //! ```
+mod catalog;
 mod engine;
 mod listening;
 mod model_preparation;
@@ -32,6 +33,12 @@ mod model_preparation;
 mod player;
 mod voice_studio;
 
+pub use catalog::{ModelInfo, model_catalog};
+pub use talechime_core::design;
+pub use talechime_core::design::{
+    DesignOutput, DesignRequest, EngineInfo, InputConstraints, VoiceDesigner,
+};
+pub type DesignerHandle = std::rc::Rc<dyn VoiceDesigner>;
 pub use engine::{Engine, EngineError, ModelOptions, PcmStream, run_local};
 pub use listening::{Listening, ListeningHandle, ListeningOptions, ListeningSession};
 pub use talechime_core::voices::library::{VoiceAsset, VoiceLibrary, VoiceSource};

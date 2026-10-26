@@ -13,8 +13,10 @@ pub enum VoiceCommand {
     Engines,
     /// Design a voice from a text description into the library.
     Design {
+        /// Display name; defaults to the first 24 characters of the description.
         #[arg(long)]
-        name: String,
+        name: Option<String>,
+        /// Describe the voice to create.
         #[arg(long)]
         description: String,
         /// Library ID; auto-generated when omitted.
@@ -26,6 +28,7 @@ pub enum VoiceCommand {
         /// Design engine id; see `engines`. Default: automatic policy.
         #[arg(long)]
         engine: Option<String>,
+        /// auto, cpu, metal or cuda; constrained by the chosen design engine.
         #[arg(long, value_parser = crate::parse_device)]
         device: Option<Device>,
         #[arg(long)]
@@ -117,13 +120,13 @@ pub async fn run(command: VoiceCommand, studio: VoiceStudio) -> anyhow::Result<(
                 description,
                 engine,
                 id,
-                name: Some(name),
+                name,
                 text: Some(text),
                 device: device.unwrap_or(Device::Auto),
                 seed,
             };
             let asset = studio.design_with(options, |event| report(&event)).await?;
-            eprintln!(
+            println!(
                 "Saved voice {}; read with --voice {} (first use materializes it into the model)",
                 asset.id, asset.id
             );
@@ -159,6 +162,9 @@ pub async fn run(command: VoiceCommand, studio: VoiceStudio) -> anyhow::Result<(
 }
 
 fn devices(list: &[Device]) -> String {
+    if list.is_empty() {
+        return "unavailable".into();
+    }
     list.iter()
         .map(|device| match device {
             Device::Auto => "auto",
