@@ -420,7 +420,7 @@ fn cli_rejects_open_or_mismatched_plan_before_model_preparation() {
 
 #[cfg(feature = "moss")]
 #[test]
-fn default_home_migration_keeps_hello_lightweight_and_legacy_voices_visible() {
+fn default_home_ignores_legacy_data_without_modifying_it() {
     let home = tempfile::tempdir().unwrap();
     std::fs::create_dir(home.path().join(".novel")).unwrap();
     std::fs::write(
@@ -439,7 +439,6 @@ fn default_home_migration_keeps_hello_lightweight_and_legacy_voices_visible() {
             vec![vec![1; 16]; 20],
         )
         .unwrap();
-    let began = std::time::Instant::now();
     let mut child = ProcessCommand::new(env!("CARGO_BIN_EXE_talechime"))
         .arg("--protocol")
         .env("HOME", home.path())
@@ -473,14 +472,13 @@ fn default_home_migration_keeps_hello_lightweight_and_legacy_voices_visible() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(began.elapsed() < std::time::Duration::from_secs(5));
     let messages: Vec<Message> = String::from_utf8(output.stdout)
         .unwrap()
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
-    assert!(messages.iter().any(|message| matches!(&message.event, Event::Ready(ready) if ready.iter().any(|caps| caps.voices.iter().any(|voice| voice == "custom:reader")))));
-    assert!(messages.iter().any(|message| matches!(&message.event, Event::Config(config) if config.backend != "kokoro" && config.volume == 0.7 && config.speed == 1.3 && config.auto_play)));
+    assert!(messages.iter().any(|message| matches!(&message.event, Event::Ready(ready) if ready.iter().all(|caps| !caps.voices.iter().any(|voice| voice == "custom:reader")))));
+    assert!(messages.iter().any(|message| matches!(&message.event, Event::Config(config) if config.backend != "kokoro" && config.volume == 1.0 && config.speed == 1.0)));
     assert!(
         !home
             .path()
@@ -488,4 +486,8 @@ fn default_home_migration_keeps_hello_lightweight_and_legacy_voices_visible() {
             .exists()
     );
     assert!(home.path().join(".novel-tts/moss/models/fake.bin").exists());
+    assert_eq!(
+        std::fs::read(home.path().join(".novel/tts_config.json")).unwrap(),
+        br#"{"backend":"kokoro","voice":"Zf001","volume":0.7,"speed":1.3,"auto_play":true}"#
+    );
 }

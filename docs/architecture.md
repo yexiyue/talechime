@@ -82,9 +82,9 @@ stateDiagram-v2
 
 朗读副本清除选定的不可见格式字符及非空白控制字符，控制空白保留词边界，CR/LF 保持原样；原文快照、摘要和 UTF-8 字节范围不变。分段边界与执行层跳过校验共用清洗后的静默行判断。
 
-空白、仅含已清除字符的行及独立装饰行可以作为无音频标记排队，只有前面音频实际消耗后才能推进检查点；后端不能无错误地省略普通正文。空章开放输入也要等待 seal。`seek_plan` 复制固定音色安排到新 ID，从原文字节重新生成，并保留音量、速度和用户暂停；开放计划可以在新 ID 上继续追加。旧 `seek` 对计划会话也保留音色/暂停，仅使用 Config 的音量/速度。`update_settings` 不允许替换活动计划的固定音色，调整音量/速度使用 `configure_playback`，重新选角则启动新计划。
+空白、仅含已清除字符的行及独立装饰行可以作为无音频标记排队，只有前面音频实际消耗后才能推进检查点；后端不能无错误地省略普通正文。空章开放输入也要等待 seal。`seek_plan` 复制固定音色安排到新 ID，从原文字节重新生成，并保留音量、速度和用户暂停；开放计划可以在新 ID 上继续追加。活动计划的音色安排固定，调整音量/速度使用 `configure_playback`，重新选角则启动新计划。
 
-原 `start` 将单音色请求转换成封闭计划，复用同一生产者；既有配置更新和单音色 seek 接口保留。会话依然运行在宿主 LocalSet，事件消费者需并行排空有界事件通道，避免控制操作等待发送时阻塞。模型参考资源的修订保护由适配器现有机制及后续装配层负责，VoiceSnapshot 不持有文件租约。
+单音色便利方法只构造封闭计划，复用同一生产者；会话只保留计划启动和计划 seek，不依赖全局 Config。会话依然运行在宿主 LocalSet，事件消费者需并行排空有界事件通道，避免控制操作等待发送时阻塞。模型参考资源的修订保护由适配器现有机制及后续装配层负责，VoiceSnapshot 不持有文件租约。
 
 无模型执行示例：`cargo run --locked -p talechime-core --example plan_session`。使用确定性 Backend/Playback、临时检查点和后台事件消费者；不播放真实音频、不读写用户目录。CLI/worker 通过库入口执行这些计划，不恢复对齐。
 
@@ -114,7 +114,7 @@ Listening 在宿主 LocalSet 持有 SessionManager，通过 16 项有界控制�
 
 Engine 同时只接受一项直接合成或一个 Listening owner。直接流完成/失败/显式取消后可复用；丢弃流先请求取消，准备 owner 等其资源释放后才解除 Busy。MOSS Nano 的初始化接收端先关闭，再关闭请求通道并 join 原生线程，算法/模型不变。自定义后端的外部所有权仍由宿主管理。
 
-当前支持宿主现有/自建 LocalSet 和宿主明确创建的线程，不自动管理后台会话线程。库沿用模型 feature，并用 cli feature 分离 executable 与终端参数依赖；播放器仍参与 core 编译；CLI/worker 已直接装配库的 ListeningSession，使用宿主原有事件队列。详细使用、事件背压和生命周期限制见 [Rust 库入口](library.md)。
+当前支持宿主现有/自建 LocalSet 和宿主明确创建的线程，不自动管理后台会话线程。库沿用模型 feature，并用 cli feature 分离 executable 与终端参数依赖；具体播放器由 facade 的 playback feature 控制，core 不依赖 rodio 或 HTTP 库；CLI/worker 已直接装配库的 ListeningSession，使用宿主原有事件队列。详细使用、事件背压和生命周期限制见 [Rust 库入口](library.md)。
 
 ### 计划协议与应用装配（T4）
 
@@ -166,3 +166,15 @@ make_user_prompt 把前段文字与音频按 12 token 延迟打包为前一轮�
 用作滚动音色参考；它从新 assistant 轮次生成，属于上下文接续而非 Local 的音频前缀格式。
 Qwen 0.6B / 1.7B Base 复用 Base ICL 编码，OmniVoice 复用 VoiceClonePrompt，VoxCPM2
 使用前段转写与 16 kHz 音频建立 continuation reference；临时 prompt 均只存在原生 owner 的内存中。
+
+## 适配器登记与基础设施边界
+
+Registry 通过静态登记表查找适配器。每个适配器拥有模型目录、设备能力、资源修订和加载/恢复机制。`ResolvedModel` 冻结已解析的模型身份；CLI 与 Engine 均调用它的 `prepare(PrepareOptions, progress)`，不在应用层按模型名选择恢复加载实现。自动校准保留三次预热、五次测量和现有阈值，显式设备失败不回退。
+
+`PrepareOptions` 显式选择设备、自动校准、自动恢复和校准音色。Engine 默认 CPU、关闭校准/恢复；CLI 开启自动选择所需策略。Auto 先选 CPU（没有 CPU 才选首个加速设备），校准缓存按确切模型身份与资源修订隔离。查询目录不准备或下载模型。
+
+core 保留 `Playback`、配置、检查点和有界暂存。facade 的 `playback` feature 提供默认音频设备，cli 自动启用它；无 playback feature 仍可直接合成或注入宿主播放器。HTTP 下载及续传锁归 backends 私有资源层，不向 core 泄露 HTTP 错误类型。
+
+分段只通过 `next_segment(SegmentationRequest)`，请求携带文本、音色与执行拥有的时长估计。producer 在执行开始及音色切换时重置估计，只有完整有效片段结束后学习；不同执行共享模型也不共享分段学习状态。模型专有分段规则继续由适配器拥有。
+
+历史目录扫描、数据转换和旧配置驱动会话入口已删除；程序不改动旧目录，当前数据格式和 v7 计划协议保持不变。

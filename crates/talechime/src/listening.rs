@@ -1,6 +1,8 @@
+#[cfg(feature = "playback")]
+use crate::player::AudioPlayer;
 use crate::{engine::Engine, *};
 use std::{path::PathBuf, rc::Rc};
-use talechime_core::{AudioPlayer, checkpoint::CheckpointStore, session::SessionManager};
+use talechime_core::{checkpoint::CheckpointStore, session::SessionManager};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
@@ -188,6 +190,7 @@ impl Drop for ListeningSession {
 }
 impl Engine {
     /// Open the default output only when listening is requested.
+    #[cfg(feature = "playback")]
     pub fn listen(&self, options: ListeningOptions) -> Result<Listening, EngineError> {
         self.available()?;
         validate(&options)?;
@@ -211,6 +214,7 @@ impl Engine {
     }
     /// Open default audio and send directly to the host's bounded event queue.
     /// The host must drain that queue concurrently with controls.
+    #[cfg(feature = "playback")]
     pub fn listen_to(
         &self,
         options: ListeningOptions,

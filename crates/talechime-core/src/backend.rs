@@ -125,18 +125,13 @@ pub trait Backend {
     fn paragraph_end(&self, segment: &str, remaining: &str) -> bool {
         segment.ends_with('\n') || remaining.trim().is_empty()
     }
-    fn select_voice(&self, _voice: &str) {}
-    fn next_segment<'a>(
-        &'a self,
-        text: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<crate::text::TextSegment>, BackendError>> + 'a>>
-    {
-        Box::pin(async move { Ok(self.segments(text).await?.into_iter().next()) })
-    }
-    /// Learn the current voice from a successful block, independently of playback speed.
-    fn observe_duration(&self, _text: &str, _voice: &str, _seconds: f64) {}
-    fn segments<'a>(&'a self, text: &'a str) -> Segmentation<'a> {
-        Box::pin(async move { Ok(crate::text::preprocess_text(text, 200)) })
+    /// Segment only the supplied voice assignment using execution-owned estimates.
+    fn next_segment<'a>(&'a self, request: SegmentationRequest<'a>) -> Segmentation<'a> {
+        Box::pin(async move {
+            Ok(crate::text::preprocess_text(request.text, 200)
+                .into_iter()
+                .next())
+        })
     }
 }
 
@@ -149,4 +144,12 @@ pub enum AudioChunk {
 pub type AudioStream = tokio::sync::mpsc::Receiver<Result<AudioChunk, BackendError>>;
 pub type Streaming<'a> = Pin<Box<dyn Future<Output = Result<AudioStream, BackendError>> + 'a>>;
 pub type Segmentation<'a> =
-    Pin<Box<dyn Future<Output = Result<Vec<crate::text::TextSegment>, BackendError>> + 'a>>;
+    Pin<Box<dyn Future<Output = Result<Option<crate::text::TextSegment>, BackendError>> + 'a>>;
+
+/// Explicit segmentation context; duration learning belongs to one execution.
+#[derive(Clone, Copy)]
+pub struct SegmentationRequest<'a> {
+    pub text: &'a str,
+    pub voice: &'a str,
+    pub duration: &'a crate::text::duration::DurationEstimator,
+}

@@ -7,7 +7,7 @@ use std::{
 };
 use talechime_core::{
     SynthesisOptions, SynthesisState, SynthesisStream,
-    backend::{AudioChunk, Backend, Pcm, Segmentation, Streaming},
+    backend::{AudioChunk, Backend, Pcm, Segmentation, SegmentationRequest, Streaming},
 };
 use talechime_protocol::{Capabilities, Device};
 
@@ -57,29 +57,11 @@ impl Backend for SeededMoss {
             )),
         }
     }
-    fn next_segment<'a>(
-        &'a self,
-        text: &'a str,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<
-                        Option<talechime_core::text::TextSegment>,
-                        talechime_core::backend::BackendError,
-                    >,
-                > + 'a,
-        >,
-    > {
-        self.backend().next_segment(text)
+    fn next_segment<'a>(&'a self, request: SegmentationRequest<'a>) -> Segmentation<'a> {
+        self.backend().next_segment(request)
     }
     fn paragraph_end(&self, text: &str, remaining: &str) -> bool {
         self.backend().paragraph_end(text, remaining)
-    }
-    fn select_voice(&self, voice: &str) {
-        self.backend().select_voice(voice)
-    }
-    fn observe_duration(&self, text: &str, voice: &str, seconds: f64) {
-        self.backend().observe_duration(text, voice, seconds)
     }
 }
 struct Observed {
@@ -172,48 +154,28 @@ impl Backend for Observed {
             Ok(rx)
         })
     }
-    fn next_segment<'a>(
-        &'a self,
-        text: &'a str,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<
-                        Option<talechime_core::text::TextSegment>,
-                        talechime_core::backend::BackendError,
-                    >,
-                > + 'a,
-        >,
-    > {
-        if self.line_segments {
-            Box::pin(async move {
-                let start = text.len() - text.trim_start().len();
-                if start == text.len() {
-                    return Ok(None);
-                }
-                let line_end = text[start..].find('\n').map_or(text.len(), |n| start + n);
-                let end = text[..line_end].trim_end().len();
-                Ok(Some(talechime_core::text::TextSegment {
-                    text: text[start..end].to_owned(),
-                    start,
-                    end,
-                }))
-            })
-        } else {
-            self.inner.next_segment(text)
+    fn next_segment<'a>(&'a self, request: SegmentationRequest<'a>) -> Segmentation<'a> {
+        if !self.line_segments {
+            return self.inner.next_segment(request);
         }
+        let text = request.text;
+        Box::pin(async move {
+            let start = text.len() - text.trim_start().len();
+            if start == text.len() {
+                return Ok(None);
+            }
+            let line_end = text[start..].find('\n').map_or(text.len(), |n| start + n);
+            let end = text[..line_end].trim_end().len();
+            Ok(Some(talechime_core::text::TextSegment {
+                text: text[start..end].to_owned(),
+                start,
+                end,
+            }))
+        })
     }
-    fn segments<'a>(&'a self, text: &'a str) -> Segmentation<'a> {
-        self.inner.segments(text)
-    }
+
     fn paragraph_end(&self, text: &str, remaining: &str) -> bool {
         self.inner.paragraph_end(text, remaining)
-    }
-    fn select_voice(&self, voice: &str) {
-        self.inner.select_voice(voice)
-    }
-    fn observe_duration(&self, text: &str, voice: &str, seconds: f64) {
-        self.inner.observe_duration(text, voice, seconds)
     }
 }
 fn wav(path: &Path, pcm: &Pcm) -> anyhow::Result<()> {

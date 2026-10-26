@@ -266,8 +266,11 @@ impl Backend for QwenBackend {
             Ok(receiver)
         })
     }
-    fn segments<'a>(&'a self, source: &'a str) -> Segmentation<'a> {
-        Box::pin(async move { Ok(text::segments(source)) })
+    fn next_segment<'a>(
+        &'a self,
+        request: talechime_core::backend::SegmentationRequest<'a>,
+    ) -> Segmentation<'a> {
+        Box::pin(async move { Ok(text::segments(request.text).into_iter().next()) })
     }
     fn paragraph_end(&self, segment: &str, remaining: &str) -> bool {
         remaining.trim().is_empty()

@@ -1,4 +1,5 @@
 //! Export the exact adapter stream; model files must already be verified locally.
+mod segmentation;
 use std::{path::PathBuf, rc::Rc, time::Instant};
 use talechime_core::backend::{AudioChunk, Backend};
 #[tokio::main(flavor = "current_thread")]
@@ -103,7 +104,7 @@ async fn run() -> anyhow::Result<()> {
     let style = std::env::var("NOVEL_TTS_PROBE_STYLE").ok();
     let mut first = None;
     let mut audio = None;
-    let segments = backend.segments(&text).await?;
+    let segments = segmentation::collect(&*backend, &text, &args[6]).await?;
     anyhow::ensure!(!segments.is_empty(), "empty input");
     let mut boundaries = Vec::new();
     for segment in &segments {

@@ -290,11 +290,13 @@ async fn round(
         }
     };
     metrics::counter!("talechime.requests","stage"=>stage).increment(1);
-    let expected_ranges = expected_ranges(backend.as_ref(), text).await?;
+    let production_ranges = Rc::new(std::cell::RefCell::new(Vec::new()));
     let backend = Rc::new(crate::observed::Observed {
         inner: backend,
         parent,
         calls: std::cell::Cell::new(0),
+        source_len: text.len(),
+        production_ranges: production_ranges.clone(),
     });
     let started = Instant::now();
     let offset = telemetry.offset_at(started);
@@ -358,7 +360,7 @@ async fn round(
             ));
             if segments.last().is_none_or(|(r, _, _)| *r != range) {
                 ensure!(
-                    segments.len() < 1024,
+                    segments.len() < crate::observed::MAX_SEGMENT_RANGES,
                     "segment evidence budget exceeded (1024 per request)"
                 );
                 segments.push((range, samples.len(), samples.len()));
@@ -375,7 +377,7 @@ async fn round(
             .map(|(range, _, _)| *range)
             .collect::<Vec<_>>();
         ensure!(
-            actual_ranges == expected_ranges,
+            actual_ranges.as_slice() == production_ranges.borrow().as_slice(),
             "consumer ranges differ from production segmentation"
         );
         ensure!(
@@ -541,36 +543,6 @@ fn parameters(request: &Request) -> talechime_core::params::GenerationParams {
 
 const SHORT_CORPUS: &str = "你好，欢迎使用叙铃。";
 
-async fn expected_ranges(
-    backend: &dyn Backend,
-    text: &str,
-) -> anyhow::Result<Vec<talechime_protocol::TextRange>> {
-    let mut ranges = Vec::new();
-    let mut source = text;
-    while let Some(segment) = backend
-        .next_segment(source)
-        .await
-        .map_err(anyhow::Error::msg)?
-    {
-        let offset = source.as_ptr() as usize - text.as_ptr() as usize;
-        let range = talechime_protocol::TextRange {
-            start: offset + segment.start,
-            end: offset + segment.end,
-        };
-        anyhow::ensure!(
-            range.start < range.end && range.end <= text.len() && range.is_valid(text),
-            "backend produced an invalid production range"
-        );
-        ranges.push(range);
-        source = &text[range.end..];
-    }
-    anyhow::ensure!(
-        !ranges.is_empty(),
-        "production segmentation produced no synthesis segments"
-    );
-    Ok(ranges)
-}
-
 struct Fixture;
 impl Backend for Fixture {
     fn capabilities(&self) -> talechime_protocol::Capabilities {
@@ -704,6 +676,84 @@ mod tests {
                 Ok(rx)
             })
         }
+    }
+    struct Adaptive {
+        inner: Controlled,
+    }
+    impl Backend for Adaptive {
+        fn capabilities(&self) -> talechime_protocol::Capabilities {
+            let mut caps = self.inner.capabilities();
+            caps.voices.push("other".into());
+            caps
+        }
+        fn stream<'a>(
+            &'a self,
+            request: talechime_core::backend::SegmentRequest<'a>,
+        ) -> talechime_core::backend::Streaming<'a> {
+            self.inner.stream(request)
+        }
+        fn next_segment<'a>(
+            &'a self,
+            request: talechime_core::backend::SegmentationRequest<'a>,
+        ) -> talechime_core::backend::Segmentation<'a> {
+            Box::pin(async move {
+                let count =
+                    if request.voice == "other" && request.duration.seconds("甲乙丙丁") == 1.0 {
+                        2
+                    } else {
+                        1
+                    };
+                let end = request
+                    .text
+                    .char_indices()
+                    .nth(count)
+                    .map_or(request.text.len(), |(at, _)| at);
+                Ok((end > 0).then(|| talechime_core::text::TextSegment {
+                    text: request.text[..end].into(),
+                    start: 0,
+                    end,
+                }))
+            })
+        }
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn adaptive_segmentation_uses_the_execution_voice_and_duration() -> anyhow::Result<()> {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let telemetry = crate::telemetry::Telemetry::install("off")?;
+                let output = tempfile::tempdir()?;
+                let mut request = request();
+                request.voice = "other".into();
+                round(
+                    &request,
+                    output.path(),
+                    "甲乙丙丁",
+                    Rc::new(Adaptive {
+                        inner: Controlled {
+                            ending: Ending::Success,
+                            closed: Arc::new(AtomicBool::new(false)),
+                        },
+                    }),
+                    0,
+                    &telemetry,
+                    tracing::Span::none(),
+                )
+                .await?;
+                let ranges: serde_json::Value = serde_json::from_slice(&std::fs::read(
+                    output.path().join("round-0-ranges.json"),
+                )?)?;
+                assert_eq!(ranges["segments"].as_array().unwrap().len(), 3);
+                assert_eq!(
+                    ranges["segments"][0]["range"],
+                    serde_json::json!({"start":0,"end":6})
+                );
+                assert_eq!(
+                    ranges["segments"][2]["range"],
+                    serde_json::json!({"start":9,"end":12})
+                );
+                Ok::<_, anyhow::Error>(())
+            })
+            .await
     }
     struct Cached {
         inner: Controlled,

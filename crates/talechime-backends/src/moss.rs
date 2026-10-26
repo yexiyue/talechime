@@ -35,8 +35,7 @@ pub fn capabilities(directory: &std::path::Path) -> anyhow::Result<Capabilities>
         voices.push(voice.id);
     }
     Ok(Capabilities {
-        model: cfg!(any(feature = "moss-candle", feature = "moss-nano-candle"))
-            .then(|| "nano".into()),
+        model: Some("nano".into()),
         model_name: "MOSS Nano".into(),
         backend: "moss".into(),
         voices,
@@ -79,7 +78,6 @@ pub struct MossBackend {
     tokenizer: Arc<SentencePieceProcessor>,
     capabilities: Capabilities,
     cache_identity: Option<String>,
-    estimate: std::cell::RefCell<(String, talechime_core::text::duration::DurationEstimator)>,
 }
 
 // Closing the initialization receiver before joining makes weight loading cancellable.
@@ -235,7 +233,6 @@ impl MossBackend {
             tokenizer,
             capabilities: caps,
             cache_identity,
-            estimate: std::cell::RefCell::new((String::new(), Default::default())),
         })
     }
     pub async fn import_voice(&self, id: String, name: String, wav: PathBuf) -> anyhow::Result<()> {
@@ -373,44 +370,13 @@ impl Backend for MossBackend {
     fn paragraph_end(&self, segment: &str, remaining: &str) -> bool {
         text::paragraph_end(segment, remaining)
     }
-    fn select_voice(&self, voice: &str) {
-        let mut estimate = self.estimate.borrow_mut();
-        if estimate.0 != voice {
-            *estimate = (voice.into(), Default::default());
-        }
-    }
     fn next_segment<'a>(
         &'a self,
-        text: &'a str,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<Option<talechime_core::text::TextSegment>, BackendError>,
-                > + 'a,
-        >,
-    > {
+        request: talechime_core::backend::SegmentationRequest<'a>,
+    ) -> Segmentation<'a> {
         Box::pin(
-            async move { text::first_segment(text, &self.tokenizer, &self.estimate.borrow().1) },
+            async move { text::first_segment(request.text, &self.tokenizer, request.duration) },
         )
-    }
-    fn observe_duration(&self, text: &str, voice: &str, seconds: f64) {
-        let mut estimate = self.estimate.borrow_mut();
-        if estimate.0 != voice {
-            *estimate = (voice.into(), Default::default());
-        }
-        estimate.1.observe(text, seconds);
-    }
-    fn segments<'a>(&'a self, text: &'a str) -> Segmentation<'a> {
-        let text = text.to_owned();
-        let tokenizer = self.tokenizer.clone();
-        let estimate = self.estimate.borrow().1.clone();
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || {
-                text::segments_with_estimate(&text, &tokenizer, &estimate)
-            })
-            .await
-            .map_err(|e| BackendError::Synthesis(e.to_string()))?
-        })
     }
 }
 

@@ -1,8 +1,8 @@
 //! Worker application state, independent of JSON Lines transport.
-use crate::resources::Resources;
 #[cfg(test)]
 use std::rc::Rc;
 use std::time::Duration;
+use talechime_backends::Registry;
 use talechime_core::{
     checkpoint::CheckpointStore,
     config::{ConfigError, ConfigStore},
@@ -35,12 +35,10 @@ impl Response {
 }
 
 pub struct Worker {
-    pub(crate) legacy_migration: Option<talechime_core::migration::LegacyMigration>,
-    migration_copy: Option<crate::migration::CopyWork>,
     readback_models: bool,
     store: ConfigStore,
     checkpoints: CheckpointStore,
-    resources: Resources,
+    resources: Registry,
     events: mpsc::Sender<SessionEvent>,
     progress: mpsc::Sender<Event>,
     preparing: Option<Preparation>,
@@ -53,14 +51,12 @@ impl Worker {
     pub fn new(
         store: ConfigStore,
         checkpoints: CheckpointStore,
-        resources: Resources,
+        resources: Registry,
         events: mpsc::Sender<SessionEvent>,
         progress: mpsc::Sender<Event>,
     ) -> Self {
         Self {
             readback_models: false,
-            legacy_migration: None,
-            migration_copy: None,
             store,
             checkpoints,
             resources,
@@ -177,9 +173,6 @@ impl Worker {
             let _ = task.await;
             self.disconnect_progress();
         }
-        if let Some(copy) = self.migration_copy.take() {
-            copy.cancel_and_wait().await;
-        }
         self.resource_state = SessionState::Idle;
     }
     fn disconnect_progress(&mut self) {
@@ -293,11 +286,7 @@ impl Worker {
                             return Response::error("backend_unavailable", "model", error);
                         }
                     };
-                    let config = match if self.legacy_migration.is_some() {
-                        Ok(config)
-                    } else {
-                        self.store.initialize(&caps)
-                    } {
+                    let config = match self.store.initialize(&caps) {
                         Ok(config) => config,
                         Err(error) => return Response::error("config_invalid", "config", error),
                     };
@@ -313,20 +302,7 @@ impl Worker {
                         }
                     }));
                     let readback = self.readback_models;
-                    let migration = self.legacy_migration.clone();
-                    let store = self.store.clone();
-                    let copy = crate::migration::CopyWork::default();
-                    self.migration_copy = Some(copy.clone());
                     self.preparing = Some(tokio::task::spawn_local(async move {
-                        let migrating = migration.is_some();
-                        crate::migration::resources(migration, Some(&progress), copy).await;
-                        let config = if migrating {
-                            let caps = resources
-                                .capabilities_for(&config.backend, config.model.as_deref())?;
-                            store.initialize(&caps)?
-                        } else {
-                            config
-                        };
                         crate::preparation::prepare_models(resources, config, progress, readback)
                             .await
                     }));
@@ -534,7 +510,7 @@ mod tests {
         talechime::run_local(async {
 
         let root = tempfile::tempdir().unwrap();
-        let resources = Resources::new(Some(root.path().join("models"))).unwrap();
+        let resources = Registry::new(Some(root.path().join("models"))).unwrap();
         let caps = resources.capabilities("moss").unwrap();
         let checkpoints = CheckpointStore::new(root.path().join("checkpoints"));
         std::fs::create_dir_all(root.path().join("checkpoints")).unwrap();
@@ -589,7 +565,7 @@ mod tests {
         talechime::run_local(async {
 
         let root = tempfile::tempdir().unwrap();
-        let resources = Resources::new(Some(root.path().join("models"))).unwrap();
+        let resources = Registry::new(Some(root.path().join("models"))).unwrap();
         let defaults = talechime_protocol::Config {
             model: Some("nano".into()),
             tts_device: talechime_protocol::Device::Cpu,
@@ -706,7 +682,7 @@ mod plan_tests {
         player: Rc<Player>,
         capacity: usize,
     ) -> (Worker, mpsc::Receiver<SessionEvent>) {
-        let resources = Resources::new(Some(root.path().join("models"))).unwrap();
+        let resources = Registry::new(Some(root.path().join("models"))).unwrap();
         let store = ConfigStore::new(root.path().join("config.json"));
         let checkpoints = CheckpointStore::new(root.path().join("checkpoints"));
         let (events, receiver) = mpsc::channel(capacity);

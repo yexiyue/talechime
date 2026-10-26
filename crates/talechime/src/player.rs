@@ -1,5 +1,4 @@
-use super::Playback;
-use crate::backend::Pcm;
+use crate::Playback;
 use rodio::Source;
 use std::{
     cell::RefCell,
@@ -9,6 +8,7 @@ use std::{
     },
     time::Duration,
 };
+use talechime_core::backend::Pcm;
 
 /// Shared PCM lets the playback source own queued audio without copying it.
 struct SharedPcm {
@@ -62,9 +62,9 @@ pub struct AudioPlayer {
     queued: RefCell<Duration>,
 }
 impl AudioPlayer {
-    pub fn open() -> Result<Self, crate::backend::BackendError> {
+    pub fn open() -> Result<Self, talechime_core::backend::BackendError> {
         let mut stream = rodio::OutputStreamBuilder::open_default_stream()
-            .map_err(|e| crate::backend::BackendError::Initialize(e.to_string()))?;
+            .map_err(|e| talechime_core::backend::BackendError::Initialize(e.to_string()))?;
         stream.log_on_drop(false);
         let sink = rodio::Sink::connect_new(stream.mixer());
         Ok(Self {

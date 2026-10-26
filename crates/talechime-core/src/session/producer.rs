@@ -59,6 +59,7 @@ pub(super) fn spawn(
             let mut leveling = crate::audio::leveling::LoudnessAligner::default();
             let mut context = None;
             let mut chained = 0f64;
+            let mut duration = crate::text::duration::DurationEstimator::default();
             let mut identity: Option<(String, Option<String>)> = None;
             let mut previous_end = byte;
             while let Some(span) = input.next(index).await {
@@ -72,13 +73,25 @@ pub(super) fn spawn(
                     context = None;
                     chained = 0.0;
                 }
+                if identity
+                    .as_ref()
+                    .is_none_or(|(voice, _)| voice != span.voice())
+                {
+                    duration = Default::default();
+                }
                 identity = Some(current);
-                backend.select_voice(span.voice());
                 let mut at = assigned.start.max(byte);
                 while at < assigned.end {
                     // The backend sees only this assignment: it cannot merge across voices.
                     let remaining = &source_text[at..assigned.end];
-                    let Some(mut segment) = backend.next_segment(remaining).await? else {
+                    let Some(mut segment) = backend
+                        .next_segment(crate::backend::SegmentationRequest {
+                            text: remaining,
+                            voice: span.voice(),
+                            duration: &duration,
+                        })
+                        .await?
+                    else {
                         send_skipped(&tx, source_text, at, assigned.end).await?;
                         if crate::continuation::hard_boundary(
                             source_text,
@@ -237,7 +250,7 @@ pub(super) fn spawn(
                         chained += generated_seconds;
                     }
                     previous_end = range.end;
-                    backend.observe_duration(&segment.text, span.voice(), generated_seconds);
+                    duration.observe(&segment.text, generated_seconds);
                     tx.send(Ok(Item::End(range)))
                         .await
                         .map_err(|_| SessionError::Disconnected)?;

@@ -15,27 +15,11 @@ use std::{
     },
     time::Duration,
 };
-use talechime_protocol::{Config, EndReason, ErrorInfo, Event, SessionState, TextRange};
+use talechime_protocol::{EndReason, ErrorInfo, Event, SessionState, TextRange};
 use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore, mpsc},
     task::JoinHandle,
 };
-
-/// Advanced core single-voice input, independent of the JSON Lines transport.
-/// Public hosts should usually construct an Engine plan instead.
-#[derive(Debug, Clone)]
-pub struct StartRequest {
-    /// Host-owned immutable source identity.
-    pub source: talechime_protocol::SourceId,
-    /// Exact full source without speech normalization.
-    pub text: String,
-    /// SHA-256 checked by the plan constructor.
-    pub text_hash: String,
-    /// Explicit source byte to resume at.
-    pub resume_byte: Option<usize>,
-    /// Use stored actual-playback progress when no explicit byte is provided.
-    pub restore_checkpoint: bool,
-}
 
 /// Per-session event before the transport adds instance IDs and sequence numbers.
 #[derive(Debug)]
@@ -127,7 +111,6 @@ struct Job {
     terminal: Rc<Cell<bool>>,
     writes: Arc<PendingWrites>,
     input: Rc<PlanInput>,
-    legacy_settings: Option<(String, Option<String>)>,
     staging: StagingOptions,
     cache: Option<ChapterCacheOptions>,
     verification: crate::verification::VerificationOptions,
@@ -188,53 +171,6 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Start explicitly. Restoring a checkpoint never starts this method on its own.
-    pub async fn start(
-        &mut self,
-        id: String,
-        request: StartRequest,
-        config: &Config,
-    ) -> Result<(), SessionError> {
-        let capabilities = self.backend.capabilities();
-        crate::config::validate(config, &capabilities)
-            .map_err(|error| SessionError::Invalid(error.to_string()))?;
-        let source = SourceSnapshot::new(request.source, request.text, &request.text_hash)?;
-        let voices = VoiceSnapshot::new(
-            &capabilities.backend,
-            capabilities.model.as_deref(),
-            &capabilities,
-            vec![config.voice.clone()],
-        )?;
-        let plan = SpeechPlan::single_voice(
-            source,
-            voices,
-            PlaybackPolicy::Streaming,
-            &config.voice,
-            config.style.clone(),
-        )?;
-        self.start_input(
-            id,
-            plan,
-            PlanSessionOptions {
-                volume: config.volume,
-                speed: config.speed,
-                resume_byte: request.resume_byte,
-                restore_checkpoint: request.restore_checkpoint,
-                continuation: true,
-                continuation_boundary: talechime_protocol::ContinuationBoundary::Paragraph,
-                continuation_span: None,
-                params: Default::default(),
-                cache: None,
-                seed: Default::default(),
-                staging: StagingOptions::default(),
-                verification: crate::verification::VerificationOptions::default(),
-            },
-            Some((config.voice.clone(), config.style.clone())),
-            None,
-        )
-        .await
-    }
-
     /// Start a plan on the host's LocalSet, replacing the previous session.
     pub async fn start_plan(
         &mut self,
@@ -242,7 +178,7 @@ impl SessionManager {
         plan: SpeechPlan,
         options: PlanSessionOptions,
     ) -> Result<(), SessionError> {
-        self.start_input(id, plan, options, None, None).await
+        self.start_input(id, plan, options, None).await
     }
 
     async fn start_input(
@@ -250,7 +186,6 @@ impl SessionManager {
         id: String,
         plan: SpeechPlan,
         options: PlanSessionOptions,
-        legacy_settings: Option<(String, Option<String>)>,
         resumed_speed: Option<f32>,
     ) -> Result<(), SessionError> {
         crate::verification::validate_options(&options.verification)?;
@@ -428,7 +363,6 @@ impl SessionManager {
             terminal,
             writes,
             input,
-            legacy_settings,
             staging: options.staging,
             cache: options.cache.clone(),
             verification: options.verification,
@@ -541,56 +475,6 @@ impl SessionManager {
         }
     }
 
-    /// Voice changes replace the session at its unfinished original-text position.
-    pub async fn update_settings(
-        &mut self,
-        new_id: String,
-        config: &Config,
-    ) -> Result<bool, SessionError> {
-        if self
-            .job
-            .as_ref()
-            .is_some_and(|job| !job.terminal.get() && job.legacy_settings.is_none())
-        {
-            return Err(SessionError::Invalid(
-                "planned sessions have fixed voices; use configure_playback or start a new plan"
-                    .into(),
-            ));
-        }
-        crate::config::validate(config, &self.backend.capabilities())
-            .map_err(|error| SessionError::Invalid(error.to_string()))?;
-        if let Some(job) = &self.job
-            && !job.terminal.get()
-            && job
-                .legacy_settings
-                .as_ref()
-                .is_some_and(|(voice, style)| voice != &config.voice || style != &config.style)
-        {
-            let paused = job.paused.get();
-            let request = StartRequest {
-                source: job.source.source().clone(),
-                text: job.source.text().into(),
-                text_hash: job.source.hash().into(),
-                resume_byte: Some(job.position.get()),
-                restore_checkpoint: false,
-            };
-            self.start(new_id.clone(), request, config).await?;
-            if paused {
-                self.pause(&new_id).await?;
-            }
-            return Ok(true);
-        }
-        let sink_speed = if let Some(job) = &self.job {
-            job.speed.set(config.speed);
-            job.volume.set(config.volume);
-            config.speed / native_speed(&job.input.params)
-        } else {
-            config.speed
-        };
-        self.player.configure(config.volume, sink_speed);
-        Ok(false)
-    }
-
     fn active(&self, id: &str) -> Result<&Job, SessionError> {
         self.job
             .as_ref()
@@ -670,31 +554,6 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Seek creates a new session and re-synthesizes from a stable original-text byte.
-    /// For planned sessions, only config volume/speed are used; voices stay fixed.
-    pub async fn seek(
-        &mut self,
-        old_id: &str,
-        new_id: String,
-        byte: usize,
-        config: &Config,
-    ) -> Result<(), SessionError> {
-        let job = self.active(old_id)?;
-        if job.legacy_settings.is_none() {
-            return self
-                .restart_plan(old_id, new_id, byte, config.volume, config.speed)
-                .await;
-        }
-        let request = StartRequest {
-            source: job.source.source().clone(),
-            text: job.source.text().into(),
-            text_hash: job.source.hash().into(),
-            resume_byte: Some(byte),
-            restore_checkpoint: false,
-        };
-        self.start(new_id, request, config).await
-    }
-
     /// Seek a planned session without global configuration, preserving voices,
     /// volume/speed and user pause. The new ID owns all subsequent input updates.
     pub async fn seek_plan(
@@ -704,11 +563,6 @@ impl SessionManager {
         byte: usize,
     ) -> Result<(), SessionError> {
         let job = self.active(old_id)?;
-        if job.legacy_settings.is_some() {
-            return Err(SessionError::Invalid(
-                "use seek for legacy configuration sessions".into(),
-            ));
-        }
         let (volume, speed) = (job.volume.get(), job.speed.get());
         self.restart_plan(old_id, new_id, byte, volume, speed).await
     }
@@ -741,7 +595,6 @@ impl SessionManager {
                 cache: job.cache.clone(),
                 verification: job.verification.clone(),
             },
-            None,
             Some(speed),
         )
         .await?;
@@ -779,7 +632,7 @@ mod tests {
         backend::{AudioChunk, Streaming},
         text::preprocess_text,
     };
-    use talechime_protocol::{Capabilities, SourceId, text_hash};
+    use talechime_protocol::{Capabilities, Config, SourceId, text_hash};
 
     struct FakeBackend {
         calls: Cell<usize>,
@@ -918,10 +771,14 @@ mod tests {
                     CheckpointStore::new(directory.path()),
                     tx,
                 );
-                manager
-                    .start("buffer".into(), request("正文。"), &Config::default())
-                    .await
-                    .unwrap();
+                launch(
+                    &mut manager,
+                    "buffer".into(),
+                    request("正文。"),
+                    &Config::default(),
+                )
+                .await
+                .unwrap();
                 loop {
                     if matches!(
                         rx.recv().await.unwrap().event,
@@ -949,8 +806,51 @@ mod tests {
             })
             .await;
     }
-    fn request(text: &str) -> StartRequest {
-        StartRequest {
+    #[derive(Clone)]
+    struct Input {
+        source: SourceId,
+        text: String,
+        text_hash: String,
+        resume_byte: Option<usize>,
+        restore_checkpoint: bool,
+    }
+    async fn launch(
+        manager: &mut SessionManager,
+        id: String,
+        input: Input,
+        config: &Config,
+    ) -> Result<(), SessionError> {
+        let caps = manager.backend.capabilities();
+        let source = SourceSnapshot::new(input.source, input.text, &input.text_hash)?;
+        let voices = crate::VoiceSnapshot::new(
+            &caps.backend,
+            caps.model.as_deref(),
+            &caps,
+            vec![config.voice.clone()],
+        )?;
+        let plan = SpeechPlan::single_voice(
+            source,
+            voices,
+            PlaybackPolicy::Streaming,
+            &config.voice,
+            config.style.clone(),
+        )?;
+        manager
+            .start_plan(
+                id,
+                plan,
+                PlanSessionOptions {
+                    volume: config.volume,
+                    speed: config.speed,
+                    resume_byte: input.resume_byte,
+                    restore_checkpoint: input.restore_checkpoint,
+                    ..Default::default()
+                },
+            )
+            .await
+    }
+    fn request(text: &str) -> Input {
+        Input {
             source: SourceId {
                 namespace: "test".into(),
                 book: "book".into(),
@@ -997,14 +897,14 @@ mod tests {
                         CheckpointStore::new(directory.path()),
                         tx,
                     );
-                    manager
-                        .start(
-                            "a".into(),
-                            request("第一句。\n第二句。\n第三句。"),
-                            &Config::default(),
-                        )
-                        .await
-                        .unwrap();
+                    launch(
+                        &mut manager,
+                        "a".into(),
+                        request("第一句。\n第二句。\n第三句。"),
+                        &Config::default(),
+                    )
+                    .await
+                    .unwrap();
                     assert_eq!(terminal(&mut rx).await.0, EndReason::Failed);
                     assert_eq!(player.appended.get(), fail_at);
                     manager.stop().await.unwrap();
@@ -1032,10 +932,14 @@ mod tests {
                         store.clone(),
                         tx,
                     );
-                    restarted
-                        .start("retry".into(), retry.clone(), &Config::default())
-                        .await
-                        .unwrap();
+                    launch(
+                        &mut restarted,
+                        "retry".into(),
+                        retry.clone(),
+                        &Config::default(),
+                    )
+                    .await
+                    .unwrap();
                     let (reason, events) = terminal(&mut rx).await;
                     assert_eq!(reason, EndReason::Completed);
                     let first = events.iter().find_map(|event| match event {
@@ -1070,16 +974,19 @@ mod tests {
                     CheckpointStore::new(directory.path()),
                     tx,
                 );
-                manager
-                    .start("empty".into(), request("\r\n  "), &Config::default())
-                    .await
-                    .unwrap();
+                launch(
+                    &mut manager,
+                    "empty".into(),
+                    request("\r\n  "),
+                    &Config::default(),
+                )
+                .await
+                .unwrap();
                 assert_eq!(terminal(&mut rx).await.0, EndReason::Completed);
                 let mut req = request("中文🙂");
                 req.resume_byte = Some(7);
                 assert!(
-                    manager
-                        .start("bad".into(), req, &Config::default())
+                    launch(&mut manager, "bad".into(), req, &Config::default())
                         .await
                         .is_err()
                 );
@@ -1104,14 +1011,14 @@ mod tests {
                     CheckpointStore::new(directory.path()),
                     tx,
                 );
-                manager
-                    .start(
-                        "old".into(),
-                        request("第一句。\n第二句。\n第三句。\n第四句。"),
-                        &Config::default(),
-                    )
-                    .await
-                    .unwrap();
+                launch(
+                    &mut manager,
+                    "old".into(),
+                    request("第一句。\n第二句。\n第三句。\n第四句。"),
+                    &Config::default(),
+                )
+                .await
+                .unwrap();
                 loop {
                     if matches!(rx.recv().await.unwrap().event, Event::SegmentStarted { .. }) {
                         break;
@@ -1142,13 +1049,13 @@ mod tests {
                 player.clone(), CheckpointStore::new(directory.path()), tx,
             );
             let req = request("第一句。\n第二句。\n第三句。");
-            manager.start("first".into(), req.clone(), &Config::default()).await.unwrap();
+            launch(&mut manager, "first".into(), req.clone(), &Config::default()).await.unwrap();
             loop { if matches!(rx.recv().await.unwrap().event, Event::SegmentStarted{..}) { break; } }
             manager.pause("first").await.unwrap();
             manager.resume("first").await.unwrap();
-            assert!(manager.seek("first", "invalid".into(), 1, &Config::default()).await.is_err());
+            assert!(manager.seek_plan("first", "invalid".into(), 1).await.is_err());
             let byte = preprocess_text(&req.text, 200)[1].start;
-            manager.seek("first", "seeked".into(), byte, &Config::default()).await.unwrap();
+            manager.seek_plan("first", "seeked".into(), byte).await.unwrap();
             let mut cancelled = Vec::new();
             loop {
                 let event = rx.recv().await.unwrap();
@@ -1161,7 +1068,7 @@ mod tests {
             assert!(manager.pause("first").await.is_err());
             let mut next = request("新章节。 ");
             next.source.chapter = "2".into();
-            manager.start("next".into(), next, &Config { voice: "Zf002".into(), ..Config::default() }).await.unwrap();
+            launch(&mut manager, "next".into(), next, &Config { voice: "Zf002".into(), ..Config::default() }).await.unwrap();
             manager.stop().await.unwrap();
             manager.stop().await.unwrap();
             while let Ok(event) = rx.try_recv() {
@@ -1212,8 +1119,7 @@ mod tests {
                     store,
                     tx,
                 );
-                manager
-                    .start("restored".into(), req, &Config::default())
+                launch(&mut manager, "restored".into(), req, &Config::default())
                     .await
                     .unwrap();
                 let (reason, events) = terminal(&mut rx).await;
@@ -1290,10 +1196,14 @@ mod tests {
                         tx,
                     );
                     let req = request("原文。 ");
-                    manager
-                        .start("stream".into(), req.clone(), &Config::default())
-                        .await
-                        .unwrap();
+                    launch(
+                        &mut manager,
+                        "stream".into(),
+                        req.clone(),
+                        &Config::default(),
+                    )
+                    .await
+                    .unwrap();
                     let (actual, events) = terminal(&mut rx).await;
                     assert_eq!(actual, reason);
                     assert_eq!(

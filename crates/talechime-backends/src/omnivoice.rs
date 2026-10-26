@@ -146,7 +146,14 @@ impl Backend for OmniBackend {
             Ok(receiver)
         })
     }
-    fn segments<'a>(&'a self, source: &'a str) -> Segmentation<'a> {
-        Box::pin(async move { Ok(talechime_core::text::preprocess_text(source, 180)) })
+    fn next_segment<'a>(
+        &'a self,
+        request: talechime_core::backend::SegmentationRequest<'a>,
+    ) -> Segmentation<'a> {
+        Box::pin(async move {
+            Ok(talechime_core::text::preprocess_text(request.text, 180)
+                .into_iter()
+                .next())
+        })
     }
 }

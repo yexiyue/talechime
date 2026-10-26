@@ -1,8 +1,9 @@
-use crate::{resources::Resources, runtime::Worker};
+use crate::runtime::Worker;
 use std::{
     io::{BufReader, BufWriter, Write},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use talechime_backends::Registry;
 use talechime_core::{checkpoint::CheckpointStore, config::ConfigStore, session::SessionEvent};
 use talechime_protocol::{
     Command, ErrorInfo, Event, Message, PROTOCOL_VERSION, Request, RequestTracker, decode, encode,
@@ -81,9 +82,8 @@ impl Output {
 pub async fn run(
     store: ConfigStore,
     checkpoints: CheckpointStore,
-    resources: Resources,
+    resources: Registry,
     readback_models: bool,
-    migration: Option<talechime_core::migration::LegacyMigration>,
 ) -> anyhow::Result<()> {
     let (input_tx, mut input) = mpsc::channel(8);
     // A dedicated stdin thread can end with the process even if a broken parent
@@ -123,7 +123,6 @@ pub async fn run(
         &mut input,
         messages,
         readback_models,
-        migration,
     )
     .await;
     let written = tokio::time::timeout(Duration::from_secs(3), writer).await;
@@ -137,16 +136,14 @@ pub async fn run(
 async fn serve(
     store: ConfigStore,
     checkpoints: CheckpointStore,
-    resources: Resources,
+    resources: Registry,
     input: &mut mpsc::Receiver<Result<Option<Vec<u8>>, talechime_protocol::ProtocolError>>,
     messages: mpsc::Sender<Message>,
     readback_models: bool,
-    migration: Option<talechime_core::migration::LegacyMigration>,
 ) -> anyhow::Result<()> {
     let (events, session_events) = mpsc::channel::<SessionEvent>(64);
     let (progress, model_events) = mpsc::channel::<Event>(16);
     let mut worker = Worker::new(store, checkpoints, resources, events, progress);
-    worker.legacy_migration = migration;
     worker.enable_readback_models(readback_models);
     serve_worker(worker, session_events, model_events, input, messages).await
 }
@@ -346,7 +343,7 @@ mod plan_tests {
             let backend=Rc::new(Fixture::default());
             let (events, pending)=mpsc::channel(2);
             let (progress, updates)=mpsc::channel(2);
-            let mut worker=Worker::new(ConfigStore::new(root.path().join("config.json")),CheckpointStore::new(root.path().join("checkpoints")),Resources::new(Some(root.path().join("models"))).unwrap(),events,progress);
+            let mut worker=Worker::new(ConfigStore::new(root.path().join("config.json")),CheckpointStore::new(root.path().join("checkpoints")),Registry::new(Some(root.path().join("models"))).unwrap(),events,progress);
             worker.attach_test(backend.clone(),Rc::new(Player::default()));
             let (input,mut frames)=mpsc::channel(8);
             let (outgoing,mut received)=mpsc::channel(1);

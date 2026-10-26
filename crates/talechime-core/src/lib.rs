@@ -9,9 +9,6 @@ pub mod checkpoint;
 pub mod config;
 mod continuation;
 pub use continuation::SpeechContext;
-pub mod download;
-mod error;
-pub mod migration;
 pub mod params;
 pub mod paths;
 mod plan;
@@ -22,12 +19,10 @@ pub mod text;
 pub mod verification;
 pub mod voices;
 
-pub use error::{ResourceError, Result};
 pub use params::{GenerationParams, SeedPolicy};
 pub use plan::{
     PlanError, PlanState, PlaybackPolicy, SourceSnapshot, SpeechPlan, SpeechSpan, VoiceSnapshot,
 };
-pub use player::AudioPlayer;
 pub use player::Playback;
 pub use session::{
     CancellationHandle, ChapterCacheOptions, DEFAULT_MAX_BYTES, PlanProgress, PlanSessionOptions,

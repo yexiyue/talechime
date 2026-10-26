@@ -64,7 +64,7 @@ pub(crate) async fn prepare(
         let tx = progress.clone();
         let download_name = name.clone();
         let size = resource.size;
-        talechime_core::download::download_from_url(&resource.url, &path, move |downloaded, _| {
+        crate::download::download_from_url(&resource.url, &path, move |downloaded, _| {
             let _ = tx.try_send(Event::ModelProgress {
                 resource: download_name.clone(),
                 downloaded,

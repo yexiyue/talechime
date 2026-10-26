@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-准备是显式操作，可能下载指定模型；资源父路径由宿主传入，不读取或写入全局 CLI 配置。默认 CPU，可显式选择 Registry 报告可用的设备；`Auto` 需由宿主先解析，装配层按选择调用既有模型准备流程。实际模型身份由准备后的 capabilities 返回。直接合成不打开音频设备、不写检查点或暂存文件；仍使用同一声音校验、模型分段、边界静音与原文范围规则。
+准备是显式操作，可能下载指定模型；资源父路径由宿主传入，不读取或写入全局 CLI 配置。默认 CPU，可显式选择 Registry 报告可用的设备；`Auto` 由统一准备服务解析，宿主通过 `calibrate` / `recovery` 显式控制校准与恢复。实际模型身份由准备后的 capabilities 返回。直接合成不打开音频设备、不写检查点或暂存文件；仍使用同一声音校验、模型分段、边界静音与原文范围规则。
 
 `SpeechAudio` 持有 PCM 和预算许可，提供只读 `pcm()`、`range()`。保留块会施加背压，释放后归还预算；队列以 30 秒/16 MiB 限制，原始输入块在边界处理前也检查同一限制。宿主自行复制/缓存 PCM 的内存由宿主管理。简单收集使用 `engine.synthesize_pcm(text, voice, style, max_bytes)`；限制必须非零，超限或跨片段格式改变返回错误并取消执行，不返回截断音频。空白/空文本可以正常生成完成，但收集辅助方法报 `EmptyAudio`。
 
@@ -117,7 +117,7 @@ cargo run --locked -p talechime --example host_thread
 
 上述示例用确定性 Backend/Playback，验证直接合成、单音色、多音色和宿主自建线程，不下载模型、不打开真实音频设备、不写用户目录。`prepare_model` 是明确会准备/可能下载模型的示例，普通测试只编译，不运行；使用 `cargo run --locked -p talechime --example prepare_model -- BACKEND RESOURCE_DIR [MODEL]` 手动执行。
 
-库沿用现有模型 feature；`default-features = false` 可仅启用所需适配器或注入自定义 backend。`cli` feature 控制 executable 与 clap/crossterm 等 CLI 依赖；嵌入库设置 default-features=false，再选择所需模型，或直接注入自定义 Backend。播放器依赖仍参与 core 编译，运行时可不装配。CLI/worker 现在复用这个库入口，协议 v7 只有计划 start 路径，无旧版本协商层。音色资源版本/租约保护、真实模型听感和平台性能不能由本阶段夹具验证推断。
+库沿用现有模型 feature；`default-features = false` 可仅启用所需适配器或注入自定义 backend。`cli` feature 控制 executable 与 clap/crossterm 等 CLI 依赖；嵌入库设置 default-features=false，再选择所需模型，或直接注入自定义 Backend。默认音频设备由 facade 的 `playback` feature 控制；core 不链接音频输出或 HTTP 实现，宿主仍可注入 Playback。CLI/worker 现在复用这个库入口，协议 v7 只有计划 start 路径，无旧版本协商层。音色资源版本/租约保护、真实模型听感和平台性能不能由本阶段夹具验证推断。
 
 首期交付顺序是 Talechime API 与确定性验收，再等待 CastGlean 标注契约完成，最后共同接入 TRNovel；当前不把阅读器兼容作为库接口约束。
 
@@ -224,3 +224,13 @@ Qwen 和 MOSS ONNX 若启用非 CPU 设备故障恢复，执行设备可能切�
 当前 MOSS Candle/Nano、VoxCPM、OmniVoice 和稳定设备的 Qwen/ONNX 实现提供资源身份。
 启用 CPU 自动恢复的非 CPU Qwen/ONNX 实例保持一次性 staging，避免运行中设备改变后
 误命中缓存。缓存冻结首次完成执行的分段与音频，后续自适应时长估计不会重分已有条目。
+
+## 架构重构后的 API
+
+本次 Rust API 调整不提供兼容别名。会话统一用 `start_plan`、`seek_plan` 和 `configure_playback`；单音色先构造封闭计划。`StartRequest`、配置驱动的 start/seek/update_settings 与历史迁移入口已删除。
+
+`Backend::next_segment` 接收 `SegmentationRequest { text, voice, duration }`，返回一个可选片段；不再提供 select_voice、observe_duration 或整篇 segments 接口。时长估计属于执行，适配器不得保存隐式当前音色或跨执行学习状态。自定义后端和观察包装器须完整传递请求。
+
+`ModelOptions` 的 `device` 可选择 Auto，`calibrate` / `recovery` 默认 false；准备通过 backends 的 ResolvedModel 和 PrepareOptions 执行。开启校准可能额外准备 CPU 与加速模型并写入所选资源目录的校准记录。
+
+具体播放器位于 facade 私有模块，仅 `playback` feature 开放 Engine::listen/listen_to；注入播放器的方法无需该 feature。core 不再导出 AudioPlayer、download、ResourceError 或通用 Result 别名。

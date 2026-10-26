@@ -1,10 +1,10 @@
-use crate::resources::Resources;
 use crossterm::{
     event::{Event as TerminalEvent, EventStream, KeyCode, KeyEventKind, KeyModifiers},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
 use futures::StreamExt;
 use std::{future::Future, io::IsTerminal, path::PathBuf, pin::Pin};
+use talechime_backends::Registry;
 use talechime_core::{checkpoint::CheckpointStore, config::ConfigStore, session::SessionEvent};
 use talechime_protocol::{EndReason, Event, SourceId, text_hash};
 use tokio::sync::mpsc;
@@ -79,7 +79,7 @@ pub async fn run(
     file: PathBuf,
     store: ConfigStore,
     checkpoints: CheckpointStore,
-    resources: Resources,
+    resources: Registry,
     options: CliOptions,
 ) -> anyhow::Result<()> {
     let CliOptions {

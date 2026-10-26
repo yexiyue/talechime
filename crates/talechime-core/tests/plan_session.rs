@@ -12,7 +12,7 @@ use talechime_core::{
     session::{SessionEvent, SessionManager},
     text::TextSegment,
 };
-use talechime_protocol::{Capabilities, Config, EndReason, Event, SourceId, TextRange, text_hash};
+use talechime_protocol::{Capabilities, EndReason, Event, SourceId, TextRange, text_hash};
 use tokio::sync::mpsc;
 
 #[derive(Clone, Copy)]
@@ -53,7 +53,7 @@ struct FixtureBackend {
     calls: RefCell<Vec<Call>>,
     contexts: RefCell<Vec<Option<String>>>,
     selected: RefCell<Vec<String>>,
-    observed: RefCell<Vec<String>>,
+    estimates: RefCell<Vec<f64>>,
     mode: Cell<Mode>,
     chunks: Rc<Cell<usize>>,
     running: Rc<Cell<usize>>,
@@ -80,7 +80,7 @@ impl FixtureBackend {
             calls: RefCell::new(vec![]),
             contexts: RefCell::new(vec![]),
             selected: RefCell::new(vec![]),
-            observed: RefCell::new(vec![]),
+            estimates: RefCell::new(vec![]),
             mode: Cell::new(Mode::Normal),
             chunks: Rc::new(Cell::new(0)),
             running: Rc::new(Cell::new(0)),
@@ -95,12 +95,7 @@ impl Backend for FixtureBackend {
     fn capabilities(&self) -> Capabilities {
         self.caps.borrow().clone()
     }
-    fn select_voice(&self, voice: &str) {
-        self.selected.borrow_mut().push(voice.into());
-    }
-    fn observe_duration(&self, _: &str, voice: &str, _: f64) {
-        self.observed.borrow_mut().push(voice.into());
-    }
+
     fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
             let (style, continuation) = {
@@ -157,7 +152,15 @@ impl Backend for FixtureBackend {
             Ok(rx)
         })
     }
-    fn segments<'a>(&'a self, text: &'a str) -> Segmentation<'a> {
+    fn next_segment<'a>(
+        &'a self,
+        request: talechime_core::backend::SegmentationRequest<'a>,
+    ) -> Segmentation<'a> {
+        let text = request.text;
+        self.selected.borrow_mut().push(request.voice.into());
+        self.estimates
+            .borrow_mut()
+            .push(request.duration.seconds("甲乙丙丁"));
         Box::pin(async move {
             Ok(match self.mode.get() {
                 Mode::Omit => vec![],
@@ -167,7 +170,9 @@ impl Backend for FixtureBackend {
                     end: text.len() + 1,
                 }],
                 _ => talechime_core::text::preprocess_text(text, 200),
-            })
+            }
+            .into_iter()
+            .next())
         })
     }
 }
@@ -328,7 +333,7 @@ async fn same_backend_switches_a_b_a_inside_voice_boundaries() {
                 ]
             );
             assert_eq!(*h.backend.selected.borrow(), ["A", "B", "A"]);
-            assert_eq!(*h.backend.observed.borrow(), ["A", "B", "A"]);
+            assert_eq!(*h.backend.estimates.borrow(), [1.0, 1.0, 1.0]);
             let ranges: Vec<_> = h
                 .events
                 .iter()
@@ -527,12 +532,12 @@ async fn seek_preserves_roles_and_new_input_identity() {
             let count = h.backend.calls.borrow().len();
             assert!(
                 h.manager
-                    .seek("before", "bad".into(), 1, &Config::default())
+                    .seek_plan("before", "bad".into(), 1)
                     .await
                     .is_err()
             );
             h.manager
-                .seek("before", "after".into(), 3, &Config::default())
+                .seek_plan("before", "after".into(), 3)
                 .await
                 .unwrap();
             assert!(
@@ -767,12 +772,6 @@ async fn planned_voice_settings_are_fixed_but_playback_settings_can_change() {
                 .start_plan("fixed".into(), h.plan("甲"), PlanSessionOptions::default())
                 .await
                 .unwrap();
-            assert!(
-                h.manager
-                    .update_settings("unexpected".into(), &Config::default())
-                    .await
-                    .is_err()
-            );
             h.manager.configure_playback("fixed", 0.5, 1.5).unwrap();
             assert_eq!(h.player.settings.get(), (0.5, 1.5));
             assert!(h.manager.configure_playback("fixed", -1.0, 1.0).is_err());
@@ -1534,7 +1533,7 @@ async fn explicit_native_speed_wins_initially_and_survives_seek() {
 }
 
 #[tokio::test]
-async fn legacy_settings_divide_out_native_generation_speed() {
+async fn playback_settings_divide_out_native_generation_speed() {
     tokio::task::LocalSet::new()
         .run_until(async {
             let mut h = Harness::new();
@@ -1545,44 +1544,26 @@ async fn legacy_settings_divide_out_native_generation_speed() {
                 description: String::new(),
             }];
             let text = "甲乙";
-            let source = h.plan(text).source().source().clone();
-            let mut config = Config {
-                backend: "fixture".into(),
-                model: Some("shared".into()),
-                voice: "A".into(),
-                speed: 1.5,
-                ..Default::default()
-            };
+            let mut plan = h.plan(text);
+            plan.append(vec![span(0, text.len(), "A")]).unwrap();
+            plan.seal().unwrap();
             h.manager
-                .start(
-                    "legacy".into(),
-                    talechime_core::session::StartRequest {
-                        source,
-                        text: text.into(),
-                        text_hash: text_hash(text),
-                        resume_byte: None,
-                        restore_checkpoint: false,
+                .start_plan(
+                    "native".into(),
+                    plan,
+                    PlanSessionOptions {
+                        speed: 1.5,
+                        ..Default::default()
                     },
-                    &config,
                 )
                 .await
                 .unwrap();
             assert_eq!(h.player.settings.get(), (1.0, 1.0));
-            config.volume = 0.5;
-            assert!(
-                !h.manager
-                    .update_settings("unused".into(), &config)
-                    .await
-                    .unwrap()
-            );
+            h.manager.configure_playback("native", 0.5, 1.5).unwrap();
             assert_eq!(h.player.settings.get(), (0.5, 1.0));
-            config.speed = 2.0;
-            h.manager
-                .update_settings("unused".into(), &config)
-                .await
-                .unwrap();
+            h.manager.configure_playback("native", 0.5, 2.0).unwrap();
             assert!((h.player.settings.get().1 - 2.0 / 1.5).abs() < 1e-6);
-            h.drive(true, |h| h.ended("legacy", EndReason::Completed))
+            h.drive(true, |h| h.ended("native", EndReason::Completed))
                 .await;
         })
         .await;

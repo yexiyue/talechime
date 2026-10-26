@@ -30,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
     let loaded = Instant::now();
     let backend = MossBackend::load(model).await?;
     let load_ms = loaded.elapsed().as_secs_f64() * 1000.0;
-    backend.select_voice("Weiguo");
+    let mut duration = talechime_core::text::duration::DurationEstimator::default();
     let began = Instant::now();
     let mut offset = 0;
     let mut rows = Vec::new();
@@ -53,7 +53,13 @@ async fn main() -> anyhow::Result<()> {
                 end: text.len() - offset,
             })
         } else {
-            backend.next_segment(&text[offset..]).await?
+            backend
+                .next_segment(talechime_core::backend::SegmentationRequest {
+                    text: &text[offset..],
+                    voice: "Weiguo",
+                    duration: &duration,
+                })
+                .await?
         };
         let Some(piece) = piece else {
             break;
@@ -104,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
         }
         wav.finalize()?;
         let report = report.await?;
-        backend.observe_duration(&piece.text, "Weiguo", report.audio_seconds);
+        duration.observe(&piece.text, report.audio_seconds);
         rows.push(serde_json::json!({"range":{"start":start,"end":end}, "source":&text[start..end],
             "generation":report,"first_processed_pcm_ms":first_ms,"total_ms":segment_start.elapsed().as_secs_f64()*1000.0,
             "synthesis_completed":completed,"failure":failure}));

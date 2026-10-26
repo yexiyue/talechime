@@ -82,7 +82,6 @@ pub struct NanoBackend {
     tokenizer: Option<Arc<SentencePieceProcessor>>,
     caps: Capabilities,
     cache_identity: String,
-    estimate: std::cell::RefCell<(String, talechime_core::text::duration::DurationEstimator)>,
 }
 impl NanoBackend {
     pub async fn load_on(root: PathBuf, selected: Device) -> Result<Self, BackendError> {
@@ -151,7 +150,6 @@ impl NanoBackend {
             tokenizer: None,
             caps,
             cache_identity,
-            estimate: std::cell::RefCell::new((String::new(), Default::default())),
         };
         struct Loading {
             receiver: oneshot::Receiver<Result<Arc<SentencePieceProcessor>, BackendError>>,
@@ -267,40 +265,15 @@ impl Backend for NanoBackend {
     fn paragraph_end(&self, segment: &str, remaining: &str) -> bool {
         super::text::paragraph_end(segment, remaining)
     }
-    fn select_voice(&self, voice: &str) {
-        let mut estimate = self.estimate.borrow_mut();
-        if estimate.0 != voice {
-            *estimate = (voice.into(), Default::default());
-        }
-    }
-    fn observe_duration(&self, text: &str, voice: &str, seconds: f64) {
-        self.select_voice(voice);
-        self.estimate.borrow_mut().1.observe(text, seconds);
-    }
     fn next_segment<'a>(
         &'a self,
-        text: &'a str,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<Option<talechime_core::text::TextSegment>, BackendError>,
-                > + 'a,
-        >,
-    > {
+        request: talechime_core::backend::SegmentationRequest<'a>,
+    ) -> Segmentation<'a> {
         Box::pin(async move {
             super::text::first_segment(
-                text,
+                request.text,
                 self.tokenizer.as_ref().expect("loaded tokenizer"),
-                &self.estimate.borrow().1,
-            )
-        })
-    }
-    fn segments<'a>(&'a self, text: &'a str) -> Segmentation<'a> {
-        Box::pin(async move {
-            super::text::segments_with_estimate(
-                text,
-                self.tokenizer.as_ref().expect("loaded tokenizer"),
-                &self.estimate.borrow().1,
+                request.duration,
             )
         })
     }

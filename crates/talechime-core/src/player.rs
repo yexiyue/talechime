@@ -9,6 +9,3 @@ pub trait Playback {
     fn stop(&self);
     fn configure(&self, volume: f32, speed: f32);
 }
-
-mod audio;
-pub use audio::AudioPlayer;

@@ -28,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&output)?;
     let backend = MossBackend::load(model.into()).await?;
     for continuous in [false, true] {
-        backend.select_voice("Weiguo");
+        let mut duration = talechime_core::text::duration::DurationEstimator::default();
         let start = Instant::now();
         let mut first = None;
         let mut blocks = 0;
@@ -49,7 +49,13 @@ async fn main() -> anyhow::Result<()> {
         )?;
         while !source.is_empty() {
             let Some(segment) = (if continuous {
-                backend.next_segment(source).await?
+                backend
+                    .next_segment(talechime_core::backend::SegmentationRequest {
+                        text: source,
+                        voice: "Weiguo",
+                        duration: &duration,
+                    })
+                    .await?
             } else {
                 let mut offset = 0;
                 for line in source.split_inclusive('\n') {
@@ -101,7 +107,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             anyhow::ensure!(ended, "incomplete synthesis");
-            backend.observe_duration(&segment.text, "Weiguo", seconds);
+            duration.observe(&segment.text, seconds);
             source = &source[segment.end..];
             blocks += 1;
         }

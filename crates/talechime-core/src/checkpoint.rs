@@ -1,6 +1,6 @@
 //! Independent, versioned listening checkpoints, never reader progress.
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use talechime_protocol::{SourceId, text_hash};
 
 /// A last durable playback boundary for one immutable source snapshot.
@@ -65,15 +65,9 @@ impl CheckpointStore {
         text: &str,
     ) -> Result<Option<Checkpoint>, CheckpointError> {
         let path = self.path(source)?;
-        let file = match std::fs::File::open(path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.into()),
+        let Some(checkpoint) = read_checkpoint(&path)? else {
+            return Ok(None);
         };
-        let checkpoint: Checkpoint = serde_json::from_reader(file)?;
-        if checkpoint.schema_version != 1 {
-            return Err(CheckpointError::Invalidated("unknown schema major version"));
-        }
         if checkpoint.source != *source || checkpoint.text_hash != text_hash(text) {
             return Err(CheckpointError::Invalidated("source or text changed"));
         }
@@ -96,6 +90,8 @@ impl CheckpointStore {
         }
         let path = self.path(source)?;
         let _lock = crate::storage::lock(&path.with_extension("json.lock"))?;
+        // Validate before replacement as well, including explicit starts without restoration.
+        read_checkpoint(&path)?;
         let checkpoint = Checkpoint {
             schema_version: 1,
             source: source.clone(),
@@ -110,6 +106,20 @@ impl CheckpointStore {
         crate::storage::save(&path, &checkpoint)?;
         Ok(())
     }
+}
+
+/// Loading and replacement both reject unsupported or malformed on-disk data.
+fn read_checkpoint(path: &Path) -> Result<Option<Checkpoint>, CheckpointError> {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let checkpoint: Checkpoint = serde_json::from_reader(file)?;
+    if checkpoint.schema_version != 1 {
+        return Err(CheckpointError::Invalidated("unknown schema major version"));
+    }
+    Ok(Some(checkpoint))
 }
 
 #[cfg(test)]
@@ -148,6 +158,34 @@ mod tests {
         );
         assert!(store.load(&source("reader"), "正文变化").is_err());
         assert!(store.save(&source("reader"), text, 7, false).is_err());
+        store.save(&source("reader"), "正文变化", 0, false).unwrap();
+        assert_eq!(
+            store
+                .load(&source("reader"), "正文变化")
+                .unwrap()
+                .unwrap()
+                .resume_byte,
+            0
+        );
+    }
+
+    #[test]
+    fn saving_preserves_unsupported_and_malformed_checkpoints() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = CheckpointStore::new(dir.path());
+        let id = source("reader");
+        store.save(&id, "中", 0, false).unwrap();
+        let path = store.path(&id).unwrap();
+        let mut checkpoint = store.load(&id, "中").unwrap().unwrap();
+        checkpoint.schema_version = 2;
+        for bytes in [
+            serde_json::to_vec(&checkpoint).unwrap(),
+            b"invalid checkpoint".to_vec(),
+        ] {
+            std::fs::write(&path, &bytes).unwrap();
+            assert!(store.save(&id, "中", 0, false).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        }
     }
 
     #[test]
@@ -160,7 +198,9 @@ mod tests {
         let mut cp = store.load(&id, "中").unwrap().unwrap();
         cp.schema_version = 2;
         crate::storage::save(&path, &cp).unwrap();
+        let unsupported = std::fs::read(&path).unwrap();
         assert!(store.load(&id, "中").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), unsupported);
         cp.schema_version = 1;
         cp.resume_byte = 4;
         crate::storage::save(&path, &cp).unwrap();

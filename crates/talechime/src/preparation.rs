@@ -1,32 +1,14 @@
-//! Composition and calibration belong to the program, not the model-free core.
-use crate::resources::Resources;
+//! CLI configuration selects policy; adapters own preparation and recovery.
 use std::rc::Rc;
+use talechime_backends::Registry;
 use talechime_core::backend::Backend;
 use talechime_protocol::{Config, Event};
 use tokio::sync::mpsc;
-#[cfg(any(
-    feature = "moss",
-    feature = "qwen",
-    feature = "voxcpm",
-    feature = "cosyvoice3",
-    feature = "indextts",
-    feature = "omnivoice",
-))]
-mod synthesis;
-
-#[cfg(any(
-    feature = "moss",
-    feature = "qwen",
-    feature = "voxcpm",
-    feature = "cosyvoice3",
-    feature = "indextts",
-    feature = "omnivoice",
-))]
 pub fn validate_device(
     device: talechime_protocol::Device,
     backend: &str,
     model: Option<&str>,
-    resources: &Resources,
+    resources: &Registry,
 ) -> anyhow::Result<()> {
     if device == talechime_protocol::Device::Auto {
         return Ok(());
@@ -42,46 +24,29 @@ pub fn validate_device(
 }
 
 pub async fn prepare(
-    resources: Resources,
+    resources: Registry,
     config: Config,
     progress: mpsc::Sender<Event>,
 ) -> anyhow::Result<Rc<dyn Backend>> {
-    #[cfg(not(any(
-        feature = "moss",
-        feature = "qwen",
-        feature = "voxcpm",
-        feature = "cosyvoice3",
-        feature = "indextts",
-        feature = "omnivoice",
-    )))]
-    {
-        let _ = (resources, config, progress);
-        anyhow::bail!("no synthesis backend is compiled");
-    }
-    #[cfg(any(
-        feature = "moss",
-        feature = "qwen",
-        feature = "voxcpm",
-        feature = "cosyvoice3",
-        feature = "indextts",
-        feature = "omnivoice",
-    ))]
-    {
-        validate_device(
-            config.tts_device,
-            &config.backend,
-            config.model.as_deref(),
-            &resources,
-        )?;
-        let backend = synthesis::prepare(&resources, &config, &progress).await?;
-        let _ = progress
-            .send(Event::ResourceState {
-                stage: "模型就绪".into(),
-                resource: config.backend.clone(),
-            })
-            .await;
-        Ok(backend)
-    }
+    let model = resources.resolve(&config.backend, config.model.as_deref())?;
+    let backend = model
+        .prepare(
+            talechime_backends::PrepareOptions {
+                device: config.tts_device,
+                calibrate: true,
+                recovery: true,
+                voice: Some(config.voice),
+            },
+            progress.clone(),
+        )
+        .await?;
+    let _ = progress
+        .send(Event::ResourceState {
+            stage: "模型就绪".into(),
+            resource: config.backend,
+        })
+        .await;
+    Ok(backend)
 }
 
 /// Explicit preparation bundle; enabling readback here never enables the gate by itself.
@@ -90,7 +55,7 @@ pub struct PreparedModels {
     pub verifier: Option<Rc<talechime::Verifier>>,
 }
 pub async fn prepare_models(
-    resources: Resources,
+    resources: Registry,
     config: Config,
     progress: mpsc::Sender<Event>,
     readback: bool,

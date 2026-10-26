@@ -28,6 +28,8 @@
 mod engine;
 mod listening;
 mod model_preparation;
+#[cfg(feature = "playback")]
+mod player;
 mod voice_import;
 
 pub use engine::{Engine, EngineError, ModelOptions, PcmStream, run_local};
@@ -37,7 +39,10 @@ pub use talechime_core::{
     PlanProgress, PlanSessionOptions, PlanState, Playback, PlaybackPolicy, SeedPolicy,
     SourceSnapshot, SpeechAudio, SpeechContext, SpeechPlan, SpeechSpan, StagingError,
     StagingOptions, SynthesisItem, SynthesisOptions, SynthesisState, VoiceSnapshot,
-    backend::{AudioChunk, Backend, BackendError, Pcm, SegmentRequest, Segmentation, Streaming},
+    backend::{
+        AudioChunk, Backend, BackendError, Pcm, SegmentRequest, Segmentation, SegmentationRequest,
+        Streaming,
+    },
     session::{SessionError, SessionEvent},
 };
 pub use talechime_protocol::{

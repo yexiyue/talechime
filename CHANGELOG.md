@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Unify backend registration and model preparation around resolved model identities, with adapter-owned resources, devices and recovery. CLI and library use the same preparation service.
+- Move audio output behind the facade playback feature and downloads into backend resources; remove audio-output and HTTP dependencies from core.
+- Make segmentation requests explicit and duration learning execution-local. Remove the selected-voice state and the separate whole-text segmentation API.
+- Remove legacy directory/data migration and configuration-driven session APIs. Current plans, JSON Lines v7 and current data formats remain; historical files are left untouched.
+
 ## 0.5.0 — 2026-10-25
 
 - Publish the facade/core 0.5.0, backends 0.3.0, protocol 0.3.1, Qwen3-TTS 0.4.0 and Qwen3-ASR 0.1.1 libraries, plus the first branded 0.1.0 MOSS, VoxCPM, OmniVoice, CosyVoice3 and IndexTTS packages. Protocol wire version remains v7.

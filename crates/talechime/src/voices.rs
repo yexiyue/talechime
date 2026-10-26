@@ -1,6 +1,6 @@
-use crate::resources::Resources;
 use clap::Subcommand;
 use std::path::PathBuf;
+use talechime_backends::Registry;
 #[derive(Subcommand)]
 pub enum VoiceCommand {
     /// List voices of the selected backend without loading a model.
@@ -33,7 +33,7 @@ pub enum VoiceCommand {
 }
 pub async fn run(
     command: VoiceCommand,
-    resources: Resources,
+    resources: Registry,
     config: &talechime_protocol::Config,
 ) -> anyhow::Result<()> {
     let backend = config.backend.as_str();
@@ -364,7 +364,7 @@ pub async fn run(
     feature = "moss-candle"
 ))]
 fn shared_store(
-    resources: &Resources,
+    resources: &Registry,
     config: &talechime_protocol::Config,
 ) -> anyhow::Result<Option<(talechime_core::voices::VoiceStore, u32)>> {
     Ok(match config.backend.as_str() {

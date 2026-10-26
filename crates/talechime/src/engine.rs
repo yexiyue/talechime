@@ -15,8 +15,12 @@ pub struct ModelOptions {
     pub backend: String,
     /// Optional model selection; resolved to the prepared capability identity.
     pub model: Option<String>,
-    /// Concrete inference device. Auto requires host-side selection first.
+    /// Requested inference device; Auto uses the explicit calibration/recovery policy.
     pub device: Device,
+    /// Measure CPU/accelerator performance when selecting Auto.
+    pub calibrate: bool,
+    /// Enable adapter-owned recovery for automatic device selection.
+    pub recovery: bool,
     /// Explicit resource directory; no implicit global configuration read/write.
     pub resources: PathBuf,
 }
@@ -27,6 +31,8 @@ impl ModelOptions {
             backend: backend.into(),
             model: None,
             device: Device::Cpu,
+            calibrate: false,
+            recovery: false,
             resources: resources.into(),
         }
     }
@@ -145,23 +151,26 @@ impl Engine {
         options: ModelOptions,
         progress: impl FnMut(Event),
     ) -> Result<Self, EngineError> {
-        if options.backend.trim().is_empty()
-            || options.resources.as_os_str().is_empty()
-            || options.device == Device::Auto
-        {
+        if options.backend.trim().is_empty() || options.resources.as_os_str().is_empty() {
             return Err(EngineError::InvalidOptions(
-                "backend, resource path and concrete device are required",
+                "backend and resource path are required",
             ));
         }
         let registry = talechime_backends::Registry::new(Some(options.resources))
             .map_err(EngineError::Prepare)?;
+        let model = registry
+            .resolve(&options.backend, options.model.as_deref())
+            .map_err(EngineError::Prepare)?;
         crate::model_preparation::with_progress(
             |tx| {
-                registry.prepare_model_on(
-                    &options.backend,
-                    options.model.as_deref(),
+                model.prepare(
+                    talechime_backends::PrepareOptions {
+                        device: options.device,
+                        calibrate: options.calibrate,
+                        recovery: options.recovery,
+                        voice: None,
+                    },
                     tx,
-                    options.device,
                 )
             },
             progress,

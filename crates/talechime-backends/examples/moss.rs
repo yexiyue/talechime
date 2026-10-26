@@ -1,6 +1,7 @@
 //! Real CPU smoke test without opening an audio device.
+mod segmentation;
 use talechime_backends::moss::MossBackend;
-use talechime_core::backend::{AudioChunk, Backend};
+use talechime_core::backend::AudioChunk;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     eprintln!("ONNX Runtime: {:?}", ort::info());
@@ -27,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
     let backend = MossBackend::load_on(directory.into(), device).await?;
     eprintln!("loaded {:?}", started.elapsed());
     let start = std::time::Instant::now();
-    let pieces = backend.segments(&text).await?;
+    let pieces = segmentation::collect(&backend, &text, &voice).await?;
     eprintln!("segments {}", pieces.len());
     let mut wav = hound::WavWriter::create(
         output,
@@ -68,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
         count as f64 / 96000.,
         start.elapsed()
     );
-    let segments = backend.segments(&text).await?;
+    let segments = segmentation::collect(&backend, &text, &voice).await?;
     anyhow::ensure!(!segments.is_empty(), "missing source segments");
     Ok(())
 }

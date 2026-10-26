@@ -61,23 +61,6 @@ pub(super) fn normalize(text: &str) -> String {
     text
 }
 
-pub(super) fn segments_with_estimate(
-    text: &str,
-    tokenizer: &SentencePieceProcessor,
-    estimate: &talechime_core::text::duration::DurationEstimator,
-) -> Result<Vec<TextSegment>, BackendError> {
-    split_estimate(
-        text,
-        |s| {
-            tokenizer
-                .encode_to_ids(&normalize(s))
-                .map(|ids| ids.len())
-                .map_err(|e| BackendError::Synthesis(e.to_string()))
-        },
-        estimate,
-    )
-}
-
 #[cfg(test)]
 fn split(
     text: &str,
@@ -85,6 +68,7 @@ fn split(
 ) -> Result<Vec<TextSegment>, BackendError> {
     split_estimate(text, count, &Default::default())
 }
+#[cfg(test)]
 fn split_estimate(
     text: &str,
     count: impl Fn(&str) -> Result<usize, BackendError>,

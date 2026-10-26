@@ -425,8 +425,7 @@ async fn invalid_preparation_and_assembly_are_read_only() {
             Engine::prepare(ModelOptions::new("not-compiled", root.path()), |_| {}).await,
             Err(EngineError::Prepare(_))
         ));
-        let mut options = ModelOptions::new("moss", root.path());
-        options.device = Device::Auto;
+        let options = ModelOptions::new("   ", root.path());
         assert!(matches!(
             Engine::prepare(options, |_| {}).await,
             Err(EngineError::InvalidOptions(_))

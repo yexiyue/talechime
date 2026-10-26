@@ -4,11 +4,10 @@ mod cli;
 #[path = "../tests/library/fixture.rs"]
 #[allow(dead_code)] // Binary adapter tests use only normal/long fixture modes.
 mod fixture;
-mod migration;
 mod plan_input;
 mod preparation;
 mod protocol;
-mod resources;
+use talechime_backends::Registry;
 mod runtime;
 #[cfg(feature = "asr")]
 mod verify;
@@ -145,27 +144,6 @@ fn parse_param(raw: &str) -> Result<(String, talechime_protocol::ParamValue), St
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let legacy_migration =
-        if args.config.is_none() && args.checkpoint_dir.is_none() && args.model_dir.is_none() {
-            let paths = talechime_core::paths::AppPaths::user_default()?;
-            let home = paths
-                .root()
-                .parent()
-                .ok_or_else(|| anyhow::anyhow!("application home unavailable"))?;
-            let migration = talechime_core::migration::LegacyMigration::from_home(home);
-            migration::startup(&migration, &resources::Resources::new(None)?);
-            Some(migration)
-        } else {
-            None
-        };
-    if !args.protocol {
-        migration::resources(
-            legacy_migration.clone(),
-            None,
-            migration::CopyWork::default(),
-        )
-        .await;
-    }
     #[cfg(feature = "asr")]
     if let Some(Commands::Verify {
         text,
@@ -173,7 +151,7 @@ async fn main() -> anyhow::Result<()> {
         report,
     }) = &args.command
     {
-        let resources = resources::Resources::new(args.model_dir.clone())?;
+        let resources = Registry::new(args.model_dir.clone())?;
         return talechime::run_local(verify::run(text, audio, report, resources.root())).await;
     }
     let config = match args.config {
@@ -184,7 +162,7 @@ async fn main() -> anyhow::Result<()> {
         Some(path) => talechime_core::checkpoint::CheckpointStore::new(path),
         None => talechime_core::checkpoint::CheckpointStore::user_default()?,
     };
-    let resources = resources::Resources::new(args.model_dir)?;
+    let resources = Registry::new(args.model_dir)?;
     let config = if config.path().exists() {
         config
     } else {
@@ -229,14 +207,6 @@ async fn main() -> anyhow::Result<()> {
                 .filter(|id| *id != &current.backend)
                 .map(|_| talechime_protocol::Device::Auto)
         });
-        #[cfg(any(
-            feature = "moss",
-            feature = "qwen",
-            feature = "voxcpm",
-            feature = "cosyvoice3",
-            feature = "indextts",
-            feature = "omnivoice",
-        ))]
         if tts_device.is_some() || model_changed {
             preparation::validate_device(
                 tts_device.unwrap_or(current.tts_device),
@@ -275,14 +245,7 @@ async fn main() -> anyhow::Result<()> {
             }
             voices::run(command, resources, &selection).await
         } else if args.protocol {
-            protocol::run(
-                config,
-                checkpoints,
-                resources,
-                args.readback_models,
-                legacy_migration,
-            )
-            .await
+            protocol::run(config, checkpoints, resources, args.readback_models).await
         } else {
             cli::run(
                 args.file.ok_or_else(|| {

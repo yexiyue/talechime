@@ -24,6 +24,7 @@ struct Call {
 #[derive(Default)]
 struct Fixture {
     calls: RefCell<Vec<Call>>,
+    estimates: RefCell<Vec<(String, String, f64)>>,
     missing_end: Cell<bool>,
     reject_context: Cell<bool>,
     seconds: Cell<usize>,
@@ -84,23 +85,32 @@ impl Backend for Fixture {
             Ok(rx)
         })
     }
-    fn segments<'a>(&'a self, text: &'a str) -> Segmentation<'a> {
+    fn next_segment<'a>(
+        &'a self,
+        request: talechime_core::backend::SegmentationRequest<'a>,
+    ) -> Segmentation<'a> {
+        let text = request.text;
+        self.estimates.borrow_mut().push((
+            text.into(),
+            request.voice.into(),
+            request.duration.seconds("甲乙丙丁"),
+        ));
         Box::pin(async move {
             let start = text
                 .char_indices()
                 .find(|(_, c)| !c.is_whitespace())
                 .map_or(text.len(), |(i, _)| i);
             if start == text.len() {
-                return Ok(vec![]);
+                return Ok(None);
             }
             let end = text[start..]
                 .find('。')
                 .map_or(text.len(), |i| start + i + 3);
-            Ok(vec![TextSegment {
+            Ok(Some(TextSegment {
                 text: text[start..end].into(),
                 start,
                 end,
-            }])
+            }))
         })
     }
 }
@@ -569,4 +579,60 @@ async fn pinned_seeds_reproduce_and_params_reach_the_backend() {
             );
         })
         .await;
+}
+
+#[tokio::test]
+async fn duration_learning_is_local_to_interleaved_executions_and_resets_after_failure() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let backend = Rc::new(Fixture::default());
+            let mut first = start(backend.clone(), "甲。乙。", false);
+            let mut second = start(backend.clone(), "丙。丁。", false);
+            let (a, b) = tokio::join!(drain(&mut first), drain(&mut second));
+            a.unwrap();
+            b.unwrap();
+            for (text, _, estimate) in backend.estimates.borrow().iter() {
+                match text.as_str() {
+                    "甲。乙。" | "丙。丁。" => assert_eq!(*estimate, 1.0),
+                    "乙。" | "丁。" => assert!(*estimate > 1.0),
+                    _ => unreachable!(),
+                }
+            }
+            let mut cancelled = start(backend.clone(), "戊。己。", false);
+            cancelled.recv().await.unwrap().unwrap();
+            cancelled.cancel().await;
+            backend.missing_end.set(true);
+            let mut broken = start(backend.clone(), "庚。辛。", false);
+            assert!(drain(&mut broken).await.is_err());
+            backend.missing_end.set(false);
+            let mut fresh = start(backend.clone(), "壬。癸。", false);
+            drain(&mut fresh).await.unwrap();
+            assert_eq!(
+                backend
+                    .estimates
+                    .borrow()
+                    .iter()
+                    .find(|(text, _, _)| text == "壬。癸。")
+                    .unwrap()
+                    .2,
+                1.0
+            );
+        })
+        .await;
+}
+#[tokio::test]
+async fn explicit_segmentation_request_is_stable_without_prior_voice_selection() {
+    let backend = Fixture::default();
+    let estimate = talechime_core::text::duration::DurationEstimator::default();
+    let request = talechime_core::backend::SegmentationRequest {
+        text: "甲。乙。",
+        voice: "b",
+        duration: &estimate,
+    };
+    let first = backend.next_segment(request).await.unwrap().unwrap();
+    let second = backend.next_segment(request).await.unwrap().unwrap();
+    assert_eq!(
+        (first.text, first.start, first.end),
+        (second.text, second.start, second.end)
+    );
 }
