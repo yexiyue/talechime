@@ -18,6 +18,9 @@ mod moss;
 #[cfg(feature = "omnivoice")]
 mod omnivoice;
 mod preparation;
+mod reference;
+use reference::ReferenceEntry;
+pub use reference::ReferenceVoice;
 #[cfg(feature = "qwen")]
 mod qwen;
 #[cfg(feature = "voxcpm")]
@@ -26,6 +29,7 @@ mod voxcpm;
 pub use preparation::PrepareOptions;
 type Preparing<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>>;
 type Loading<'a> = Pin<Box<dyn Future<Output = anyhow::Result<Rc<dyn Backend>>> + 'a>>;
+type Installing<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>>;
 trait ModelAdapter {
     fn id(&self) -> &'static str;
     fn capabilities(&self, root: &Path) -> anyhow::Result<Capabilities>;
@@ -46,6 +50,33 @@ trait ModelAdapter {
         device: Device,
         recovery: bool,
     ) -> Loading<'a>;
+    /// Physical reference payload; materialization ownership is tracked separately.
+    fn reference_entry(&self, _root: &Path, _id: &str) -> anyhow::Result<ReferenceEntry> {
+        anyhow::bail!("this model does not support reference voices")
+    }
+    /// Validate and install a reference recording for later synthesis.
+    /// Directory-backed stores complete synchronously in milliseconds.
+    fn install_reference(
+        &self,
+        _root: &Path,
+        _wav: &Path,
+        _id: &str,
+        _name: &str,
+        _transcript: &str,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("this model does not support reference voices")
+    }
+    /// Asynchronous install for adapters needing background work (codec encoding).
+    fn install_reference_async<'a>(
+        &'a self,
+        root: &'a Path,
+        wav: &'a Path,
+        id: &'a str,
+        name: &'a str,
+        transcript: &'a str,
+    ) -> Installing<'a> {
+        Box::pin(async move { self.install_reference(root, wav, id, name, transcript) })
+    }
 }
 struct Registration {
     id: &'static str,
@@ -114,6 +145,39 @@ impl Registry {
     pub fn root(&self) -> &Path {
         &self.root
     }
+    /// Engine info for every design engine compiled into this build.
+    pub fn designers(&self) -> Vec<talechime_core::design::EngineInfo> {
+        crate::design::designers(&self.root)
+    }
+    /// Materialize a library asset; unmarked custom references are never replaced.
+    pub async fn install_reference(
+        &self,
+        backend: &str,
+        model: Option<&str>,
+        voice: ReferenceVoice<'_>,
+    ) -> anyhow::Result<()> {
+        let adapter = self.adapter(backend, model)?;
+        reference::install(adapter.as_ref(), &self.root, voice).await
+    }
+    /// Check both the asset fingerprint and the installed payload integrity.
+    pub fn reference_fresh(
+        &self,
+        backend: &str,
+        model: Option<&str>,
+        voice_id: &str,
+        fingerprint: &str,
+    ) -> bool {
+        talechime_core::voices::library::validate_id(voice_id).is_ok()
+            && self
+                .adapter(backend, model)
+                .ok()
+                .and_then(|adapter| {
+                    adapter
+                        .reference_entry(&self.root, &format!("custom:{voice_id}"))
+                        .ok()
+                })
+                .is_some_and(|entry| entry.fresh(voice_id, fingerprint))
+    }
     pub fn feature_exists(feature: &str) -> bool {
         matches!(
             feature,
@@ -142,7 +206,7 @@ impl Registry {
         )
     }
 
-    pub fn resolve(&self, backend: &str, model: Option<&str>) -> anyhow::Result<ResolvedModel> {
+    fn adapter(&self, backend: &str, model: Option<&str>) -> anyhow::Result<Rc<dyn ModelAdapter>> {
         let registration = ADAPTERS
             .iter()
             .find(|entry| entry.id == backend)
@@ -152,6 +216,10 @@ impl Registry {
             .into_iter()
             .find(|adapter| adapter.id() == id)
             .ok_or_else(|| anyhow::anyhow!("unsupported or retired model {backend}/{id}; supported models in this build: {}", (registration.models)().iter().map(|model| model.id()).collect::<Vec<_>>().join(", ")))?;
+        Ok(adapter)
+    }
+    pub fn resolve(&self, backend: &str, model: Option<&str>) -> anyhow::Result<ResolvedModel> {
+        let adapter = self.adapter(backend, model)?;
         let mut capabilities = adapter.capabilities(&self.root)?;
         capabilities.model = Some(adapter.id().into());
         capabilities.compiled_devices = adapter.compiled_devices();
@@ -303,6 +371,175 @@ mod tests {
             assert!(error.to_string().contains(retired));
         }
         assert_eq!(std::fs::read_dir(root.path())?.count(), 0);
+        Ok(())
+    }
+    #[cfg(feature = "qwen")]
+    #[test]
+    fn qwen_catalog_hides_the_design_generator_and_rejects_it_for_narration() -> anyhow::Result<()>
+    {
+        let root = tempfile::tempdir()?;
+        let registry = Registry::new(Some(root.path().into()))?;
+        let models = registry
+            .catalog()?
+            .into_iter()
+            .filter(|caps| caps.backend == "qwen")
+            .map(|caps| caps.model.unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            models,
+            vec![
+                "0.6b-customvoice",
+                "1.7b-customvoice",
+                "0.6b-base",
+                "1.7b-base"
+            ]
+        );
+        let error = match registry.resolve("qwen", Some("1.7b-voicedesign")) {
+            Ok(_) => panic!("design-only model accepted for narration"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("unsupported or retired model"));
+        assert!(error.to_string().contains("1.7b-voicedesign"));
+        assert_eq!(std::fs::read_dir(root.path())?.count(), 0);
+        Ok(())
+    }
+    /// One second of quiet mono audio; valid for reference validation.
+    #[cfg(feature = "qwen")]
+    fn write_reference_wav(path: &std::path::Path, seconds: u32) {
+        write_reference_wav_pitch(path, seconds, 400.0)
+    }
+    #[cfg(feature = "qwen")]
+    fn write_reference_wav_pitch(path: &std::path::Path, seconds: u32, frequency: f32) {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 24000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(path, spec).unwrap();
+        for index in 0..seconds * 24000 {
+            let value =
+                ((index as f32 / 24000.0) * frequency * std::f32::consts::PI).sin() * 8000.0;
+            writer.write_sample(value as i16).unwrap();
+        }
+        writer.finalize().unwrap();
+    }
+    /// The reference.wav location for a qwen base model voice, via public APIs.
+    #[cfg(feature = "qwen")]
+    fn talechime_backends_qwen_voice_wav(root: &std::path::Path, id: &str) -> std::path::PathBuf {
+        use crate::qwen::{models::Model, voice_store};
+        voice_store(&Model::Base17.directory(root), Model::Base17)
+            .unwrap()
+            .path(&format!("custom:{id}"))
+            .unwrap()
+            .join("reference.wav")
+    }
+    #[cfg(feature = "qwen")]
+    fn reference_asset(id: &str, wav: &[u8]) -> talechime_core::voices::library::VoiceAsset {
+        use talechime_core::voices::library::{VoiceAsset, VoiceSource, fingerprint};
+        VoiceAsset {
+            id: id.into(),
+            name: "主角".into(),
+            transcript: "试音转写".into(),
+            description: None,
+            source: VoiceSource::Imported,
+            created_at_unix: 0,
+            fingerprint: fingerprint("试音转写", None, wav),
+        }
+    }
+    #[cfg(feature = "qwen")]
+    #[tokio::test]
+    async fn install_reference_materializes_reuses_and_refreshes() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let registry = Registry::new(Some(root.path().into()))?;
+        let wav = root.path().join("reference.wav");
+        write_reference_wav(&wav, 1);
+        let bytes = std::fs::read(&wav)?;
+        let asset = reference_asset("hero", &bytes);
+        let voice = ReferenceVoice {
+            asset: &asset,
+            wav: &bytes,
+        };
+        registry
+            .install_reference("qwen", Some("1.7b-base"), voice)
+            .await?;
+        assert!(registry.reference_fresh("qwen", Some("1.7b-base"), "hero", &asset.fingerprint));
+        let voice_wav = talechime_backends_qwen_voice_wav(root.path(), "hero");
+        let before = std::fs::read(&voice_wav)?;
+        registry
+            .install_reference("qwen", Some("1.7b-base"), voice)
+            .await?;
+        assert_eq!(std::fs::read(&voice_wav)?, before);
+        write_reference_wav_pitch(&wav, 1, 800.0);
+        let changed = std::fs::read(&wav)?;
+        let changed_asset = reference_asset("hero", &changed);
+        registry
+            .install_reference(
+                "qwen",
+                Some("1.7b-base"),
+                ReferenceVoice {
+                    asset: &changed_asset,
+                    wav: &changed,
+                },
+            )
+            .await?;
+        assert!(registry.reference_fresh(
+            "qwen",
+            Some("1.7b-base"),
+            "hero",
+            &changed_asset.fingerprint
+        ));
+        assert_ne!(std::fs::read(&voice_wav)?, before);
+        // Damage must not make catalog enumeration prevent repairing the entry.
+        std::fs::write(voice_wav.parent().unwrap().join("voice.json"), b"broken")?;
+        assert!(!registry.reference_fresh(
+            "qwen",
+            Some("1.7b-base"),
+            "hero",
+            &changed_asset.fingerprint
+        ));
+        registry
+            .install_reference(
+                "qwen",
+                Some("1.7b-base"),
+                ReferenceVoice {
+                    asset: &changed_asset,
+                    wav: &changed,
+                },
+            )
+            .await?;
+        assert!(registry.reference_fresh(
+            "qwen",
+            Some("1.7b-base"),
+            "hero",
+            &changed_asset.fingerprint
+        ));
+        Ok(())
+    }
+    #[cfg(feature = "qwen")]
+    #[tokio::test]
+    async fn install_reference_rejects_duration_limit_and_non_cloning_models() -> anyhow::Result<()>
+    {
+        let root = tempfile::tempdir()?;
+        let registry = Registry::new(Some(root.path().into()))?;
+        let wav = root.path().join("long.wav");
+        write_reference_wav(&wav, 20);
+        let bytes = std::fs::read(&wav)?;
+        let asset = reference_asset("long", &bytes);
+        let voice = ReferenceVoice {
+            asset: &asset,
+            wav: &bytes,
+        };
+        let error = registry
+            .install_reference("qwen", Some("1.7b-base"), voice)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("1..15 seconds"));
+        let error = registry
+            .install_reference("qwen", Some("1.7b-customvoice"), voice)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("0.6b-base or 1.7b-base"));
         Ok(())
     }
 }

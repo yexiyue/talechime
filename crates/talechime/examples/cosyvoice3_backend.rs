@@ -20,15 +20,17 @@ async fn main() -> anyhow::Result<()> {
         let text = "你好，欢迎使用叙铃。";
         let mut first = None;
         for run in 0..2 {
-            let mut stream = engine.synthesize_with_options(
-                text,
-                &args[2],
-                None,
-                SynthesisOptions {
-                    seed: SeedPolicy::Pinned(42),
-                    ..Default::default()
-                },
-            )?;
+            let mut stream = engine
+                .synthesize_with_options(
+                    text,
+                    &args[2],
+                    None,
+                    SynthesisOptions {
+                        seed: SeedPolicy::Pinned(42),
+                        ..Default::default()
+                    },
+                )
+                .await?;
             let mut samples = Vec::new();
             let mut blocks = 0;
             while let Some(block) = stream.recv().await {
@@ -48,11 +50,13 @@ async fn main() -> anyhow::Result<()> {
                 first = Some(samples);
             }
         }
-        let mut stream = engine.synthesize(
-            "今天天气真不错，我们一起去公园散步吧。顺便买点水果，晚上回家做沙拉。",
-            &args[2],
-            None,
-        )?;
+        let mut stream = engine
+            .synthesize(
+                "今天天气真不错，我们一起去公园散步吧。顺便买点水果，晚上回家做沙拉。",
+                &args[2],
+                None,
+            )
+            .await?;
         anyhow::ensure!(stream.recv().await.transpose()?.is_some());
         stream.cancel().await;
         drop(stream);

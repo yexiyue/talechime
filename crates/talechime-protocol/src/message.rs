@@ -91,6 +91,15 @@ pub struct ConfigPatch {
 }
 
 impl ConfigPatch {
+    /// Whether this patch changes only model-independent playback preferences.
+    pub fn is_playback_only(&self) -> bool {
+        self.backend.is_none()
+            && self.model.is_none()
+            && self.style.is_none()
+            && self.tts_device.is_none()
+            && self.voice.is_none()
+    }
+
     /// A backend change resets model selection unless a new model is provided.
     pub fn target_model<'a>(&'a self, current: &'a Config) -> Option<&'a str> {
         self.model.as_deref().or_else(|| {
@@ -169,6 +178,26 @@ pub enum Command {
         byte: usize,
         new_session_id: String,
     },
+    /// Design one library voice with a design engine (v7 addition).
+    /// Progress arrives as `ModelProgress`; completion as `VoiceReady`.
+    DesignVoice {
+        name: String,
+        description: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        engine: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        device: Option<Device>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seed: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+    ListVoices,
+    RemoveVoice {
+        voice: String,
+    },
     Shutdown,
 }
 
@@ -214,6 +243,17 @@ pub struct ErrorInfo {
     pub retryable: bool,
 }
 
+/// One library voice as reported over the protocol (v7 addition).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoiceAssetRecord {
+    pub id: String,
+    pub name: String,
+    pub transcript: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub designed: bool,
+}
+
 /// Messages sent by the worker. Accepted does not mean synthesis has completed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
@@ -235,6 +275,13 @@ pub enum Event {
         total: u64,
     },
     ModelReady,
+    /// One design job finished; the voice id is usable in later plans (v7 addition).
+    VoiceReady {
+        voice: String,
+        name: String,
+    },
+    /// Library voice listing (v7 addition).
+    VoicesListed(Vec<VoiceAssetRecord>),
     DeviceStatus {
         component: String,
         compiled: Vec<Device>,
@@ -374,4 +421,75 @@ pub const MAX_PLAN_SPANS: usize = 65536;
 
 fn enabled() -> bool {
     true
+}
+
+#[cfg(test)]
+mod voice_command_tests {
+    use super::*;
+
+    #[test]
+    fn design_voice_is_additive_and_old_frames_still_parse() {
+        // New command round-trips with optional fields omitted.
+        let minimal =
+            r#"{"type":"design_voice","payload":{"name":"主角","description":"低沉男声"}}"#;
+        let command: Command = serde_json::from_str(minimal).unwrap();
+        match &command {
+            Command::DesignVoice {
+                name,
+                description,
+                text,
+                engine,
+                device,
+                seed,
+                id,
+            } => {
+                assert_eq!(name, "主角");
+                assert_eq!(description, "低沉男声");
+                assert!(
+                    text.is_none()
+                        && engine.is_none()
+                        && device.is_none()
+                        && seed.is_none()
+                        && id.is_none()
+                );
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        let encoded = serde_json::to_string(&command).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Command>(&encoded).unwrap(),
+            command,
+            "round-trip must be stable"
+        );
+        // Optional fields survive a full round-trip.
+        let full = Command::DesignVoice {
+            name: "主角".into(),
+            description: "低沉".into(),
+            text: Some("试音".into()),
+            engine: Some("voxcpm".into()),
+            device: Some(Device::Cuda),
+            seed: Some(42),
+            id: Some("hero".into()),
+        };
+        let encoded = serde_json::to_string(&full).unwrap();
+        assert_eq!(serde_json::from_str::<Command>(&encoded).unwrap(), full);
+        // Pre-existing v7 frames are unaffected.
+        let old = r#"{"type":"prepare_model"}"#;
+        assert!(matches!(
+            serde_json::from_str::<Command>(old).unwrap(),
+            Command::PrepareModel
+        ));
+        let old_event = r#"{"type":"model_ready"}"#;
+        assert!(matches!(
+            serde_json::from_str::<Event>(old_event).unwrap(),
+            Event::ModelReady
+        ));
+        // New events serialize with the shared tagging scheme.
+        let event = Event::VoiceReady {
+            voice: "hero".into(),
+            name: "主角".into(),
+        };
+        let encoded = serde_json::to_string(&event).unwrap();
+        assert!(encoded.contains("\"voice_ready\""), "{encoded}");
+    }
 }

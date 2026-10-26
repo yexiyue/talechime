@@ -1,7 +1,10 @@
 //! Validated, append-only speech plans, independent of execution and transport.
 #![deny(missing_docs)]
 
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 use talechime_protocol::{Capabilities, SourceId, TextRange, text_hash};
 
 use crate::config::{ConfigError, validate_style, validate_voice};
@@ -120,6 +123,7 @@ impl SourceSnapshot {
 pub struct VoiceSnapshot {
     capabilities: Capabilities,
     voices: BTreeSet<String>,
+    aliases: BTreeMap<String, String>,
 }
 
 impl VoiceSnapshot {
@@ -149,7 +153,23 @@ impl VoiceSnapshot {
         Ok(Self {
             capabilities: capabilities.clone(),
             voices: selected,
+            aliases: BTreeMap::new(),
         })
+    }
+
+    /// Attach caller-facing aliases to already validated model voices.
+    /// Plans normalize aliases on every append, including incremental input.
+    pub fn with_aliases(mut self, aliases: BTreeMap<String, String>) -> Result<Self, PlanError> {
+        for (alias, target) in &aliases {
+            if !self.voices.contains(target) || self.voices.contains(alias) && alias != target {
+                return Err(PlanError::VoiceNotSelected(alias.clone()));
+            }
+        }
+        self.aliases = aliases
+            .into_iter()
+            .filter(|(alias, target)| alias != target)
+            .collect();
+        Ok(self)
     }
 
     /// Prepared backend identity.
@@ -273,13 +293,16 @@ impl SpeechPlan {
     }
 
     /// Accept a complete batch atomically; any validation error leaves the plan unchanged.
-    pub fn append(&mut self, batch: Vec<SpeechSpan>) -> Result<(), PlanError> {
+    pub fn append(&mut self, mut batch: Vec<SpeechSpan>) -> Result<(), PlanError> {
         self.require_open()?;
         if batch.is_empty() {
             return Err(PlanError::EmptyBatch);
         }
         let mut end = self.accepted_end;
-        for span in &batch {
+        for span in &mut batch {
+            if let Some(voice) = self.voices.aliases.get(&span.voice) {
+                span.voice = voice.clone();
+            }
             if !span.range.is_valid(self.source.text()) || span.range.start == span.range.end {
                 return Err(PlanError::InvalidRange(span.range));
             }
@@ -342,6 +365,7 @@ impl SpeechPlan {
         voice: &str,
         style: Option<String>,
     ) -> Result<Self, PlanError> {
+        let voice = voices.aliases.get(voice).map_or(voice, String::as_str);
         let span = SpeechSpan::new(
             TextRange {
                 start: 0,

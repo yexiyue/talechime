@@ -16,7 +16,7 @@ let options = VerificationOptions {
     ..Default::default()
 };
 let voice = engine.capabilities()?.default_voice;
-let mut stream = engine.synthesize_verified("你好，世界。", &voice, None, options)?;
+let mut stream = engine.synthesize_verified("你好，世界。", &voice, None, options).await?;
 while let Some(item) = stream.next().await {
     match item? {
         SynthesisItem::Verification(report) => println!("{:?}", report.verdict),

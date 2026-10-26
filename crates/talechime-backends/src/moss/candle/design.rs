@@ -13,6 +13,7 @@ pub async fn reference(
     text: String,
     description: String,
     output: PathBuf,
+    seed: Option<u64>,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         selected == talechime_protocol::Device::Cuda,
@@ -50,6 +51,7 @@ pub async fn reference(
                 let mut request = talechime_moss_tts::Generation::new(&text);
                 request.instruction = Some(&description);
                 request.max_frames = 125;
+                request.seed = seed.unwrap_or(42);
                 let mut frames = Vec::new();
                 let mut samples = Vec::new();
                 model.generate(&request, &check, |frame| {

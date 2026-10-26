@@ -76,6 +76,25 @@ impl ConfigStore {
         patch: &ConfigPatch,
         capabilities: &Capabilities,
     ) -> Result<Config, ConfigError> {
+        self.update_checked(patch, Some(capabilities))
+    }
+
+    /// Update volume, speed and auto-play without requiring a compiled synthesis
+    /// backend. Model-related fields remain unchanged and require [`Self::update`].
+    pub fn update_playback(&self, patch: &ConfigPatch) -> Result<Config, ConfigError> {
+        if !patch.is_playback_only() {
+            return Err(ConfigError::Invalid(
+                "model settings require backend capabilities".into(),
+            ));
+        }
+        self.update_checked(patch, None)
+    }
+
+    fn update_checked(
+        &self,
+        patch: &ConfigPatch,
+        capabilities: Option<&Capabilities>,
+    ) -> Result<Config, ConfigError> {
         let _lock = crate::storage::lock(&self.path.with_extension("json.lock"))?;
         let mut config = self.load()?;
         if config.revision != patch.expected_revision {
@@ -84,7 +103,7 @@ impl ConfigStore {
         config.model = patch.target_model(&config).map(str::to_owned);
         if let Some(style) = &patch.style {
             config.style = (!style.trim().is_empty()).then(|| style.clone());
-        } else if !capabilities.style {
+        } else if capabilities.is_some_and(|caps| !caps.style) {
             config.style = None;
         }
         if let Some(backend) = &patch.backend {
@@ -105,7 +124,10 @@ impl ConfigStore {
         if let Some(auto_play) = patch.auto_play {
             config.auto_play = auto_play;
         }
-        validate(&config, capabilities)?;
+        match capabilities {
+            Some(capabilities) => validate(&config, capabilities)?,
+            None => validate_playback(config.volume, config.speed)?,
+        }
         config.revision = config
             .revision
             .checked_add(1)
@@ -188,6 +210,83 @@ mod tests {
             pronunciation: false,
             continuation: false,
             parameters: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn playback_updates_preserve_unavailable_model_settings_and_validate_before_writing() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = ConfigStore::new(directory.path().join("config.json")).with_defaults(Config {
+            backend: "not-compiled".into(),
+            model: Some("saved-model".into()),
+            voice: "saved-voice".into(),
+            style: Some("saved-style".into()),
+            tts_device: talechime_protocol::Device::Cuda,
+            ..Default::default()
+        });
+        let original = store.load().unwrap();
+        let updated = store
+            .update_playback(&ConfigPatch {
+                volume: Some(0.7),
+                speed: Some(1.2),
+                auto_play: Some(true),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            updated,
+            Config {
+                volume: 0.7,
+                speed: 1.2,
+                auto_play: true,
+                revision: 1,
+                ..original
+            }
+        );
+        let saved = std::fs::read(store.path()).unwrap();
+        assert!(matches!(
+            store.update_playback(&ConfigPatch::default()),
+            Err(ConfigError::RevisionConflict)
+        ));
+        for patch in [
+            ConfigPatch {
+                volume: Some(f32::NAN),
+                ..Default::default()
+            },
+            ConfigPatch {
+                speed: Some(0.0),
+                ..Default::default()
+            },
+            ConfigPatch {
+                backend: Some("other".into()),
+                ..Default::default()
+            },
+            ConfigPatch {
+                model: Some("other".into()),
+                ..Default::default()
+            },
+            ConfigPatch {
+                voice: Some("other".into()),
+                ..Default::default()
+            },
+            ConfigPatch {
+                style: Some(String::new()),
+                ..Default::default()
+            },
+            ConfigPatch {
+                tts_device: Some(talechime_protocol::Device::Cpu),
+                ..Default::default()
+            },
+        ] {
+            let patch = ConfigPatch {
+                expected_revision: 1,
+                ..patch
+            };
+            assert!(matches!(
+                store.update_playback(&patch),
+                Err(ConfigError::Invalid(_))
+            ));
+            assert_eq!(std::fs::read(store.path()).unwrap(), saved);
         }
     }
 

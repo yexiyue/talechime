@@ -8,6 +8,7 @@ pub mod asr;
     feature = "omnivoice"
 ))]
 mod cache_identity;
+pub mod design;
 pub mod devices;
 #[cfg(any(
     feature = "moss",
@@ -62,4 +63,4 @@ pub mod voxcpm;
 pub mod cosyvoice3;
 
 mod registry;
-pub use registry::{PrepareOptions, Registry, ResolvedModel};
+pub use registry::{PrepareOptions, ReferenceVoice, Registry, ResolvedModel};

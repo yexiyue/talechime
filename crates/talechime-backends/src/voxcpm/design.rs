@@ -7,6 +7,7 @@ pub async fn reference(
     text: String,
     description: String,
     output: PathBuf,
+    seed: Option<u64>,
 ) -> anyhow::Result<()> {
     reference_model(
         directory,
@@ -15,6 +16,7 @@ pub async fn reference(
         text,
         description,
         output,
+        seed,
     )
     .await
 }
@@ -25,6 +27,7 @@ pub async fn reference_model(
     text: String,
     description: String,
     output: PathBuf,
+    seed: Option<u64>,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         variant.compiled_devices().contains(&device),
@@ -54,7 +57,10 @@ pub async fn reference_model(
                 let outcome = model.generate(
                     &format!("({description}){text}"),
                     None,
-                    &talechime_voxcpm::Options::default(),
+                    &talechime_voxcpm::Options {
+                        seed: seed.unwrap_or(42),
+                        ..Default::default()
+                    },
                     &|| result.is_closed(),
                     |pcm| {
                         if result.is_closed() {

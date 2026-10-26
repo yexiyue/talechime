@@ -9,14 +9,20 @@ async fn direct_synthesis_validates_styles_and_returns_original_ranges() {
     run_local(async {
         let backend = Rc::new(Fixture::default());
         let mut engine = Engine::from_backend(backend.clone());
-        assert!(engine.synthesize("甲", "missing", None).is_err());
-        assert!(engine.synthesize("甲", "A", Some(" ".into())).is_err());
+        assert!(engine.synthesize("甲", "missing", None).await.is_err());
+        assert!(
+            engine
+                .synthesize("甲", "A", Some(" ".into()))
+                .await
+                .is_err()
+        );
         assert!(backend.calls.borrow().is_empty());
         let mut stream = engine
             .synthesize("甲😀\n乙", "B", Some("轻声".into()))
+            .await
             .unwrap();
         assert!(matches!(
-            engine.synthesize("另", "A", None),
+            engine.synthesize("另", "A", None).await,
             Err(EngineError::Busy)
         ));
         assert!(matches!(engine.close().await, Err(EngineError::Busy)));
@@ -63,7 +69,7 @@ async fn empty_layout_completes_without_inference_or_fake_audio() {
         let backend = Rc::new(Fixture::default());
         let engine = Engine::from_backend(backend.clone());
         for text in ["", " \n\t"] {
-            let mut stream = engine.synthesize(text, "A", None).unwrap();
+            let mut stream = engine.synthesize(text, "A", None).await.unwrap();
             assert!(stream.recv().await.is_none());
             assert_eq!(stream.state(), SynthesisState::Completed);
         }
@@ -82,7 +88,7 @@ async fn incomplete_silent_or_changed_format_streams_fail_explicitly() {
         let engine = Engine::from_backend(backend.clone());
         for mode in [Mode::Disconnect, Mode::Silent, Mode::Format] {
             backend.mode.set(mode);
-            let mut stream = engine.synthesize("甲", "A", None).unwrap();
+            let mut stream = engine.synthesize("甲", "A", None).await.unwrap();
             let mut failed = false;
             while let Some(block) = stream.recv().await {
                 if block.is_err() {
@@ -101,7 +107,7 @@ async fn retained_pcm_applies_budget_and_cross_thread_cancel_releases_execution(
         let backend = Rc::new(Fixture::default());
         backend.mode.set(Mode::Long);
         let engine = Engine::from_backend(backend.clone());
-        let mut stream = engine.synthesize("甲", "A", None).unwrap();
+        let mut stream = engine.synthesize("甲", "A", None).await.unwrap();
         let mut retained = vec![];
         for _ in 0..75 {
             retained.push(stream.recv().await.unwrap().unwrap());
@@ -128,7 +134,7 @@ async fn dropped_stream_is_awaited_by_engine_close() {
         let backend = Rc::new(Fixture::default());
         backend.mode.set(Mode::Long);
         let mut engine = Engine::from_backend(backend);
-        let stream = engine.synthesize("甲", "A", None).unwrap();
+        let stream = engine.synthesize("甲", "A", None).await.unwrap();
         let completed = stream.cancellation();
         drop(stream);
         engine.close().await.unwrap();
@@ -284,12 +290,12 @@ async fn dropping_event_owner_requests_cleanup_and_does_not_release_engine_early
         let handle = listening.control();
         drop(listening);
         assert!(matches!(
-            engine.synthesize("忙", "A", None),
+            engine.synthesize("忙", "A", None).await,
             Err(EngineError::Busy)
         ));
         tokio::time::timeout(Duration::from_secs(3), async {
             loop {
-                match engine.synthesize("复用", "A", None) {
+                match engine.synthesize("复用", "A", None).await {
                     Ok(mut stream) => {
                         stream.cancel().await;
                         break;
@@ -478,7 +484,7 @@ async fn oversized_model_block_fails_before_boundary_processing() {
         let backend = Rc::new(Fixture::default());
         backend.mode.set(Mode::Oversized);
         let engine = Engine::from_backend(backend);
-        let mut stream = engine.synthesize("甲", "A", None).unwrap();
+        let mut stream = engine.synthesize("甲", "A", None).await.unwrap();
         assert!(stream.recv().await.unwrap().is_err());
         assert_eq!(stream.state(), SynthesisState::Failed);
     })
@@ -582,6 +588,7 @@ async fn engine_plan_helpers_use_prepared_identity_and_validate_empty_voice_and_
         .unwrap();
         let mut incremental = engine
             .plan(source.clone(), vec!["A".into()], PlaybackPolicy::Streaming)
+            .await
             .unwrap();
         incremental
             .append(vec![SpeechSpan::new(
@@ -595,6 +602,7 @@ async fn engine_plan_helpers_use_prepared_identity_and_validate_empty_voice_and_
             incremental,
             engine
                 .single_voice_plan(source, "A", None, PlaybackPolicy::Streaming)
+                .await
                 .unwrap()
         );
         let empty = SourceSnapshot::new(
@@ -610,11 +618,13 @@ async fn engine_plan_helpers_use_prepared_identity_and_validate_empty_voice_and_
         assert!(
             engine
                 .single_voice_plan(empty.clone(), "unknown", None, PlaybackPolicy::Streaming)
+                .await
                 .is_err()
         );
         assert!(
             engine
                 .single_voice_plan(empty, "A", Some(" ".into()), PlaybackPolicy::Streaming)
+                .await
                 .is_err()
         );
         engine.close().await.unwrap();

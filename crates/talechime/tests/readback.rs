@@ -108,6 +108,7 @@ async fn gate_replaces_only_failed_attempt_before_delivering_pcm_and_keeps_voice
                     strict_suspect: false,
                 }),
             )
+            .await
             .unwrap();
         // Both attempts' reports precede the accepted PCM.
         assert!(matches!(
@@ -191,6 +192,7 @@ async fn exhaustion_and_unverified_gate_deliver_no_pcm_but_report_only_continues
             );
             let mut stream = engine
                 .synthesize_verified("甲乙", "A", None, options(policy))
+                .await
                 .unwrap();
             let (reports, samples, error) = drain(&mut stream).await;
             assert_eq!(error, expected_error);
@@ -220,6 +222,7 @@ async fn same_family_rejected_and_suspect_default_delivery_vs_strict_gate() {
                         strict_suspect,
                     }),
                 )
+                .await
                 .unwrap();
             let (reports, samples, error) = drain(&mut stream).await;
             assert_eq!(reports[0].verdict, VerificationVerdict::Suspect);
@@ -245,6 +248,7 @@ async fn timeout_and_explicit_cancel_drop_recognition_and_engine_is_reusable() {
                     strict_suspect: false,
                 }),
             )
+            .await
             .unwrap();
         let (reports, samples, error) = drain(&mut stream).await;
         assert!(error);
@@ -263,6 +267,7 @@ async fn timeout_and_explicit_cancel_drop_recognition_and_engine_is_reusable() {
                     ..options(VerificationPolicy::ReportOnly)
                 },
             )
+            .await
             .unwrap();
         assert!(
             tokio::time::timeout(Duration::from_millis(20), stream.next())
@@ -284,12 +289,14 @@ async fn bounds_and_missing_preparation_fail_before_delivery() {
         assert!(
             plain
                 .synthesize_verified("甲乙", "A", None, options(VerificationPolicy::ReportOnly))
+                .await
                 .is_err()
         );
         let (engine, backend) = engine(Asr::new("a", vec![]), Asr::new("b", vec![]));
         backend.mode.set(Mode::Long);
         let mut stream = engine
             .synthesize_verified("甲乙", "A", None, options(VerificationPolicy::ReportOnly))
+            .await
             .unwrap();
         let (reports, samples, error) = drain(&mut stream).await;
         assert!(error);
@@ -325,6 +332,7 @@ async fn after_chapter_error_never_reaches_player_or_chapter_ready() {
                 vec!["A".into(), "B".into()],
                 PlaybackPolicy::AfterChapterReady,
             )
+            .await
             .unwrap();
         plan.append(vec![
             SpeechSpan::new(TextRange { start: 0, end: 6 }, "A", None),
@@ -599,7 +607,7 @@ async fn disabled_verification_and_engine_close_ignore_unrelated_native_work() {
         let mut engine = Engine::from_backend(Rc::new(Fixture::default()));
         engine.set_verifier(verifier.clone()).unwrap();
         for _ in 0..2 {
-            let mut stream = engine.synthesize("甲乙", "A", None).unwrap();
+            let mut stream = engine.synthesize("甲乙", "A", None).await.unwrap();
             let (reports, samples, error) = drain(&mut stream).await;
             assert!(reports.is_empty() && samples > 0 && !error);
             assert_eq!(stream.state(), SynthesisState::Completed);
@@ -642,6 +650,7 @@ async fn cancellation_waits_for_its_native_receipt_and_not_shared_reports() {
                     ..Default::default()
                 },
             )
+            .await
             .unwrap();
         while primary.receipts.borrow().len() < 2 {
             tokio::task::yield_now().await;
@@ -697,6 +706,7 @@ async fn listening_close_waits_only_for_its_own_native_request() {
                 None,
                 PlaybackPolicy::Streaming,
             )
+            .await
             .unwrap();
         listening
             .control()

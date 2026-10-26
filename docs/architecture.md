@@ -157,6 +157,26 @@ VoxCPM2（上游 `(description)text` 前缀，与接续组合待验收、当前�
 候选在接收原始流时有界复制，播放无需等待候选完成；End 后且交付策略允许时才替换参考。
 门禁拒绝的尝试不进入候选，重试使用原快照。参考限额与重置语义见[库说明](library.md#段落内接续)。
 
+### 音色资产层
+
+音色库（`~/.talechime/voices/`，`VoiceLibrary`）是设计/导入音色的唯一事实源：每条音色
+= 原始参考 WAV + 准确转写 + 描述与来源标注，与模型资源目录彻底分离，可单文件导出搬运。
+各模型的 per-model `VoiceStore` 降级为可再生物化缓存：按库音色的内容指纹
+（转写+描述+WAV 的 sha256）和缓存内容摘要写入相邻 `.library` 标记，缺失或损坏即重物化；
+只替换归属明确的缓存，同名且未标记的用户音色报冲突并原样保留。
+旧 `<resources>/voices/` 目录不扫描、不迁移、不删除。
+
+设计引擎实现 core 的 `VoiceDesigner` 契约（描述→参考录音，future drop 即取消，
+输入约束在加载权重前校验），以静态登记表接入，与 Backend/Registry 同构：Qwen 与 MOSS
+的专用设计模型仅按需准备；VoxCPM/OmniVoice 复用已就绪的朗读模型。自动选择策略优先
+零额外下载的引擎；`VoiceStudio` 的自动层是显式层的薄封装，两层共一条内部路径。
+
+库音色 id 的解析顺序：模型能力目录内建音色 → `custom:` 模型本地音色 → 音色库 id
+（物化后改写为 `custom:<id>`）。Rust API、计划 `SpeechSpan.voice` 与 CLI `--voice`
+共用异步物化入口；`VoiceSnapshot` 持有别名，计划统一解析首次及后续 Append 的 span。
+协议 v7 加法式扩展：`DesignVoice` 命令（进度复用 `ModelProgress`）、`VoiceReady`
+完成事件、`ListVoices`/`RemoveVoice`。设计、模型准备与播放互斥；等待资源的命令按有界队列排队，活动播放的控制仍可执行。
+
 MOSS 只保留 `nano-candle` 与 `realtime-1.7b`。未指定模型时，能力目录、设备选择、
 准备路径与校准 revision 解析到 `nano-candle`（已编译时）；只启用 `moss` 的构建默认 Realtime。
 旧 `nano`、`local-1b`、`local-1.7b` ID 加载时明确报错，不重写配置或迁移用户资源。
@@ -165,6 +185,8 @@ codec 先消费前缀建立状态，丢弃前缀 PCM 后只输出新帧。Realti
 把前段文字与音频按 12 token 延迟打包为前一轮上下文，并将同一音频用作滚动音色参考。
 Nano 音色使用其独立 revision 目录，由 Candle encoder 编码；Realtime 音色独立保存。
 VoiceDesign 仅作为辅助参考生成器，不进入产品模型目录。移除依据见[决策记录](records/moss/2026-10-26-moss-tier-removal.md)。
+Qwen `1.7b-voicedesign` 遵循同一规则：`voices design` 按需准备并产出参考录音，
+能力目录不登记该模型，选它做朗读明确报错；产物进音色库而非任何模型目录。
 Qwen 0.6B / 1.7B Base 复用 Base ICL 编码，OmniVoice 复用 VoiceClonePrompt，VoxCPM2
 使用前段转写与 16 kHz 音频建立 continuation reference；临时 prompt 均只存在原生 owner 的内存中。
 

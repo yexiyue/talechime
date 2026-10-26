@@ -36,6 +36,9 @@ impl AppPaths {
     pub fn resources(&self) -> PathBuf {
         self.root.join("resources")
     }
+    pub fn voices(&self) -> PathBuf {
+        self.root.join("voices")
+    }
 }
 
 #[cfg(test)]

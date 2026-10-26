@@ -35,6 +35,17 @@ cargo build --locked -p talechime --bins
 GPU feature 必须按目标平台显式选择，不能用 `--all-features` 同时启用 CUDA 和 Metal；
 移除 platform 辅助包后，Cargo 不再自动过滤异平台 GPU feature。CUDA 与 Metal 编译分别在原生 CI 中检查。普通测试不下载大模型；真实模型测试使用显式环境变量，保留历史 `TRNOVEL_*` 变量以兼容已有验收脚本。历史 `tools/` 脚本已删除；性能工具使用 Rust `cargo xtask perf`。历史对照和转换脚本可从 Git revision `e591c94` 取回，不是当前运行时依赖。
 
+最小 CLI 组合也须运行测试；仅 Clippy 不能发现运行期的默认模型假设：
+
+```bash
+for features in cli "cli moss" "cli moss-nano-candle"; do
+  cargo test --locked -p talechime --no-default-features --features "$features" --lib --tests --examples
+done
+```
+
+只编入 `cli` 时，协议可握手、查询空模型目录与读写播放偏好；模型准备请求明确失败。
+音色库命令独立于合成配置，损坏或当前未编译后端的合成设置不阻止库操作。
+
 ## 编译 feature 分层
 
 CLI 与 backends 使用同名开关，计算库只提供 `cuda` / `metal` 平台开关：

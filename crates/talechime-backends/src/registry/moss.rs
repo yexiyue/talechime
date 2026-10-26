@@ -56,6 +56,72 @@ impl ModelAdapter for Adapter {
             Self::Realtime => moss::candle::Mode::Realtime.revision(),
         }
     }
+    fn reference_entry(&self, root: &Path, id: &str) -> anyhow::Result<ReferenceEntry> {
+        match self {
+            #[cfg(feature = "moss-nano-candle")]
+            Self::Nano => Ok(ReferenceEntry::File(
+                moss::voices::VoiceStore::new(&moss::nano::directory(root)).path(id)?,
+            )),
+            Self::Realtime => Ok(ReferenceEntry::Directory(
+                moss::candle::voice_store(
+                    &moss::candle::Mode::Realtime.directory(root),
+                    moss::candle::Mode::Realtime,
+                )?
+                .path(id)?,
+            )),
+        }
+    }
+    fn install_reference(
+        &self,
+        root: &Path,
+        wav: &Path,
+        id: &str,
+        name: &str,
+        transcript: &str,
+    ) -> anyhow::Result<()> {
+        match self {
+            #[cfg(feature = "moss-nano-candle")]
+            Self::Nano => anyhow::bail!(
+                "MOSS Nano encodes references in the background; use the asynchronous install"
+            ),
+            Self::Realtime => {
+                let reference = crate::reference::load(wav, 24000)?;
+                anyhow::ensure!(
+                    reference.len() <= 240000,
+                    "MOSS trial reference must be at most 10 seconds"
+                );
+                let mode = moss::candle::Mode::Realtime;
+                let store = moss::candle::voice_store(&mode.directory(root), mode)?;
+                store.import(id, name, wav, transcript, None)?;
+                Ok(())
+            }
+        }
+    }
+    fn install_reference_async<'a>(
+        &'a self,
+        root: &'a Path,
+        wav: &'a Path,
+        id: &'a str,
+        name: &'a str,
+        transcript: &'a str,
+    ) -> Installing<'a> {
+        let root = root.to_path_buf();
+        let wav = wav.to_path_buf();
+        let id = id.to_string();
+        let name = name.to_string();
+        let transcript = transcript.to_string();
+        Box::pin(async move {
+            match self {
+                #[cfg(feature = "moss-nano-candle")]
+                Self::Nano => {
+                    let _ = transcript;
+                    moss::nano::import_voice(root, id, name, wav).await?;
+                    Ok(())
+                }
+                Self::Realtime => self.install_reference(&root, &wav, &id, &name, &transcript),
+            }
+        })
+    }
     fn prepare<'a>(&'a self, root: &'a Path, progress: mpsc::Sender<Event>) -> Preparing<'a> {
         Box::pin(async move {
             match self {

@@ -92,16 +92,22 @@ MOSS 两档均使用 Candle；各模型通过自己的 feature 启用 GPU。详�
 
 ### 音色和生成参数
 
+音色资产存放在独立的音色库（`~/.talechime/voices/`），与任何后端/模型解耦：
+同一条音色可被所有支持参考克隆的模型使用，首次引用时自动物化进所选模型。
+
 ```sh
-talechime --backend moss voices list
-talechime --backend moss voices import reader --name "我的朗读音色" --text "参考音频的准确文字" reference.wav
-talechime --backend moss --voice custom:reader chapter.txt
-talechime --backend moss voices remove reader
+talechime voices list                        # 库内音色（与 --backend 无关）
+talechime voices engines                     # 可用设计引擎与代价
+talechime voices design --name "我的朗读音色" --description "低沉温和的中年男声"
+talechime voices import reference.wav --name "导入音色" --text "参考音频的准确文字"
+talechime voices export my-voice --output my-voice.voice
+talechime voices import-bundle my-voice.voice
+talechime --voice my-voice chapter.txt       # 库音色直接朗读，隐式物化
 
 talechime --backend voxcpm --param steps=32 --param temperature=0.9 --seed 7 chapter.txt
 ```
 
-参考音频应附准确转写。音色绑定具体模型，不能仅凭相同 ID 跨模型使用。各模型只接受其能力目录声明的参数；非法名称、类型或范围会报错。[参数与风格记录](docs/records/tts-core/params-exposure-2026-10-10.md)列出当前接口。
+参考音频应附准确转写。设计引擎的自动选择优先复用已就绪的朗读模型（零额外下载），也可 `--engine` 显式指定。各模型只接受其能力目录声明的参数；非法名称、类型或范围会报错。[参数与风格记录](docs/records/tts-core/params-exposure-2026-10-10.md)与[音色库重构记录](docs/records/tts-core/voice-studio-2026-10-26.md)列出当前接口。
 
 ## 与官方实现的性能对比
 
@@ -187,7 +193,8 @@ Talechime 不获取章节、不分析角色，也不决定下一章。TRNovel �
 | --- | --- |
 | 配置 | `~/.talechime/config.json` |
 | 播放检查点 | `~/.talechime/checkpoints/` |
-| 模型、音色及缓存 | `~/.talechime/resources/` |
+| 音色库（设计/导入音色的唯一事实源） | `~/.talechime/voices/` |
+| 模型及可再生音色缓存 | `~/.talechime/resources/` |
 
 可用 `--config`、`--checkpoint-dir`、`--model-dir` 指定自定义路径。程序只使用当前目录与格式，不扫描或迁移旧 `novel-tts` 数据；旧文件保留原位，详见[数据目录说明](docs/migration.md)。
 

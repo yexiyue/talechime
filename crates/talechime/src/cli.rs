@@ -113,6 +113,11 @@ pub async fn run(
     let mut continuation_span = continuation_span;
     let (mut generation_params, mut seed_policy) =
         generation_settings(&Default::default(), None, &params, seed);
+    let studio = store
+        .path()
+        .parent()
+        .map(|root| root.join("voices"))
+        .and_then(|voices| talechime::VoiceStudio::at(resources.root(), voices).ok());
     let (plan, resume_byte, restore_checkpoint) = if let Some(path) = plan_file {
         // Bound file reads before deserialization. Full plans only; stdin worker handles increments.
         use tokio::io::AsyncReadExt;
@@ -143,7 +148,9 @@ pub async fn run(
             crate::plan_input::build(
                 &input,
                 &resources.capabilities_for(&config.backend, config.model.as_deref())?,
-            )?,
+                studio.as_ref(),
+            )
+            .await?,
             if restore_checkpoint {
                 input.resume_byte
             } else {
@@ -154,12 +161,19 @@ pub async fn run(
     } else {
         let caps = resources.capabilities_for(&config.backend, config.model.as_deref())?;
         let source = talechime::SourceSnapshot::new(source, text.clone(), &text_hash(&text))?;
-        let voices = talechime::VoiceSnapshot::new(
-            &caps.backend,
-            caps.model.as_deref(),
-            &caps,
-            vec![config.voice.clone()],
-        )?;
+        let voices = match &studio {
+            Some(studio) => {
+                studio
+                    .voice_snapshot(&caps, std::slice::from_ref(&config.voice))
+                    .await?
+            }
+            None => talechime::VoiceSnapshot::new(
+                &caps.backend,
+                caps.model.as_deref(),
+                &caps,
+                vec![config.voice.clone()],
+            )?,
+        };
         (
             talechime::SpeechPlan::single_voice(
                 source,

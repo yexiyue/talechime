@@ -10,6 +10,7 @@ pub async fn reference(
     text: String,
     description: String,
     output: PathBuf,
+    seed: Option<u64>,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         !description.trim().is_empty() && description.len() <= 4096,
@@ -24,7 +25,7 @@ pub async fn reference(
         "voice design requires 1.7b-voicedesign weights"
     );
     let (completed, receiver) = tokio::sync::oneshot::channel();
-    std::thread::Builder::new()
+    let thread = std::thread::Builder::new()
         .name("qwen-voice-design".into())
         .spawn(move || {
             let result = (|| -> anyhow::Result<()> {
@@ -36,7 +37,7 @@ pub async fn reference(
                     SynthesisOptions {
                         max_length: MAX_FRAMES,
                         chunk_frames: 20,
-                        seed: Some(42),
+                        seed: Some(seed.unwrap_or(42)),
                         ..Default::default()
                     },
                 )?;
@@ -54,7 +55,8 @@ pub async fn reference(
             // GPU weights are released before the caller can load Base.
             let _ = completed.send(result);
         })?;
-    receiver
+    let mut owner = crate::design::thread::DesignThread::new(receiver, thread);
+    (&mut owner.receiver)
         .await
         .map_err(|_| anyhow::anyhow!("voice design thread exited"))?
 }

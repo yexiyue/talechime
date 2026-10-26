@@ -22,7 +22,7 @@ impl VoiceStore {
             directory: root.join("voices"),
         }
     }
-    fn path(&self, id: &str) -> anyhow::Result<PathBuf> {
+    pub(crate) fn path(&self, id: &str) -> anyhow::Result<PathBuf> {
         let name = id
             .strip_prefix("custom:")
             .ok_or_else(|| anyhow::anyhow!("custom voice IDs start with custom:"))?;

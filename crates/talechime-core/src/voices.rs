@@ -1,4 +1,7 @@
 //! Model-scoped reference recordings. Adapter encoding caches live beside the reference.
+pub mod bundle;
+pub mod library;
+
 use serde::{Deserialize, Serialize};
 use std::{
     fs::File,

@@ -13,7 +13,7 @@
 //!     // Explicit preparation may download model resources to this directory.
 //!     let mut engine = Engine::prepare(ModelOptions::new("moss", "./models"), |_| {}).await?;
 //!     let voice = engine.capabilities()?.default_voice;
-//!     let mut stream = engine.synthesize("你好。", &voice, None)?;
+//!     let mut stream = engine.synthesize("你好。", &voice, None).await?;
 //!     while let Some(block) = stream.recv().await {
 //!         let block = block?;
 //!         println!("{} samples", block.pcm().samples.len());
@@ -30,10 +30,11 @@ mod listening;
 mod model_preparation;
 #[cfg(feature = "playback")]
 mod player;
-mod voice_import;
+mod voice_studio;
 
 pub use engine::{Engine, EngineError, ModelOptions, PcmStream, run_local};
 pub use listening::{Listening, ListeningHandle, ListeningOptions, ListeningSession};
+pub use talechime_core::voices::library::{VoiceAsset, VoiceLibrary, VoiceSource};
 pub use talechime_core::{
     CancellationHandle, ChapterCacheOptions, DEFAULT_MAX_BYTES, GenerationParams, PlanError,
     PlanProgress, PlanSessionOptions, PlanState, Playback, PlaybackPolicy, SeedPolicy,
@@ -49,7 +50,7 @@ pub use talechime_protocol::{
     Capabilities, Device, EndReason, Event, ParamKind, ParamValue, ParameterSpec, SessionState,
     SourceId, TextRange, text_hash,
 };
-pub use voice_import::{VoiceImportError, import_reference_voice, list_voices};
+pub use voice_studio::{DEFAULT_TRIAL_TEXT, DesignOptions, VoiceId, VoiceStudio, VoiceStudioError};
 
 pub use talechime_core::verification::{
     DifferenceKind, ReadbackAudio, ReadbackDifference, ReadbackEvidence, ReadbackRequest,

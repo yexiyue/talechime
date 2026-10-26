@@ -97,7 +97,7 @@ impl Playback for Player {
     }
     fn configure(&self, _: f32, _: f32) {}
 }
-pub fn plan(engine: &Engine, text: &str, policy: PlaybackPolicy) -> SpeechPlan {
+pub async fn plan(engine: &Engine, text: &str, policy: PlaybackPolicy) -> SpeechPlan {
     engine
         .plan(
             SourceSnapshot::new(
@@ -113,5 +113,6 @@ pub fn plan(engine: &Engine, text: &str, policy: PlaybackPolicy) -> SpeechPlan {
             vec!["A".into(), "B".into()],
             policy,
         )
+        .await
         .unwrap()
 }

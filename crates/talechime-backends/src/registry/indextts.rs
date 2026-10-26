@@ -22,6 +22,29 @@ impl ModelAdapter for Adapter {
     fn revision(&self) -> &'static str {
         model::resources::REVISION
     }
+    fn reference_entry(&self, root: &Path, id: &str) -> anyhow::Result<ReferenceEntry> {
+        Ok(ReferenceEntry::Directory(
+            model::voice_store(&model::directory(root))?.path(id)?,
+        ))
+    }
+    fn install_reference(
+        &self,
+        root: &Path,
+        wav: &Path,
+        id: &str,
+        name: &str,
+        transcript: &str,
+    ) -> anyhow::Result<()> {
+        let reference = crate::reference::load(wav, 22_050)?;
+        anyhow::ensure!(
+            reference.len() <= 15 * 22_050,
+            "IndexTTS reference must be at most 15 seconds"
+        );
+        let store = model::voice_store(&model::directory(root))?;
+        store.import(id, name, wav, transcript, None)?;
+        Ok(())
+    }
+
     fn calibrates(&self) -> bool {
         false
     }

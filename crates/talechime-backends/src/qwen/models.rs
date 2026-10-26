@@ -60,7 +60,7 @@ impl Model {
                 .join(self.revision())
         }
     }
-    pub(super) fn manifest(self) -> &'static str {
+    pub(crate) fn manifest(self) -> &'static str {
         match self {
             Self::Custom06 => include_str!("resources.json"),
             Self::Custom17 => include_str!("models/1.7b-customvoice.json"),

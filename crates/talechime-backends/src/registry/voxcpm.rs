@@ -31,6 +31,25 @@ impl ModelAdapter for Adapter {
     fn revision(&self) -> &'static str {
         self.0.calibration_revision()
     }
+    fn reference_entry(&self, root: &Path, id: &str) -> anyhow::Result<ReferenceEntry> {
+        Ok(ReferenceEntry::Directory(
+            voxcpm::voice_store_for(&self.0.directory(root), self.0)?.path(id)?,
+        ))
+    }
+    fn install_reference(
+        &self,
+        root: &Path,
+        wav: &Path,
+        id: &str,
+        name: &str,
+        transcript: &str,
+    ) -> anyhow::Result<()> {
+        crate::reference::load(wav, 16000)?;
+        let store = voxcpm::voice_store_for(&self.0.directory(root), self.0)?;
+        store.import(id, name, wav, transcript, None)?;
+        Ok(())
+    }
+
     fn prepare<'a>(&'a self, root: &'a Path, progress: mpsc::Sender<Event>) -> Preparing<'a> {
         Box::pin(async move {
             voxcpm::resources::prepare_model(&self.0.directory(root), self.0, progress).await

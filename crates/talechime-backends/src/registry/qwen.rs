@@ -4,12 +4,13 @@ pub(super) const REGISTRATION: Registration = Registration {
     id: "qwen",
     default_model: "0.6b-customvoice",
     models: || {
+        // 1.7b-voicedesign stays an internal design-only generator: the voices
+        // command prepares it on demand and never offers it for narration.
         [
             Model::Custom06,
             Model::Custom17,
             Model::Base06,
             Model::Base17,
-            Model::Design17,
         ]
         .into_iter()
         .map(|model| Rc::new(Adapter(model)) as Rc<dyn ModelAdapter>)
@@ -33,6 +34,33 @@ impl ModelAdapter for Adapter {
     fn revision(&self) -> &'static str {
         self.0.revision()
     }
+    fn reference_entry(&self, root: &Path, id: &str) -> anyhow::Result<ReferenceEntry> {
+        anyhow::ensure!(
+            self.0.is_base(),
+            "qwen reference voices require model 0.6b-base or 1.7b-base"
+        );
+        Ok(ReferenceEntry::Directory(
+            qwen::voice_store(&self.0.directory(root), self.0)?.path(id)?,
+        ))
+    }
+    fn install_reference(
+        &self,
+        root: &Path,
+        wav: &Path,
+        id: &str,
+        name: &str,
+        transcript: &str,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.0.is_base(),
+            "qwen reference voices require model 0.6b-base or 1.7b-base"
+        );
+        qwen::validate_wav(wav)?;
+        let store = qwen::voice_store(&self.0.directory(root), self.0)?;
+        store.import(id, name, wav, transcript, None)?;
+        Ok(())
+    }
+
     fn supports_recovery(&self) -> bool {
         true
     }

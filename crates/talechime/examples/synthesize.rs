@@ -7,7 +7,9 @@ use talechime::{Engine, SynthesisState, run_local};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_local(async {
         let mut engine = Engine::from_backend(Rc::new(support::Fixture::default()));
-        let mut stream = engine.synthesize("你好，世界。", "A", Some("轻声".into()))?;
+        let mut stream = engine
+            .synthesize("你好，世界。", "A", Some("轻声".into()))
+            .await?;
         let mut samples = 0;
         while let Some(block) = stream.recv().await {
             let block = block?;

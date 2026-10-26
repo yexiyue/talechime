@@ -13,11 +13,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_local(async {
         let mut engine = Engine::prepare(options, |progress| eprintln!("{progress:?}")).await?;
         let capabilities = engine.capabilities()?;
-        let mut stream = engine.synthesize(
-            "你好，这是直接合成接口。",
-            &capabilities.default_voice,
-            None,
-        )?;
+        let mut stream = engine
+            .synthesize(
+                "你好，这是直接合成接口。",
+                &capabilities.default_voice,
+                None,
+            )
+            .await?;
         let mut samples = 0;
         while let Some(block) = stream.recv().await {
             samples += block?.pcm().samples.len();

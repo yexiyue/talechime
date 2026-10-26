@@ -11,7 +11,12 @@ pub fn spans(input: &[VoiceSpan]) -> Vec<SpeechSpan> {
         .collect()
 }
 
-pub fn build(input: &PlanRequest, caps: &Capabilities) -> anyhow::Result<SpeechPlan> {
+/// Build a plan; its voice snapshot owns aliases for all subsequent appends.
+pub async fn build(
+    input: &PlanRequest,
+    caps: &Capabilities,
+    studio: Option<&talechime::VoiceStudio>,
+) -> anyhow::Result<SpeechPlan> {
     if input.voices.len() > 256
         || input.spans.len() > MAX_PLAN_SPANS
         || input.text.len() > talechime_protocol::MAX_MESSAGE_BYTES
@@ -19,12 +24,18 @@ pub fn build(input: &PlanRequest, caps: &Capabilities) -> anyhow::Result<SpeechP
         anyhow::bail!("plan transport limits exceeded");
     }
     let source = SourceSnapshot::new(input.source.clone(), input.text.clone(), &input.text_hash)?;
-    let voices = VoiceSnapshot::new(
-        &input.backend,
-        input.model.as_deref(),
-        caps,
-        input.voices.clone(),
-    )?;
+    if input.backend != caps.backend || input.model.as_deref() != caps.model.as_deref() {
+        return Err(talechime_core::PlanError::ModelMismatch.into());
+    }
+    let voices = match studio {
+        Some(studio) => studio.voice_snapshot(caps, &input.voices).await?,
+        None => VoiceSnapshot::new(
+            &input.backend,
+            input.model.as_deref(),
+            caps,
+            input.voices.clone(),
+        )?,
+    };
     let policy = match input.playback {
         talechime_protocol::PlanPlayback::Streaming => PlaybackPolicy::Streaming,
         talechime_protocol::PlanPlayback::AfterChapterReady => PlaybackPolicy::AfterChapterReady,

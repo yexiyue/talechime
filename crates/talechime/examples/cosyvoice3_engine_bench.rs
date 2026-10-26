@@ -70,8 +70,9 @@ async fn main() -> anyhow::Result<()> {
 
         // Warmup request (untimed) so later rounds measure the hot path.
         {
-            let mut stream =
-                engine.synthesize_with_options(text.as_str(), &pos[1], None, options.clone())?;
+            let mut stream = engine
+                .synthesize_with_options(text.as_str(), &pos[1], None, options.clone())
+                .await?;
             while let Some(block) = stream.recv().await {
                 block?;
             }
@@ -82,12 +83,9 @@ async fn main() -> anyhow::Result<()> {
         for i in 0..rounds {
             let entry = (async {
                 let request_start = Instant::now();
-                let mut stream = engine.synthesize_with_options(
-                    text.as_str(),
-                    &pos[1],
-                    None,
-                    options.clone(),
-                )?;
+                let mut stream = engine
+                    .synthesize_with_options(text.as_str(), &pos[1], None, options.clone())
+                    .await?;
                 let mut chunks = Vec::new();
                 let mut samples = 0usize;
                 while let Some(block) = stream.recv().await {

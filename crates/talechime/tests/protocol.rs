@@ -95,6 +95,12 @@ impl Drop for Worker {
 fn query_and_update_do_not_prepare_resources_and_shutdown_drains_json() {
     let mut worker = Worker::new();
     let ready = worker.send("hello", Command::Hello);
+    if matches!(&ready.event, Event::Ready(catalog) if catalog.is_empty()) {
+        assert!(
+            matches!(worker.send("prepare-without-backend", Command::PrepareModel).event,
+            Event::Error(ref error) if error.code == "backend_unavailable")
+        );
+    }
     assert!(matches!(ready.event, Event::Ready(_)));
     assert_eq!(ready.request_id.as_deref(), Some("hello"));
     let original = worker.send("config", Command::GetConfig);
@@ -119,6 +125,39 @@ fn query_and_update_do_not_prepare_resources_and_shutdown_drains_json() {
         Event::Accepted
     ));
     worker.wait();
+}
+
+#[test]
+fn voice_commands_ignore_unavailable_or_malformed_synthesis_settings() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = directory.path().join("config.json");
+    for original in [
+        "not JSON".to_owned(),
+        serde_json::to_string(&talechime_protocol::Config {
+            backend: "not-compiled".into(),
+            model: Some("saved-model".into()),
+            ..Default::default()
+        })
+        .unwrap(),
+    ] {
+        std::fs::write(&config, &original).unwrap();
+        let output = ProcessCommand::new(env!("CARGO_BIN_EXE_talechime"))
+            .arg("--config")
+            .arg(&config)
+            .arg("--model-dir")
+            .arg(directory.path().join("models"))
+            .args(["voices", "list"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("voice library is empty"));
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), original);
+        assert!(!directory.path().join("models").exists());
+    }
 }
 
 #[test]
@@ -217,9 +256,12 @@ fn qwen_selection_and_voice_listing_do_not_load_models() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    // The library is model-independent and starts empty; the command must not
+    // load models or depend on the backend selection.
     let voices = String::from_utf8(output.stdout).unwrap();
-    assert_eq!(voices.lines().count(), 9);
-    assert!(voices.contains("uncle_fu"));
+    assert_eq!(voices.lines().count(), 1);
+    assert!(voices.contains("voice library is empty"), "{voices}");
+    assert!(!worker._directory.path().join("models").exists());
 }
 
 #[test]

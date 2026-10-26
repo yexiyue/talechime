@@ -163,6 +163,16 @@ async fn main() -> anyhow::Result<()> {
         None => talechime_core::checkpoint::CheckpointStore::user_default()?,
     };
     let resources = Registry::new(args.model_dir)?;
+    if let Some(Commands::Voices { command }) = args.command {
+        // Asset operations depend on the config location, not synthesis settings.
+        let voices = config
+            .path()
+            .parent()
+            .map(|root| root.join("voices"))
+            .ok_or_else(|| anyhow::anyhow!("config path needs a parent directory"))?;
+        let studio = talechime::VoiceStudio::at(resources.root(), voices)?;
+        return talechime::run_local(voices::run(command, studio)).await;
+    }
     let config = if config.path().exists() {
         config
     } else {
@@ -176,13 +186,14 @@ async fn main() -> anyhow::Result<()> {
                     ..Default::default()
                 }
             }
+            None if args.protocol && resources.catalog()?.is_empty() => Default::default(),
             None => resources.default_config()?,
         };
         config.with_defaults(defaults)
     };
     // Reject retired identities before a CLI override can persist a replacement.
     let stored = config.load()?;
-    if stored.backend == "moss" {
+    if cfg!(feature = "moss") && stored.backend == "moss" {
         resources.resolve(&stored.backend, stored.model.as_deref())?;
     }
     if args.command.is_none()
@@ -234,22 +245,7 @@ async fn main() -> anyhow::Result<()> {
         )?;
     }
     talechime::run_local(async move {
-        if let Some(Commands::Voices { command }) = args.command {
-            let mut selection = config.load()?;
-            if let Some(backend) = args.backend {
-                if backend != selection.backend {
-                    selection.model = None;
-                }
-                selection.backend = backend;
-            }
-            if let Some(model) = args.model {
-                selection.model = Some(model);
-            }
-            if let Some(device) = args.tts_device {
-                selection.tts_device = device;
-            }
-            voices::run(command, resources, &selection).await
-        } else if args.protocol {
+        if args.protocol {
             protocol::run(config, checkpoints, resources, args.readback_models).await
         } else {
             cli::run(

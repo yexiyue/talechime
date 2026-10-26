@@ -33,6 +33,12 @@ jobs:
           for feature in playback cli moss qwen voxcpm omnivoice cosyvoice3 moss-candle moss-nano-candle asr indextts; do
             cargo clippy --locked -p talechime --no-default-features --features "$feature" --all-targets -- -D warnings
           done
+      - name: Test minimal CLI feature combinations without models
+        shell: bash
+        run: |
+          for features in cli "cli moss" "cli moss-nano-candle"; do
+            cargo test --locked -p talechime --no-default-features --features "$features" --lib --tests --examples
+          done
       - name: Verify isolated MOSS catalogs without models
         run: |
           cargo test --locked -p talechime-backends --no-default-features --features moss moss_catalog_contains_only_retained_models_and_rejects_retired_ids

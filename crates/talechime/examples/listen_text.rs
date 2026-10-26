@@ -11,13 +11,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &engine,
             "单音色使用相同的计划路径。",
             PlaybackPolicy::Streaming,
-        );
-        let chapter = engine.single_voice_plan(
-            source.source().clone(),
-            "A",
-            None,
-            PlaybackPolicy::Streaming,
-        )?;
+        )
+        .await;
+        let chapter = engine
+            .single_voice_plan(
+                source.source().clone(),
+                "A",
+                None,
+                PlaybackPolicy::Streaming,
+            )
+            .await?;
         let mut listening = engine.listen_with(
             Rc::new(support::Player::default()),
             ListeningOptions::default(),

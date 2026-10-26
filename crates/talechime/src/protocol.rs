@@ -1,4 +1,4 @@
-use crate::runtime::Worker;
+use crate::runtime::{BackgroundOutcome, Worker};
 use std::{
     io::{BufReader, BufWriter, Write},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -170,7 +170,7 @@ async fn serve_worker(
     tokio::pin!(deadline);
     let result: anyhow::Result<()> = async {
         loop {
-            let preparing = worker.is_preparing();
+            let background = worker.has_background_work();
             tokio::select! {
                 _ = &mut deadline, if !handshake => {
                     output.error(None, "handshake_timeout", "protocol", "hello required within five seconds").await?;
@@ -186,8 +186,17 @@ async fn serve_worker(
                         output.send(None, None, event).await?;
                     }
                 }
-                response = worker.prepared(), if preparing => {
-                    output.send(None, response.session, response.event).await?;
+                outcome = worker.poll_background(), if background => {
+                    while let Ok(event) = model_events.try_recv() {
+                        output.send(None, None, event).await?;
+                    }
+                    match outcome {
+                        BackgroundOutcome::Event(response) => output.send(None, response.session, response.event).await?,
+                        BackgroundOutcome::Command(request) => {
+                            let response = output.while_draining(&mut session_events, worker.execute_command(&request)).await?;
+                            output.send(Some(&request), response.session, response.event).await?;
+                        }
+                    }
                 }
                 frame = input.recv() => {
                     let bytes = match frame {
@@ -324,6 +333,272 @@ mod tests {
         );
         assert!(matches!(second.event, Event::Accepted) || matches!(third.event, Event::Accepted));
         assert_eq!([first.sequence, second.sequence, third.sequence], [1, 2, 3]);
+    }
+}
+
+#[cfg(test)]
+mod design_tests {
+    fn test_wav() -> Vec<u8> {
+        let mut wav = b"RIFF".to_vec();
+        wav.extend_from_slice(&38u32.to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&24000u32.to_le_bytes());
+        wav.extend_from_slice(&48000u32.to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&2u32.to_le_bytes());
+        wav.extend_from_slice(&0i16.to_le_bytes());
+        wav
+    }
+
+    use super::*;
+    use std::rc::Rc;
+    use talechime_backends::design::DesignerHandle;
+    use talechime_core::checkpoint::CheckpointStore;
+    use talechime_core::config::ConfigStore;
+    use talechime_core::design::{
+        DesignOutput, DesignRequest, Designing, EngineInfo, InputConstraints, Preparing,
+        VoiceDesigner,
+    };
+
+    /// Test-only design engine: no weights, instant reference output.
+    struct FakeDesigner;
+    impl VoiceDesigner for FakeDesigner {
+        fn id(&self) -> &'static str {
+            "fake-designer"
+        }
+        fn info(&self, _root: &std::path::Path) -> EngineInfo {
+            EngineInfo {
+                id: "fake-designer",
+                name: "Fake Designer",
+                devices: vec![talechime_protocol::Device::Cpu],
+                inputs: InputConstraints {
+                    text_max_chars: 100,
+                    description_max_chars: None,
+                    description_max_bytes: 4096,
+                    forbid_parentheses: false,
+                },
+                extra_download_bytes: 0,
+                ready: true,
+                reuses_synthesis_model: false,
+            }
+        }
+        fn prepare<'a>(
+            &'a self,
+            _root: &'a std::path::Path,
+            progress: mpsc::Sender<Event>,
+        ) -> Preparing<'a> {
+            Box::pin(async move {
+                let _ = progress
+                    .send(Event::ResourceState {
+                        stage: "校验".into(),
+                        resource: "fake/designer".into(),
+                    })
+                    .await;
+                Ok(())
+            })
+        }
+        fn design<'a>(
+            &'a self,
+            _root: &'a std::path::Path,
+            _request: DesignRequest,
+        ) -> Designing<'a> {
+            Box::pin(async move {
+                let wav = test_wav();
+                Ok(DesignOutput { wav })
+            })
+        }
+    }
+
+    async fn poll(worker: &mut Worker) -> crate::runtime::Response {
+        match worker.poll_background().await {
+            BackgroundOutcome::Event(response) => response,
+            BackgroundOutcome::Command(request) => worker.execute_command(&request).await,
+        }
+    }
+
+    #[tokio::test]
+    async fn designs_queue_and_completed_cancel_races_report_the_saved_voice() {
+        talechime::run_local(async {
+            let root = tempfile::tempdir().unwrap();
+            let (events, _pending) = mpsc::channel(32);
+            let (progress, _updates) = mpsc::channel(32);
+            let mut worker = Worker::new(
+                ConfigStore::new(root.path().join("config.json")),
+                CheckpointStore::new(root.path().join("checkpoints")),
+                Registry::new(Some(root.path().join("models"))).unwrap(), events, progress,
+            );
+            worker.test_design_studio(vec![Rc::new(FakeDesigner)]);
+            let request = |id: &str| Request {
+                protocol_version: PROTOCOL_VERSION, request_id: id.into(), session_id: None,
+                command: Command::DesignVoice {
+                    name: id.into(), description: "低沉温和".into(), text: None,
+                    engine: None, device: None, seed: None, id: Some(id.into()),
+                },
+            };
+            assert!(matches!(worker.command(&request("first")).await.event, Event::Accepted));
+            assert!(matches!(worker.command(&request("second")).await.event, Event::Accepted));
+            assert!(matches!(poll(&mut worker).await.event, Event::VoiceReady { voice, .. } if voice == "first"));
+            assert!(matches!(poll(&mut worker).await.event, Event::Accepted));
+            assert!(matches!(poll(&mut worker).await.event, Event::VoiceReady { voice, .. } if voice == "second"));
+            worker.command(&request("race")).await;
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while !root.path().join("voices/race/voice.json").is_file() {
+                    tokio::task::yield_now().await;
+                }
+            }).await.unwrap();
+            let cancelled = Request { command: Command::CancelPrepare, ..request("cancel") };
+            assert!(matches!(worker.command(&cancelled).await.event, Event::VoiceReady { voice, .. } if voice == "race"));
+            // An open playback plan retains the resource owner while awaiting input.
+            worker.attach_test(Rc::new(crate::fixture::Fixture::default()), Rc::new(crate::fixture::Player::default()));
+            let plan = talechime_protocol::PlanRequest {
+                source: talechime_protocol::SourceId { namespace: "test".into(), book: "book".into(), chapter: "open".into() },
+                text: "甲".into(), text_hash: talechime_protocol::text_hash("甲"),
+                backend: "fixture".into(), model: Some("shared".into()), voices: vec!["A".into()], spans: vec![],
+                sealed: false, playback: talechime_protocol::PlanPlayback::Streaming,
+                resume_byte: Some(0), restore_checkpoint: false, continuation: false,
+                continuation_boundary: Default::default(), continuation_span: None,
+                params: Default::default(), seed: None, verification: Default::default(),
+            };
+            let start = Request { command: Command::Start(Box::new(plan)), session_id: Some("open".into()), ..request("start") };
+            assert!(matches!(worker.command(&start).await.event, Event::Accepted));
+            assert!(matches!(worker.command(&request("after-playback")).await.event, Event::Accepted));
+            assert!(tokio::time::timeout(Duration::from_millis(20), worker.poll_background()).await.is_err());
+            assert!(!root.path().join("voices/after-playback").exists());
+            let stop = Request { command: Command::Stop, ..start };
+            assert!(matches!(worker.command(&stop).await.event, Event::Accepted));
+            assert!(matches!(poll(&mut worker).await.event, Event::Accepted));
+            assert!(matches!(poll(&mut worker).await.event, Event::VoiceReady { voice, .. } if voice == "after-playback"));
+            worker.shutdown().await.unwrap();
+        }).await;
+    }
+
+    #[tokio::test]
+    async fn design_voice_flows_progress_then_ready_and_lists_voices() {
+        talechime::run_local(async {
+            let root = tempfile::tempdir().unwrap();
+            let (events, pending) = mpsc::channel(2);
+            let (progress, updates) = mpsc::channel(2);
+            let mut worker = Worker::new(
+                ConfigStore::new(root.path().join("config.json")),
+                CheckpointStore::new(root.path().join("checkpoints")),
+                Registry::new(Some(root.path().join("models"))).unwrap(),
+                events,
+                progress,
+            );
+            let engines: Vec<DesignerHandle> = vec![Rc::new(FakeDesigner)];
+            worker.test_design_studio(engines);
+            let (input, mut frames) = mpsc::channel(8);
+            let (outgoing, mut received) = mpsc::channel(1);
+            let task = tokio::task::spawn_local(async move {
+                serve_worker(worker, pending, updates, &mut frames, outgoing).await
+            });
+            let design = Command::DesignVoice {
+                name: "主角".into(),
+                description: "低沉温和的中年男声".into(),
+                text: None,
+                engine: None,
+                device: None,
+                seed: None,
+                id: Some("hero".into()),
+            };
+            for (id, command) in [("hello", Command::Hello), ("design", design)] {
+                input
+                    .send(Ok(Some(
+                        encode(&Request {
+                            protocol_version: PROTOCOL_VERSION,
+                            request_id: id.into(),
+                            session_id: None,
+                            command,
+                        })
+                        .unwrap(),
+                    )))
+                    .await
+                    .unwrap();
+            }
+            let mut saw_progress = false;
+            let mut saw_ready = false;
+            let mut listed = false;
+            let mut removed = false;
+            tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    let message = received.recv().await.unwrap();
+                    match message.event {
+                        Event::ResourceState { .. } => saw_progress = true,
+                        Event::VoiceReady { voice, name } => {
+                            saw_ready = true;
+                            assert_eq!(voice, "hero");
+                            assert_eq!(name, "主角");
+                            assert!(saw_progress, "progress must precede VoiceReady");
+                            input
+                                .send(Ok(Some(
+                                    encode(&Request {
+                                        protocol_version: PROTOCOL_VERSION,
+                                        request_id: "list".into(),
+                                        session_id: None,
+                                        command: Command::ListVoices,
+                                    })
+                                    .unwrap(),
+                                )))
+                                .await
+                                .unwrap();
+                        }
+                        Event::VoicesListed(voices) => {
+                            listed = true;
+                            assert_eq!(voices.len(), 1);
+                            assert_eq!(voices[0].id, "hero");
+                            assert!(voices[0].designed);
+                            input
+                                .send(Ok(Some(
+                                    encode(&Request {
+                                        protocol_version: PROTOCOL_VERSION,
+                                        request_id: "remove".into(),
+                                        session_id: None,
+                                        command: Command::RemoveVoice {
+                                            voice: "hero".into(),
+                                        },
+                                    })
+                                    .unwrap(),
+                                )))
+                                .await
+                                .unwrap();
+                        }
+                        Event::Accepted => {
+                            if message.request_id.as_deref() == Some("remove") {
+                                removed = true;
+                            }
+                        }
+                        Event::Ready(_) | Event::DeviceStatus { .. } => {}
+                        other => panic!("unexpected event {other:?}"),
+                    }
+                    if saw_progress && saw_ready && listed && removed {
+                        break;
+                    }
+                }
+            })
+            .await
+            .unwrap();
+            assert!(saw_progress && saw_ready && listed && removed);
+            input
+                .send(Ok(Some(
+                    encode(&Request {
+                        protocol_version: 7,
+                        request_id: "shutdown".into(),
+                        session_id: None,
+                        command: Command::Shutdown,
+                    })
+                    .unwrap(),
+                )))
+                .await
+                .unwrap();
+            while received.recv().await.is_some() {}
+            task.await.unwrap().unwrap();
+        })
+        .await;
     }
 }
 

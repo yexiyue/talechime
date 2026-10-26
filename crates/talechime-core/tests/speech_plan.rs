@@ -379,3 +379,47 @@ fn resume_requires_a_utf8_boundary_within_accepted_input() {
     }
     assert!(plan.validate_resume_byte(5).is_err());
 }
+
+#[test]
+fn voice_aliases_normalize_initial_incremental_and_empty_single_voice_plans() {
+    let snapshot = voices(true)
+        .with_aliases([("hero".into(), "A".into())].into())
+        .unwrap();
+    let mut plan = SpeechPlan::new(
+        source("中🙂文"),
+        snapshot.clone(),
+        PlaybackPolicy::Streaming,
+    );
+    plan.append(vec![span(0, 3, "hero")]).unwrap();
+    let before = plan.clone();
+    assert!(
+        plan.append(vec![span(3, 7, "hero"), span(7, 10, "missing")])
+            .is_err()
+    );
+    assert_eq!(plan, before);
+    plan.append(vec![span(3, 7, "hero"), span(7, 10, "B")])
+        .unwrap();
+    plan.seal().unwrap();
+    assert_eq!(
+        plan.spans()
+            .iter()
+            .map(SpeechSpan::voice)
+            .collect::<Vec<_>>(),
+        ["A", "A", "B"]
+    );
+    assert!(
+        SpeechPlan::single_voice(
+            source(""),
+            snapshot.clone(),
+            PlaybackPolicy::Streaming,
+            "hero",
+            None
+        )
+        .is_ok()
+    );
+    assert!(
+        snapshot
+            .with_aliases([("B".into(), "A".into())].into())
+            .is_err()
+    );
+}

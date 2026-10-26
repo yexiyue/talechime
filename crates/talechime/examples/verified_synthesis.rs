@@ -12,18 +12,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut engine = Engine::prepare(ModelOptions::new(&args[1], &args[2]), |_| {}).await?;
         engine.set_verifier(verifier)?;
         let voice = engine.capabilities()?.default_voice;
-        let mut stream = engine.synthesize_verified(
-            "你好，世界。",
-            &voice,
-            None,
-            VerificationOptions {
-                policy: VerificationPolicy::Gate {
-                    max_retries: 1,
-                    strict_suspect: false,
+        let mut stream = engine
+            .synthesize_verified(
+                "你好，世界。",
+                &voice,
+                None,
+                VerificationOptions {
+                    policy: VerificationPolicy::Gate {
+                        max_retries: 1,
+                        strict_suspect: false,
+                    },
+                    ..Default::default()
                 },
-                ..Default::default()
-            },
-        )?;
+            )
+            .await?;
         let mut samples = 0;
         let mut reports = 0;
         while let Some(item) = stream.next().await {

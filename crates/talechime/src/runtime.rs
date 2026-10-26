@@ -12,6 +12,20 @@ use talechime_protocol::{Command, ErrorInfo, Event, Request, SessionState};
 use tokio::{sync::mpsc, task::JoinHandle};
 
 type Preparation = JoinHandle<anyhow::Result<crate::preparation::PreparedModels>>;
+type DesignJob = JoinHandle<anyhow::Result<talechime::VoiceAsset>>;
+
+enum BackgroundJob {
+    Preparing(Preparation),
+    Designing(DesignJob),
+}
+impl BackgroundJob {
+    fn abort(&self) {
+        match self {
+            Self::Preparing(task) => task.abort(),
+            Self::Designing(task) => task.abort(),
+        }
+    }
+}
 
 pub struct Response {
     pub session: Option<String>,
@@ -34,6 +48,13 @@ impl Response {
     }
 }
 
+/// A ready command is handed back to transport before any command side effects.
+/// The select loop may cancel polling, but cannot lose an already dequeued command.
+pub enum BackgroundOutcome {
+    Event(Response),
+    Command(Request),
+}
+
 pub struct Worker {
     readback_models: bool,
     store: ConfigStore,
@@ -41,7 +62,9 @@ pub struct Worker {
     resources: Registry,
     events: mpsc::Sender<SessionEvent>,
     progress: mpsc::Sender<Event>,
-    preparing: Option<Preparation>,
+    background: Option<BackgroundJob>,
+    queued: std::collections::VecDeque<Request>,
+    voice_studio: Option<talechime::VoiceStudio>,
     progress_forwarder: Option<JoinHandle<()>>,
     manager: Option<crate::app_session::AppSession>,
     plan_spans: usize,
@@ -55,6 +78,12 @@ impl Worker {
         events: mpsc::Sender<SessionEvent>,
         progress: mpsc::Sender<Event>,
     ) -> Self {
+        // Voice assets live beside the config file, never inside model resources.
+        let voices = store
+            .path()
+            .parent()
+            .map(|root| root.join("voices"))
+            .and_then(|voices| talechime::VoiceStudio::at(resources.root(), voices).ok());
         Self {
             readback_models: false,
             store,
@@ -62,7 +91,9 @@ impl Worker {
             resources,
             events,
             progress,
-            preparing: None,
+            background: None,
+            queued: Default::default(),
+            voice_studio: voices,
             progress_forwarder: None,
             manager: None,
             plan_spans: 0,
@@ -106,7 +137,27 @@ impl Worker {
         ))
     }
     pub fn is_preparing(&self) -> bool {
-        self.preparing.is_some()
+        matches!(self.background, Some(BackgroundJob::Preparing(_)))
+    }
+    pub fn is_designing(&self) -> bool {
+        matches!(self.background, Some(BackgroundJob::Designing(_)))
+    }
+    pub fn has_background_work(&self) -> bool {
+        self.is_preparing() || self.is_designing() || !self.queued.is_empty()
+    }
+    async fn session_active(&self) -> bool {
+        let (_, state) = self.status().await;
+        !matches!(
+            state,
+            SessionState::Idle | SessionState::Stopped | SessionState::Failed
+        )
+    }
+    /// Test hook: inject a studio with overridden design engines.
+    #[cfg(test)]
+    pub fn test_design_studio(&mut self, engines: Vec<talechime_backends::design::DesignerHandle>) {
+        if let Some(studio) = self.voice_studio.as_mut() {
+            studio.set_designers(engines);
+        }
     }
     #[cfg(any(
         feature = "moss",
@@ -118,6 +169,52 @@ impl Worker {
     ))]
     pub fn has_prepared_model(&self) -> bool {
         self.manager.is_some()
+    }
+    /// Poll the single background job (preparation or design) when one exists.
+    pub async fn poll_background(&mut self) -> BackgroundOutcome {
+        if self.is_preparing() {
+            return BackgroundOutcome::Event(self.prepared().await);
+        }
+        if self.is_designing() {
+            return BackgroundOutcome::Event(self.designed().await);
+        }
+        if let Some(request) = self.queued.front() {
+            if matches!(request.command, Command::DesignVoice { .. }) {
+                while self.session_active().await {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+            }
+            if let Some(request) = self.queued.pop_front() {
+                return BackgroundOutcome::Command(request);
+            }
+        }
+        BackgroundOutcome::Event(Response::error(
+            "prepare_failed",
+            "model",
+            "no background job is running",
+        ))
+    }
+    /// Poll only while a design job exists; completion publishes `VoiceReady`.
+    pub async fn designed(&mut self) -> Response {
+        let Some(BackgroundJob::Designing(task)) = &mut self.background else {
+            return Response::error("design_failed", "voice", "no design job is running");
+        };
+        // Drain progress before consuming the join result. Both awaits remain
+        // cancellation-safe when the transport selects another input/event.
+        if let Some(forwarder) = &mut self.progress_forwarder {
+            let _ = forwarder.await;
+        }
+        self.progress_forwarder.take();
+        let finished = task.await;
+        self.background.take();
+        match finished {
+            Ok(Ok(asset)) => Response::global(Event::VoiceReady {
+                voice: asset.id,
+                name: asset.name,
+            }),
+            Ok(Err(error)) => Response::error("design_failed", "voice", error),
+            Err(error) => Response::error("design_failed", "voice", error),
+        }
     }
     async fn status(&self) -> (Option<String>, SessionState) {
         match &self.manager {
@@ -134,11 +231,11 @@ impl Worker {
     }
     /// Poll only while preparation exists; dropping this future keeps the task owned.
     pub async fn prepared(&mut self) -> Response {
-        let Some(task) = &mut self.preparing else {
+        let Some(BackgroundJob::Preparing(task)) = &mut self.background else {
             return Response::error("prepare_failed", "model", "no preparation is running");
         };
         let loaded = task.await;
-        self.preparing.take();
+        self.background.take();
         let prepared = match loaded {
             Ok(Ok(backend)) => backend,
             Ok(Err(error)) => {
@@ -167,13 +264,23 @@ impl Worker {
             }
         }
     }
-    async fn cancel_prepare(&mut self) {
-        if let Some(task) = self.preparing.take() {
-            task.abort();
-            let _ = task.await;
-            self.disconnect_progress();
-        }
+    async fn cancel_prepare(&mut self) -> Option<talechime::VoiceAsset> {
+        self.queued.clear();
+        let completed = match self.background.take() {
+            Some(BackgroundJob::Preparing(task)) => {
+                task.abort();
+                let _ = task.await;
+                None
+            }
+            Some(BackgroundJob::Designing(task)) => {
+                task.abort();
+                task.await.ok().and_then(Result::ok)
+            }
+            None => None,
+        };
+        self.disconnect_progress();
         self.resource_state = SessionState::Idle;
+        completed
     }
     fn disconnect_progress(&mut self) {
         if let Some(task) = self.progress_forwarder.take() {
@@ -181,6 +288,29 @@ impl Worker {
         }
     }
     pub async fn command(&mut self, request: &Request) -> Response {
+        let exclusive = matches!(
+            request.command,
+            Command::Start(_) | Command::PrepareModel | Command::DesignVoice { .. }
+        );
+        // Input for a queued Start must retain its order; controls for the
+        // current session still pass through so it can finish or stop.
+        let follows_start = request.session_id.is_some()
+            && self.queued.iter().any(|queued| {
+                matches!(queued.command, Command::Start(_))
+                    && queued.session_id == request.session_id
+            });
+        let waits_for_session =
+            matches!(request.command, Command::DesignVoice { .. }) && self.session_active().await;
+        if follows_start || exclusive && (self.has_background_work() || waits_for_session) {
+            if self.queued.len() == 16 {
+                return Response::error("busy", "voice", "resource command queue is full");
+            }
+            self.queued.push_back(request.clone());
+            return Response::global(Event::Accepted);
+        }
+        self.execute_command(request).await
+    }
+    pub async fn execute_command(&mut self, request: &Request) -> Response {
         match &request.command {
             Command::GetStatus => {
                 let (session, state) = self.status().await;
@@ -194,17 +324,34 @@ impl Worker {
                 Err(error) => Response::error("config_invalid", "config", error),
             },
             Command::UpdateConfig(patch) => {
+                if self.is_designing()
+                    && (patch.backend.is_some()
+                        || patch.model.is_some()
+                        || patch.tts_device.is_some())
+                {
+                    return Response::error(
+                        "busy",
+                        "voice",
+                        "cancel voice design before changing model resources",
+                    );
+                }
                 let old = match self.store.load() {
                     Ok(config) => config,
                     Err(error) => return Response::error("config_invalid", "config", error),
                 };
                 let target = patch.backend.as_deref().unwrap_or(&old.backend);
-                let caps = match self
-                    .resources
-                    .capabilities_for(target, patch.target_model(&old))
-                {
-                    Ok(caps) => caps,
-                    Err(error) => return Response::error("backend_unavailable", "config", error),
+                let caps = if patch.is_playback_only() {
+                    None
+                } else {
+                    match self
+                        .resources
+                        .capabilities_for(target, patch.target_model(&old))
+                    {
+                        Ok(caps) => Some(caps),
+                        Err(error) => {
+                            return Response::error("backend_unavailable", "config", error);
+                        }
+                    }
                 };
                 #[cfg(any(
                     feature = "moss",
@@ -225,7 +372,11 @@ impl Worker {
                 ) {
                     return Response::error("device_unavailable", "config", error);
                 }
-                let config = match self.store.update(patch, &caps) {
+                let update = match caps.as_ref() {
+                    Some(caps) => self.store.update(patch, caps),
+                    None => self.store.update_playback(patch),
+                };
+                let config = match update {
                     Ok(config) => config,
                     Err(error) => {
                         let code = if matches!(error, ConfigError::RevisionConflict) {
@@ -240,7 +391,7 @@ impl Worker {
                     || config.backend != old.backend
                     || config.tts_device != old.tts_device
                 {
-                    self.cancel_prepare().await;
+                    let _ = self.cancel_prepare().await;
                     self.disconnect_progress();
                     if let Some(mut manager) = self.manager.take()
                         && let Err(error) = manager.stop_and_close().await
@@ -272,7 +423,10 @@ impl Worker {
                 if self.manager.is_some() {
                     return Response::global(Event::ModelReady);
                 }
-                if self.preparing.is_none() {
+                if self.is_designing() {
+                    return Response::error("busy", "voice", "a design job is running");
+                }
+                if !self.is_preparing() {
                     let config = match self.store.load() {
                         Ok(config) => config,
                         Err(error) => return Response::error("config_invalid", "config", error),
@@ -302,18 +456,112 @@ impl Worker {
                         }
                     }));
                     let readback = self.readback_models;
-                    self.preparing = Some(tokio::task::spawn_local(async move {
-                        crate::preparation::prepare_models(resources, config, progress, readback)
+                    self.background = Some(BackgroundJob::Preparing(tokio::task::spawn_local(
+                        async move {
+                            crate::preparation::prepare_models(
+                                resources, config, progress, readback,
+                            )
                             .await
-                    }));
+                        },
+                    )));
                     self.resource_state = SessionState::Preparing;
                 }
                 Response::global(Event::Accepted)
             }
-            Command::CancelPrepare => {
-                self.cancel_prepare().await;
+            Command::CancelPrepare => match self.cancel_prepare().await {
+                Some(asset) => Response::global(Event::VoiceReady {
+                    voice: asset.id,
+                    name: asset.name,
+                }),
+                None => Response::global(Event::Accepted),
+            },
+            Command::DesignVoice {
+                name,
+                description,
+                text,
+                engine,
+                device,
+                seed,
+                id,
+            } => {
+                if self.is_designing() {
+                    return Response::error("busy", "voice", "one design job at a time");
+                }
+                if self.is_preparing() {
+                    return Response::error("busy", "model", "preparation is running");
+                }
+                let Some(studio) = self.voice_studio.clone() else {
+                    return Response::error(
+                        "voice_studio_unavailable",
+                        "voice",
+                        "voice assets are unavailable in this configuration",
+                    );
+                };
+                let options = talechime::DesignOptions {
+                    description: description.clone(),
+                    engine: engine.clone(),
+                    id: id.clone(),
+                    name: Some(name.clone()),
+                    text: text.clone(),
+                    device: device.unwrap_or(talechime_protocol::Device::Auto),
+                    seed: *seed,
+                };
+                self.disconnect_progress();
+                let (progress, mut updates) = mpsc::channel(16);
+                let outgoing = self.progress.clone();
+                self.progress_forwarder = Some(tokio::task::spawn_local(async move {
+                    while let Some(event) = updates.recv().await {
+                        if outgoing.send(event).await.is_err() {
+                            break;
+                        }
+                    }
+                }));
+                self.background = Some(BackgroundJob::Designing(tokio::task::spawn_local(
+                    async move {
+                        studio
+                            .design_with_channel(options, progress)
+                            .await
+                            .map_err(|error| anyhow::anyhow!(error.to_string()))
+                    },
+                )));
                 Response::global(Event::Accepted)
             }
+            Command::ListVoices => match &self.voice_studio {
+                Some(studio) => match studio.list() {
+                    Ok(voices) => Response::global(Event::VoicesListed(
+                        voices
+                            .into_iter()
+                            .map(|asset| talechime_protocol::VoiceAssetRecord {
+                                id: asset.id,
+                                name: asset.name,
+                                transcript: asset.transcript,
+                                description: asset.description,
+                                designed: matches!(
+                                    asset.source,
+                                    talechime::VoiceSource::Designed(_)
+                                ),
+                            })
+                            .collect(),
+                    )),
+                    Err(error) => Response::error("voice_invalid", "voice", error),
+                },
+                None => Response::error(
+                    "voice_studio_unavailable",
+                    "voice",
+                    "voice assets are unavailable in this configuration",
+                ),
+            },
+            Command::RemoveVoice { voice } => match &self.voice_studio {
+                Some(studio) => match studio.remove(voice) {
+                    Ok(()) => Response::global(Event::Accepted),
+                    Err(error) => Response::error("voice_invalid", "voice", error),
+                },
+                None => Response::error(
+                    "voice_studio_unavailable",
+                    "voice",
+                    "voice assets are unavailable in this configuration",
+                ),
+            },
             Command::Hello | Command::Shutdown => Response::error(
                 "invalid_request",
                 "protocol",
@@ -343,8 +591,10 @@ impl Worker {
                     Ok(caps) => caps,
                     Err(error) => return Response::error("session_invalid", "plan", error),
                 };
-                let plan = match crate::plan_input::build(input, &caps) {
-                    Ok(plan) => plan,
+                let plan = match crate::plan_input::build(input, &caps, self.voice_studio.as_ref())
+                    .await
+                {
+                    Ok(result) => result,
                     Err(error) => return Response::error("plan_invalid", "plan", error),
                 };
                 let config = match self.store.load() {
@@ -454,7 +704,7 @@ impl Worker {
         }
     }
     pub async fn shutdown(&mut self) -> anyhow::Result<()> {
-        self.cancel_prepare().await;
+        let _ = self.cancel_prepare().await;
         self.disconnect_progress();
         if let Some(manager) = &mut self.manager {
             tokio::time::timeout(Duration::from_secs(3), manager.stop_and_close()).await??;
@@ -465,8 +715,8 @@ impl Worker {
 impl Drop for Worker {
     fn drop(&mut self) {
         self.disconnect_progress();
-        if let Some(task) = &self.preparing {
-            task.abort();
+        if let Some(job) = &self.background {
+            job.abort();
         }
     }
 }
@@ -512,6 +762,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let resources = Registry::new(Some(root.path().join("models"))).unwrap();
         let caps = resources.capabilities("moss").unwrap();
+        let store = ConfigStore::new(root.path().join("config.json")).with_defaults(talechime_protocol::Config {
+            backend: caps.backend.clone(), model: caps.model.clone(), voice: caps.default_voice.clone(),
+            tts_device: talechime_protocol::Device::Cpu, ..Default::default()
+        });
         let checkpoints = CheckpointStore::new(root.path().join("checkpoints"));
         std::fs::create_dir_all(root.path().join("checkpoints")).unwrap();
         let progress_file = root.path().join("checkpoints/existing.json");
@@ -520,7 +774,7 @@ mod tests {
         let (progress, _) = mpsc::channel(32);
         let player = Rc::new(IdlePlayer::default());
         let mut worker = Worker::new(
-            ConfigStore::new(root.path().join("config.json")),
+            store,
             checkpoints.clone(),
             resources,
             events.clone(),
@@ -541,13 +795,13 @@ mod tests {
                 request_id: "device".into(),
                 session_id: None,
                 command: Command::UpdateConfig(talechime_protocol::ConfigPatch {
-                    tts_device: Some(talechime_protocol::Device::Cpu),
+                    tts_device: Some(talechime_protocol::Device::Auto),
                     ..Default::default()
                 }),
             })
             .await;
         assert!(
-            matches!(response.event, Event::ConfigChanged(config) if config.tts_device == talechime_protocol::Device::Cpu)
+            matches!(response.event, Event::ConfigChanged(config) if config.tts_device == talechime_protocol::Device::Auto)
         );
         assert!(worker.manager.is_none());
         assert_eq!(worker.resource_state, SessionState::Idle);
@@ -894,6 +1148,16 @@ mod plan_tests {
                 Rc::new(Player::default()),
                 64,
             );
+            let caps = worker.resources.capabilities("moss").unwrap();
+            worker.store = worker
+                .store
+                .clone()
+                .with_defaults(talechime_protocol::Config {
+                    backend: caps.backend,
+                    model: caps.model,
+                    voice: caps.default_voice.clone(),
+                    ..Default::default()
+                });
             send(
                 &mut worker,
                 Some("open"),
@@ -904,7 +1168,7 @@ mod plan_tests {
                 &mut worker,
                 None,
                 Command::UpdateConfig(talechime_protocol::ConfigPatch {
-                    voice: Some("Weiguo".into()),
+                    voice: Some(caps.default_voice),
                     ..Default::default()
                 }),
             )

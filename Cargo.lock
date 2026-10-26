@@ -4067,6 +4067,7 @@ dependencies = [
  "futures",
  "hound",
  "rodio",
+ "serde",
  "serde_json",
  "talechime-backends",
  "talechime-core",
@@ -4119,6 +4120,7 @@ dependencies = [
  "criterion",
  "dirs",
  "ferrous-opencc",
+ "hound",
  "rand 0.9.5",
  "regex",
  "serde",
@@ -4131,6 +4133,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "unicode-normalization",
+ "zip",
 ]
 
 [[package]]

@@ -7,6 +7,7 @@ pub async fn reference(
     text: String,
     description: String,
     output: PathBuf,
+    seed: Option<u64>,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         !text.trim().is_empty() && text.chars().count() <= 100,
@@ -16,11 +17,11 @@ pub async fn reference(
         !description.trim().is_empty() && description.len() <= 4096,
         "provide a voice description up to 4096 bytes"
     );
-    let (completed, mut receiver) = tokio::sync::oneshot::channel::<()>();
+    let (completed, receiver) = tokio::sync::oneshot::channel::<()>();
     let completed = Arc::new(completed);
     // Receiver drop is observed directly at diffusion and decode boundaries.
     let (result, received) = tokio::sync::oneshot::channel();
-    std::thread::Builder::new()
+    let thread = std::thread::Builder::new()
         .name("omni-voice-design".into())
         .spawn(move || {
             let generated = (|| -> anyhow::Result<()> {
@@ -30,7 +31,7 @@ pub async fn reference(
                             super::runtime::options_device(device)
                                 .ok_or_else(|| anyhow::anyhow!("unsupported Omni device"))?,
                         )
-                        .with_seed(42),
+                        .with_seed(seed.unwrap_or(42)),
                 )?;
                 let signal = completed.clone();
                 pipeline.set_cancellation_probe(Some(
@@ -71,9 +72,8 @@ pub async fn reference(
             })();
             let _ = result.send(generated);
         })?;
-    let result = received
+    let _owner = crate::design::thread::DesignThread::new(receiver, thread);
+    received
         .await
-        .map_err(|_| anyhow::anyhow!("Omni voice design thread exited"));
-    receiver.close();
-    result?
+        .map_err(|_| anyhow::anyhow!("Omni voice design thread exited"))?
 }

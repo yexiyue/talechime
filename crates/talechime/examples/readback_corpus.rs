@@ -117,15 +117,17 @@ async fn run(args: &[String]) -> anyhow::Result<()> {
             let mut reports = BufWriter::new(fs::File::create(directory.join("reports.jsonl"))?);
             let started = Instant::now();
             eprintln!("START {id} {mode} chars={}", text.chars().count());
-            let mut stream = engine.synthesize_verified(
-                text.clone(),
-                &caps.default_voice,
-                None,
-                VerificationOptions {
-                    policy,
-                    ..Default::default()
-                },
-            )?;
+            let mut stream = engine
+                .synthesize_verified(
+                    text.clone(),
+                    &caps.default_voice,
+                    None,
+                    VerificationOptions {
+                        policy,
+                        ..Default::default()
+                    },
+                )
+                .await?;
             let mut first_pcm_s = None;
             let mut audio_s = 0.0;
             let mut segment: Option<Export> = None;

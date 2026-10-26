@@ -106,18 +106,6 @@ pub fn capabilities_at(
     }
     Ok(caps)
 }
-pub fn catalog(root: &std::path::Path) -> anyhow::Result<Vec<Capabilities>> {
-    [
-        models::Model::Custom06,
-        models::Model::Custom17,
-        models::Model::Base06,
-        models::Model::Base17,
-        models::Model::Design17,
-    ]
-    .into_iter()
-    .map(|model| capabilities_at(&model.directory(root), model))
-    .collect()
-}
 
 pub fn compiled_devices() -> Vec<Device> {
     vec![

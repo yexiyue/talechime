@@ -12,7 +12,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ListeningOptions::default(),
         )?;
         let handle = listening.control();
-        let mut chapter = support::plan(&engine, "甲乙丙", PlaybackPolicy::Streaming);
+        let mut chapter = support::plan(&engine, "甲乙丙", PlaybackPolicy::Streaming).await;
         chapter.append(vec![SpeechSpan::new(
             TextRange { start: 0, end: 3 },
             "A",
