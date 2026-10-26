@@ -559,7 +559,7 @@ mod tests {
 
         }).await;
     }
-    #[cfg(feature = "moss-candle")]
+    #[cfg(feature = "moss-nano-candle")]
     #[tokio::test]
     async fn model_change_rejects_inherited_device_before_config_or_manager_changes() {
         talechime::run_local(async {
@@ -567,13 +567,13 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let resources = Registry::new(Some(root.path().join("models"))).unwrap();
         let defaults = talechime_protocol::Config {
-            model: Some("nano".into()),
+            model: Some("nano-candle".into()),
             tts_device: talechime_protocol::Device::Cpu,
             ..Default::default()
         };
         let store = ConfigStore::new(root.path().join("config.json")).with_defaults(defaults);
         let old = store
-            .initialize(&resources.capabilities_for("moss", Some("nano")).unwrap())
+            .initialize(&resources.capabilities_for("moss", Some("nano-candle")).unwrap())
             .unwrap();
         let original = std::fs::read(store.path()).unwrap();
         let checkpoints = CheckpointStore::new(root.path().join("checkpoints"));
@@ -589,7 +589,7 @@ mod tests {
         );
         worker.manager = Some(
             crate::app_session::AppSession::with_player(
-                Rc::new(SilentBackend(resources.capabilities_for("moss", Some("nano")).unwrap())),
+                Rc::new(SilentBackend(resources.capabilities_for("moss", Some("nano-candle")).unwrap())),
                 player.clone(),
                 &checkpoints,
                 events,
@@ -603,7 +603,7 @@ mod tests {
                 session_id: None,
                 command: Command::UpdateConfig(talechime_protocol::ConfigPatch {
                     expected_revision: old.revision,
-                    model: Some("local-1.7b".into()),
+                    model: Some("realtime-1.7b".into()),
                     voice: Some("narrator".into()),
                     ..Default::default()
                 }),

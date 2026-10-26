@@ -114,7 +114,7 @@ fn real_cuda_forward_scoped_rope_tables_match_original() -> anyhow::Result<()> {
 }
 
 #[test]
-#[ignore = "explicit Local/Realtime/VoiceDesign CUDA models and codec; no downloads"]
+#[ignore = "explicit Realtime/VoiceDesign CUDA models and codec; no downloads"]
 fn real_cuda_rope_reuse_preserves_model_codes_and_pcm() -> anyhow::Result<()> {
     struct ResetReference;
     impl Drop for ResetReference {
@@ -128,7 +128,6 @@ fn real_cuda_rope_reuse_preserves_model_codes_and_pcm() -> anyhow::Result<()> {
     );
     let device = Device::new_cuda(0)?;
     for (mode, revision) in [
-        ("local-1.7b", "12aa734e4f11a7b3fdf4eb0ad2aa2029675ffc2e"),
         ("realtime-1.7b", "75682787d8e2fcc73faca37ba2931453ca9c4022"),
         (
             "voice-design-1.7b",

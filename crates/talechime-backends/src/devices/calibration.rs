@@ -77,26 +77,25 @@ pub fn key(component: &str, revision: &str) -> String {
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default();
     format!(
-        "{}:{}:{}:{}:{}:{}:{:?}:{}",
+        "{}:{}:{}:{}:{}:{}:{}",
         component,
         revision,
         std::env::consts::OS,
         std::env::consts::ARCH,
         hardware,
         runtime_info(),
-        super::available(),
         gpu
     )
 }
 fn runtime_info() -> String {
     let versions: Vec<String> = vec![
-        #[cfg(any(feature = "moss", feature = "ort-coreml", feature = "ort-cuda",))]
+        #[cfg(feature = "asr")]
         format!("{:?}", ort::info()),
         #[cfg(any(
             feature = "qwen",
             feature = "voxcpm",
             feature = "omnivoice",
-            feature = "moss-candle"
+            feature = "moss"
         ))]
         "candle-0.11.0:local-v1".into(),
     ];
@@ -108,9 +107,6 @@ fn path(root: &Path, component: &str, key: &str) -> PathBuf {
         "calibration-{component}-{:x}.json",
         Sha256::digest(key.as_bytes())
     ))
-}
-pub fn cached(root: &Path, component: &str, key: &str) -> Option<Record> {
-    cached_for(root, component, key, &super::available())
 }
 pub fn cached_for(root: &Path, component: &str, key: &str, available: &[Device]) -> Option<Record> {
     let record: Record =
@@ -194,7 +190,12 @@ mod tests {
             .unwrap();
         }
         for key in ["moss-model", "qwen-model"] {
-            assert_eq!(cached(root.path(), "tts", key).unwrap().reason, key);
+            assert_eq!(
+                cached_for(root.path(), "tts", key, &[Device::Cpu])
+                    .unwrap()
+                    .reason,
+                key
+            );
         }
     }
     #[test]

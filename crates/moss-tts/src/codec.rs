@@ -734,7 +734,7 @@ mod nano_tests {
         let reference: serde_json::Value =
             serde_json::from_str(include_str!("../tests/fixtures/nano-codec.json"))?;
         let codes: Vec<Vec<u32>> = serde_json::from_value(reference["codes"].clone())?;
-        // 10.96 seconds crosses every pinned Nano and Local/Realtime layer window.
+        // 10.96 seconds crosses every pinned Nano and Realtime layer window.
         let frames: Vec<_> = codes.iter().cycle().take(137).cloned().collect();
         let dtype = match std::env::var("TALECHIME_MOSS_CODEC_DTYPE").as_deref() {
             Ok("f16") => DType::F16,
@@ -775,49 +775,6 @@ mod nano_tests {
                 maximum < max_limit && rmse < rms_limit,
                 "real codec chunk-window error: max={maximum}, rmse={rmse}"
             );
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn real_nano_codec_matches_pinned_onnx_stereo_and_streaming() -> anyhow::Result<()> {
-        let Some(directory) = std::env::var_os("TRNOVEL_MOSS_NANO_CANDLE_DIR") else {
-            return Ok(());
-        };
-        let reference: serde_json::Value =
-            serde_json::from_str(include_str!("../tests/fixtures/nano-codec.json"))?;
-        let frames: Vec<Vec<u32>> = serde_json::from_value(reference["codes"].clone())?;
-        #[allow(unused_mut)] // CPU-only test builds do not append a GPU.
-        let mut devices = vec![Device::Cpu];
-        #[cfg(all(feature = "metal", target_os = "macos"))]
-        devices.push(Device::new_metal(0)?);
-        for device in devices {
-            let mut codec = AudioCodec::load(
-                &std::path::PathBuf::from(&directory).join("codec"),
-                &device,
-                DType::F32,
-            )?;
-            assert_eq!((codec.sample_rate, codec.channels), (48000, 2));
-            let mut samples = Vec::new();
-            for chunk in frames.chunks(3) {
-                samples.extend(codec.decode(chunk, &|| false)?);
-            }
-            assert_eq!(
-                samples.len(),
-                reference["sample_count"].as_u64().unwrap() as usize
-            );
-            let mut max_error = 0f32;
-            for probe in reference["probes"].as_array().unwrap() {
-                let actual = samples[probe["index"].as_u64().unwrap() as usize];
-                let expected = probe["value"].as_f64().unwrap() as f32;
-                max_error = max_error.max((actual - expected).abs());
-            }
-            assert!(
-                max_error < 3e-4,
-                "Nano {device:?} codec differs from ONNX: {max_error}"
-            );
-            codec.reset_decoder();
-            assert!(codec.decode(&frames[..3], &|| true).is_err());
         }
         Ok(())
     }

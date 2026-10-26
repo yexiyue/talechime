@@ -36,7 +36,7 @@ mod tests {
             identity("nano-candle", "revision-1", Device::Cpu, directory)
         );
         for other in [
-            identity("nano-onnx", "revision-1", Device::Cpu, directory),
+            identity("nano-alternative", "revision-1", Device::Cpu, directory),
             identity("nano-candle", "revision-2", Device::Cpu, directory),
             identity("nano-candle", "revision-1", Device::Metal, directory),
             identity("nano-candle", "revision-1", Device::Cpu, Path::new("other")),

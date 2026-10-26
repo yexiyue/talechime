@@ -297,9 +297,12 @@ std::thread::JoinHandle 直接 drop 会脱离线程。后端加载时先构造�
 
 ### MOSS 多种原生模型
 
-MOSS Nano 保留原 ONNX 与音色格式，旧 model=None 不改写；Candle 试用构建目录项增加显式 nano ID，以便从同后端的 Local/Realtime 切回。新模型设备按 model 查询，不能沿用 Nano 的 ORT 设备列表。GPU-only 模式 Auto 只能选择公布 GPU，不能拿未开放的 CPU adapter 做校准或降级。新参考记录走统一 VoiceStore，码本缓存额外检查 codec revision、WAV SHA、帧数和码本数。VoiceGenerator 创建参考一次，后续小说段落复用克隆。
-
-Codec 流式 ring-cache 在当前 chunk 注意力之前覆盖旧 key，与先算完整滑窗再裁缓存不同；需有跨窗口官方数值回归。EOS 和正常 End 不证明语音内容逐字完整。
+MOSS 只保留 `nano-candle`（默认）与 `realtime-1.7b`。两档使用 Candle，不提供 style、instruction 或 language。
+只启用 `moss` 时默认 Realtime；GPU-only Auto 只选择已公布 GPU，不使用未开放 CPU 做校准或降级。
+Nano 导入音色使用 Candle encoder，保存在自身 revision 目录；旧共享音色及退休模型文件不迁移、不删除。
+旧 `nano`、`local-1b`、`local-1.7b` 加载明确报错且不改写配置。VoiceGenerator 仅生成可复用参考。
+Codec 注意力先使用完整当前 chunk 与历史 K/V，再裁剪返回缓存。EOS 不证明语音逐字完整。
+移除依据见[决策记录](../records/moss/2026-10-26-moss-tier-removal.md)。
 
 **相关文件**：`crates/novel-tts-backends/src/moss/candle.rs`、`crates/moss-tts/src/codec.rs`。
 
@@ -325,7 +328,7 @@ GGUF 重建的 SentencePiece 与官方实际 `LlamaTokenizerFast` 并非所有�
 
 ### MOSS Candle 0.11 Metal 加载完成与流式验收（2026-10-08）
 
-Mac M4 Pro 的 0.11 原加载路径实测 Realtime 提前 EOS、Local 非法控制 token；相同权重/输入的 0.9.2 Realtime 能输出非静音 PCM。Metal 模型加载及 codec 加载后分别 `Device::synchronize()`，再发送 ready，Realtime 三轮恢复正常非静音 End；Local 当前 24GB 机器则明确在初始化返回 GPU OOM，保持未验收。详细记录见 `docs/records/moss/moss-macos-streaming.md`。
+Mac M4 Pro 的 0.11 原加载路径实测 Realtime 提前 EOS、Local 非法控制 token；相同权重/输入的 0.9.2 Realtime 能输出非静音 PCM。Metal 模型加载及 codec 加载后分别 `Device::synchronize()`，再发送 ready，Realtime 三轮恢复正常非静音 End；Local 当时在 24GB 机器初始化返回 GPU OOM，保持未验收；该档位已于 2026-10-26 退役，不再作为当前能力。详细记录见 `docs/records/moss/moss-macos-streaming.md`。
 
 **正确做法**：GPU 加载 API 返回不等于异步设备工作已完成。此处将同步错误归入现有 Initialize 路径，不放宽静音/EOS 检查。流式验收记录逐 PCM 块到达时间：Realtime 热首块约 400ms、18 块、每块通常 400ms；默认 3 秒预缓冲使实际起声晚于首 PCM。测试前检查阅读器 worker 的图形内存，避免两套 1.7B/codec 同时驻留；macOS RSS 很低不表示 GPU 权重已释放。
 

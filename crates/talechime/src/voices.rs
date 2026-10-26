@@ -37,6 +37,7 @@ pub async fn run(
     config: &talechime_protocol::Config,
 ) -> anyhow::Result<()> {
     let backend = config.backend.as_str();
+    let selected = resources.resolve(backend, config.model.as_deref())?;
     if matches!(command, VoiceCommand::List) {
         let caps = resources.capabilities_for(backend, config.model.as_deref())?;
         for id in caps.voices {
@@ -55,7 +56,7 @@ pub async fn run(
         feature = "indextts",
         feature = "voxcpm",
         feature = "omnivoice",
-        feature = "moss-candle"
+        feature = "moss"
     ))]
     if let Some((store, rate)) = shared_store(&resources, config)? {
         match command {
@@ -89,7 +90,7 @@ pub async fn run(
                     None,
                 )?;
             }
-            #[cfg(any(feature = "voxcpm", feature = "omnivoice", feature = "moss-candle"))]
+            #[cfg(any(feature = "voxcpm", feature = "omnivoice", feature = "moss"))]
             VoiceCommand::Design {
                 id,
                 name,
@@ -127,7 +128,7 @@ pub async fn run(
                 });
                 let result = async {
                     match backend {
-                        #[cfg(feature = "moss-candle")]
+                        #[cfg(feature = "moss")]
                         "moss" => {
                             talechime_backends::moss::candle::resources::prepare_design(
                                 resources.root(),
@@ -194,7 +195,7 @@ pub async fn run(
                 logger.abort();
                 result?;
             }
-            #[cfg(not(any(feature = "voxcpm", feature = "omnivoice", feature = "moss-candle")))]
+            #[cfg(not(any(feature = "voxcpm", feature = "omnivoice", feature = "moss")))]
             VoiceCommand::Design { .. } => {
                 anyhow::bail!("{backend} does not support voice design")
             }
@@ -310,9 +311,13 @@ pub async fn run(
         backend == "moss",
         "{backend} supports preset voices only; voice import/remove requires the MOSS backend"
     );
-    #[cfg(feature = "moss")]
+    #[cfg(feature = "moss-nano-candle")]
     {
-        let directory = resources.root().join("moss");
+        anyhow::ensure!(
+            selected.capabilities().model.as_deref() == Some("nano-candle"),
+            "MOSS Nano Candle is not selected"
+        );
+        let directory = talechime_backends::moss::nano::directory(resources.root());
         match command {
             VoiceCommand::List => unreachable!("list handled before model-specific operations"),
             VoiceCommand::Design { .. } => {
@@ -338,9 +343,14 @@ pub async fn run(
                     }
                 });
                 let result = async {
-                    talechime_backends::moss::resources::prepare(&directory, progress).await?;
-                    let backend = talechime_backends::moss::MossBackend::load(directory).await?;
-                    backend.import_voice(id.clone(), name, wav).await
+                    talechime_backends::moss::nano::prepare(resources.root(), progress).await?;
+                    talechime_backends::moss::nano::import_voice(
+                        resources.root().into(),
+                        id.clone(),
+                        name,
+                        wav,
+                    )
+                    .await
                 }
                 .await;
                 logger.abort();
@@ -350,9 +360,9 @@ pub async fn run(
         }
         Ok(())
     }
-    #[cfg(not(feature = "moss"))]
+    #[cfg(not(feature = "moss-nano-candle"))]
     {
-        let _ = (command, resources);
+        let _ = (command, resources, selected);
         anyhow::bail!("voice import requires the moss Cargo feature")
     }
 }
@@ -361,7 +371,7 @@ pub async fn run(
     feature = "indextts",
     feature = "voxcpm",
     feature = "omnivoice",
-    feature = "moss-candle"
+    feature = "moss"
 ))]
 fn shared_store(
     resources: &Registry,
@@ -382,23 +392,21 @@ fn shared_store(
             )?,
             24000,
         )),
-        #[cfg(feature = "moss-candle")]
-        "moss"
-            if config
-                .model
-                .as_deref()
-                .is_some_and(|id| id != "nano" && id != "nano-candle") =>
-        {
-            let mode = talechime_backends::moss::candle::Mode::parse(
-                config.model.as_deref().expect("matched model"),
-            )?;
-            Some((
-                talechime_backends::moss::candle::voice_store(
-                    &mode.directory(resources.root()),
-                    mode,
-                )?,
-                24000,
-            ))
+        #[cfg(feature = "moss")]
+        "moss" => {
+            let selected = resources.resolve("moss", config.model.as_deref())?;
+            if selected.capabilities().model.as_deref() == Some("realtime-1.7b") {
+                let mode = talechime_backends::moss::candle::Mode::Realtime;
+                Some((
+                    talechime_backends::moss::candle::voice_store(
+                        &mode.directory(resources.root()),
+                        mode,
+                    )?,
+                    24000,
+                ))
+            } else {
+                None
+            }
         }
         #[cfg(feature = "voxcpm")]
         "voxcpm" => {

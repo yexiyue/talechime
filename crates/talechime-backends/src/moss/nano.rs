@@ -1,4 +1,4 @@
-//! Candle Nano adapter; shares Nano voice codes with ONNX.
+//! Candle Nano synthesis and reference encoding, isolated to this model revision.
 use candle_core::{DType, Device as CandleDevice};
 use sentencepiece_rs::SentencePieceProcessor;
 use std::{
@@ -13,7 +13,7 @@ pub fn directory(root: &Path) -> PathBuf {
     root.join("moss/models/nano-candle").join(REVISION)
 }
 pub fn capabilities(root: &Path) -> anyhow::Result<Capabilities> {
-    let mut caps = super::capabilities(&root.join("moss"))?;
+    let mut caps = super::nano_capabilities(&directory(root))?;
     caps.continuation = true;
     caps.model = Some("nano-candle".into());
     caps.model_name = "MOSS Nano Candle".into();
@@ -286,7 +286,7 @@ fn generate(
     owner_closed: &impl Fn() -> bool,
 ) -> anyhow::Result<()> {
     let manifest: serde_json::Value =
-        serde_json::from_str(include_str!("assets/browser_poc_manifest.json"))?;
+        serde_json::from_str(include_str!("assets/nano-prompt.json"))?;
     let cancelled = || job.audio.is_closed() || owner_closed();
     let codes: Vec<Vec<i32>> = if let Some(context) = &job.context {
         anyhow::ensure!(
@@ -299,7 +299,7 @@ fn generate(
             .map(|frame| frame.into_iter().map(|id| id as i32).collect())
             .collect()
     } else {
-        super::voices::VoiceStore::new(&root.join("moss")).codes(&job.voice, &manifest)?
+        super::voices::VoiceStore::new(&directory(root)).codes(&job.voice, &manifest)?
     };
     let flat = super::prompt::rows(
         &manifest,
@@ -523,9 +523,9 @@ mod tests {
             .map(|id| id as i32)
             .collect();
         let manifest: serde_json::Value =
-            serde_json::from_str(include_str!("assets/browser_poc_manifest.json"))?;
+            serde_json::from_str(include_str!("assets/nano-prompt.json"))?;
         let codes =
-            super::super::voices::VoiceStore::new(&root.join("moss")).codes("Yuewen", &manifest)?;
+            super::super::voices::VoiceStore::new(&directory(&root)).codes("Yuewen", &manifest)?;
         let flat = super::super::prompt::rows(&manifest, &tokens, &codes, None)?;
         let rows: Vec<Vec<u32>> = flat
             .as_chunks::<17>()
@@ -591,18 +591,15 @@ mod tests {
         assert!(thread.join().unwrap().is_err());
     }
     #[test]
-    fn catalog_shares_nano_voices_and_defaults_to_candle() -> anyhow::Result<()> {
+    fn catalog_uses_only_candle_voices_and_defaults_to_candle() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
         let registry = crate::Registry::new(Some(root.path().into()))?;
-        let onnx = registry.capabilities_for("moss", Some("nano"))?;
         let candle = registry.capabilities_for("moss", None)?;
         assert_eq!(candle.model.as_deref(), Some("nano-candle"));
-        assert_eq!(onnx.model.as_deref(), Some("nano"));
-        assert_eq!(onnx.voices, candle.voices);
         assert_eq!(candle.default_voice, "Weiguo");
         assert!(candle.compiled_devices.contains(&Device::Cpu));
         assert!(!root.path().join("moss").exists());
-        super::super::voices::VoiceStore::new(&root.path().join("moss")).save(
+        super::super::voices::VoiceStore::new(&directory(root.path())).save(
             "custom:shared".into(),
             "shared".into(),
             vec![vec![42; 16]; 3],
@@ -615,5 +612,61 @@ mod tests {
                 .any(|id| id == "custom:shared")
         );
         Ok(())
+    }
+}
+
+/// Encode and publish one reference with the native CPU codec; resources must be prepared explicitly.
+pub async fn import_voice(
+    root: PathBuf,
+    id: String,
+    name: String,
+    wav: PathBuf,
+) -> anyhow::Result<()> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let signal = cancelled.clone();
+    let (reply, result) = oneshot::channel();
+    let handle = std::thread::Builder::new()
+        .name("moss-nano-voice-import".into())
+        .spawn(move || {
+            let encoded = (|| {
+                let check = || signal.load(Ordering::Relaxed);
+                let samples = super::audio::read_wav(&wav)?;
+                anyhow::ensure!(!check(), "Nano voice import cancelled");
+                let mut codec = talechime_moss_tts::codec::AudioCodec::load(
+                    &directory(&root).join("codec"),
+                    &CandleDevice::Cpu,
+                    DType::F32,
+                )?;
+                let codes = codec
+                    .encode(&samples, 16, &check)?
+                    .into_iter()
+                    .map(|row| row.into_iter().map(|id| id as i32).collect())
+                    .collect();
+                anyhow::ensure!(!check(), "Nano voice import cancelled");
+                super::voices::VoiceStore::new(&directory(&root)).save(id, name, codes)
+            })();
+            let _ = reply.send(encoded);
+        })?;
+    let _owner = ImportThread {
+        cancelled,
+        handle: Some(handle),
+    };
+    result
+        .await
+        .map_err(|_| anyhow::anyhow!("Nano voice import thread exited"))?
+}
+
+struct ImportThread {
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+impl Drop for ImportThread {
+    fn drop(&mut self) {
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
     }
 }

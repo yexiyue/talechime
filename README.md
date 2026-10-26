@@ -71,7 +71,7 @@ cargo run --release -- --backend moss --model nano-candle --tts-device cpu chapt
 
 | 后端 / `--backend` | 模型或实现 | 音色与输出 | 构建和资源边界 |
 | --- | --- | --- | --- |
-| MOSS / `moss` | Nano Candle `nano-candle`（默认）；Nano ONNX `nano`；Local / Realtime 1.7B | Nano 内置或导入音色；Local 支持风格；三种模型支持段落内接续 | Nano Candle 默认有 CPU，Metal / CUDA 需显式 feature；ONNX 由 ORT provider 决定设备；Local / Realtime 是需 `moss-candle-*` 的 GPU 试用模型 |
+| MOSS / `moss` | Nano Candle `nano-candle`（默认）；Realtime `realtime-1.7b` | Nano 内置或导入音色；两档支持段落内接续，均不提供 style/instruction/language | Nano 默认 CPU，Metal / CUDA 需显式 feature；Realtime 为需 `moss-candle-*` 的 GPU 模型 |
 | Qwen3-TTS / `qwen` | 0.6B、1.7B CustomVoice；0.6B、1.7B Base | CustomVoice 预置音色；1.7B CustomVoice 支持风格；Base 可导入参考音频克隆 | Candle CPU；Metal / CUDA 需 `qwen-metal` / `qwen-cuda` |
 | VoxCPM2 / `voxcpm` | 2B Q8 GGUF；另有实验 BF16 路径 | 参考音色、音色设计与原生流式 PCM；风格和接续同时使用仍待验收 | Candle CPU；Metal / CUDA 需 `voxcpm-metal` / `voxcpm-cuda` |
 | OmniVoice / `omnivoice` | 0.6B | 参考音色、音色设计、风格和生成期语速；按语义段输出 | Candle CPU；Metal / CUDA 需 `omnivoice-metal` / `omnivoice-cuda`；当前不是模型原生实时流式 |
@@ -88,7 +88,7 @@ cargo build --release --locked -p talechime --no-default-features --features cli
 target/release/talechime --backend qwen --model 1.7b-customvoice --tts-device cuda chapter.txt
 ```
 
-`ort-cuda` 是 MOSS Nano ONNX 的计算路径，不能代替 `qwen-cuda` 等 Candle 模型开关。详细编译组合见[开发说明](docs/development.md)，验收边界见[模型验收记录](docs/records/tts-core/tts-model-tiers-acceptance.md)。
+MOSS 两档均使用 Candle；各模型通过自己的 feature 启用 GPU。详细编译组合见[开发说明](docs/development.md)，验收边界见[模型验收记录](docs/records/tts-core/tts-model-tiers-acceptance.md)。
 
 ### 音色和生成参数
 

@@ -31,10 +31,7 @@ async fn manifest(
     .await
 }
 pub async fn prepare(root: &Path, mode: Mode, progress: mpsc::Sender<Event>) -> anyhow::Result<()> {
-    let json = match mode {
-        Mode::Local => talechime_moss_tts::manifests::LOCAL,
-        Mode::Realtime => talechime_moss_tts::manifests::REALTIME,
-    };
+    let json = talechime_moss_tts::manifests::REALTIME;
     manifest(&mode.directory(root), mode.id(), json, progress.clone()).await?;
     codec(root, progress).await
 }

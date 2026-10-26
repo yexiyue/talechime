@@ -1,10 +1,9 @@
 //! Real CPU smoke test without opening an audio device.
 mod segmentation;
-use talechime_backends::moss::MossBackend;
+use talechime_backends::moss::nano::NanoBackend;
 use talechime_core::backend::AudioChunk;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-    eprintln!("ONNX Runtime: {:?}", ort::info());
     let mut args = std::env::args().skip(1);
     let directory = args
         .next()
@@ -20,12 +19,12 @@ async fn main() -> anyhow::Result<()> {
     };
     let voice = args.next().unwrap_or_else(|| "Weiguo".into());
     let device = match args.next().as_deref() {
-        Some("coreml") => talechime_protocol::Device::Coreml,
+        Some("metal") => talechime_protocol::Device::Metal,
         Some("cuda") => talechime_protocol::Device::Cuda,
         _ => talechime_protocol::Device::Cpu,
     };
     let started = std::time::Instant::now();
-    let backend = MossBackend::load_on(directory.into(), device).await?;
+    let backend = NanoBackend::load_on(directory.into(), device).await?;
     eprintln!("loaded {:?}", started.elapsed());
     let start = std::time::Instant::now();
     let pieces = segmentation::collect(&backend, &text, &voice).await?;
@@ -43,7 +42,9 @@ async fn main() -> anyhow::Result<()> {
     anyhow::ensure!(!pieces.is_empty(), "empty text");
     for piece in &pieces {
         let mut ended = false;
-        let mut stream = backend.stream_seeded(&piece.text, &voice, Some(42)).await?;
+        let mut stream = backend
+            .stream_seeded_with_context(&piece.text, &voice, 42, None)
+            .await?;
         while let Some(chunk) = stream.recv().await {
             match chunk? {
                 AudioChunk::Pcm(pcm) => {

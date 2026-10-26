@@ -5,12 +5,9 @@ async fn main() -> anyhow::Result<()> {
         .nth(1)
         .ok_or_else(|| anyhow::anyhow!("model directory required"))?;
     let mut baseline = None;
-    for device in [
-        talechime_protocol::Device::Cpu,
-        talechime_protocol::Device::Coreml,
-    ] {
+    for device in talechime_backends::moss::nano::available_devices() {
         let backend =
-            talechime_backends::moss::MossBackend::load_on(directory.clone().into(), device)
+            talechime_backends::moss::nano::NanoBackend::load_on(directory.clone().into(), device)
                 .await?;
         let measured =
             talechime_backends::devices::calibration::synthesis(&backend, "Weiguo").await?;

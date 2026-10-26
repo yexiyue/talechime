@@ -1,4 +1,4 @@
-//! GPU trial models share native computation and model-scoped reference voices.
+//! Realtime 1.7B Candle synthesis with model-scoped reference voices.
 #[cfg(all(test, feature = "moss-candle-cuda", target_os = "windows"))]
 mod cuda_tests;
 pub mod design;
@@ -12,28 +12,22 @@ use tokio::sync::{mpsc, oneshot};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    Local,
     Realtime,
 }
 impl Mode {
     pub fn parse(id: &str) -> anyhow::Result<Self> {
         match id {
-            "local-1.7b" => Ok(Self::Local),
             "realtime-1.7b" => Ok(Self::Realtime),
-            _ => anyhow::bail!("unknown MOSS Candle model {id}"),
+            _ => anyhow::bail!(
+                "unsupported MOSS model {id}; supported Realtime model: realtime-1.7b"
+            ),
         }
     }
     pub fn id(self) -> &'static str {
-        match self {
-            Self::Local => "local-1.7b",
-            Self::Realtime => "realtime-1.7b",
-        }
+        "realtime-1.7b"
     }
     pub fn revision(self) -> &'static str {
-        match self {
-            Self::Local => "12aa734e4f11a7b3fdf4eb0ad2aa2029675ffc2e",
-            Self::Realtime => "75682787d8e2fcc73faca37ba2931453ca9c4022",
-        }
+        "75682787d8e2fcc73faca37ba2931453ca9c4022"
     }
     pub fn directory(self, root: &Path) -> PathBuf {
         root.join("moss/models")
@@ -41,10 +35,7 @@ impl Mode {
             .join(self.revision())
     }
     fn codebooks(self) -> usize {
-        match self {
-            Self::Local => 32,
-            Self::Realtime => 16,
-        }
+        16
     }
 }
 pub fn voice_store(
@@ -57,20 +48,16 @@ pub fn capabilities(root: &Path, mode: Mode) -> anyhow::Result<Capabilities> {
     let mut caps = Capabilities {
         backend: "moss".into(),
         model: Some(mode.id().into()),
-        model_name: match mode {
-            Mode::Local => "MOSS Local 1.7B（实验，较慢）",
-            Mode::Realtime => "MOSS Realtime 1.7B（实验）",
-        }
-        .into(),
+        model_name: "MOSS Realtime 1.7B（实验）".into(),
         voices: vec!["narrator".into()],
         default_voice: "narrator".into(),
         voice_names: [("narrator".into(), "随机音色（建议导入或设计音色）".into())].into(),
         native_streaming: true,
         cloning: true,
-        style: mode == Mode::Local,
+        style: false,
         pronunciation: false,
         continuation: true,
-        parameters: params::catalog(mode == Mode::Local),
+        parameters: params::catalog(),
         compiled_devices: compiled_devices(),
     };
     for voice in voice_store(&mode.directory(root), mode)?.list()? {
@@ -186,11 +173,7 @@ impl Backend for CandleBackend {
                     "unknown MOSS voice or empty text".into(),
                 ));
             }
-            let mut resolved = params::resolve(request.params);
-            // A per-span style is the utterance-level instruction and wins over the param.
-            if let Some(style) = request.style.filter(|value| !value.trim().is_empty()) {
-                resolved.instruction = Some(style.to_owned());
-            }
+            let resolved = params::resolve(request.params);
             let (audio, receiver) = mpsc::channel(1);
             self.requests
                 .as_ref()
@@ -227,86 +210,83 @@ impl Backend for CandleBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn realtime_exposes_no_local_controls_or_cpu_device() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let caps = capabilities(root.path(), Mode::Realtime)?;
+        assert_eq!(caps.model.as_deref(), Some("realtime-1.7b"));
+        assert!(caps.cloning && caps.native_streaming && caps.continuation);
+        assert!(!caps.style);
+        assert!(!caps.compiled_devices.contains(&Device::Cpu));
+        assert_eq!(
+            caps.parameters
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["max_duration"]
+        );
+        for retired in ["nano", "local-1b", "local-1.7b"] {
+            assert!(Mode::parse(retired).is_err());
+        }
+        assert_eq!(std::fs::read_dir(root.path())?.count(), 0);
+        Ok(())
+    }
+    #[cfg(feature = "moss-nano-candle")]
+    #[test]
+    fn retained_voice_directories_are_independent_and_retired_files_are_untouched()
+    -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let retired = root.path().join("moss/voices/retired.json");
+        std::fs::create_dir_all(retired.parent().unwrap())?;
+        std::fs::write(&retired, b"retired voice must not be read or modified")?;
+        let realtime = voice_store(&Mode::Realtime.directory(root.path()), Mode::Realtime)?;
+        let nano =
+            super::super::voices::VoiceStore::new(&super::super::nano::directory(root.path()));
+        nano.save(
+            "custom:reader".into(),
+            "Reader".into(),
+            vec![vec![1; 16]; 20],
+        )?;
+        assert_eq!(nano.list()?.len(), 1);
+        assert!(realtime.list()?.is_empty());
+        assert!(realtime.load("custom:reader").is_err());
+        assert_eq!(
+            std::fs::read(retired)?,
+            b"retired voice must not be read or modified"
+        );
+        Ok(())
+    }
     #[cfg(feature = "experimental-moss-reference-anchor")]
     #[tokio::test(flavor = "current_thread")]
-    async fn reference_anchor_rejects_local_and_unanchored_default_voice() -> anyhow::Result<()> {
+    async fn reference_anchor_rejects_unanchored_default_voice() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
-        let backend = |mode| -> anyhow::Result<CandleBackend> {
-            Ok(CandleBackend {
-                reference_anchor: false,
-                requests: None,
-                thread: None,
-                caps: capabilities(root.path(), mode)?,
-                cache_identity: "test".into(),
-            })
-        };
-        assert!(backend(Mode::Local)?.with_reference_anchor().is_err());
-        let realtime = backend(Mode::Realtime)?.with_reference_anchor()?;
+        let backend = CandleBackend {
+            reference_anchor: false,
+            requests: None,
+            thread: None,
+            caps: capabilities(root.path(), Mode::Realtime)?,
+            cache_identity: "test".into(),
+        }
+        .with_reference_anchor()?;
         assert!(
-            realtime
+            backend
                 .cache_identity
                 .ends_with("-experimental-reference-anchor-v1")
         );
-        let params = talechime_core::params::GenerationParams::new();
+        let params = Default::default();
         assert!(matches!(
-            realtime
+            backend
                 .stream(talechime_core::backend::SegmentRequest {
                     text: "测试",
                     voice: "narrator",
                     style: None,
                     context: None,
                     seed: 42,
-                    params: &params,
+                    params: &params
                 })
                 .await,
             Err(BackendError::Unsupported(_))
         ));
-        assert!(!root.path().join("moss").exists());
-        Ok(())
-    }
-    #[test]
-    fn nano_identity_and_candle_devices_remain_separate() -> anyhow::Result<()> {
-        let root = tempfile::tempdir()?;
-        let registry = crate::Registry::new(Some(root.path().into()))?;
-        let nano = registry.capabilities_for("moss", Some("nano"))?;
-        assert_eq!(nano.model.as_deref(), Some("nano"));
-        assert!(nano.matches("moss", None));
-        assert_eq!(nano.default_voice, "Weiguo");
-        assert_eq!(nano.compiled_devices, crate::devices::compiled());
-        for mode in [Mode::Local, Mode::Realtime] {
-            let caps = registry.capabilities_for("moss", Some(mode.id()))?;
-            assert_eq!(caps.compiled_devices, compiled_devices());
-            assert!(!caps.compiled_devices.contains(&Device::Cpu));
-            assert_eq!(caps.default_voice, "narrator");
-            assert!(caps.cloning && caps.native_streaming && caps.continuation);
-            assert_eq!(caps.style, mode == Mode::Local);
-        }
-        assert!(
-            !root.path().join("moss").exists(),
-            "catalog queries must not create assets"
-        );
-        Ok(())
-    }
-    #[test]
-    fn modes_isolate_imported_voices_and_share_only_codec_assets() -> anyhow::Result<()> {
-        let root = tempfile::tempdir()?;
-        let wav = root.path().join("input.wav");
-        std::fs::write(&wav, b"managed reference")?;
-        let local = voice_store(&Mode::Local.directory(root.path()), Mode::Local)?;
-        let realtime = voice_store(&Mode::Realtime.directory(root.path()), Mode::Realtime)?;
-        local.import("custom:test", "test", &wav, "reference transcript", None)?;
-        assert_eq!(local.list()?.len(), 1);
-        assert!(realtime.list()?.is_empty());
-        assert!(realtime.load("custom:test").is_err());
-        assert!(
-            super::super::voices::VoiceStore::new(&root.path().join("moss"))
-                .list()?
-                .is_empty()
-        );
-        assert_ne!(
-            Mode::Local.directory(root.path()),
-            Mode::Realtime.directory(root.path())
-        );
         Ok(())
     }
 }

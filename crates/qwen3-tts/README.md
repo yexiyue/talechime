@@ -40,7 +40,7 @@ requests fail if initialization fails; only Auto may fall back to CPU.
   module layout.
 - Disable tokenizers' default features; retain `onig` for the Qwen tokenizer.
   The training-only `esaxx_fast` C++ implementation caused an MSVC `/MT` versus
-  ONNX Runtime `/MD` link conflict. No compiler flag workaround is needed.
+  other native `/MD` link conflicts. No compiler flag workaround is needed.
 - Downloads remain in the worker's verified resource pipeline.
 - The public facade is `lib.rs`; model orchestration lives in `synthesis.rs`,
   streaming and options in `synthesis/`. Device construction lives in `device.rs` and is shared by availability probes
@@ -57,8 +57,7 @@ cargo build --release -p talechime --no-default-features --features qwen-cuda
 cargo build --release -p talechime --no-default-features --features qwen-metal
 ```
 
-`qwen-cuda` accelerates Qwen through Candle. `ort-cuda` independently accelerates
-MOSS Nano through ONNX Runtime. Enable both only when needed.
+`qwen-cuda` accelerates Qwen through Candle. Each model adapter has its own GPU feature.
 
 For RTX 50 series, use a Blackwell-capable Toolkit (12.8 or newer), with a
 compatible MSVC host compiler. The `nvidia-smi` CUDA version describes the driver,

@@ -17,6 +17,17 @@ class ArchitectureTests(unittest.TestCase):
         protocol = manifest('talechime-protocol')
         self.assertTrue({'rodio', 'cpal', 'reqwest', 'talechime-core', 'talechime-backends', 'talechime'}.isdisjoint(protocol['dependencies']))
 
+    def test_moss_is_candle_only(self):
+        retired = {'directml-probe', 'ort-dynamic', 'ort-cuda', 'ort-coreml'}
+        for name in ['talechime-backends', 'talechime']:
+            features = manifest(name)['features']
+            self.assertTrue(retired.isdisjoint(features))
+        backends = manifest('talechime-backends')
+        self.assertNotIn('dep:ort', backends['features']['moss'])
+        self.assertIn('dep:talechime-moss-tts', backends['features']['moss'])
+        self.assertIn('dep:ort', backends['features']['asr'])
+        self.assertIn('talechime-cosyvoice3/ort', backends['features']['cosyvoice3'])
+
     def test_default_audio_requires_playback_feature(self):
         app = manifest('talechime')
         self.assertTrue(app['dependencies']['rodio']['optional'])

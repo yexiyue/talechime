@@ -338,7 +338,7 @@ fn plan_queries_require_prepared_model_without_download_side_effects() {
     worker.wait();
 }
 
-#[cfg(feature = "moss")]
+#[cfg(feature = "moss-nano-candle")]
 #[test]
 fn cli_rejects_open_or_mismatched_plan_before_model_preparation() {
     for (text, sealed, resume_byte) in [
@@ -360,8 +360,8 @@ fn cli_rejects_open_or_mismatched_plan_before_model_preparation() {
             backend: "moss".into(),
             model: if cfg!(feature = "moss-nano-candle") {
                 Some("nano-candle".into())
-            } else if cfg!(feature = "moss-candle") {
-                Some("nano".into())
+            } else if cfg!(feature = "moss") {
+                Some("realtime-1.7b".into())
             } else {
                 None
             },
@@ -432,13 +432,11 @@ fn default_home_ignores_legacy_data_without_modifying_it() {
     std::fs::create_dir_all(&models).unwrap();
     let fake_weights = std::fs::File::create(models.join("fake.bin")).unwrap();
     fake_weights.set_len(32 * 1024 * 1024).unwrap();
-    talechime_backends::moss::voices::VoiceStore::new(&home.path().join(".novel-tts/moss"))
-        .save(
-            "custom:reader".into(),
-            "Legacy Reader".into(),
-            vec![vec![1; 16]; 20],
-        )
-        .unwrap();
+    let legacy_voice = home.path().join(".novel-tts/moss/voices/reader.json");
+    std::fs::create_dir_all(legacy_voice.parent().unwrap()).unwrap();
+    let legacy_voice_bytes =
+        br#"{"id":"custom:reader","name":"Legacy Reader","revision":"retired","codes":[]}"#;
+    std::fs::write(&legacy_voice, legacy_voice_bytes).unwrap();
     let mut child = ProcessCommand::new(env!("CARGO_BIN_EXE_talechime"))
         .arg("--protocol")
         .env("HOME", home.path())
@@ -472,6 +470,7 @@ fn default_home_ignores_legacy_data_without_modifying_it() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    assert_eq!(std::fs::read(&legacy_voice).unwrap(), legacy_voice_bytes);
     let messages: Vec<Message> = String::from_utf8(output.stdout)
         .unwrap()
         .lines()
@@ -490,4 +489,57 @@ fn default_home_ignores_legacy_data_without_modifying_it() {
         std::fs::read(home.path().join(".novel/tts_config.json")).unwrap(),
         br#"{"backend":"kokoro","voice":"Zf001","volume":0.7,"speed":1.3,"auto_play":true}"#
     );
+}
+
+#[cfg(feature = "moss")]
+#[test]
+fn retired_moss_config_fails_before_cli_override_without_touching_files() {
+    for model in ["nano", "local-1b", "local-1.7b"] {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("config.json");
+        let bytes = serde_json::to_vec(&talechime_protocol::Config {
+            backend: "moss".into(),
+            model: Some(model.into()),
+            ..Default::default()
+        })
+        .unwrap();
+        std::fs::write(&config, &bytes).unwrap();
+        let old_voice = root.path().join("models/moss/voices/reader.json");
+        std::fs::create_dir_all(old_voice.parent().unwrap()).unwrap();
+        std::fs::write(&old_voice, b"old voice must remain").unwrap();
+        let checkpoint = root.path().join("positions/chapter.json");
+        std::fs::create_dir_all(checkpoint.parent().unwrap()).unwrap();
+        std::fs::write(&checkpoint, b"old checkpoint must remain").unwrap();
+        for override_model in [false, true] {
+            let mut command = ProcessCommand::new(env!("CARGO_BIN_EXE_talechime"));
+            command
+                .args(["--protocol", "--config"])
+                .arg(&config)
+                .arg("--model-dir")
+                .arg(root.path().join("models"))
+                .arg("--checkpoint-dir")
+                .arg(root.path().join("positions"))
+                .stdin(Stdio::null());
+            if override_model {
+                command.args(["--model", "realtime-1.7b"]);
+            }
+            let output = command.output().unwrap();
+            assert!(!output.status.success());
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert!(error.contains("unsupported or retired model"), "{error}");
+            assert!(error.contains(model));
+            assert_eq!(std::fs::read(&config).unwrap(), bytes);
+            assert_eq!(std::fs::read(&old_voice).unwrap(), b"old voice must remain");
+            assert_eq!(
+                std::fs::read(&checkpoint).unwrap(),
+                b"old checkpoint must remain"
+            );
+            assert_eq!(
+                std::fs::read_dir(root.path().join("models/moss"))
+                    .unwrap()
+                    .count(),
+                1
+            );
+        }
+    }
 }

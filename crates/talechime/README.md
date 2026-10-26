@@ -19,10 +19,10 @@ cargo run -p talechime -- voices list
 cargo build --release -p talechime --features qwen,voxcpm,omnivoice
 cargo build --release -p talechime --no-default-features --features qwen-cuda
 cargo build --release -p talechime --features qwen-metal,voxcpm-metal,omnivoice-metal,moss-candle-metal
-cargo build --release -p talechime --features ort-coreml
+cargo build --release -p talechime --features moss-nano-candle-metal
 ```
 
-Candle 加速开关包含对应模型开关；`ort-cuda` / `ort-coreml` 仅为 MOSS Nano 启用 ORT provider。`auto` 通过完整合成校准选择设备；显式不可用设备报错。切换模型时同时校验目标模型与设备。
+Candle 加速开关包含对应模型开关；MOSS 两档均使用 Candle，GPU 需对应模型开关。`auto` 通过完整合成校准选择设备；显式不可用设备报错。切换模型时同时校验目标模型与设备。
 
 ## Worker
 

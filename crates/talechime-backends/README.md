@@ -20,14 +20,15 @@ cargo build --release -p talechime --features qwen-metal   # macOS: MOSS + Candl
 cargo build --release -p talechime --no-default-features --features qwen-cuda # NVIDIA GPU
 ```
 
-`Registry` 暴露已编译后端的能力、默认音色及显示名称，按需准备一个模型。后端扩展实现 core 的 `Backend::stream` 和 `Backend::segments`，无需改变播放器或阅读器。
+`Registry` 暴露已编译后端的能力、默认音色及显示名称，按需准备一个模型。后端扩展实现 core 的 `Backend::stream` 和 `Backend::next_segment`，无需改变播放器或阅读器。
 
-## MOSS GPU（Candle）
+## MOSS（Candle）
 
-MOSS 也可通过 `moss-candle-cuda` / `moss-candle-metal` 增加 GPU 试用模型
-`local-1.7b` 和 `realtime-1.7b`。计算与 codec 位于 `crates/moss-tts`，共用
-工作区 Candle；Nano 继续走原 ONNX。VoiceGenerator 仅用于创建可复用参考音色。
-资源与真实验收边界见 [验收记录](../../docs/records/moss/moss-candle-acceptance.md)。
+产品目录仅有 `nano-candle`（默认）与 `realtime-1.7b`。`moss` 提供 Realtime，
+`moss-nano-candle` 另外提供 Nano；`moss-candle` 启用 Realtime 的基础依赖。
+Nano 支持 CPU，以及显式开启的 `moss-nano-candle-metal` / `moss-nano-candle-cuda`。
+Realtime 仅开放 `moss-candle-metal` / `moss-candle-cuda` GPU 设备。
+两档均不提供 style、instruction 或 language；VoiceDesign 仅创建可复用参考音色。
 
 ## Qwen TTS（Candle）
 
@@ -39,7 +40,7 @@ CustomVoice 提供九种预置音色，默认福叔 `uncle_fu`；1.7B 支持朗�
 
 Qwen 分段独立于 MOSS 的 token 预算：真实段落和标题建立硬边界；合并软换行，在 180 UTF-8 字节内优先切完整句末、分句、单词和字符边界。原文不修改，装饰线跳过，正文运算符保留。
 
-CPU、可选 CUDA（Windows/Linux，`qwen-cuda`）和 Metal（macOS，`qwen-metal`）由 Qwen 自己的设备目录报告。`ort-cuda` 仅用于 MOSS Nano，不能为 Qwen 提供 CUDA。各模型 manifest 直接启用同一套 Candle 0.11.0 的 GPU feature；Metal 探测位于内部 `devices/metal.rs`。GPU feature 必须按平台选择，不使用同时启用 CUDA 与 Metal 的 `--all-features`。CUDA feature 仍需 Toolkit。Auto 使用同一完整链路校准门槛；运行错误仅在 Auto 模式重建 CPU 供下次显式播放，不重放失败片段。
+CPU、可选 CUDA（Windows/Linux，`qwen-cuda`）和 Metal（macOS，`qwen-metal`）由 Qwen 自己的设备目录报告。各模型 manifest 直接启用同一套 Candle 0.11.0 的 GPU feature；Metal 探测位于内部 `devices/metal.rs`。GPU feature 必须按平台选择，不使用同时启用 CUDA 与 Metal 的 `--all-features`。CUDA feature 仍需 Toolkit。Auto 使用同一完整链路校准门槛；运行错误仅在 Auto 模式重建 CPU 供下次显式播放，不重放失败片段。
 
 流式 codec 的边界连续性需要人工试听，EOS 也不能证明逐字覆盖。当前各模型实测与待验收项见 [验收记录](../../docs/records/tts-core/tts-model-tiers-acceptance.md)。
 
@@ -48,39 +49,27 @@ cargo run --release -p talechime-backends --no-default-features --features qwen-
 TRNOVEL_QWEN_MODEL_DIR=<model-directory> cargo test --release -p talechime-backends --features qwen real_model_streams_and_releases_cancelled_request
 ```
 
-## MOSS
+## MOSS 资源与音色
 
-CPU ONNX 推理在独立线程执行。通道容量为 1；消费者丢弃流后，生成在推理步骤之间终止。SentencePiece 按 50 token / 60 个 CJK 字符预算合并相邻句子，超限优先在句末分段，保存原文范围，合成副本执行空白/标点规范化。首版不引入官方 Python 可选的 WeText 数字规范化包。
+SentencePiece 分段保留 UTF-8 原文范围；每个执行拥有时长估计。推理和 codec 使用工作区
+Candle，独立 owner 通过有界通道发送 PCM，关闭接收端触发取消。
 
-资源位于 `~/.talechime/resources/moss/{tts,codec}`，自定义音色位于 `moss/voices`。`--model-dir` 覆盖的是公共根目录，子目录按后端和模型隔离。
+Nano 资源清单为 `src/moss/nano/resources.json`；共享 prompt 与内置音色 codes 为
+`src/moss/assets/nano-prompt.json`，保留 Apache-2.0 许可 `LICENSE.OpenMOSS`。
+Nano 固定 revision `44502f80dbf9743528fa921cc544d662c685ebec`，资源与导入音色位于
+`moss/models/nano-candle/<revision>/{tts,codec,voices}`。参考 WAV 支持 1..30 秒
+非静音 mono/stereo PCM 或 float，经 sinc 重采样为 48kHz 交错 stereo，再由 Candle encoder 编码。
+重复音色 ID 拒绝覆盖；Realtime 使用独立模型目录与参考音色存储。
 
-固定资源清单位于 `src/moss/assets/resources.json`，每个文件记录下载 URL、大小和 SHA-256：
-
-- TTS：OpenMOSS-Team/MOSS-TTS-Nano-100M-ONNX，revision `f52645cb467506d8e18e746ddd59482685b74e58`。
-- Codec：OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX，revision `ceff0d0749bfb3fa2d61149794ec6feef0d1e1ae`。
-- 总下载约 763 MB，包含 ONNX 外部权重。模型只在实际准备时下载；损坏文件隔离为 `.corrupt`，重新准备会补下载。
-
-参考 WAV 支持 1..30 秒非静音 mono/stereo PCM 或 float，内部使用 sinc 重采样至 48kHz stereo。自定义 ID 使用 `custom:<name>`，缓存模型 revision 和编码结果；重复 ID 拒绝覆盖，升级模型后需重新导入。CLI 导入后重新连接阅读器即可刷新音色目录。
-
-## 原生验收
+旧 `nano`、`local-1b`、`local-1.7b` 加载时明确报错；旧配置、共享音色和模型文件留在原位置，
+不扫描、不复制、不删除。变更范围和历史依据见[决策记录](../../docs/records/moss/2026-10-26-moss-tier-removal.md)。
 
 ```sh
-cargo run -p talechime-backends --example moss -- <root>/moss output.wav '你好，欢迎使用听书功能。'
-# 第三个参数也可使用 @文本文件；第四个参数指定音色
-TRNOVEL_MOSS_MODEL_DIR=<root>/moss cargo test -p talechime-backends
+cargo run -p talechime-backends --example moss -- RESOURCE_ROOT output.wav '你好，欢迎收听。'
+cargo run -p talechime-backends --example moss_probe -- RESOURCE_ROOT TEXT_FILE OUTPUT.wav
 ```
 
-普通测试不下载模型；设置环境变量后才执行真实模型的官方数值对照和取消测试。官方参考 fixture 来自 upstream commit `8b7bcc9341b3b4ef3a3a58ba1338a7d85ff133eb` 的 `ort_cpu_runtime.py`，使用官方 fixed sampling 图、三个 codec frame 一块和 seed=42 的固定 LCG 随机数序列。fixture 包含 SentencePiece tokens、样本数和跨音频范围的 512 个 PCM 探针；误差容限为 1e-4。随机序列用于验收，正常播放使用系统种子随机源。
-
-本地验收记录见 [验收记录](../../docs/records/moss/moss-tts-acceptance.md)。Python 只用于生成官方对照数据，用户运行程序无需 Python。
-
-## 上游来源和许可
-
-MOSS 推理流程移植自 [OpenMOSS/MOSS-TTS-Nano](https://github.com/OpenMOSS/MOSS-TTS-Nano)。assets 中的 manifest、ONNX metadata 和参考音色 codes 来自上述固定模型 revision，按 Apache-2.0 提供；许可证保存在 `src/moss/assets/LICENSE.OpenMOSS`。原项目 Rust 代码继续使用仓库 MIT 许可。
-
-## MOSS 连贯性与终止诊断
-
-MOSS 软换行可共享上下文；初始目标 8 秒/预计上限 12 秒，保留 50 token/60 CJK/375 帧限制。标题规则复用轻量 protocol 的内置 TOC 常量。`stream_diagnosed` 提供可选报告（规范化文本/token/帧/时长/EOS、frame_limit、cancelled、inference_failure），只用于诊断，不用于推断完整朗读。`moss_probe` example 可生成固定 seed=42 的源范围、报告和 WAV；报告只写入显式输出目录。失败不发送成功 End，不自动重读，frame_limit 不触发设备回退。
+普通测试不下载模型。上述探针要求显式提供本地资源，不能替代真实音频和性能验收。
 
 ## 新增原生后端
 

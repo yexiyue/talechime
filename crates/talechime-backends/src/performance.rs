@@ -117,19 +117,9 @@ pub fn verify(registry: &crate::Registry, backend: &str, model: &str) -> anyhow:
                 &crate::moss::nano::directory(root),
                 include_str!("moss/nano/resources.json"),
             )?,
-            "nano" => manifest(
-                root,
-                &root.join("moss"),
-                include_str!("moss/assets/resources.json"),
-            )?,
-            #[cfg(feature = "moss-candle")]
-            "local-1.7b" | "realtime-1.7b" => {
+            "realtime-1.7b" => {
                 let mode = crate::moss::candle::Mode::parse(model)?;
-                let json = if model == "local-1.7b" {
-                    talechime_moss_tts::manifests::LOCAL
-                } else {
-                    talechime_moss_tts::manifests::REALTIME
-                };
+                let json = talechime_moss_tts::manifests::REALTIME;
                 let mut files = manifest(root, &mode.directory(root), json)?;
                 files.extend(manifest(
                     root,
@@ -234,11 +224,7 @@ pub async fn load(
             "nano-candle" => Some(std::rc::Rc::new(
                 crate::moss::nano::NanoBackend::load_on(root.to_owned(), device).await?,
             )),
-            "nano" => Some(std::rc::Rc::new(
-                crate::moss::MossBackend::load_on(root.join("moss"), device).await?,
-            )),
-            #[cfg(feature = "moss-candle")]
-            "local-1.7b" | "realtime-1.7b" => Some(std::rc::Rc::new(
+            "realtime-1.7b" => Some(std::rc::Rc::new(
                 crate::moss::candle::CandleBackend::load_on(
                     root.to_owned(),
                     crate::moss::candle::Mode::parse(model)?,

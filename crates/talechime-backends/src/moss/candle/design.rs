@@ -1,4 +1,4 @@
-//! Design once with VoiceGenerator; narration reuses the saved WAV in Local/Realtime.
+//! Design once with VoiceGenerator; narration reuses the saved WAV in Realtime.
 use super::{resources, runtime};
 use std::{
     path::PathBuf,

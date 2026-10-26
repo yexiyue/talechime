@@ -81,7 +81,7 @@ mod tests {
     #[test]
     fn pinned_official_builder_matches_every_clone_and_continuation_row() {
         let manifest: Value =
-            serde_json::from_str(include_str!("assets/browser_poc_manifest.json")).unwrap();
+            serde_json::from_str(include_str!("assets/nano-prompt.json")).unwrap();
         let reference: Value =
             serde_json::from_str(include_str!("assets/nano-prompt-reference.json")).unwrap();
         for case in reference["cases"].as_array().unwrap() {
@@ -105,7 +105,7 @@ mod tests {
     #[test]
     fn official_continuation_moves_codes_to_assistant_and_has_no_user_audio() {
         let manifest: Value =
-            serde_json::from_str(include_str!("assets/browser_poc_manifest.json")).unwrap();
+            serde_json::from_str(include_str!("assets/nano-prompt.json")).unwrap();
         let codes = vec![vec![42; 16], vec![17; 16]];
         let text = [123, 456];
         let none = [789];

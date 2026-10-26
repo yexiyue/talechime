@@ -58,5 +58,5 @@ TextRange 是同一份完整正文的 UTF-8 左闭右开字节范围。正文不
 复现。未在目录中声明、类型不符或越界的参数在会话启动时被显式拒绝，不会静默忽略。
 两者均为 v7 内的加法式可选字段。当前目录：VoxCPM2（steps/cfg/temperature/max_duration）、
 Qwen（采样参数/language/max_duration/chunk_frames）、OmniVoice（num_step/guidance_scale/
-language/speed）、MOSS Local/Realtime（instruction/max_duration）；Nano 与 ONNX 目录为空，
+language/speed）、MOSS Realtime（max_duration）；Nano 目录为空，
 仅消费 seed。详见[参数接入记录](../../docs/records/tts-core/params-exposure-2026-10-10.md)。

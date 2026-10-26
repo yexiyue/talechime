@@ -1,4 +1,4 @@
-//! Nano's fixed-seed inverse-CDF sampling, using the ONNX adapter's LCG.
+//! Nano's fixed-seed inverse-CDF sampling, using the upstream adapter's LCG.
 use candle_core::{DType, Tensor};
 use std::collections::HashSet;
 pub(super) struct Sampler {

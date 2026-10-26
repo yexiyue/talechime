@@ -151,19 +151,20 @@ producer 在当前执行内保存最多一个 `SpeechContext`（不可变共享 
 `speed` 参数且宿主未显式设置时自动路由到生成期无损变速，sink 置 1.0；运行期改速按比例
 换算不叠加。逐段 style 由 `SpeechSpan.style` 携带：Qwen 1.7B CustomVoice（指令）、
 VoxCPM2（上游 `(description)text` 前缀，与接续组合待验收、当前显式拒绝）、OmniVoice
-（instruct 词表校验）、MOSS Local（Instruction 槽位，逐段优先于同名参数）；Realtime 不声明风格或 instruction。
+（instruct 词表校验）。MOSS 两档均不声明风格、instruction 或 language。
 各目录与真模型结论见[参数记录](records/tts-core/params-exposure-2026-10-10.md)与
 [风格记录](records/tts-core/style-exposure-2026-10-10.md)。
 候选在接收原始流时有界复制，播放无需等待候选完成；End 后且交付策略允许时才替换参考。
 门禁拒绝的尝试不进入候选，重试使用原快照。参考限额与重置语义见[库说明](library.md#段落内接续)。
 
-默认 MOSS Nano 使用 Candle，ONNX 保留为显式 `nano` 模型项。未指定 MOSS 模型时，能力目录、
-设备选择、准备路径与校准 revision 均解析到 `nano-candle`（已编译时）；只启用 `moss` 的构建使用 ONNX。
-MOSS Nano 用前段转写与当前文字建立无用户参考的 continuation prompt，把音频 codes 放入
-assistant 前缀；codec 先消费前缀建立状态，丢弃前缀 PCM 后只输出新帧。Local 使用官方
-无参考 user 消息与 assistant 音频前缀，采用相同 decoder 预热规则。Realtime 按官方
-make_user_prompt 把前段文字与音频按 12 token 延迟打包为前一轮上下文，并将同一音频
-用作滚动音色参考；它从新 assistant 轮次生成，属于上下文接续而非 Local 的音频前缀格式。
+MOSS 只保留 `nano-candle` 与 `realtime-1.7b`。未指定模型时，能力目录、设备选择、
+准备路径与校准 revision 解析到 `nano-candle`（已编译时）；只启用 `moss` 的构建默认 Realtime。
+旧 `nano`、`local-1b`、`local-1.7b` ID 加载时明确报错，不重写配置或迁移用户资源。
+Nano 用前段转写与当前文字建立 continuation prompt，把音频 codes 放入 assistant 前缀；
+codec 先消费前缀建立状态，丢弃前缀 PCM 后只输出新帧。Realtime 按官方 make_user_prompt
+把前段文字与音频按 12 token 延迟打包为前一轮上下文，并将同一音频用作滚动音色参考。
+Nano 音色使用其独立 revision 目录，由 Candle encoder 编码；Realtime 音色独立保存。
+VoiceDesign 仅作为辅助参考生成器，不进入产品模型目录。移除依据见[决策记录](records/moss/2026-10-26-moss-tier-removal.md)。
 Qwen 0.6B / 1.7B Base 复用 Base ICL 编码，OmniVoice 复用 VoiceClonePrompt，VoxCPM2
 使用前段转写与 16 kHz 音频建立 continuation reference；临时 prompt 均只存在原生 owner 的内存中。
 

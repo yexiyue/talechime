@@ -17,12 +17,6 @@ impl Parameters {
         top_p: 1.,
         penalty: 1.,
     };
-    pub(crate) const LOCAL: Self = Self {
-        temperature: 1.,
-        top_k: 50,
-        top_p: 0.95,
-        penalty: 1.1,
-    };
 }
 
 pub(crate) fn sample(

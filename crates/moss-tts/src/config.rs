@@ -28,39 +28,6 @@ pub struct SpeechConfig {
     pub sampling_rate: u32,
 }
 
-#[derive(Clone, Debug, Deserialize)]
-pub struct LocalConfig {
-    #[serde(flatten)]
-    pub speech: SpeechConfig,
-    pub local_hidden_size: usize,
-    pub local_ffn_hidden_size: usize,
-    pub local_num_layers: usize,
-    pub additional_mlp_ffn_hidden_size: usize,
-}
-impl std::ops::Deref for LocalConfig {
-    type Target = SpeechConfig;
-    fn deref(&self) -> &SpeechConfig {
-        &self.speech
-    }
-}
-
-impl LocalConfig {
-    pub fn depth_config(&self) -> TransformerConfig {
-        TransformerConfig {
-            hidden_size: self.local_hidden_size,
-            intermediate_size: self.local_ffn_hidden_size,
-            num_hidden_layers: self.local_num_layers,
-            ..self.language_config.clone()
-        }
-    }
-    pub fn validate(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            self.local_hidden_size > 0 && self.local_num_layers > 0,
-            "invalid depth transformer"
-        );
-        self.speech.validate()
-    }
-}
 impl SpeechConfig {
     pub fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(

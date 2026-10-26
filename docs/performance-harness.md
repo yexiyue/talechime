@@ -44,7 +44,7 @@ cargo xtask perf resource-download --plan resource-plan.json --resources-root "$
 
 `resource-inventory` 记录大小、SHA-256、复用字节和来源身份；`resource-import` 按身份加锁、暂存复核并原子无覆盖发布匹配目标，冲突保留原件。`resource-download` 仅接受 `production_manifest`，先暂存校验摘要，离线模式只复用已验证文件。转换收据和未验证文件不能替代生产清单；准备完成标记是下载/导入收据的前提，测量 Job 只消费已验证资源收据，不下载或转换。
 
-计划中的公共朗读矩阵保持 28 个 CPU/CUDA 格（25 个适用、3 个不适用）；`moss/VoiceGenerator` 是单独 `auxiliary=true` 的 CUDA 辅助行。Windows 所需 feature 记录在构建收据中：Candle 使用 `qwen-cuda`、`voxcpm-cuda`、`omnivoice-cuda`、`moss-candle-cuda`、`moss-nano-candle-cuda`、`cosyvoice3-cuda`、`indextts-cuda-cudnn`，Nano ONNX 使用 `ort-cuda`；CPU 探针使用对应基础模型 feature。
+计划中的公共朗读矩阵保持 24 个 CPU/CUDA 格（22 个适用、2 个不适用）；`moss/VoiceGenerator` 是单独 `auxiliary=true` 的 CUDA 辅助行。Windows 所需 feature 记录在构建收据中：Candle 使用 `qwen-cuda`、`voxcpm-cuda`、`omnivoice-cuda`、`moss-candle-cuda`、`moss-nano-candle-cuda`、`cosyvoice3-cuda`、`indextts-cuda-cudnn`；CPU 探针使用对应基础模型 feature。
 
 基准参考音色使用生产 `voices import --text` 保存 `reference.wav`、准确转写和模型身份；探测记录只引用 `custom:<id>` 与文件摘要，不复制用户音频入仓库。缓存身份来自生产 `Backend::cache_identity()`，按实现、revision、设备、平台和目录隔离，不能仅凭同名音色跨模型复用；可证明身份时，每个进程仅在正式轮次前用一个有超时的短请求预热懒参考编码；其完整合成成本单列为 `reference_warmup_seconds`，不冒充纯参考编码成本，也不混入每轮计时。否则首次懒准备保留在首个正式轮并如实呈现。首 PCM 按能力分为 `native_streaming_first_pcm` 和 `segment_delivery_first_pcm`；后者是整段交付延迟，不能当作原生流式首块。
 
@@ -250,10 +250,8 @@ CUDA/cuDNN依赖，也不替代实际加载模块审计。未设置路径的旧�
 [Windows ORT 身份记录](records/platform/windows-ort-runtime-identity-2026-10-24.md)。
 
 
-动态 ORT 探针可通过 `perf build --features 'moss-nano-candle,ort-cuda,ort/load-dynamic'`
-生成标准 Native 收据。工具从实际 ORT 库的 Cargo artifact 核对 load-dynamic，
-不能以顶层 features 或命令行意图代替依赖构建身份。上述 Windows 记录包含正式
-3×(1+5) Native CUDA 请求和报告；默认分发是否可用仍需独立验收。
+MOSS 动态 ORT 构建入口已随 Nano 导出图路径退役；当前两档使用 Candle。
+通用 ORT 动态库身份审计仍用于显式指定原生运行库的诊断，不构成 MOSS provider 支持。
 
 ## 不产生音频的参考组件诊断
 

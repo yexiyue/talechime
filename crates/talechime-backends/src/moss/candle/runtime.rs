@@ -121,15 +121,7 @@ fn generate(
     let mut generation = Generation::new(&request.text);
     generation.seed = request.seed;
     generation.max_frames = request.resolved.max_frames;
-    generation.instruction = request.resolved.instruction.as_deref();
-    generation.language = request.resolved.language.as_deref();
-    generation.reference = reference.as_deref().or_else(|| {
-        if mode == Mode::Realtime {
-            continuation.as_deref()
-        } else {
-            None
-        }
-    });
+    generation.reference = reference.as_deref().or(continuation.as_deref());
     generation.continuation =
         request
             .context
@@ -139,14 +131,6 @@ fn generate(
                 text: context.text(),
                 codes,
             });
-    if mode == Mode::Local
-        && let Some(codes) = &continuation
-    {
-        // Prime the causal decoder, but never deliver the already-played prefix.
-        for frames in codes.chunks(5) {
-            codec.decode(frames, &|| request.audio.is_closed())?;
-        }
-    }
     let mut pending = Vec::new();
     let mut delivered = false;
     model.generate(&generation, &|| request.audio.is_closed(), |frame| {

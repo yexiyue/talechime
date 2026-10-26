@@ -180,6 +180,11 @@ async fn main() -> anyhow::Result<()> {
         };
         config.with_defaults(defaults)
     };
+    // Reject retired identities before a CLI override can persist a replacement.
+    let stored = config.load()?;
+    if stored.backend == "moss" {
+        resources.resolve(&stored.backend, stored.model.as_deref())?;
+    }
     if args.command.is_none()
         && (args.model.is_some()
             || args.style.is_some()

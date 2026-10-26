@@ -103,12 +103,6 @@ async fn check(mode: Mode) -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "explicit local MOSS Local 1.7B CUDA resources; no downloads"]
-async fn real_cuda_local_owner_cancel_failure_and_reuse() -> anyhow::Result<()> {
-    check(Mode::Local).await
-}
-
-#[tokio::test(flavor = "current_thread")]
 #[ignore = "explicit local MOSS Realtime 1.7B CUDA resources; no downloads"]
 async fn real_cuda_realtime_owner_cancel_failure_and_reuse() -> anyhow::Result<()> {
     check(Mode::Realtime).await
@@ -216,12 +210,6 @@ async fn check_reference_and_continuation(mode: Mode) -> anyhow::Result<()> {
             Ok(())
         })
         .await
-}
-
-#[tokio::test(flavor = "current_thread")]
-#[ignore = "explicit local MOSS Local 1.7B CUDA reference/continuation gate; no downloads"]
-async fn real_cuda_local_reference_and_continuation_reuse() -> anyhow::Result<()> {
-    check_reference_and_continuation(Mode::Local).await
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -17,11 +17,11 @@ cosyvoice3-metal = ["cosyvoice3", "talechime-cosyvoice3/metal", "dep:candle-meta
 cosyvoice3-cuda = ["cosyvoice3", "talechime-cosyvoice3/cuda"]
 default = ["moss-nano-candle"]
 asr = ["dep:reqwest", "dep:talechime-qwen3-asr", "dep:candle-core", "dep:ort", "dep:kaldi-fbank", "dep:rubato", "dep:hound"]
-moss = ["dep:reqwest", "dep:ort", "dep:sentencepiece-rs", "dep:rand", "dep:hound", "dep:rubato"]
-moss-nano-candle = ["moss", "dep:talechime-moss-tts", "dep:candle-core"]
+moss = ["dep:reqwest", "dep:sentencepiece-rs", "dep:hound", "dep:rubato", "dep:talechime-moss-tts", "dep:candle-core"]
+moss-nano-candle = ["moss"]
 moss-nano-candle-metal = ["moss-nano-candle", "talechime-moss-tts/metal", "dep:candle-metal-kernels"]
 moss-nano-candle-cuda = ["moss-nano-candle", "talechime-moss-tts/cuda"]
-moss-candle = ["moss", "dep:talechime-moss-tts", "dep:candle-core"]
+moss-candle = ["moss"]
 experimental-moss-reference-anchor = ["moss-candle"]
 moss-candle-cuda = ["moss-candle", "talechime-moss-tts/cuda"]
 moss-candle-metal = ["moss-candle", "talechime-moss-tts/metal", "dep:candle-metal-kernels"]
@@ -35,10 +35,6 @@ voxcpm-metal = ["voxcpm", "talechime-voxcpm/metal", "dep:candle-metal-kernels"]
 omnivoice = ["dep:reqwest", "dep:talechime-omnivoice", "dep:hound", "dep:rubato"]
 omnivoice-cuda = ["omnivoice", "talechime-omnivoice/cuda"]
 omnivoice-metal = ["omnivoice", "talechime-omnivoice/metal", "dep:candle-metal-kernels"]
-ort-coreml = ["dep:ort", "ort/coreml"]
-ort-cuda = ["dep:ort", "ort/cuda"]
-ort-dynamic = ["dep:ort", "ort/load-dynamic"]
-directml-probe = ["moss", "ort/directml", "dep:windows"]
 
 [dependencies]
 reqwest = { workspace = true, optional = true }
@@ -57,7 +53,6 @@ talechime-core = { path = "../talechime-core", version = "0.5.0" }
 talechime-protocol = { path = "../talechime-protocol", version = "0.3.1" }
 ort = { workspace = true, optional = true }
 sentencepiece-rs = { version = "0.2.2", optional = true }
-rand = { version = "0.9", optional = true }
 hound = { workspace = true, optional = true }
 rubato = { version = "0.16", optional = true }
 anyhow.workspace = true
@@ -68,27 +63,20 @@ dirs.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 
-[target.'cfg(windows)'.dependencies]
-windows = { workspace = true, optional = true, features = ["Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D12"] }
-
-[[example]]
-name = "moss_directml_probe"
-required-features = ["directml-probe"]
-
 [[example]]
 name = "moss"
-required-features = ["moss"]
+required-features = ["moss-nano-candle"]
 
 [[example]]
 name = "device_calibration"
-required-features = ["moss"]
+required-features = ["moss-nano-candle"]
 
 [[example]]
 name = "continuity"
-required-features = ["moss"]
+required-features = ["moss-nano-candle"]
 [[example]]
 name = "moss_probe"
-required-features = ["moss"]
+required-features = ["moss-nano-candle"]
 
 [[example]]
 name = "qwen"
@@ -131,10 +119,6 @@ required-features = ["asr"]
 [[example]]
 name = "continuation_probe"
 required-features = ["moss", "qwen", "omnivoice"]
-
-[[example]]
-name = "moss_continuation_codec"
-required-features = ["moss"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 candle-metal-kernels = { workspace = true, optional = true }

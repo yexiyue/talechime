@@ -1,6 +1,6 @@
 //! Export a reproducible same-voice comparison without an audio output device.
 use std::{path::PathBuf, time::Instant};
-use talechime_backends::moss::MossBackend;
+use talechime_backends::moss::nano::NanoBackend;
 use talechime_core::{
     audio::BoundarySilence,
     backend::{AudioChunk, Backend, Pcm},
@@ -26,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
     );
     let text=args.next().unwrap_or_else(||"=====\n夜色落在山间，星河缓缓流动。林舟打开远方寄来的信，看见一行熟悉的字。风吹过窗前的树叶，路灯照亮小巷，他决定明天清晨出发。".into());
     std::fs::create_dir_all(&output)?;
-    let backend = MossBackend::load(model.into()).await?;
+    let backend = NanoBackend::load_on(model.into(), talechime_protocol::Device::Cpu).await?;
     for continuous in [false, true] {
         let mut duration = talechime_core::text::duration::DurationEstimator::default();
         let start = Instant::now();
@@ -80,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
             let paragraph = backend.paragraph_end(&segment.text, &source[segment.end..]);
             let mut silence = BoundarySilence::default();
             let mut stream = backend
-                .stream_seeded(&segment.text, "Weiguo", Some(42))
+                .stream_seeded_with_context(&segment.text, "Weiguo", 42, None)
                 .await?;
             let mut ended = false;
             let mut seconds = 0.0;

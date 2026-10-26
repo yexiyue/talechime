@@ -79,10 +79,7 @@ impl Plan {
             Platform::Macos => ["cpu", "metal"],
         };
         for (backend, models) in [
-            (
-                "moss",
-                &["nano-candle", "nano", "local-1.7b", "realtime-1.7b"][..],
-            ),
+            ("moss", &["nano-candle", "realtime-1.7b"][..]),
             (
                 "qwen",
                 &[
@@ -101,7 +98,7 @@ impl Plan {
             for model in models {
                 for device in devices {
                     let unsupported = (device == "cpu"
-                        && ["local-1.7b", "realtime-1.7b", "2b-bf16"].contains(model))
+                        && ["realtime-1.7b", "2b-bf16"].contains(model))
                         || (device == "metal" && *model == "2b-bf16");
                     let (status, reason) = if unsupported {
                         (
@@ -216,20 +213,20 @@ mod tests {
     fn windows_matrix_keeps_all_combinations_without_claiming_readiness() -> anyhow::Result<()> {
         let plan = Plan::new(Platform::Windows, "fixture".into())?;
         plan.validate()?;
-        assert_eq!(plan.cases.len(), 29);
+        assert_eq!(plan.cases.len(), 25);
         assert_eq!(
             plan.cases
                 .iter()
                 .filter(|c| c.status == "not_applicable")
                 .count(),
-            3
+            2
         );
         assert_eq!(
             plan.cases
                 .iter()
                 .filter(|c| c.status == "unverified")
                 .count(),
-            26
+            23
         );
         let auxiliary = plan
             .cases
@@ -256,7 +253,6 @@ mod tests {
             "cosyvoice3-cuda",
             "indextts",
             "indextts-cuda-cudnn",
-            "ort-cuda",
         ];
         for feature in features {
             assert!(talechime_backends::Registry::feature_exists(feature));
@@ -267,7 +263,7 @@ mod tests {
     fn mac_plan_keeps_models_unverified_and_unknown_schema_is_rejected() -> anyhow::Result<()> {
         let mut plan = Plan::new(Platform::Macos, "mac-fixture".into())?;
         plan.validate()?;
-        assert_eq!(plan.cases.len(), 29);
+        assert_eq!(plan.cases.len(), 25);
         assert!(
             plan.cases
                 .iter()
@@ -302,21 +298,21 @@ mod tests {
         plan.apply_catalog(&catalog)?;
         let mut mac = Plan::new(Platform::Macos, "mac-fixture".into())?;
         mac.apply_catalog(&catalog)?;
-        assert_eq!(mac.cases.len(), 29);
+        assert_eq!(mac.cases.len(), 25);
         assert_eq!(
             mac.cases
                 .iter()
                 .filter(|c| c.status == "missing_feature")
                 .count(),
-            24
+            21
         );
-        assert_eq!(plan.cases.len(), 29);
+        assert_eq!(plan.cases.len(), 25);
         assert_eq!(
             plan.cases
                 .iter()
                 .filter(|c| c.status == "missing_feature")
                 .count(),
-            25
+            22
         );
         let auxiliary = plan
             .cases

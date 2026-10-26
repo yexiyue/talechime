@@ -61,7 +61,7 @@ impl VoiceStore {
                     "voice ID does not match cache filename"
                 );
                 anyhow::ensure!(
-                    voice.revision == super::resources::REVISION,
+                    voice.revision == super::nano::REVISION,
                     "voice {} requires re-import for this model revision",
                     voice.id
                 );
@@ -86,7 +86,7 @@ impl VoiceStore {
             &Voice {
                 id,
                 name,
-                revision: super::resources::REVISION.into(),
+                revision: super::nano::REVISION.into(),
                 codes,
             },
         )?;
@@ -104,7 +104,7 @@ impl VoiceStore {
         if id.starts_with("custom:") {
             let voice: Voice = serde_json::from_reader(File::open(self.path(id)?)?)?;
             anyhow::ensure!(
-                voice.id == id && voice.revision == super::resources::REVISION,
+                voice.id == id && voice.revision == super::nano::REVISION,
                 "voice cache identity/revision mismatch; re-import {id}"
             );
             validate_codes(&voice.codes)?;

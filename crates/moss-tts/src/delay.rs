@@ -89,7 +89,7 @@ impl DelayModel {
             request.continuation.is_none(),
             "VoiceDesign does not support continuation"
         );
-        // Reference delay patterns differ from Local; never reuse Local encoded rows.
+        // Voice-design references use the delay-pattern scheduler.
         anyhow::ensure!(
             request.reference.is_none(),
             "delay reference scheduling has not been verified"
@@ -100,7 +100,6 @@ impl DelayModel {
             &self.config,
             request.text,
             request.instruction,
-            None,
             None,
         )?;
         let mut hidden = self.backbone.forward(&self.embed(&prompt)?, cancelled)?;

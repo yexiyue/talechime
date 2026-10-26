@@ -19,51 +19,6 @@ struct Metric {
     elapsed_ms: u128,
     audio_seconds: f64,
 }
-#[cfg(feature = "moss")]
-enum SeededMoss {
-    Onnx(talechime_backends::moss::MossBackend),
-    #[cfg(feature = "moss-nano-candle")]
-    Candle(talechime_backends::moss::nano::NanoBackend),
-}
-#[cfg(feature = "moss")]
-impl SeededMoss {
-    fn backend(&self) -> &dyn Backend {
-        match self {
-            Self::Onnx(backend) => backend,
-            #[cfg(feature = "moss-nano-candle")]
-            Self::Candle(backend) => backend,
-        }
-    }
-}
-#[cfg(feature = "moss")]
-impl Backend for SeededMoss {
-    fn capabilities(&self) -> Capabilities {
-        self.backend().capabilities()
-    }
-    fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
-        match self {
-            Self::Onnx(backend) => Box::pin(backend.stream_seeded_with_context(
-                request.text,
-                request.voice,
-                Some(request.seed),
-                request.context,
-            )),
-            #[cfg(feature = "moss-nano-candle")]
-            Self::Candle(backend) => Box::pin(backend.stream_seeded_with_context(
-                request.text,
-                request.voice,
-                request.seed,
-                request.context,
-            )),
-        }
-    }
-    fn next_segment<'a>(&'a self, request: SegmentationRequest<'a>) -> Segmentation<'a> {
-        self.backend().next_segment(request)
-    }
-    fn paragraph_end(&self, text: &str, remaining: &str) -> bool {
-        self.backend().paragraph_end(text, remaining)
-    }
-}
 struct Observed {
     inner: Rc<dyn Backend>,
     metrics: Rc<RefCell<Vec<Metric>>>,
@@ -326,19 +281,10 @@ async fn run() -> anyhow::Result<()> {
     });
     let started = Instant::now();
     let backend: Rc<dyn Backend> = match args[1].as_str() {
-        #[cfg(feature = "moss")]
-        "moss" => {
-            talechime_backends::moss::resources::prepare(&directory, progress.clone()).await?;
-            Rc::new(SeededMoss::Onnx(
-                talechime_backends::moss::MossBackend::load_on(directory, device).await?,
-            ))
-        }
         #[cfg(feature = "moss-nano-candle")]
-        "moss-candle" => {
+        "moss" => {
             talechime_backends::moss::nano::prepare(&directory, progress.clone()).await?;
-            Rc::new(SeededMoss::Candle(
-                talechime_backends::moss::nano::NanoBackend::load_on(directory, device).await?,
-            ))
+            Rc::new(talechime_backends::moss::nano::NanoBackend::load_on(directory, device).await?)
         }
         #[cfg(feature = "qwen")]
         "qwen" | "qwen-base17" => {
@@ -375,13 +321,9 @@ async fn run() -> anyhow::Result<()> {
             };
             Rc::new(backend)
         }
-        #[cfg(feature = "moss-candle")]
-        "moss-local" | "moss-realtime" => {
-            let mode = if args[1] == "moss-local" {
-                talechime_backends::moss::candle::Mode::Local
-            } else {
-                talechime_backends::moss::candle::Mode::Realtime
-            };
+        #[cfg(feature = "moss")]
+        "moss-realtime" => {
+            let mode = talechime_backends::moss::candle::Mode::Realtime;
             talechime_backends::moss::candle::resources::prepare(
                 &directory,
                 mode,

@@ -42,7 +42,7 @@ pub mod qwen;
     feature = "cosyvoice3",
     feature = "indextts",
     feature = "omnivoice",
-    feature = "moss-candle"
+    feature = "moss"
 ))]
 pub mod reference;
 #[cfg(any(

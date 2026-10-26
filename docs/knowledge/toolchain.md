@@ -125,7 +125,7 @@ CLI 接管原 novel-tts 的包名，保持 0.3.0 版本线，后续发布需递�
 
 新模型实现在 novel-tts-backends；共享原生依赖版本位于 workspace.dependencies。novel-tts 默认 moss，CPU 默认仅 MOSS Nano；Kokoro 和 ZipVoice 已移除。阅读器保持协议依赖隔离。
 
-MOSS ONNX opset 17 原始验收使用 ort rc.10，升级到 rc.13 后需重测加载、生成与编解码。SentencePiece 使用纯 Rust sentencepiece-rs，参考 WAV 用 hound 解码和 rubato sinc 重采样，无 Python 运行依赖。资源固定 revision、尺寸和 SHA-256；音色缓存绑定模型版本。
+MOSS 两档均使用 Candle。SentencePiece 使用纯 Rust sentencepiece-rs，参考 WAV 用 hound 解码和 rubato sinc 重采样，再由 Candle encoder 编码。资源固定 revision、尺寸和 SHA-256；音色缓存绑定模型版本。
 
 VHS 验收不同 feature 的阅读器时，把构建出的 basic 二进制复制到独立目录后再录制。随后运行 workspace all-features 测试会重建 target/debug/trn；若继续录制这个共享路径，会误把完整听书版当成基础版。
 
@@ -133,7 +133,7 @@ VHS 验收不同 feature 的阅读器时，把构建出的 basic 二进制复制
 
 ### ORT 加速 feature 与模型校验
 
-固定 ort=2.0.0-rc.13，显式启用 api-21。coreml/ort-cuda 仅由听书后端/程序 feature 启用，阅读器始终不链接它们。ORT 自带下载清单仅提供 CUDA13 的原生分发，Mac 可静态链接 CoreML 框架；跨平台原生运行与 CUDA/cuDNN 依赖必须在对应平台验收。本机 Mac 启用 ort-cuda feature 会下载 CPU 原生包，因此 cargo check 不能证明 CUDA 可用。
+固定 ort=2.0.0-rc.13，显式启用 api-21。ASR SenseVoice 与 CosyVoice 前端/数值对照仍用 CPU ORT；MOSS 不依赖 ORT，原 MOSS provider feature 已删除。原生跨平台依赖仍须在对应平台验收。
 
 开发构建将 sha2 单包 opt-level=3，避免每次准备模型时对 GB 级权重执行慢速 debug 校验；保留每次大小与 SHA-256 校验。性能校准应使用 release 构建。多包 cargo build 配合 --bin trn 只构建名为 trn 的程序；更新 worker 必须单独 cargo build -p novel-tts，不能依据阅读器构建完成判断 worker 已更新。
 
@@ -146,7 +146,7 @@ VHS 验收不同 feature 的阅读器时，把构建出的 basic 二进制复制
 Qwen 推理源码位于 `crates/qwen3-tts`，来自 TrevorS/qwen3-tts-rs revision `711ceee07cad92673f86de8997bdf54c30caa49f`（MIT）。仅纳入推理库，移除上游 CLI、Hub 下载、Flash Attention 和自定义 PTX；下载/校验、校准、会话与播放仍由既有层管理。Candle core/nn/transformers 统一钉为 0.9.2。
 
 **正确做法**：
-- `qwen` 是 CPU 后端；`qwen-cuda` 同时启用 Qwen 和三套 Candle CUDA 算子；`metal` 启用 Candle core/nn 的 Metal 算子，仅在 macOS 构建。`ort-cuda` 独立用于 MOSS/对齐器，不保留旧 `cuda` 别名。
+- `qwen` 是 CPU 后端；`qwen-cuda` 同时启用 Qwen 和三套 Candle CUDA 算子；`metal` 启用 Candle core/nn 的 Metal 算子，仅在 macOS 构建。MOSS 使用 `moss-nano-candle-cuda` 或 `moss-candle-cuda`；不保留旧 `cuda` 别名。
 - GPU feature 由模型 manifest 直接启用，同一 Candle 0.11.0 同时服务 Qwen 和 Omni。Windows/Linux 选择 CUDA，macOS 选择 Metal；不再依靠 platform 辅助包过滤异平台 feature，因此不使用跨平台 all-features。CUDA 构建仍需 Toolkit，通用 CI/lefthook 使用 CPU feature 集合，平台 GPU CI 单独启用。
 - `device.rs` 统一设备创建；显式 CUDA 使用 `Device::new_cuda`，避免 `cuda_if_available` 静默返回 CPU。Registry 继续按后端提供编译/可用设备，对齐器使用自己的 ORT provider。
 - CUDA 编译需要 Toolkit/`nvcc`；驱动提供的 `nvidia-smi` 不代替 Toolkit。RTX 5070 的 CC 为 12.0，使用支持 Blackwell 的 Toolkit；无 GPU 构建机显式设置 `CUDA_COMPUTE_CAP`。
@@ -286,25 +286,12 @@ CFM 只缓存一个步数对应的时间嵌入表，每个 patch 的 cond projec
 
 
 
-### Windows AMD 核显候选（2026-10-07）
+### Windows AMD 核显实验（已退役）
 
-本机是 Ryzen 7 9700X，Windows 枚举到 AMD Radeon(TM) Graphics 和 RTX 5070。WMI 的 AdapterRAM 不是共享 GPU 内存上限，不能据其 512 MiB 值判断模型可用性。Candle 0.9.2 与 0.11.0 的 Device 均只有 CPU/CUDA/Metal；当前 Qwen、VoxCPM、OmniVoice 及 MOSS Candle 后端没有 AMD Windows 计算路径，不将“检测到核显”等同于模型可运行。
-
-候选方案是先验证现有 MOSS Nano ONNX 的 ORT DirectML 路径。rc.13 的 Windows 1.28 分发清单包含 CUDA13+DirectML 联合包，支持复用 ORT；实际 provider 和模型算子覆盖仍须验证。DirectML 需禁用 memory pattern 和 parallel execution；适配器编号来自 DXGI 枚举，不是 CUDA 编号，不写死 0 或 1。显式选择不得静默切换 NVIDIA/CPU；Auto 必须经过真实生成校准，核显不优先于已通过吞吐的 RTX。
-
-后续验收先测逐阶段图分区、CPU fallback、动态 KV 与 int8 算子覆盖、共享内存、首 PCM/RTF、取消和重复生成；只有完整生成有效 PCM 后才新增协议设备及阅读器选项。当前没有发布 DirectML 设备，也没有 AMD 性能验收结果。不要为此维护第二套 Candle 或将 ROCm/Metal 支持误认为 Windows 核显支持。
-
-来源：Candle 0.11.0 `candle-core/src/device.rs`；ORT 官方 https://onnxruntime.ai/docs/execution-providers/DirectML-ExecutionProvider.html；本地 ort-sys rc.13 `build/download/dist.tsv`。
-
-2026-10-07 进一步静态评估：本机 Windows build 28000，AMD 驱动 32.0.21042.62，Ryzen 9700X 官方标注 2 个图形核心。缓存中的 Nano 8 个 ONNX 图均为 opset17，权重为 FLOAT（编码器另有 INT64 常量），无 Quantize/MatMulInteger/MatMulNBits；不能把当前资源描述成 INT8。prefill/decode/codec 含动态序列长度。`moss/runtime.rs::run` 仅 CUDA 分支用 I/O Binding 把 present/cache 留在 GPU，其他设备走普通 Run；新增 DirectML 注册本身不能证明缓存不会逐步拷回 CPU，需要同时验证 DirectML 设备分配、I/O Binding 和图分区。现有专用线程符合 DirectML 同一 session 不并发 Run 的约束。
-
-Windows ML 新路线不是只有 DirectML：官方 MIGraphX 插件要求 RDNA3+、指定最低驱动，当前明确未支持 GenAI 场景；WebGPU 插件仍为实验。DirectML 继续支持，但新功能开发转向 WinML。对当前 Rust/ORT worker，DirectML 是范围最小的功能试验；WinML/MIGraphX 留作新硬件后续评估，不为这个基础核显迁移整个运行时。此次未启用 DirectML 或执行 AMD 推理，尚无性能/算子覆盖结论。
-
-后续原生试验已实现：后端可选 `directml-probe` example 使用 DXGI 显式选择、专用 session 线程、禁用 memory pattern/parallel execution，支持 host outputs 与持久缓存 I/O Binding。DML `MemoryInfo` 的 allocation id 0 是所选 session 内的设备分配标识，不是 DXGI adapter0；实际 adapter1 的缓存返回身份验证通过。显卡按 D3D12 能力筛选，AMD 独显与核显均可参与，不因本机核显结果排除 RX 系列。
-
-本机短语料 release 五轮平均 RTF：CPU .4224、AMD 核显 host 1.2694、device cache 1.1145。真实 provider profiles 显示 MatMul/Conv 在 DML 执行，但仍有 CPU shape/control 与 codec 算术节点；内置音色不触发参考 encoder，不能宣称克隆图覆盖。取消和再次生成通过。CPU/DML 输出时长及 ASR 有差异，人工音质、长播放与 AMD 独显实机未验收，未新增产品设备或 Auto 偏好。资源是 FLOAT opset17，当前不测试 INT8 算子。详见 `docs/records/moss/moss-directml-evaluation.md`。
-
-来源：AMD 9700X 规格 https://www.amd.com/en/products/processors/desktops/ryzen/9000-series/amd-ryzen-7-9700x.html；Windows ML provider 要求 https://learn.microsoft.com/en-us/windows/ai/new-windows-ml/supported-execution-providers；本地 ONNX 图静态检查。
+DirectML 从未成为产品 Device。实验中 iGPU 慢于 CPU，探针和 Nano 导出图路径于
+2026-10-26 移除。原实验结论保留在[验收记录](../records/moss/moss-directml-evaluation.md)，
+范围与取舍见[决策记录](../records/moss/2026-10-26-moss-tier-removal.md)。
+当前 MOSS 只保留 Nano Candle 与 Realtime；不据设备枚举宣称 AMD Windows GPU 可用。
 
 
 ### Candle 0.11.0 统一升级（2026-10-07）

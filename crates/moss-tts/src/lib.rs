@@ -4,8 +4,6 @@
 //! and configuration. Candidates remain outside the worker catalog until verified.
 /// Pinned resource manifests shared with host adapters.
 pub mod manifests {
-    /// Local model resources.
-    pub const LOCAL: &str = include_str!("../assets/local-1.7b.json");
     /// Realtime model resources.
     pub const REALTIME: &str = include_str!("../assets/realtime-1.7b.json");
     /// Shared audio codec resources.
@@ -17,7 +15,6 @@ pub mod manifests {
 pub mod codec;
 pub mod config;
 pub mod delay;
-pub mod local;
 pub mod nano;
 pub mod prompt;
 pub mod realtime;
@@ -26,7 +23,6 @@ mod transformer;
 
 /// Different scheduling architectures share the same tensor runtime and codec.
 pub enum Model {
-    Local(local::LocalModel),
     Realtime(realtime::RealtimeModel),
     VoiceDesign(delay::DelayModel),
 }
@@ -38,7 +34,6 @@ impl Model {
         dtype: DType,
     ) -> anyhow::Result<Self> {
         Ok(match mode {
-            "local-1.7b" => Self::Local(local::LocalModel::load(directory, device, dtype)?),
             "realtime-1.7b" => {
                 Self::Realtime(realtime::RealtimeModel::load(directory, device, dtype)?)
             }
@@ -50,7 +45,6 @@ impl Model {
     }
     pub fn codebooks(&self) -> usize {
         match self {
-            Self::Local(model) => model.config.n_vq,
             Self::Realtime(_) => 16,
             Self::VoiceDesign(model) => model.config.n_vq,
         }
@@ -62,7 +56,6 @@ impl Model {
         frame: impl FnMut(&[u32]) -> anyhow::Result<bool>,
     ) -> anyhow::Result<()> {
         match self {
-            Self::Local(model) => model.generate(request, cancelled, frame),
             Self::Realtime(model) => model.generate(request, cancelled, frame),
             Self::VoiceDesign(model) => model.generate(request, cancelled, frame),
         }
@@ -80,8 +73,6 @@ pub struct Generation<'a> {
     pub continuation: Option<Continuation<'a>>,
     pub text: &'a str,
     pub instruction: Option<&'a str>,
-    /// Official `build_user_message` language tag; only Local renders it.
-    pub language: Option<&'a str>,
     pub reference: Option<&'a [Vec<u32>]>,
     pub max_frames: usize,
     pub seed: u64,
@@ -92,7 +83,6 @@ impl<'a> Generation<'a> {
             text,
             continuation: None,
             instruction: None,
-            language: None,
             reference: None,
             max_frames: 750,
             seed: 42,

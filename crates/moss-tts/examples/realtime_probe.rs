@@ -6,7 +6,7 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().collect();
     anyhow::ensure!(
         args.len() >= 5,
-        "usage: local_probe MODEL CODEC OUTPUT.wav TEXT [cpu|cuda]"
+        "usage: realtime_probe MODEL CODEC OUTPUT.wav TEXT [cpu|cuda]"
     );
     let device = match args.get(5).map(String::as_str).unwrap_or("cpu") {
         "cpu" => Device::Cpu,
@@ -20,7 +20,7 @@ fn main() -> anyhow::Result<()> {
         DType::F16
     };
     let start = Instant::now();
-    let mode = std::env::var("MOSS_MODE").unwrap_or_else(|_| "local-1.7b".into());
+    let mode = std::env::var("MOSS_MODE").unwrap_or_else(|_| "realtime-1.7b".into());
     let model_dtype = match std::env::var("MOSS_DTYPE").as_deref() {
         Ok("bf16") => DType::BF16,
         Ok("f32") => DType::F32,

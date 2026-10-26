@@ -60,7 +60,7 @@ pub use talechime_core::verification::{
 /// Typed per-model generation parameter builders; available with each backend feature.
 #[cfg(feature = "indextts")]
 pub use talechime_backends::indextts::params::IndexTtsParams;
-#[cfg(feature = "moss-candle")]
+#[cfg(feature = "moss")]
 pub use talechime_backends::moss::candle::params::MossParams;
 #[cfg(feature = "omnivoice")]
 pub use talechime_backends::omnivoice::params::OmniVoiceParams;

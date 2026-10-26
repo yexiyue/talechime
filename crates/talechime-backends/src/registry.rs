@@ -139,8 +139,6 @@ impl Registry {
                 | "indextts"
                 | "indextts-cuda-cudnn"
                 | "indextts-metal"
-                | "ort-cuda"
-                | "ort-coreml"
         )
     }
 
@@ -153,7 +151,7 @@ impl Registry {
         let adapter = (registration.models)()
             .into_iter()
             .find(|adapter| adapter.id() == id)
-            .ok_or_else(|| anyhow::anyhow!("model {backend}/{id} is unavailable in this build"))?;
+            .ok_or_else(|| anyhow::anyhow!("unsupported or retired model {backend}/{id}; supported models in this build: {}", (registration.models)().iter().map(|model| model.id()).collect::<Vec<_>>().join(", ")))?;
         let mut capabilities = adapter.capabilities(&self.root)?;
         capabilities.model = Some(adapter.id().into());
         capabilities.compiled_devices = adapter.compiled_devices();
@@ -225,12 +223,17 @@ impl Registry {
             });
         }
         if let Ok(model) = self.resolve("moss", None) {
+            let device = if model.compiled_devices().contains(&Device::Cpu) {
+                Device::Cpu
+            } else {
+                Device::Auto
+            };
             let caps = model.capabilities;
             return Ok(Config {
                 backend: caps.backend,
                 model: caps.model,
                 voice: caps.default_voice,
-                tts_device: Device::Cpu,
+                tts_device: device,
                 ..Default::default()
             });
         }
@@ -274,23 +277,32 @@ mod tests {
         assert_eq!(std::fs::read_dir(root.path())?.count(), 0);
         Ok(())
     }
-    #[cfg(feature = "moss-nano-candle")]
+    #[cfg(feature = "moss")]
     #[test]
-    fn default_moss_is_candle_with_independent_onnx_identity() -> anyhow::Result<()> {
+    fn moss_catalog_contains_only_retained_models_and_rejects_retired_ids() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
-        let registry = Registry::new(Some(root.path().to_path_buf()))?;
-        assert_eq!(
-            registry.resolve("moss", None)?.revision(),
-            crate::moss::nano::REVISION
-        );
-        assert_eq!(
-            registry.resolve("moss", Some("nano"))?.revision(),
-            crate::moss::resources::REVISION
-        );
-        let config = registry.default_config()?;
-        if config.backend == "moss" {
-            assert_eq!(config.model.as_deref(), Some("nano-candle"));
+        let registry = Registry::new(Some(root.path().into()))?;
+        let models = registry
+            .catalog()?
+            .into_iter()
+            .filter(|caps| caps.backend == "moss")
+            .map(|caps| caps.model.unwrap())
+            .collect::<Vec<_>>();
+        let expected = if cfg!(feature = "moss-nano-candle") {
+            vec!["nano-candle", "realtime-1.7b"]
+        } else {
+            vec!["realtime-1.7b"]
+        };
+        assert_eq!(models, expected);
+        for retired in ["nano", "local-1b", "local-1.7b"] {
+            let error = match registry.resolve("moss", Some(retired)) {
+                Ok(_) => panic!("retired model accepted"),
+                Err(error) => error,
+            };
+            assert!(error.to_string().contains("unsupported or retired model"));
+            assert!(error.to_string().contains(retired));
         }
+        assert_eq!(std::fs::read_dir(root.path())?.count(), 0);
         Ok(())
     }
 }

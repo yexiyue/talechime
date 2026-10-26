@@ -5,10 +5,6 @@ Rust 性能开发入口、Windows 资源准备命令、任务复用及 Mac 接�
 
 ## 工具链
 
-Windows ONNX CUDA 可显式启用`ort-dynamic`，由`ORT_DYLIB_PATH`选择已验证的完整
-动态ORT分发；默认构建和标准CPU发行不变。主CLI构建命令、仅ONNX模型选择及
-真实静音播放验证见[Windows动态ORT主CLI](records/platform/windows-ort-cli-dynamic-2026-10-25.md)。
-
 Rust 2024，声明最低 Rust 1.89；当前 stable 验证不等于最低版本实机验收。Linux 安装 `libasound2-dev libssl-dev pkg-config`。CUDA 可选构建需要匹配 Toolkit；显式设备不可用时不能静默替代。ORT 固定 rc.13，Candle core/nn/transformers 固定 0.11.0；保持 Windows 动态 CRT。
 
 TTS 热路径修改先按 [性能优化方法](knowledge/tts-performance.md) 固定基线与输出门禁。
@@ -45,15 +41,15 @@ CLI 与 backends 使用同名开关，计算库只提供 `cuda` / `metal` 平台
 
 | 层次 | 开关 | 含义 |
 | --- | --- | --- |
-| 模型适配器 | `moss`、`qwen`、`voxcpm`、`omnivoice`、`cosyvoice3`、`indextts` | 启用对应模型；默认构建启用 `moss-nano-candle`；单独启用 `moss` 保留 ONNX；IndexTTS 仅源码构建 |
+| 模型适配器 | `moss`、`qwen`、`voxcpm`、`omnivoice`、`cosyvoice3`、`indextts` | 启用对应模型；默认构建启用 `moss-nano-candle`；单独启用 `moss` 仅提供 Realtime Candle；IndexTTS 仅源码构建 |
 | 回读模型组 | `asr` | Qwen3-ASR 0.6B Candle CPU + SenseVoiceSmall INT8 ORT CPU；合成策略仍默认关闭 |
-| Nano 默认实现 | `moss-nano-candle` | 在 MOSS 目录优先选择原生 Nano；ONNX 仍可显式选择 |
-| MOSS 实验实现 | `moss-candle` | 在 MOSS 目录增加 Local / Realtime；生产入口目前仅开放 GPU |
+| Nano 默认实现 | `moss-nano-candle` | 启用原生 Nano 并将它选为 MOSS 默认模型 |
+| MOSS Realtime | `moss-candle` | 启用 `moss`；Realtime 生产入口仅开放 GPU |
 | Candle 加速 | `qwen-cuda` / `qwen-metal`、`voxcpm-cuda` / `voxcpm-metal`、`omnivoice-cuda` / `omnivoice-metal`、`cosyvoice3-cuda` / `cosyvoice3-metal`、`moss-candle-cuda` / `moss-candle-metal`、`moss-nano-candle-cuda` / `moss-nano-candle-metal` | 启用对应适配器及计算库加速；按目标平台门控 |
 | IndexTTS 加速 | `indextts-metal`、`indextts-cuda-cudnn` | 启用 IndexTTS 及对应设备；CUDA 使用 cuDNN 卷积，需要原生工具链 |
 | Candle cuDNN 卷积 | `indextts-cuda-cudnn` | indextts 的 cuda 变体：卷积走 cuDNN，绕开 candle unfold 回退对跨步布局的限制（普通 `cuda` 行为不变） |
 
-| ORT provider | `ort-cuda`、`ort-coreml` | 为 Nano 提供 provider，不自动启用模型适配器 |
+MOSS 专属的 `ort-dynamic`、`ort-cuda`、`ort-coreml` 与 `directml-probe` 已删除；ASR 与 CosyVoice 的 CPU ORT 依赖保留。
 
 macOS 上所有 Candle 模型库（含 Qwen3-ASR）的 CPU 默认启用系统 Accelerate，
 通过 macOS target 依赖激活，无需额外 feature。Windows/Linux 不启用 Apple framework；
@@ -64,12 +60,12 @@ Qwen/CosyVoice 的历史验收见[性能记录](records/cosyvoice3/cosyvoice3-pe
 与 [Qwen 记录](records/qwen/qwen-tts-acceptance.md)；其他模型的编译/普通测试不等于真实音频验收。
 后续 macOS CPU 性能实验以 Accelerate 为默认基线；标准全模型发行配置此前已合并启用它。
 
-适配器层不提供通用 `metal` / `cuda` 开关；选择加速时必须明确模型。旧 `metal` / `coreml` 名称已移除，改用 `qwen-metal` / `ort-coreml`。加速开关包含对应模型开关，发行配置无需重复列出模型。`directml-probe` 仅是 backends 的实验 example，不暴露产品设备。
+适配器层不提供通用 `metal` / `cuda` 开关；选择加速时必须明确模型。例如使用 `qwen-metal` 或 `moss-nano-candle-metal`。加速开关包含对应模型开关，发行配置无需重复列出模型。
 
 Cargo 会统一同一计算库的 feature，可能使依赖同时拥有多个加速实现；各适配器仍按自己的开关报告设备，不能以底层 Candle 的统一 feature 推断模型可用性。MOSS 两种实现共用一个后端目录，`moss-candle` 依赖 `moss` 是当前设计；CPU Nano 与 GPU 实验模型的差异保留。
 
 MOSS Candle 的共用 codec 在注意力完成后才裁剪 K/V，避免提前丢失当前块早期 query
-需要的历史；Nano ONNX 使用自己的导出状态图，不复用 Candle 的缓存策略。各后端的
+需要的历史。各后端的
 流式边界、真实 codec 回放和未验收范围见[流式边界审查](records/tts-core/streaming-boundary-audit-2026-10-25.md)。
 
 ## Rust 库发布
@@ -181,11 +177,10 @@ ASR 普通测试使用确定性转写和合成夹具，不下载权重；原生�
 独立探针使用固定 manifest 校验模型，固定种子 42；真实模型、输入、对照 WAV 和报告都放忽略目录。
 
 ```sh
-cargo build --release --locked -p talechime-backends --features qwen-metal,omnivoice-metal --example continuation_probe --example moss_continuation_codec
-target/release/examples/continuation_probe moss NANO_DIR target/continuation-evidence/moss-on cpu Weiguo on CORPUS_TXT
+cargo build --release --locked -p talechime-backends --features qwen-metal,omnivoice-metal --example continuation_probe
+target/release/examples/continuation_probe moss RESOURCE_ROOT target/continuation-evidence/moss-on cpu Weiguo on CORPUS_TXT
 target/release/examples/continuation_probe qwen BASE06_DIR target/continuation-evidence/qwen-on metal custom:reader on CORPUS_TXT
 target/release/examples/continuation_probe omnivoice OMNI_DIR target/continuation-evidence/omni-on metal narrator on CORPUS_TXT
-target/release/examples/moss_continuation_codec NANO_DIR
 ```
 
 将 `on` 换成 `off` 并使用另一输出目录生成对照；Qwen Base 先通过 `voices import` 导入准确转写的参考音色。
@@ -194,11 +189,11 @@ target/release/examples/moss_continuation_codec NANO_DIR
 探针输出完整与逐段 float32 WAV、PCM16 回读 WAV、原文范围、首个 PCM 延迟、合成耗时及 RTF；
 用 `/usr/bin/time -l` 额外记录进程峰值内存。`readback-corpus.json` 可传入上面的 `asr_readback`。
 取消、错误不会自动退回独立生成；失败保留已产生的音频与错误摘要。
-Nano 数值探针对比分批前缀预热与整段预热后同一组新 codes 的 PCM，前缀音频本身不交付。
+Nano 接续前缀音频本身不交付。
 [本次结果与限制](records/continuation/continuation-small-models-2026-10-10.md)包含固定语料、权重 revision、回读及试听边界。
 
 其他模型复用上述探针：`qwen-base17` 的目录是 Base 1.7B revision 目录；`voxcpm` /
-`voxcpm-bf16` 使用对应 revision 目录；`moss-local` / `moss-realtime` 使用资源根目录，
+`voxcpm-bf16` 使用对应 revision 目录；`moss-realtime` 使用资源根目录，
 由各自固定 manifest 校验模型与 codec。构建探针时增加 `voxcpm-metal,moss-candle-metal`，
 CUDA 可替换为相应 `-cuda` feature 与 `cuda` 设备。使用 `on` / `off` 生成对照；
 BF16 仍只开放 CUDA。听感与真实平台数值验收单独记录，不由能力标记推断。

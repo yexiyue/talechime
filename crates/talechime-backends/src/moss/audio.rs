@@ -65,12 +65,45 @@ pub(super) fn read_wav(path: &Path) -> anyhow::Result<Vec<f32>> {
         channels[0].len() == channels[1].len(),
         "invalid resampled waveform"
     );
-    Ok(channels.into_iter().flatten().collect())
+    Ok(channels[0]
+        .iter()
+        .zip(&channels[1])
+        .flat_map(|(&left, &right)| [left, right])
+        .collect())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stereo_reference_remains_interleaved_for_native_encoder() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("stereo.wav");
+        let mut writer = hound::WavWriter::create(
+            &path,
+            hound::WavSpec {
+                channels: 2,
+                sample_rate: 48000,
+                bits_per_sample: 32,
+                sample_format: hound::SampleFormat::Float,
+            },
+        )
+        .unwrap();
+        for _ in 0..48000 {
+            writer.write_sample(0.25f32).unwrap();
+            writer.write_sample(-0.5f32).unwrap();
+        }
+        writer.finalize().unwrap();
+        let samples = read_wav(&path).unwrap();
+        assert_eq!(samples.len(), 96000);
+        assert!(
+            samples
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .all(|frame| *frame == [0.25, -0.5])
+        );
+    }
     #[test]
     fn wav_resampling_and_silence_validation() {
         let directory = tempfile::tempdir().unwrap();
@@ -90,7 +123,13 @@ mod tests {
         writer.finalize().unwrap();
         let waveform = read_wav(&path).unwrap();
         assert_eq!(waveform.len(), 96000);
-        assert_eq!(waveform[..48000], waveform[48000..]);
+        assert!(
+            waveform
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .all(|frame| frame[0] == frame[1])
+        );
         let mut writer = hound::WavWriter::create(&path, spec).unwrap();
         for _ in 0..16000 {
             writer.write_sample(0i16).unwrap();
