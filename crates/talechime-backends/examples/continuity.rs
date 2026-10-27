@@ -79,9 +79,7 @@ async fn main() -> anyhow::Result<()> {
             };
             let paragraph = backend.paragraph_end(&segment.text, &source[segment.end..]);
             let mut silence = BoundarySilence::default();
-            let mut stream = backend
-                .stream_seeded_with_context(&segment.text, "Weiguo", 42, None)
-                .await?;
+            let mut stream = backend.stream_seeded(&segment.text, "Weiguo", 42).await?;
             let mut ended = false;
             let mut seconds = 0.0;
             while let Some(chunk) = stream.recv().await {

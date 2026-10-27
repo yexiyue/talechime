@@ -14,7 +14,6 @@ pub fn directory(root: &Path) -> PathBuf {
 }
 pub fn capabilities(root: &Path) -> anyhow::Result<Capabilities> {
     let mut caps = super::nano_capabilities(&directory(root))?;
-    caps.continuation = true;
     caps.model = Some("nano-candle".into());
     caps.model_name = "MOSS Nano Candle".into();
     caps.compiled_devices = compiled_devices();
@@ -70,8 +69,7 @@ struct Request {
     #[cfg(feature = "performance-tools")]
     pub(crate) perf: crate::performance::OwnerContext,
     tokens: Vec<i32>,
-    none_tokens: Vec<i32>,
-    context: Option<talechime_core::SpeechContext>,
+
     voice: String,
     seed: u64,
     audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
@@ -181,40 +179,17 @@ impl NanoBackend {
         voice: &str,
         seed: u64,
     ) -> Result<talechime_core::backend::AudioStream, BackendError> {
-        self.stream_seeded_with_context(text, voice, seed, None)
-            .await
-    }
-    pub async fn stream_seeded_with_context(
-        &self,
-        text: &str,
-        voice: &str,
-        seed: u64,
-        context: Option<&talechime_core::SpeechContext>,
-    ) -> Result<talechime_core::backend::AudioStream, BackendError> {
         let text = super::text::normalize(text);
         if text.is_empty() || !self.capabilities().voices.iter().any(|v| v == voice) {
             return Err(BackendError::Unsupported(
                 "empty text or unknown Nano voice".into(),
             ));
         }
-        let effective = context.map_or_else(
-            || text.clone(),
-            |previous| super::text::normalize(previous.text()) + &text,
-        );
-        let none_tokens = self
-            .tokenizer
-            .as_ref()
-            .expect("loaded tokenizer")
-            .encode_to_ids("None")
-            .map_err(|e| BackendError::Synthesis(e.to_string()))?
-            .into_iter()
-            .map(|id| id as i32)
-            .collect();
         let tokens = self
             .tokenizer
             .as_ref()
             .expect("loaded tokenizer")
-            .encode_to_ids(&effective)
+            .encode_to_ids(&text)
             .map_err(|e| BackendError::Synthesis(e.to_string()))?
             .into_iter()
             .map(|id| id as i32)
@@ -227,8 +202,7 @@ impl NanoBackend {
                 #[cfg(feature = "performance-tools")]
                 perf: crate::performance::OwnerContext::capture(),
                 tokens,
-                none_tokens,
-                context: context.cloned(),
+
                 voice: voice.into(),
                 seed,
                 audio,
@@ -256,14 +230,9 @@ impl Backend for NanoBackend {
     }
     fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            request.reject_unsupported(self.caps.style, self.caps.continuation)?;
-            self.stream_seeded_with_context(
-                request.text,
-                request.voice,
-                request.seed,
-                request.context,
-            )
-            .await
+            request.reject_unsupported(self.caps.style)?;
+            self.stream_seeded(request.text, request.voice, request.seed)
+                .await
         })
     }
     fn paragraph_end(&self, segment: &str, remaining: &str) -> bool {
@@ -292,25 +261,8 @@ fn generate(
     let manifest: serde_json::Value =
         serde_json::from_str(include_str!("assets/nano-prompt.json"))?;
     let cancelled = || job.audio.is_closed() || owner_closed();
-    let codes: Vec<Vec<i32>> = if let Some(context) = &job.context {
-        anyhow::ensure!(
-            context.pcm().sample_rate == 48000 && context.pcm().channels == 2,
-            "Nano continuation requires original stereo 48 kHz PCM"
-        );
-        codec
-            .encode(&context.pcm().samples, 16, &cancelled)?
-            .into_iter()
-            .map(|frame| frame.into_iter().map(|id| id as i32).collect())
-            .collect()
-    } else {
-        super::voices::VoiceStore::new(&directory(root)).codes(&job.voice, &manifest)?
-    };
-    let flat = super::prompt::rows(
-        &manifest,
-        &job.tokens,
-        &codes,
-        job.context.as_ref().map(|_| job.none_tokens.as_slice()),
-    )?;
+    let codes = super::voices::VoiceStore::new(&directory(root)).codes(&job.voice, &manifest)?;
+    let flat = super::prompt::rows(&manifest, &job.tokens, &codes)?;
     let rows: Vec<Vec<u32>> = flat
         .as_chunks::<17>()
         .0
@@ -318,15 +270,6 @@ fn generate(
         .map(|row| row.iter().map(|id| *id as u32).collect())
         .collect();
     codec.reset_decoder();
-    if job.context.is_some() {
-        for batch in codes.chunks(3) {
-            let frames: Vec<Vec<u32>> = batch
-                .iter()
-                .map(|row| row.iter().map(|id| *id as u32).collect())
-                .collect();
-            let _prefix_pcm = codec.decode(&frames, &cancelled)?;
-        }
-    }
     let mut pending = Vec::new();
     let send = |codec: &mut talechime_moss_tts::codec::AudioCodec,
                 pending: &mut Vec<Vec<u32>>|
@@ -342,7 +285,7 @@ fn generate(
         pending.clear();
         Ok(())
     };
-    generate_nonempty(job.seed, |seed| {
+    let generate = |seed| {
         let mut generated = 0usize;
         model.generate(&rows, 375, seed, &cancelled, |frame| {
             generated += 1;
@@ -353,7 +296,8 @@ fn generate(
             Ok(())
         })?;
         Ok(generated)
-    })?;
+    };
+    generate_nonempty(job.seed, generate)?;
     if !pending.is_empty() {
         send(codec, &mut pending)?;
     }
@@ -562,7 +506,7 @@ mod tests {
             serde_json::from_str(include_str!("assets/nano-prompt.json"))?;
         let codes =
             super::super::voices::VoiceStore::new(&directory(&root)).codes("Yuewen", &manifest)?;
-        let flat = super::super::prompt::rows(&manifest, &tokens, &codes, None)?;
+        let flat = super::super::prompt::rows(&manifest, &tokens, &codes)?;
         let rows: Vec<Vec<u32>> = flat
             .as_chunks::<17>()
             .0
@@ -597,8 +541,7 @@ mod tests {
             #[cfg(feature = "performance-tools")]
             perf: crate::performance::OwnerContext::capture(),
             tokens,
-            none_tokens: vec![],
-            context: None,
+
             voice: "Yuewen".into(),
             seed,
             audio,

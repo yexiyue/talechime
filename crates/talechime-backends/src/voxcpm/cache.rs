@@ -31,35 +31,8 @@ impl Saved {
 }
 /// Keep at most one encoded voice resident on the model device.
 #[derive(Default)]
-pub(super) struct Cache(
-    Option<(Identity, Reference)>,
-    #[cfg(feature = "experimental-dual-reference")] Option<(String, Reference)>,
-);
+pub(super) struct Cache(Option<(Identity, Reference)>);
 impl Cache {
-    #[cfg(feature = "experimental-dual-reference")]
-    pub(super) fn isolated_reference(
-        &mut self,
-        model: &mut Model,
-        variant: super::models::Model,
-        directory: &Path,
-        voice: &str,
-        cancel: &impl Fn() -> bool,
-    ) -> anyhow::Result<Reference> {
-        let store = super::voice_store_for(directory, variant)?;
-        store.load(voice)?;
-        let wav = store.path(voice)?.join("reference.wav");
-        let key = format!("{:x}", Sha256::digest(std::fs::read(&wav)?));
-        if self.1.as_ref().is_none_or(|(saved, _)| saved != &key) {
-            let samples = crate::reference::load(&wav, 16000)?;
-            let reference = model.reference(&samples, None, cancel)?;
-            self.1 = Some((key, reference));
-        }
-        let reference = &self.1.as_ref().expect("encoded isolated reference").1;
-        Ok(Reference {
-            features: reference.features.clone(),
-            transcript: None,
-        })
-    }
     pub(super) fn reference(
         &mut self,
         model: &mut Model,

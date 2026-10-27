@@ -29,7 +29,7 @@ pub fn capabilities(directory: &Path) -> anyhow::Result<Capabilities> {
         style: true,
         compiled_devices: Vec::new(),
         pronunciation: false,
-        continuation: true,
+
         parameters: params::catalog(),
     };
     for voice in voice_store(directory)?.list()? {
@@ -117,8 +117,8 @@ impl Backend for OmniBackend {
     }
     fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            request.reject_unsupported(self.caps.style, self.caps.continuation)?;
-            let (text, voice, context) = (request.text, request.voice, request.context);
+            request.reject_unsupported(self.caps.style)?;
+            let (text, voice) = (request.text, request.voice);
             if !self.caps.voices.iter().any(|id| id == voice) || text.trim().is_empty() {
                 return Err(BackendError::Unsupported(
                     "unknown Omni voice or empty text".into(),
@@ -133,7 +133,6 @@ impl Backend for OmniBackend {
                     text,
                     voice,
                     audio,
-                    context,
                     request.seed,
                     resolved,
                     request

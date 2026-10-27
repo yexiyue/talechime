@@ -138,7 +138,7 @@ pub async fn synthesis(backend: &dyn Backend, voice: &str) -> anyhow::Result<Mea
                 text,
                 voice,
                 style: None,
-                context: None,
+
                 // Fixed seed keeps timing runs comparable across devices.
                 seed: 42,
                 params: &params,

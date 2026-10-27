@@ -42,7 +42,7 @@ pub fn capabilities_for(directory: &Path, model: models::Model) -> anyhow::Resul
         style: true,
         compiled_devices: Vec::new(),
         pronunciation: false,
-        continuation: true,
+
         parameters: params::catalog(),
     };
     for voice in voice_store_for(directory, model)?.list()? {
@@ -78,8 +78,6 @@ pub fn available_devices() -> Vec<Device> {
         .collect()
 }
 pub struct VoxBackend {
-    #[cfg(feature = "experimental-dual-reference")]
-    dual_reference: bool,
     requests: Option<mpsc::Sender<runtime::Request>>,
     thread: Option<std::thread::JoinHandle<()>>,
     caps: Capabilities,
@@ -111,8 +109,6 @@ impl VoxBackend {
             .map_err(|e| BackendError::Initialize(e.to_string()))?;
         // Own the thread before awaiting initialization: cancellation must join it.
         let backend = Self {
-            #[cfg(feature = "experimental-dual-reference")]
-            dual_reference: false,
             requests: Some(requests),
             thread: Some(thread),
             caps,
@@ -122,15 +118,6 @@ impl VoxBackend {
             .await
             .map_err(|_| BackendError::Initialize("Vox inference thread exited".into()))??;
         Ok(backend)
-    }
-    /// Opt into experimental isolated reference plus rolling continuation.
-    /// Requires an imported voice; not enabled by CLI or protocol defaults.
-    #[cfg(feature = "experimental-dual-reference")]
-    pub fn with_dual_reference(mut self) -> Self {
-        self.dual_reference = true;
-        self.cache_identity
-            .push_str("-experimental-dual-reference-v1");
-        self
     }
 }
 impl Drop for VoxBackend {
@@ -150,14 +137,8 @@ impl Backend for VoxBackend {
     }
     fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            request.reject_unsupported(self.caps.style, self.caps.continuation)?;
-            #[cfg(feature = "experimental-dual-reference")]
-            if self.dual_reference && !request.voice.starts_with("custom:") {
-                return Err(BackendError::Unsupported(
-                    "dual reference requires an imported voice".into(),
-                ));
-            }
-            let (text, voice, context) = (request.text, request.voice, request.context);
+            request.reject_unsupported(self.caps.style)?;
+            let (text, voice) = (request.text, request.voice);
             if !self.caps.voices.iter().any(|id| id == voice) || text.trim().is_empty() {
                 return Err(BackendError::Unsupported(
                     "unknown Vox voice or empty text".into(),
@@ -172,9 +153,7 @@ impl Backend for VoxBackend {
                 .send(runtime::Request {
                     #[cfg(feature = "performance-tools")]
                     perf: crate::performance::OwnerContext::capture(),
-                    #[cfg(feature = "experimental-dual-reference")]
-                    dual_reference: self.dual_reference,
-                    context: context.cloned(),
+
                     text,
                     voice: voice.into(),
                     options: resolved,
@@ -201,11 +180,7 @@ impl Backend for VoxBackend {
 /// description prefix on the target text; parentheses inside the description
 /// would blur the prefix boundary and are rejected explicitly.
 ///
-/// Combined with execution-local continuation the prefix sits between the
-/// previous transcript and the target text; a real-model trial (see
-/// docs/records/tts-core/style-exposure-2026-10-10.md) truncated the continued
-/// segment there. The combination stays enabled for listening acceptance;
-/// a styled segment may therefore finish audibly short.
+/// The selected fixed reference and its transcript stay unchanged.
 fn styled_text(style: Option<&str>, text: &str) -> Result<String, BackendError> {
     let style = style
         .filter(|value| !value.trim().is_empty())
@@ -226,11 +201,12 @@ fn styled_text(style: Option<&str>, text: &str) -> Result<String, BackendError> 
 mod tests {
     use super::*;
     #[test]
-    fn both_weight_variants_support_continuation_without_preparing_assets() -> anyhow::Result<()> {
+    fn both_weight_variants_support_fixed_reference_without_preparing_assets() -> anyhow::Result<()>
+    {
         let root = tempfile::tempdir()?;
         for model in [models::Model::Q8, models::Model::OriginalBf16] {
             let caps = capabilities_for(&model.directory(root.path()), model)?;
-            assert!(caps.continuation);
+            assert!(caps.cloning);
             assert!(caps.style);
             assert_eq!(caps.default_voice, "narrator");
         }

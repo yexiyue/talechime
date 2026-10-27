@@ -36,7 +36,7 @@ completion remain adapter responsibilities. Only EOS with valid PCM can finish
 a segment.
 
 A reference without transcript uses the reference prefix; one with transcript
-uses continuation. Voice design uses the same model with `(description)text`
+uses the same fixed recording and transcript for each request; generated output never replaces it. Voice design uses the same model with `(description)text`
 to produce a short reference, then stores the WAV and its text for cloning.
 Legacy `features.json` is never consumed. The adapter rebuilds
 `candle-reference-v1.json` from the retained WAV and verifies implementation,

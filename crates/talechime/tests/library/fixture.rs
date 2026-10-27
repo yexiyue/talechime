@@ -47,13 +47,13 @@ impl Backend for Fixture {
             style: true,
             cloning: false,
             pronunciation: false,
-            continuation: false,
+
             parameters: vec![],
         }
     }
     fn stream<'a>(&'a self, request: SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            request.reject_unsupported(true, false)?;
+            request.reject_unsupported(true)?;
             let (text, voice, style) = (request.text, request.voice, request.style);
             self.calls
                 .borrow_mut()

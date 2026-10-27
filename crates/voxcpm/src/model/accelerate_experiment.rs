@@ -363,7 +363,7 @@ fn capture(
             GenerateRequest {
                 text: &segment.text,
                 reference: Some(&reference),
-                identity: None,
+
                 options: &options,
             },
             &|| false,

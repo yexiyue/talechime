@@ -130,17 +130,12 @@ ListeningSession 是执行 owner，Listening 是该 owner 与库自建事件接�
 
 计划执行与直接 PCM 流共用 producer。开启回读时，producer 有界收集实际 TTS 片段，经 Verifier 主识别/跨家族复核后先发布报告，再发布接受的 PCM；只对共同确认异常重合成同一片段。报告-only 也收集片段，但不阻止内容异常的交付。AfterChapterReady 在这一阶段之后暂存，全章成功才进入播放。原生 ASR 各有请求容量为 1 的 owner，取消会终止请求并在显式关闭时等待在途工作。报告与 PCM 保持原有有界背压，不在事件转发层另建后台队列。契约及模型组见[回读校验](readback.md)。
 
-## 执行级接续参考
+## 固定参考合成
 
-producer 在当前执行内保存最多一个 `SpeechContext`（不可变共享 PCM 与生成文字），
-与全局音色缓存和模型张量隔离。支持的 Backend 通过 `Backend::stream` 的 `SegmentRequest`
-接收可选前段、逐段 seed 与已校验的生成参数。链何时因原文结构清空由宿主决定：
-协议 `PlanRequest.continuation_boundary`（v7 加法字段）取 `paragraph`（空行/装饰线/标题，
-缺省旧行为）、`scene`（仅标题与装饰线，空段落间隔保持接续）或 `none`；自链累积的音色漂移
-由 `continuation_span`（秒，缺省 45）封顶：预算耗尽后在下一个段落间隔重锚静态参考，
-无间隔流在两倍预算处中途重锚。CLI 另有 `--continuation-boundary` 与 `--continuation-span`
-覆盖 plan 文件取值。交付路径在同一次执行内做有界响度对齐，
-消除段间采样造成的能量台阶；参考与限额语义见[库说明](library.md#段落内接续)。
+每个 SegmentRequest 只携带当前文字、音色、风格、seed 和参数；producer 不保留生成 PCM 作为后续条件。
+各后端复用所选音色的固定 codes/features/prompt，不从上一段重新提取音色。语义组段和单次生成内部的
+KV、卷积及 codec 状态保持模型原生语义。取消、背压、原文范围和实际播放检查点不变。
+策略表与官方依据见[固定参考合成](reference-synthesis.md)。交付侧仍仅做原有边界静音裁剪和有界响度对齐，不补静音。
 
 ### 生成参数与 seed
 
@@ -150,13 +145,10 @@ producer 在当前执行内保存最多一个 `SpeechContext`（不可变共享 
 `Pinned(u64)` 按 hash(seed, 合成序号, attempt) 派生以复现。会话 `speed` 在模型声明原生
 `speed` 参数且宿主未显式设置时自动路由到生成期无损变速，sink 置 1.0；运行期改速按比例
 换算不叠加。逐段 style 由 `SpeechSpan.style` 携带：Qwen 1.7B CustomVoice（指令）、
-VoxCPM2（上游 `(description)text` 前缀，与接续组合待验收、当前显式拒绝）、OmniVoice
+VoxCPM2（上游 `(description)text` 前缀）、OmniVoice
 （instruct 词表校验）。MOSS 两档均不声明风格、instruction 或 language。
 各目录与真模型结论见[参数记录](records/tts-core/params-exposure-2026-10-10.md)与
 [风格记录](records/tts-core/style-exposure-2026-10-10.md)。
-候选在接收原始流时有界复制，播放无需等待候选完成；End 后且交付策略允许时才替换参考。
-门禁拒绝的尝试不进入候选，重试使用原快照。参考限额与重置语义见[库说明](library.md#段落内接续)。
-
 ### 音色资产层
 
 音色库（`~/.talechime/voices/`，`VoiceLibrary`）是设计/导入音色的唯一事实源：每条音色
@@ -180,15 +172,13 @@ VoxCPM2（上游 `(description)text` 前缀，与接续组合待验收、当前�
 MOSS 只保留 `nano-candle` 与 `realtime-1.7b`。未指定模型时，能力目录、设备选择、
 准备路径与校准 revision 解析到 `nano-candle`（已编译时）；只启用 `moss` 的构建默认 Realtime。
 旧 `nano`、`local-1b`、`local-1.7b` ID 加载时明确报错，不重写配置或迁移用户资源。
-Nano 用前段转写与当前文字建立 continuation prompt，把音频 codes 放入 assistant 前缀；
-codec 先消费前缀建立状态，丢弃前缀 PCM 后只输出新帧。Realtime 按官方 make_user_prompt
-把前段文字与音频按 12 token 延迟打包为前一轮上下文，并将同一音频用作滚动音色参考。
+Nano 使用官方 voice-clone user reference 模板，Realtime 使用所选固定参考；两者每请求均独立生成。
 Nano 音色使用其独立 revision 目录，由 Candle encoder 编码；Realtime 音色独立保存。
 VoiceDesign 仅作为辅助参考生成器，不进入产品模型目录。移除依据见[决策记录](records/moss/2026-10-26-moss-tier-removal.md)。
 Qwen `1.7b-voicedesign` 遵循同一规则：`voices design` 按需准备并产出参考录音，
 能力目录不登记该模型，选它做朗读明确报错；产物进音色库而非任何模型目录。
 Qwen 0.6B / 1.7B Base 复用 Base ICL 编码，OmniVoice 复用 VoiceClonePrompt，VoxCPM2
-使用前段转写与 16 kHz 音频建立 continuation reference；临时 prompt 均只存在原生 owner 的内存中。
+使用固定原始录音与准确转写建立单参考；参考张量均由原生 owner 持有。
 
 ## 适配器登记与基础设施边界
 

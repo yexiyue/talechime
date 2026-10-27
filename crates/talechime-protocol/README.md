@@ -53,9 +53,9 @@ TextRange 是同一份完整正文的 UTF-8 左闭右开字节范围。正文不
 
 普通测试不下载模型。数值、听感和平台实时性由独立真实模型验收证明。
 
-`PlanRequest.continuation` 默认 `true`；设为 `false` 可关闭本执行的段落内前段文字/音频条件。
-`Capabilities.continuation` 表示所选模型是否实现这一能力，缺省为 `false`。协议仍为 v7。
-参考不跨执行、seek、恢复或章节保存；具体边界与限额见[库说明](../../docs/library.md#段落内接续)。
+每段复用所选音色的固定参考，不提供滚动参考或双参考能力。协议仍为 v7；
+已移除的旧滚动配置字段将由 `PlanRequest` 的未知字段校验拒绝。
+固定参考和原生流式边界见[库说明](../../docs/library.md#固定参考合成)。
 
 `Capabilities.parameters` 是所选模型声明的生成参数目录（名称、类型/范围、默认值与描述）；
 `PlanRequest.params` 按名称携带本次执行的设定值，`PlanRequest.seed` 可选地钉住采样以便

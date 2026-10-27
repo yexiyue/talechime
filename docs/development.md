@@ -13,7 +13,7 @@ TTS 热路径修改先按 [性能优化方法](knowledge/tts-performance.md) 固
 当前性能主线见[双设备优化 #5](https://github.com/yexiyue/talechime/issues/5)：Windows
 RTX 5070 的 CUDA，与 MacBook Pro M4 Pro 的 Metal / CPU Accelerate 分别实机验收。
 性能报告在结果表旁注明设备和执行路径，不把 Accelerate feature 启用当作逐算子 AMX 验证；
-固定音色与可选 VoxCPM2 双参考见[低优先级规划 #4](https://github.com/yexiyue/talechime/issues/4)。
+各后端固定参考策略与上游依据见[固定参考合成](reference-synthesis.md)。
 Candle core/nn/transformers/metal-kernels 的 fork 来源统一在根 `[patch.crates-io]`，
 CUDA/Metal feature 由各模型 manifest 直接启用，Metal 探测保留在 backends 内部；详见
 [来源与发布策略](legal/candle/SOURCE.md)。组合启用模型时须检查 feature 合并后的依赖与测试。
@@ -83,9 +83,8 @@ MOSS Candle 的共用 codec 在注意力完成后才裁剪 K/V，避免提前丢
 
 `talechime-libs-v*` 标签触发独立库发布流程，不触发应用安装包构建。流程先完成 CPU
 模型组合的测试、Clippy、格式、rustdoc 和纯库检查，再按依赖顺序执行 `cargo publish`。
-协议 v7 使用 `talechime-protocol 0.3.1`（0.3.0 新增加法字段 `PlanRequest.continuation_boundary`
-与 `continuation_span`，缺省值保持 0.2.0 行为；旧宿主发出的计划仍被接受），不兼容已发布
-的 0.1.0 / 协议 v5。
+协议仍为 v7；当前源码已移除滚动参考字段，旧宿主须更新请求，不提供旧策略兼容层。
+已发布包的历史行为以对应版本为准；本轮源码修改尚未发布。
 
 库发布批次 `talechime-libs-v0.5.0` 包含 facade/core 0.5.0、backends 0.3.0、
 protocol 0.3.1、Qwen3-TTS 0.4.0、Qwen3-ASR 0.1.1，以及五个首次使用品牌包名的
@@ -183,33 +182,13 @@ cargo clippy --locked -p talechime --no-default-features --all-targets -- -D war
 
 ASR 普通测试使用确定性转写和合成夹具，不下载权重；原生前端用固定整数合成波形对照独立 kaldi-native-fbank 数值。手工真实模型探针：`cargo run --release --locked -p talechime-backends --features asr --example asr_readback -- QWEN_DIR SENSEVOICE_DIR CORPUS_JSON OUTPUT_JSON`。语料、模型、结果只放 Git 忽略目录；验证范围见[原生验收](records/asr/asr-readback-mainline-2026-10-09.md)。
 
-## 段落内接续探针
+## 固定参考验证
 
-独立探针使用固定 manifest 校验模型，固定种子 42；真实模型、输入、对照 WAV 和报告都放忽略目录。
-
-```sh
-cargo build --release --locked -p talechime-backends --features qwen-metal,omnivoice-metal --example continuation_probe
-target/release/examples/continuation_probe moss RESOURCE_ROOT target/continuation-evidence/moss-on cpu Weiguo on CORPUS_TXT
-target/release/examples/continuation_probe qwen BASE06_DIR target/continuation-evidence/qwen-on metal custom:reader on CORPUS_TXT
-target/release/examples/continuation_probe omnivoice OMNI_DIR target/continuation-evidence/omni-on metal narrator on CORPUS_TXT
-```
-
-将 `on` 换成 `off` 并使用另一输出目录生成对照；Qwen Base 先通过 `voices import` 导入准确转写的参考音色。
-探针支持尾部旗标：`--seed n` 钉住采样（默认 42）、`--param name=value`（可重复，按当前模型
-目录校验）、`--style 描述`（逐段风格）。summary.json 记录实际 seed、参数与 style。
-探针输出完整与逐段 float32 WAV、PCM16 回读 WAV、原文范围、首个 PCM 延迟、合成耗时及 RTF；
-用 `/usr/bin/time -l` 额外记录进程峰值内存。`readback-corpus.json` 可传入上面的 `asr_readback`。
-取消、错误不会自动退回独立生成；失败保留已产生的音频与错误摘要。
-Nano 接续前缀音频本身不交付。
-[本次结果与限制](records/continuation/continuation-small-models-2026-10-10.md)包含固定语料、权重 revision、回读及试听边界。
-
-其他模型复用上述探针：`qwen-base17` 的目录是 Base 1.7B revision 目录；`voxcpm` /
-`voxcpm-bf16` 使用对应 revision 目录；`moss-realtime` 使用资源根目录，
-由各自固定 manifest 校验模型与 codec。构建探针时增加 `voxcpm-metal,moss-candle-metal`，
-CUDA 可替换为相应 `-cuda` feature 与 `cuda` 设备。使用 `on` / `off` 生成对照；
-BF16 仍只开放 CUDA。听感与真实平台数值验收单独记录，不由能力标记推断。
-
-CosyVoice3 的本地转换、资源校验、音色导入与端到端探针见 [CosyVoice3 后端](cosyvoice3.md)。
+滚动/双参考对照探针及 narration runner 已退役。使用公共 Engine PCM API 或现有 `performance_probe`
+验证固定参考合成；回读使用 `asr_readback`，输入及真实音频放忽略目录。
+真实检查覆盖固定参考冷/热缓存、音色切换、取消后复用及内容完整性，单次生成的流式状态不变。
+历史听感记录只作为退役策略的证据，不再提供可运行的旧命令。各模型策略见[固定参考合成](reference-synthesis.md)。
+CosyVoice3 资源准备与检查见[后端说明](cosyvoice3.md)。
 
 ## Mac 性能工具契约
 

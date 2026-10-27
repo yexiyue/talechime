@@ -649,9 +649,7 @@ impl Worker {
                             resume_byte: input.resume_byte,
                             restore_checkpoint: input.restore_checkpoint,
                             verification: input.verification.clone(),
-                            continuation: input.continuation,
-                            continuation_boundary: input.continuation_boundary,
-                            continuation_span: input.continuation_span,
+
                             cache,
                             params,
                             seed,
@@ -929,9 +927,7 @@ mod plan_tests {
             playback,
             resume_byte: Some(0),
             restore_checkpoint: false,
-            continuation: true,
-            continuation_boundary: Default::default(),
-            continuation_span: None,
+
             params: Default::default(),
             seed: None,
             verification: Default::default(),

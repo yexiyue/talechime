@@ -320,7 +320,7 @@ impl Engine {
         self.synthesize_pcm_with_options(text, voice, style, max_bytes, Default::default())
             .await
     }
-    /// Collect an isolated execution with explicit continuation and verification.
+    /// Collect an isolated execution with explicit verification.
     pub async fn synthesize_pcm_with_options(
         &self,
         text: impl Into<Arc<str>>,
@@ -508,7 +508,7 @@ mod tests {
                 style: false,
                 cloning: true,
                 pronunciation: false,
-                continuation: false,
+
                 compiled_devices: vec![Device::Cpu],
                 parameters: vec![],
             }

@@ -208,7 +208,7 @@ mod tests {
             compiled_devices: Vec::new(),
             cloning: false,
             pronunciation: false,
-            continuation: false,
+
             parameters: Vec::new(),
         }
     }
@@ -434,7 +434,7 @@ mod tests {
             compiled_devices: Vec::new(),
             cloning: false,
             pronunciation: false,
-            continuation: false,
+
             parameters: Vec::new(),
         };
         let patch = ConfigPatch {

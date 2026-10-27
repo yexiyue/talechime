@@ -18,7 +18,7 @@ The suite SHALL enumerate all current public TTS variants of MOSS, Qwen, VoxCPM,
 - **THEN** that row records the actual failure and evidence, and any CPU measurement is a separate row rather than a GPU success
 
 ### Requirement: Fixed attributable measurement cases
-Every case SHALL record source/binary/model/manifest/reference/corpus identities, actual device and provider, feature set, precision, threads, seed, effective parameters and generation mode. Short and multi-segment workloads SHALL be included. Supported full, streaming and continuation modes MUST be distinguished without adding unsupported product modes.
+Every case SHALL record source/binary/model/manifest/reference/corpus identities, actual device and provider, feature set, precision, threads, seed, effective parameters and generation mode. Short and multi-segment workloads SHALL be included. Supported full and streaming modes MUST be distinguished without adding unsupported product modes. Synthesis SHALL use the selected fixed reference or official preset; generated PCM MUST NOT become a rolling reference.
 
 #### Scenario: Different voice capabilities
 - **WHEN** Base cloning, CustomVoice or VoiceDesign are benchmarked

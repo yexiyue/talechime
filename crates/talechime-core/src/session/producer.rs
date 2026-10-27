@@ -51,17 +51,9 @@ pub(super) fn spawn(
             let budget = Budget::default();
             let mut index = 0;
             let mut call = 0u64;
-            let enabled = input.continuation && backend.capabilities().continuation;
-            let boundary = input.continuation_boundary;
-            let chain_span = input
-                .continuation_span
-                .unwrap_or(crate::continuation::DEFAULT_CHAIN_SPAN_SECONDS);
             let mut leveling = crate::audio::leveling::LoudnessAligner::default();
-            let mut context = None;
-            let mut chained = 0f64;
             let mut duration = crate::text::duration::DurationEstimator::default();
             let mut identity: Option<(String, Option<String>)> = None;
-            let mut previous_end = byte;
             while let Some(span) = input.next(index).await {
                 index += 1;
                 let assigned = span.range();
@@ -69,10 +61,6 @@ pub(super) fn spawn(
                     continue;
                 }
                 let current = (span.voice().to_owned(), span.style().map(str::to_owned));
-                if identity.as_ref() != Some(&current) {
-                    context = None;
-                    chained = 0.0;
-                }
                 if identity
                     .as_ref()
                     .is_none_or(|(voice, _)| voice != span.voice())
@@ -93,16 +81,6 @@ pub(super) fn spawn(
                         .await?
                     else {
                         send_skipped(&tx, source_text, at, assigned.end).await?;
-                        if crate::continuation::hard_boundary(
-                            source_text,
-                            previous_end,
-                            assigned.end,
-                            boundary,
-                        ) {
-                            context = None;
-                            chained = 0.0;
-                        }
-                        previous_end = assigned.end;
                         break;
                     };
                     let relative = TextRange {
@@ -127,75 +105,23 @@ pub(super) fn spawn(
                     };
                     let paragraph_end =
                         backend.paragraph_end(&segment.text, &source_text[segment.end..]);
-                    let hard = crate::continuation::hard_boundary(
-                        source_text,
-                        range.start,
-                        range.end,
-                        boundary,
-                    );
-                    // A spent chain budget re-anchors on the static voice at
-                    // the next paragraph gap, or mid-stream at twice the span.
-                    let spanned = context.is_some()
-                        && crate::continuation::span_reset(
-                            chained,
-                            chain_span,
-                            crate::continuation::hard_boundary(
-                                source_text,
-                                previous_end,
-                                range.start,
-                                talechime_protocol::ContinuationBoundary::Paragraph,
-                            ),
-                        );
-                    if spanned {
-                        eprintln!("continuation span reset after {chained:.1}s chained");
-                    }
-                    if hard
-                        || spanned
-                        || crate::continuation::hard_boundary(
-                            source_text,
-                            previous_end,
-                            range.start,
-                            boundary,
-                        )
-                    {
-                        context = None;
-                    }
-                    let chained_before = context.is_some();
-                    let mut candidate = crate::continuation::Candidate::new(
-                        context.as_ref(),
-                        enabled && !hard,
-                        &segment.text,
-                    );
                     let mut silence = crate::audio::BoundarySilence::default();
-                    let (mut audio, trusted) = if input.verification.policy
+                    let mut audio = if input.verification.policy
                         == crate::verification::VerificationPolicy::Off
                     {
                         let seed = input.seed.resolve(call, 0);
                         call += 1;
-                        (
-                            backend
-                                .stream(crate::backend::SegmentRequest {
-                                    text: &segment.text,
-                                    voice: span.voice(),
-                                    style: span.style(),
-                                    context: context.as_ref(),
-                                    seed,
-                                    params: &input.params,
-                                })
-                                .await?,
-                            true,
-                        )
+                        backend
+                            .stream(crate::backend::SegmentRequest {
+                                text: &segment.text,
+                                voice: span.voice(),
+                                style: span.style(),
+                                seed,
+                                params: &input.params,
+                            })
+                            .await?
                     } else {
-                        verified_audio(
-                            backend,
-                            input,
-                            &segment,
-                            &span,
-                            context.as_ref(),
-                            &mut call,
-                            &tx,
-                        )
-                        .await?
+                        verified_audio(backend, input, &segment, &span, &mut call, &tx).await?
                     };
                     tx.send(Ok(Item::Start(range)))
                         .await
@@ -206,7 +132,6 @@ pub(super) fn spawn(
                         match chunk? {
                             crate::backend::AudioChunk::Pcm(pcm) => {
                                 let (duration, _) = Budget::validate(&pcm)?;
-                                candidate.push(&pcm)?;
                                 generated_seconds += duration as f64 / 1000.0;
                                 let Some(pcm) = silence.push(pcm)? else {
                                     continue;
@@ -238,18 +163,6 @@ pub(super) fn spawn(
                     if generated_seconds == 0.0 {
                         return Err(SessionError::Invalid("empty synthesis segment".into()));
                     }
-                    context = if trusted {
-                        candidate.finish(&segment.text)
-                    } else {
-                        None
-                    };
-                    if !chained_before || context.is_none() {
-                        chained = 0.0;
-                    }
-                    if context.is_some() {
-                        chained += generated_seconds;
-                    }
-                    previous_end = range.end;
                     duration.observe(&segment.text, generated_seconds);
                     tx.send(Ok(Item::End(range)))
                         .await
@@ -283,10 +196,10 @@ async fn verified_audio(
     input: &PlanInput,
     segment: &crate::text::TextSegment,
     span: &SpeechSpan,
-    context: Option<&crate::SpeechContext>,
+
     call: &mut u64,
     tx: &mpsc::Sender<Result<Item, SessionError>>,
-) -> Result<(crate::backend::AudioStream, bool), SessionError> {
+) -> Result<crate::backend::AudioStream, SessionError> {
     use crate::verification::*;
     let verifier = input
         .verifier
@@ -296,7 +209,7 @@ async fn verified_audio(
     let source = input.plan.borrow().source().clone();
     let options = &input.verification;
     let mut attempt = 0;
-    let (pcm, trusted) = loop {
+    let pcm = loop {
         // Retries resolve a fresh seed so gated resynthesis can escape a
         // sampling-induced misreading instead of repeating it verbatim.
         let stream = backend
@@ -304,7 +217,6 @@ async fn verified_audio(
                 text: &segment.text,
                 voice: span.voice(),
                 style: span.style(),
-                context,
                 seed: input.seed.resolve(*call, attempt),
                 params: &input.params,
             })
@@ -334,17 +246,17 @@ async fn verified_audio(
             .await
             .map_err(|_| SessionError::Disconnected)?;
         match options.policy {
-            VerificationPolicy::ReportOnly => break (pcm, verdict == VerificationVerdict::Passed),
+            VerificationPolicy::ReportOnly => break pcm,
             VerificationPolicy::Gate {
                 max_retries,
                 strict_suspect,
             } => match verdict {
-                VerificationVerdict::Passed => break (pcm, true),
-                VerificationVerdict::Suspect if !strict_suspect => break (pcm, false),
+                VerificationVerdict::Passed => break pcm,
+                VerificationVerdict::Suspect if !strict_suspect => break pcm,
                 VerificationVerdict::ConfirmedError if attempt < max_retries => attempt += 1,
                 _ => return Err(VerificationError::Rejected { verdict, attempt }.into()),
             },
-            VerificationPolicy::Off => break (pcm, true),
+            VerificationPolicy::Off => break pcm,
         }
     };
     *call += 1;
@@ -356,7 +268,7 @@ async fn verified_audio(
     sender
         .try_send(Ok(crate::backend::AudioChunk::End))
         .map_err(|_| SessionError::Disconnected)?;
-    Ok((receiver, trusted))
+    Ok(receiver)
 }
 
 async fn collect_segment(

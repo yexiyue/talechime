@@ -272,10 +272,7 @@ impl SessionManager {
                 self.verifier.as_ref().map(|verifier| verifier.scoped())
             };
         input.verification = options.verification.clone();
-        crate::continuation::validate_span(options.continuation_span)?;
-        input.continuation = options.continuation;
-        input.continuation_boundary = options.continuation_boundary;
-        input.continuation_span = options.continuation_span;
+
         input.params = params;
         input.seed = options.seed;
         let input = Rc::new(input);
@@ -586,9 +583,7 @@ impl SessionManager {
                 speed,
                 resume_byte: Some(byte),
                 restore_checkpoint: false,
-                continuation: job.input.continuation,
-                continuation_boundary: job.input.continuation_boundary,
-                continuation_span: job.input.continuation_span,
+
                 params: job.input.params.clone(),
                 seed: job.input.seed,
                 staging: job.staging.clone(),
@@ -652,7 +647,7 @@ mod tests {
                 compiled_devices: Vec::new(),
                 cloning: false,
                 pronunciation: false,
-                continuation: false,
+
                 parameters: Vec::new(),
             }
         }

@@ -40,8 +40,8 @@ CLI 提供文件朗读；若需要导出生成的 WAV，使用 Rust PCM API，�
 完全一致；`--plan` 不与 --voice/--style/--after-chapter 混用。
 
 `--param name=value` 可重复，按模型目录校验；`--seed` 固定采样输入。
-`--no-continuation` 关闭段落内接续；边界与链预算分别由 --continuation-boundary 和
---continuation-span 控制。`--verify report|gate` 需要 ASR feature；默认关闭。
+各段使用所选音色的固定参考；无滚动参考或双参考开关。
+`--verify report|gate` 需要 ASR feature；默认关闭。
 
 ## 音色资产
 

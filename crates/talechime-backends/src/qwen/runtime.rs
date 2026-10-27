@@ -9,7 +9,7 @@ use tokio::sync::{mpsc, oneshot};
 pub(super) struct Request {
     #[cfg(feature = "performance-tools")]
     pub(crate) perf: crate::performance::OwnerContext,
-    pub(super) context: Option<talechime_core::SpeechContext>,
+
     pub(super) text: String,
     pub(super) voice: String,
     pub(super) style: Option<String>,
@@ -118,22 +118,7 @@ fn generate(
         request
             .chunk_frames
             .unwrap_or(if model.device().is_cuda() { 20 } else { 10 });
-    let transient = request
-        .context
-        .as_ref()
-        .map(|context| {
-            let samples = crate::reference::mono(context.pcm(), 24000).map_err(inference_error)?;
-            model
-                .create_voice_clone_prompt(
-                    &talechime_qwen3_tts::AudioBuffer::new(samples, 24000),
-                    Some(&super::text::normalize(context.text())),
-                )
-                .map_err(inference_error)
-        })
-        .transpose()?;
-    let mut stream = if let Some(prompt) = &transient {
-        model.synthesize_voice_clone_streaming(&request.text, prompt, language, options)
-    } else if request.voice.starts_with("custom:") {
+    let mut stream = if request.voice.starts_with("custom:") {
         if !prompts.contains_key(&request.voice) {
             let variant = super::models::Model::detect(directory).map_err(inference_error)?;
             let store = super::voice_store(directory, variant).map_err(inference_error)?;

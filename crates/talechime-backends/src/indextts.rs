@@ -41,7 +41,7 @@ pub fn capabilities(directory: &Path) -> anyhow::Result<Capabilities> {
         style: true,
         compiled_devices: Vec::new(),
         pronunciation: false,
-        continuation: false,
+
         parameters: params::catalog(),
     })
 }
@@ -118,7 +118,7 @@ impl Backend for IndexBackend {
 
     fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            request.reject_unsupported(self.caps.style, self.caps.continuation)?;
+            request.reject_unsupported(self.caps.style)?;
             let resolved = params::resolve(request.params, request.style, request.seed)?;
             if request.text.trim().is_empty()
                 || !self.caps.voices.iter().any(|voice| voice == request.voice)
@@ -178,7 +178,7 @@ mod tests {
             text: "测试。",
             voice: "custom:reader",
             style,
-            context: None,
+
             seed: 12,
             params: &params,
         };
@@ -224,7 +224,7 @@ mod tests {
         let registry = crate::Registry::new(Some(root.path().to_owned()))?;
         let caps = registry.capabilities("indextts")?;
         assert_eq!(caps.model.as_deref(), Some(MODEL));
-        assert!(caps.cloning && caps.style && !caps.native_streaming && !caps.continuation);
+        assert!(caps.cloning && caps.style && !caps.native_streaming);
         assert!(caps.voices.is_empty() && caps.default_voice.is_empty());
         assert!(
             registry

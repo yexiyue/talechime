@@ -126,7 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## 跑通后再加的能力
 
 生成参数通过 synthesize_with_options / synthesize_pcm_with_options 的 SynthesisOptions
-传入，包括 GenerationParams、SeedPolicy、接续和回读。具体参数只从所选模型的
+传入，包括 GenerationParams、SeedPolicy 和回读；音色参考固定，不回灌前段 PCM。具体参数只从所选模型的
 Capabilities.parameters 读取，不把 steps、language、speed 当成通用参数。
 
 音色资产的 rename/remove/export/import_bundle 与生成独立；显式

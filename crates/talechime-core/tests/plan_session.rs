@@ -51,7 +51,6 @@ fn call_shapes(calls: &[Call]) -> Vec<(&str, &str, Option<&str>)> {
 struct FixtureBackend {
     caps: RefCell<Capabilities>,
     calls: RefCell<Vec<Call>>,
-    contexts: RefCell<Vec<Option<String>>>,
     selected: RefCell<Vec<String>>,
     estimates: RefCell<Vec<f64>>,
     mode: Cell<Mode>,
@@ -74,11 +73,10 @@ impl FixtureBackend {
                 style: true,
                 cloning: false,
                 pronunciation: false,
-                continuation: false,
+
                 parameters: vec![],
             }),
             calls: RefCell::new(vec![]),
-            contexts: RefCell::new(vec![]),
             selected: RefCell::new(vec![]),
             estimates: RefCell::new(vec![]),
             mode: Cell::new(Mode::Normal),
@@ -98,11 +96,7 @@ impl Backend for FixtureBackend {
 
     fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            let (style, continuation) = {
-                let caps = self.caps.borrow();
-                (caps.style, caps.continuation)
-            };
-            request.reject_unsupported(style, continuation)?;
+            request.reject_unsupported(self.caps.borrow().style)?;
             self.calls.borrow_mut().push(Call {
                 text: request.text.into(),
                 voice: request.voice.into(),
@@ -114,9 +108,6 @@ impl Backend for FixtureBackend {
                     .map(|(name, value)| (name.to_owned(), value.clone()))
                     .collect(),
             });
-            self.contexts
-                .borrow_mut()
-                .push(request.context.map(|c| c.text().into()));
             let (tx, rx) = mpsc::channel(1);
             let mode = self.mode.get();
             let chunks = self.chunks.clone();
@@ -1364,12 +1355,11 @@ async fn staged_stop_waits_for_paused_reader_and_removes_storage_before_returnin
 }
 
 #[tokio::test]
-async fn continuation_across_spans_resets_voice_style_seek_and_recovery_in_both_strategies() {
+async fn fixed_voice_style_assignments_survive_seek_and_recovery_in_both_strategies() {
     tokio::task::LocalSet::new()
         .run_until(async {
             for policy in [PlaybackPolicy::Streaming, PlaybackPolicy::AfterChapterReady] {
                 let mut h = Harness::new();
-                h.backend.caps.borrow_mut().continuation = true;
                 let text = "甲乙丙丁戊己";
                 let caps = h.backend.capabilities();
                 let mut plan = SpeechPlan::new(
@@ -1411,10 +1401,17 @@ async fn continuation_across_spans_resets_voice_style_seek_and_recovery_in_both_
                 })
                 .await;
                 assert_eq!(
-                    *h.backend.contexts.borrow(),
-                    [None, Some("甲".into()), None, None, Some("丁".into()), None]
+                    call_shapes(&h.backend.calls.borrow()),
+                    [
+                        ("甲", "A", None),
+                        ("乙", "A", None),
+                        ("丙", "B", None),
+                        ("丁", "B", Some("calm")),
+                        ("戊", "B", Some("calm")),
+                        ("己", "B", None),
+                    ]
                 );
-                let count = h.backend.contexts.borrow().len();
+                let after_seek = h.backend.calls.borrow().len();
                 h.manager
                     .seek_plan("before", "after".into(), 12)
                     .await
@@ -1422,8 +1419,11 @@ async fn continuation_across_spans_resets_voice_style_seek_and_recovery_in_both_
                 h.manager.resume("after").await.unwrap();
                 h.drive(true, |h| h.ended("after", EndReason::Completed))
                     .await;
-                assert!(h.backend.contexts.borrow()[count].is_none());
-                let count = h.backend.contexts.borrow().len();
+                assert_eq!(
+                    call_shapes(&h.backend.calls.borrow()[after_seek..]),
+                    [("戊", "B", Some("calm")), ("己", "B", None),]
+                );
+                let after_recovery = h.backend.calls.borrow().len();
                 h.manager
                     .start_plan(
                         "resume".into(),
@@ -1437,7 +1437,16 @@ async fn continuation_across_spans_resets_voice_style_seek_and_recovery_in_both_
                     .unwrap();
                 h.drive(true, |h| h.ended("resume", EndReason::Completed))
                     .await;
-                assert!(h.backend.contexts.borrow()[count].is_none());
+                assert_eq!(
+                    call_shapes(&h.backend.calls.borrow()[after_recovery..]),
+                    [
+                        ("乙", "A", None),
+                        ("丙", "B", None),
+                        ("丁", "B", Some("calm")),
+                        ("戊", "B", Some("calm")),
+                        ("己", "B", None),
+                    ]
+                );
             }
         })
         .await;

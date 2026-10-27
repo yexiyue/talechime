@@ -39,7 +39,7 @@ fn nano_capabilities(directory: &std::path::Path) -> anyhow::Result<Capabilities
         style: false,
         compiled_devices: Vec::new(),
         pronunciation: false,
-        continuation: true,
+
         parameters: Vec::new(),
     })
 }

@@ -53,16 +53,10 @@ impl Default for Options {
         }
     }
 }
-/// Latent reference patches, with optional transcript for continuation.
+/// Fixed latent reference patches, optionally paired with an accurate transcript.
 pub struct Reference {
     pub features: Tensor,
     pub transcript: Option<String>,
-}
-/// Experimental isolated identity prefix plus an optional spoken continuation.
-#[cfg(feature = "experimental-dual-reference")]
-pub struct DualReference<'a> {
-    pub identity: &'a Reference,
-    pub continuation: Option<&'a Reference>,
 }
 /// All weights use one Candle device. No runtime subprocess or native TTS engine.
 pub struct Model {
@@ -87,7 +81,6 @@ pub struct Model {
 struct GenerateRequest<'a> {
     text: &'a str,
     reference: Option<&'a Reference>,
-    identity: Option<&'a Reference>,
     options: &'a Options,
 }
 impl Model {
@@ -343,46 +336,6 @@ impl Model {
         cancel: &impl Fn() -> bool,
         mut pcm: impl FnMut(&[f32]) -> Result<()>,
     ) -> Result<Outcome> {
-        self.generate_conditioned(text, reference, None, options, cancel, &mut pcm)
-    }
-    /// Experimental upstream ref_continuation mode; identity has right padding,
-    /// continuation has left padding and a matching spoken transcript.
-    #[cfg(feature = "experimental-dual-reference")]
-    pub fn generate_dual(
-        &mut self,
-        text: &str,
-        references: DualReference<'_>,
-        options: &Options,
-        cancel: &impl Fn() -> bool,
-        mut pcm: impl FnMut(&[f32]) -> Result<()>,
-    ) -> Result<Outcome> {
-        if references.identity.transcript.is_some()
-            || references
-                .continuation
-                .is_some_and(|r| r.transcript.is_none())
-        {
-            candle_core::bail!(
-                "dual reference requires isolated identity and transcribed continuation"
-            );
-        }
-        self.generate_conditioned(
-            text,
-            references.continuation,
-            Some(references.identity),
-            options,
-            cancel,
-            &mut pcm,
-        )
-    }
-    fn generate_conditioned(
-        &mut self,
-        text: &str,
-        reference: Option<&Reference>,
-        identity: Option<&Reference>,
-        options: &Options,
-        cancel: &impl Fn() -> bool,
-        pcm: &mut impl FnMut(&[f32]) -> Result<()>,
-    ) -> Result<Outcome> {
         self.timings = Timings::default();
         if options.steps < 2
             || options.steps > 128
@@ -402,11 +355,10 @@ impl Model {
             GenerateRequest {
                 text,
                 reference,
-                identity,
                 options,
             },
             cancel,
-            pcm,
+            &mut pcm,
             &mut |_| Ok(()),
         );
         self.codec.reset();
@@ -426,7 +378,6 @@ impl Model {
         let GenerateRequest {
             text,
             reference,
-            identity,
             options: o,
         } = request;
         if text.trim().is_empty() {
@@ -499,48 +450,7 @@ impl Model {
                 audio_range = Some((1, n));
             }
         }
-        let mut audio_ranges: Vec<_> = audio_range.into_iter().collect();
-        if let Some(identity) = identity {
-            let (n, patch, width) = identity.features.dims3()?;
-            if n == 0
-                || patch != 4
-                || width != 64
-                || !identity.features.device().same_device(&self.device)
-                || identity.features.dtype() != self.dtype
-            {
-                candle_core::bail!("identity features do not match this model/device");
-            }
-            let encoded = self
-                .acoustic
-                .encode(&identity.features, cancel)?
-                .unsqueeze(0)?;
-            let marks = self
-                .embedding
-                .index_select(&Tensor::new(&[103u32, 104], &self.device)?, 0)?
-                .unsqueeze(0)?;
-            input = Tensor::cat(
-                &[
-                    marks.narrow(1, 0, 1)?,
-                    encoded.to_dtype(self.backbone_dtype)?,
-                    marks.narrow(1, 1, 1)?,
-                    input,
-                ],
-                1,
-            )?;
-            audio_embedding = Tensor::cat(
-                &[
-                    Tensor::zeros((1, 1, 2048), self.dtype, &self.device)?,
-                    encoded,
-                    Tensor::zeros((1, 1, 2048), self.dtype, &self.device)?,
-                    audio_embedding,
-                ],
-                1,
-            )?;
-            for (start, _) in &mut audio_ranges {
-                *start += n + 2;
-            }
-            audio_ranges.insert(0, (1, n));
-        }
+        let audio_ranges: Vec<_> = audio_range.into_iter().collect();
         let context = input.dim(1)?;
         if context + o.max_frames > 4096 {
             candle_core::bail!("reference/text exceeds bounded context");
@@ -718,7 +628,7 @@ fn quantize_audio_ranges(
 mod conditioning_tests {
     use super::*;
     #[test]
-    fn disjoint_identity_and_continuation_masks_preserve_text_and_markers() -> Result<()> {
+    fn disjoint_audio_ranges_preserve_text_and_markers() -> Result<()> {
         let full = Tensor::from_vec((0..8).map(|i| i as f32).collect(), (1, 8, 1), &Device::Cpu)?;
         let result = quantize_audio_ranges(&full, &[(1, 2), (5, 2)], |x| x.affine(1.0, 100.0))?;
         assert_eq!(

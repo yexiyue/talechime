@@ -75,7 +75,7 @@ fn request<'a>(voice: &'a str, params: &'a GenerationParams) -> SegmentRequest<'
         text: TEXT,
         voice,
         style: None,
-        context: None,
+
         seed: talechime_core::SeedPolicy::Pinned(42).resolve(0, 0),
         params,
     }
@@ -112,75 +112,6 @@ async fn collect_request(
     }
     anyhow::ensure!(ended && !bits.is_empty(), "incomplete Qwen request");
     Ok(bits)
-}
-
-async fn verify_continuation_chain(
-    backend: &QwenBackend,
-    model: models::Model,
-    voice: &str,
-    params: &GenerationParams,
-    initial: &[u32],
-) -> anyhow::Result<()> {
-    use sha2::{Digest, Sha256};
-    let texts = [
-        "今天的故事开始了。",
-        "小女孩推开窗户，看见远处的森林。",
-        "她带上地图，沿着小路慢慢向前走去。",
-    ];
-    let mut oracle = Vec::new();
-    for pass in 0..2 {
-        let mut previous_text = TEXT;
-        let mut previous = initial.to_vec();
-        for (index, text) in texts.iter().enumerate() {
-            // Production SpeechContext carries the immediately preceding segment,
-            // not concatenated chapter audio or an unchanged first reference.
-            let context = talechime_core::SpeechContext::new(
-                previous_text,
-                talechime_core::backend::Pcm {
-                    samples: previous.iter().copied().map(f32::from_bits).collect(),
-                    sample_rate: 24000,
-                    channels: 1,
-                },
-            )?;
-            let next = || SegmentRequest {
-                text,
-                context: Some(&context),
-                seed: talechime_core::SeedPolicy::Pinned(42).resolve((index + 1) as u64, 0),
-                ..request(voice, params)
-            };
-            if pass == 1 && index == 1 {
-                let mut stream = backend.stream(next()).await?;
-                anyhow::ensure!(matches!(stream.recv().await, Some(Ok(AudioChunk::Pcm(_)))));
-                tokio::time::timeout(Duration::from_secs(30), async {
-                    while stream.len() != 1 {
-                        tokio::time::sleep(Duration::from_millis(5)).await;
-                    }
-                })
-                .await?;
-                drop(stream);
-            }
-            let current = collect_request(backend, next()).await?;
-            if pass == 0 {
-                oracle.push(current.clone());
-            } else {
-                assert_eq!(current, oracle[index], "continuation chain segment {index}");
-            }
-            let mut hash = Sha256::new();
-            for bits in &current {
-                hash.update(bits.to_le_bytes());
-            }
-            eprintln!(
-                "{}: continuation chain pass={pass} segment={index} samples={} raw_f32le_sha256={:x}",
-                model.id(),
-                current.len(),
-                hash.finalize()
-            );
-            previous_text = text;
-            previous = current;
-        }
-    }
-    assert_eq!(collect(backend, voice, params).await?, initial);
-    Ok(())
 }
 
 async fn verify(model: models::Model, voice: &str, alternate: Option<&str>) -> anyhow::Result<()> {
@@ -282,48 +213,6 @@ async fn verify(model: models::Model, voice: &str, alternate: Option<&str>) -> a
             "{}: {voice} -> {alternate} -> {voice} preserves original PCM",
             model.id()
         );
-    }
-    if model.is_base() {
-        let context = talechime_core::SpeechContext::new(
-            TEXT,
-            talechime_core::backend::Pcm {
-                samples: expected.iter().copied().map(f32::from_bits).collect(),
-                sample_rate: 24000,
-                channels: 1,
-            },
-        )?;
-        let continued_request = || SegmentRequest {
-            text: "今天的故事开始了。",
-            context: Some(&context),
-            ..request(voice, &params)
-        };
-        let continued = collect_request(&backend, continued_request()).await?;
-        assert_eq!(
-            collect_request(&backend, continued_request()).await?,
-            continued
-        );
-        drop(backend.stream(continued_request()).await?);
-        assert_eq!(collect(&backend, voice, &params).await?, expected);
-        let mut stream = backend.stream(continued_request()).await?;
-        anyhow::ensure!(matches!(stream.recv().await, Some(Ok(AudioChunk::Pcm(_)))));
-        tokio::time::timeout(Duration::from_secs(30), async {
-            while stream.len() != 1 {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        })
-        .await?;
-        drop(stream);
-        assert_eq!(
-            collect_request(&backend, continued_request()).await?,
-            continued
-        );
-        assert_eq!(collect(&backend, voice, &params).await?, expected);
-        eprintln!(
-            "{}: continuation PCM {} bits repeat after unread/full-queue cancellation; static reference PCM restored",
-            model.id(),
-            continued.len()
-        );
-        verify_continuation_chain(&backend, model, voice, &params, &expected).await?;
     }
     if let Some(reference) = alternate_reference.take() {
         let cache = reference.cache()?;

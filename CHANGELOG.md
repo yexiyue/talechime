@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Use official fixed-reference or preset synthesis for every backend. Remove host rolling PCM, dual-reference and reference-anchor experiments, related CLI/wire/API fields, and old comparison runners. Chapter caches use a new fixed-reference policy key; existing voice assets remain untouched.
+
 - Unify backend registration and model preparation around resolved model identities, with adapter-owned resources, devices and recovery. CLI and library use the same preparation service.
 - Move audio output behind the facade playback feature and downloads into backend resources; remove audio-output and HTTP dependencies from core.
 - Make segmentation requests explicit and duration learning execution-local. Remove the selected-voice state and the separate whole-text segmentation API.

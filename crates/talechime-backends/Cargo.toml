@@ -22,14 +22,12 @@ moss-nano-candle = ["moss"]
 moss-nano-candle-metal = ["moss-nano-candle", "talechime-moss-tts/metal", "dep:candle-metal-kernels"]
 moss-nano-candle-cuda = ["moss-nano-candle", "talechime-moss-tts/cuda"]
 moss-candle = ["moss"]
-experimental-moss-reference-anchor = ["moss-candle"]
 moss-candle-cuda = ["moss-candle", "talechime-moss-tts/cuda"]
 moss-candle-metal = ["moss-candle", "talechime-moss-tts/metal", "dep:candle-metal-kernels"]
 qwen = ["dep:reqwest", "dep:talechime-qwen3-tts", "dep:hound", "dep:rubato"]
 qwen-metal = ["qwen", "talechime-qwen3-tts/metal", "dep:candle-metal-kernels"]
 qwen-cuda = ["qwen", "talechime-qwen3-tts/cuda"]
 voxcpm = ["dep:reqwest", "dep:talechime-voxcpm", "dep:candle-core", "dep:hound", "dep:rubato"]
-experimental-dual-reference = ["voxcpm", "talechime-voxcpm/experimental-dual-reference"]
 voxcpm-cuda = ["voxcpm", "talechime-voxcpm/cuda"]
 voxcpm-metal = ["voxcpm", "talechime-voxcpm/metal", "dep:candle-metal-kernels"]
 omnivoice = ["dep:reqwest", "dep:talechime-omnivoice", "dep:hound", "dep:rubato"]
@@ -116,9 +114,6 @@ required-features = ["asr"]
 name = "sensevoice_aux_readback"
 required-features = ["asr"]
 
-[[example]]
-name = "continuation_probe"
-required-features = ["moss", "qwen", "omnivoice"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 candle-metal-kernels = { workspace = true, optional = true }

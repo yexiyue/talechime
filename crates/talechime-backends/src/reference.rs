@@ -45,20 +45,10 @@ pub fn load(path: &Path, target_rate: u32) -> anyhow::Result<Vec<f32>> {
     resample(mono, spec.sample_rate, target_rate)
 }
 
-/// Convert immutable generated PCM without file or voice-cache writes.
-pub fn mono(pcm: &talechime_core::backend::Pcm, target_rate: u32) -> anyhow::Result<Vec<f32>> {
-    pcm.duration_ms()?;
-    let samples = pcm
-        .samples
-        .chunks_exact(pcm.channels as usize)
-        .map(|frame| frame.iter().sum::<f32>() / f32::from(pcm.channels))
-        .collect();
-    resample(samples, pcm.sample_rate, target_rate)
-}
 fn resample(mono: Vec<f32>, sample_rate: u32, target_rate: u32) -> anyhow::Result<Vec<f32>> {
     anyhow::ensure!(
         mono.iter().all(|v| v.is_finite()) && mono.iter().any(|v| v.abs() > 0.0001),
-        "silent or invalid mono continuation reference"
+        "silent or invalid mono reference"
     );
     if sample_rate == target_rate {
         return Ok(mono);

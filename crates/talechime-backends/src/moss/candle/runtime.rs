@@ -8,9 +8,7 @@ use tokio::sync::{mpsc, oneshot};
 pub(super) struct Request {
     #[cfg(feature = "performance-tools")]
     pub(crate) perf: crate::performance::OwnerContext,
-    #[cfg(feature = "experimental-moss-reference-anchor")]
-    pub reference_anchor: bool,
-    pub context: Option<talechime_core::SpeechContext>,
+
     pub text: String,
     pub voice: String,
     pub seed: u64,
@@ -93,44 +91,22 @@ fn generate(
     mode: Mode,
     request: &Request,
 ) -> anyhow::Result<()> {
-    let continuation = request
-        .context
-        .as_ref()
-        .map(|context| {
-            let samples = crate::reference::mono(context.pcm(), 24000)?;
-            codec.encode(&samples, mode.codebooks(), &|| request.audio.is_closed())
-        })
-        .transpose()?;
-    #[cfg(feature = "experimental-moss-reference-anchor")]
-    let reference_anchor = request.reference_anchor;
-    #[cfg(not(feature = "experimental-moss-reference-anchor"))]
-    let reference_anchor = false;
-    let reference =
-        if (continuation.is_none() || reference_anchor) && request.voice.starts_with("custom:") {
-            Some(prompt(
-                codec,
-                &mode.directory(root),
-                mode,
-                &request.voice,
-                &|| request.audio.is_closed(),
-            )?)
-        } else {
-            None
-        };
+    let reference = if request.voice.starts_with("custom:") {
+        Some(prompt(
+            codec,
+            &mode.directory(root),
+            mode,
+            &request.voice,
+            &|| request.audio.is_closed(),
+        )?)
+    } else {
+        None
+    };
     codec.reset_decoder();
     let mut generation = Generation::new(&request.text);
     generation.seed = request.seed;
     generation.max_frames = request.resolved.max_frames;
-    generation.reference = reference.as_deref().or(continuation.as_deref());
-    generation.continuation =
-        request
-            .context
-            .as_ref()
-            .zip(continuation.as_deref())
-            .map(|(context, codes)| talechime_moss_tts::Continuation {
-                text: context.text(),
-                codes,
-            });
+    generation.reference = reference.as_deref();
     let mut pending = Vec::new();
     let mut delivered = false;
     model.generate(&generation, &|| request.audio.is_closed(), |frame| {

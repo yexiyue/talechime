@@ -196,13 +196,13 @@ Qwen Base06/Base17随后将状态门禁落实到生产Backend owner：立即丢�
 排除错误后追加正常End，再用同owner恢复默认预算验证PCM。保持负向预算与性能
 条件分开。Windows同CUDA/cuDNN组合两种Base各5次完整原始PCM一致，见
 [Qwen状态门禁](../../../docs/records/qwen/qwen-windows-production-2026-10-24.md)。
-这些是Backend生成边界，不能替代生产宿主后处理、跨音色/接续或实际播放验收。
+这些是Backend生成边界，不能替代生产宿主后处理、跨固定音色或实际播放验收。
 
 
 Qwen随后把同一owner门禁用于四种narration变体并实际重跑：共用测试驱动时仍显式
 保持Base的1.5 penalty与CustomVoice默认1.05，不能用一个“共同默认”掩盖模式差异。
 CustomVoice06/17增加A/B/A（uncle_fu/serena），B不同且返回A逐位一致；这不覆盖Base
-跨参考或style/接续。四变体CUDA实测、源/二进制与38项资源身份见上述Qwen记录的
+跨参考或 style。四变体CUDA实测、源/二进制与38项资源身份见上述Qwen记录的
 四变体状态矩阵节；计时证据继续使用原独立基线，不把正确性测试耗时当性能收益。
 
 
@@ -218,7 +218,7 @@ profiling feature 可能主动关闭图，先查源码；同路径 coarse diagno
 逐帧 codes 捕获会增加同步，只用于独立正确性门禁，不能混入正式性能计时。
 Windows RTX5070 的 Qwen Base06/17 将 64 扩至 128，覆盖 86+20=106 帧参考首块，
 ABBAABBA 完整耗时下降约 13.9%/13.0%，但 Job commit 增加约 1.2–1.4 GB。
-此结果不构成其他 GPU、接续或长参考的可用性保证，见
+此结果不构成其他 GPU 或长参考的可用性保证，见
 [带版本的候选记录](../../../docs/records/qwen/qwen-decoder-reference-graph-windows-2026-10-24.md)。
 资源采集状态 unavailable 与可用但空列表分开报告；整卡显存不能当逐进程分配器峰值。
 

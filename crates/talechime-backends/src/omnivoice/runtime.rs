@@ -17,7 +17,7 @@ use tokio::sync::{mpsc, oneshot};
 pub(super) struct Request {
     #[cfg(feature = "performance-tools")]
     pub(crate) perf: crate::performance::OwnerContext,
-    context: Option<talechime_core::SpeechContext>,
+
     text: String,
     voice: String,
     seed: u64,
@@ -31,7 +31,7 @@ impl Request {
         text: &str,
         voice: &str,
         audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
-        context: Option<&talechime_core::SpeechContext>,
+
         seed: u64,
         resolved: super::params::Resolved,
         style: Option<String>,
@@ -39,7 +39,7 @@ impl Request {
         Self {
             #[cfg(feature = "performance-tools")]
             perf: crate::performance::OwnerContext::capture(),
-            context: context.cloned(),
+
             text: text.into(),
             voice: voice.into(),
             seed,
@@ -165,19 +165,7 @@ fn generate(pipeline: &Pipeline, directory: &Path, request: &Request) -> Result<
     if let Some(style) = &request.style {
         input = input.with_instruct(style);
     }
-    if let Some(context) = &request.context {
-        let samples = crate::reference::mono(context.pcm(), 24000)
-            .map_err(|e| BackendError::Synthesis(e.to_string()))?;
-        let prompt = pipeline
-            .create_voice_clone_prompt_from_audio(
-                &ReferenceAudioInput::Waveform(WaveformInput::mono(samples, 24000)),
-                Some(context.text()),
-                false,
-                None,
-            )
-            .map_err(|e| BackendError::Synthesis(e.to_string()))?;
-        input = input.with_voice_clone_prompt(prompt);
-    } else if request.voice.starts_with("custom:") {
+    if request.voice.starts_with("custom:") {
         input = input.with_voice_clone_prompt(
             prompt(pipeline, directory, &request.voice)
                 .map_err(|e| BackendError::Unsupported(e.to_string()))?,

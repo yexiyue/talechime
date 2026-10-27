@@ -64,14 +64,8 @@ impl CancellationHandle {
 }
 
 /// Options for one independent direct synthesis execution.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SynthesisOptions {
-    /// Previous complete segment conditioning, where supported.
-    pub continuation: bool,
-    /// Source structure that resets the continuation chain.
-    pub continuation_boundary: talechime_protocol::ContinuationBoundary,
-    /// Chained seconds before the reference re-anchors; `None` uses default.
-    pub continuation_span: Option<u64>,
     /// Generation parameters validated against the prepared model's catalog.
     pub params: crate::params::GenerationParams,
     /// Sampling seed policy; Auto draws fresh randomness per attempt.
@@ -79,19 +73,6 @@ pub struct SynthesisOptions {
     /// Optional content verification before delivery.
     pub verification: crate::verification::VerificationOptions,
 }
-impl Default for SynthesisOptions {
-    fn default() -> Self {
-        Self {
-            continuation: true,
-            continuation_boundary: talechime_protocol::ContinuationBoundary::Paragraph,
-            continuation_span: None,
-            params: crate::params::GenerationParams::default(),
-            seed: crate::params::SeedPolicy::default(),
-            verification: Default::default(),
-        }
-    }
-}
-
 /// Local bounded synthesis stream using the same segmentation and PCM rules as listening.
 /// Consume to Completed, or explicitly cancel and await cleanup. Drop only requests it.
 pub struct SynthesisStream {
@@ -142,7 +123,7 @@ impl SynthesisStream {
             },
         )
     }
-    /// Start an isolated execution with explicit continuation and readback settings.
+    /// Start an isolated execution with explicit readback settings.
     pub fn start_with_options(
         backend: Rc<dyn Backend>,
         text: impl Into<Arc<str>>,
@@ -157,7 +138,7 @@ impl SynthesisStream {
         {
             return Err(crate::verification::VerificationError::NotPrepared.into());
         }
-        crate::continuation::validate_span(options.continuation_span)?;
+
         let caps = backend.capabilities();
         options
             .params
@@ -192,9 +173,7 @@ impl SynthesisStream {
         let mut input = PlanInput::new(plan, 0);
         input.verifier = verifier;
         input.verification = verification;
-        input.continuation = options.continuation;
-        input.continuation_boundary = options.continuation_boundary;
-        input.continuation_span = options.continuation_span;
+
         input.params = options.params;
         input.seed = options.seed;
         let input = Rc::new(input);

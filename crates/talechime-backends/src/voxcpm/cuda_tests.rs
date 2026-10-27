@@ -14,7 +14,7 @@ fn request<'a>(voice: &'a str, params: &'a GenerationParams) -> SegmentRequest<'
         text: TEXT,
         voice,
         style: None,
-        context: None,
+
         seed: talechime_core::SeedPolicy::Pinned(42).resolve(0, 0),
         params,
     }

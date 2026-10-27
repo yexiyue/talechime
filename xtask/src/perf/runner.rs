@@ -296,7 +296,7 @@ pub fn run(job_path: &Path, root: &Path, resume: bool) -> anyhow::Result<PathBuf
                         effective.insert(format!("generation.{name}"), value.to_string());
                     }
                 }
-                for name in ["voice", "style", "seed", "continuation"] {
+                for name in ["voice", "style", "seed"] {
                     effective.insert(format!("request.{name}"), job.request[name].to_string());
                 }
                 preflight_valid &= effective == job.conditions.parameters;

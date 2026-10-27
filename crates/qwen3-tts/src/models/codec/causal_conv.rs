@@ -268,7 +268,20 @@ mod tests {
 
             let expected = expected.flatten_all().unwrap().to_vec1::<f32>().unwrap();
             let actual = actual.flatten_all().unwrap().to_vec1::<f32>().unwrap();
-            assert_eq!(actual, expected, "case {cases:?}");
+            if device.is_metal() {
+                // The fast path uses a seven-tap matmul rather than grouped
+                // conv1d. Metal may accumulate these equivalent operations in
+                // different orders; bound F32 rounding instead of requiring bits.
+                for (index, (actual, expected)) in actual.iter().zip(&expected).enumerate() {
+                    let tolerance = 8.0 * f32::EPSILON * (1.0 + expected.abs());
+                    assert!(
+                        actual.is_finite() && (actual - expected).abs() <= tolerance,
+                        "shape ({batch}, {channels}, {length}) sample {index}: {actual} vs {expected}, tolerance {tolerance}"
+                    );
+                }
+            } else {
+                assert_eq!(actual, expected, "case {cases:?}");
+            }
         }
     }
 

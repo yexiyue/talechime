@@ -42,9 +42,7 @@ async fn main() -> anyhow::Result<()> {
     anyhow::ensure!(!pieces.is_empty(), "empty text");
     for piece in &pieces {
         let mut ended = false;
-        let mut stream = backend
-            .stream_seeded_with_context(&piece.text, &voice, 42, None)
-            .await?;
+        let mut stream = backend.stream_seeded(&piece.text, &voice, 42).await?;
         while let Some(chunk) = stream.recv().await {
             match chunk? {
                 AudioChunk::Pcm(pcm) => {

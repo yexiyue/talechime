@@ -85,10 +85,6 @@ impl DelayModel {
         cancelled: &impl Fn() -> bool,
         mut frame: impl FnMut(&[u32]) -> anyhow::Result<bool>,
     ) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            request.continuation.is_none(),
-            "VoiceDesign does not support continuation"
-        );
         // Voice-design references use the delay-pattern scheduler.
         anyhow::ensure!(
             request.reference.is_none(),

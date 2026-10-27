@@ -56,7 +56,7 @@ pub fn capabilities(root: &Path, mode: Mode) -> anyhow::Result<Capabilities> {
         cloning: true,
         style: false,
         pronunciation: false,
-        continuation: true,
+
         parameters: params::catalog(),
         compiled_devices: compiled_devices(),
     };
@@ -88,8 +88,6 @@ pub fn available_devices() -> Vec<Device> {
         .collect()
 }
 pub struct CandleBackend {
-    #[cfg(feature = "experimental-moss-reference-anchor")]
-    reference_anchor: bool,
     requests: Option<mpsc::Sender<runtime::Request>>,
     thread: Option<std::thread::JoinHandle<()>>,
     caps: Capabilities,
@@ -117,8 +115,6 @@ impl CandleBackend {
             .spawn(move || runtime::run(root, mode, device, jobs, ready))
             .map_err(|e| BackendError::Initialize(e.to_string()))?;
         let backend = Self {
-            #[cfg(feature = "experimental-moss-reference-anchor")]
-            reference_anchor: false,
             requests: Some(requests),
             thread: Some(thread),
             caps,
@@ -128,19 +124,6 @@ impl CandleBackend {
             .await
             .map_err(|_| BackendError::Initialize("MOSS Candle thread exited".into()))??;
         Ok(backend)
-    }
-    /// Experimental Realtime identity reference retained beside recent speech context.
-    #[cfg(feature = "experimental-moss-reference-anchor")]
-    pub fn with_reference_anchor(mut self) -> Result<Self, BackendError> {
-        if self.caps.model.as_deref() != Some(Mode::Realtime.id()) {
-            return Err(BackendError::Unsupported(
-                "reference anchor experiment requires MOSS Realtime".into(),
-            ));
-        }
-        self.reference_anchor = true;
-        self.cache_identity
-            .push_str("-experimental-reference-anchor-v1");
-        Ok(self)
     }
 }
 impl Drop for CandleBackend {
@@ -160,14 +143,8 @@ impl Backend for CandleBackend {
     }
     fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            request.reject_unsupported(self.caps.style, self.caps.continuation)?;
-            #[cfg(feature = "experimental-moss-reference-anchor")]
-            if self.reference_anchor && !request.voice.starts_with("custom:") {
-                return Err(BackendError::Unsupported(
-                    "reference anchor requires an imported voice".into(),
-                ));
-            }
-            let (text, voice, context) = (request.text, request.voice, request.context);
+            request.reject_unsupported(self.caps.style)?;
+            let (text, voice) = (request.text, request.voice);
             if text.trim().is_empty() || !self.caps.voices.iter().any(|id| id == voice) {
                 return Err(BackendError::Unsupported(
                     "unknown MOSS voice or empty text".into(),
@@ -181,9 +158,7 @@ impl Backend for CandleBackend {
                 .send(runtime::Request {
                     #[cfg(feature = "performance-tools")]
                     perf: crate::performance::OwnerContext::capture(),
-                    #[cfg(feature = "experimental-moss-reference-anchor")]
-                    reference_anchor: self.reference_anchor,
-                    context: context.cloned(),
+
                     text: text.into(),
                     voice: voice.into(),
                     seed: request.seed,
@@ -215,7 +190,7 @@ mod tests {
         let root = tempfile::tempdir()?;
         let caps = capabilities(root.path(), Mode::Realtime)?;
         assert_eq!(caps.model.as_deref(), Some("realtime-1.7b"));
-        assert!(caps.cloning && caps.native_streaming && caps.continuation);
+        assert!(caps.cloning && caps.native_streaming);
         assert!(!caps.style);
         assert!(!caps.compiled_devices.contains(&Device::Cpu));
         assert_eq!(
@@ -254,39 +229,6 @@ mod tests {
             std::fs::read(retired)?,
             b"retired voice must not be read or modified"
         );
-        Ok(())
-    }
-    #[cfg(feature = "experimental-moss-reference-anchor")]
-    #[tokio::test(flavor = "current_thread")]
-    async fn reference_anchor_rejects_unanchored_default_voice() -> anyhow::Result<()> {
-        let root = tempfile::tempdir()?;
-        let backend = CandleBackend {
-            reference_anchor: false,
-            requests: None,
-            thread: None,
-            caps: capabilities(root.path(), Mode::Realtime)?,
-            cache_identity: "test".into(),
-        }
-        .with_reference_anchor()?;
-        assert!(
-            backend
-                .cache_identity
-                .ends_with("-experimental-reference-anchor-v1")
-        );
-        let params = Default::default();
-        assert!(matches!(
-            backend
-                .stream(talechime_core::backend::SegmentRequest {
-                    text: "测试",
-                    voice: "narrator",
-                    style: None,
-                    context: None,
-                    seed: 42,
-                    params: &params
-                })
-                .await,
-            Err(BackendError::Unsupported(_))
-        ));
         Ok(())
     }
 }

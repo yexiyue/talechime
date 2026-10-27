@@ -71,9 +71,9 @@ cargo run --release -- --backend moss --model nano-candle --tts-device cpu chapt
 
 | 后端 / `--backend` | 模型或实现 | 音色与输出 | 构建和资源边界 |
 | --- | --- | --- | --- |
-| MOSS / `moss` | Nano Candle `nano-candle`（默认）；Realtime `realtime-1.7b` | Nano 内置或导入音色；两档支持段落内接续，均不提供 style/instruction/language | Nano 默认 CPU，Metal / CUDA 需显式 feature；Realtime 为需 `moss-candle-*` 的 GPU 模型 |
+| MOSS / `moss` | Nano Candle `nano-candle`（默认）；Realtime `realtime-1.7b` | Nano 内置或固定导入音色；两档均不提供 style/instruction/language | Nano 默认 CPU，Metal / CUDA 需显式 feature；Realtime 为需 `moss-candle-*` 的 GPU 模型 |
 | Qwen3-TTS / `qwen` | 0.6B、1.7B CustomVoice；0.6B、1.7B Base | CustomVoice 预置音色；1.7B CustomVoice 支持风格；Base 可导入参考音频克隆 | Candle CPU；Metal / CUDA 需 `qwen-metal` / `qwen-cuda` |
-| VoxCPM2 / `voxcpm` | 2B Q8 GGUF；另有实验 BF16 路径 | 参考音色、音色设计与原生流式 PCM；风格和接续同时使用仍待验收 | Candle CPU；Metal / CUDA 需 `voxcpm-metal` / `voxcpm-cuda` |
+| VoxCPM2 / `voxcpm` | 2B Q8 GGUF；另有实验 BF16 路径 | 固定参考音色、音色设计与原生流式 PCM | Candle CPU；Metal / CUDA 需 `voxcpm-metal` / `voxcpm-cuda` |
 | OmniVoice / `omnivoice` | 0.6B | 参考音色、音色设计、风格和生成期语速；按语义段输出 | Candle CPU；Metal / CUDA 需 `omnivoice-metal` / `omnivoice-cuda`；当前不是模型原生实时流式 |
 | CosyVoice3 / `cosyvoice3` | 0.5B，实验性 | 导入参考音色克隆，支持风格指令，24 kHz 原生流式输出 | Candle + ORT CPU 前端；可启用 Metal / CUDA；须先[转换官方权重并放入本地目录](docs/cosyvoice3.md)，不自动下载 |
 | IndexTTS 2.5 / `indextts` | 2.5，实验性 | 中文或英文参考克隆，支持命名情绪/向量/情绪参考，22.05 kHz 整段输出 | Candle CPU；Metal / CUDA 需显式 feature 和[本地转换文件](docs/indextts.md)；标准包暂未编入 |
@@ -117,7 +117,7 @@ talechime --backend voxcpm --param steps=32 --param temperature=0.9 --seed 7 cha
 以及 **MacBook Pro / M4 Pro（12 核 CPU、16 核 GPU、24 GB 统一内存）**。
 下文分别标注 CUDA、Metal 或 CPU Accelerate 路径，收益不能跨设备叠加。
 当前优先[继续优化已有后端的双设备性能 #5](https://github.com/yexiyue/talechime/issues/5)；
-[固定音色与可选双参考 #4](https://github.com/yexiyue/talechime/issues/4)为低优先级规划，尚未改变库默认。
+所有后端使用各自官方固定参考或预置音色流程；宿主滚动参考与双参考实验已移除，见[固定参考合成](docs/reference-synthesis.md)。
 环境采集要求及历史结果边界见[性能方法](docs/knowledge/tts-performance.md#当前优先级与测试设备)。
 
 以下数字来自仓库内的真实模型记录，以官方 Python / PyTorch 实现为基线。**RTF = 合成耗时 ÷ 输出音频时长，越低越快**。跨框架即使使用相同 seed，也可能生成不同长度的音频；表中变化是所述测试条件下的观察值，不代表音质、内容完整性或所有设备的速度。

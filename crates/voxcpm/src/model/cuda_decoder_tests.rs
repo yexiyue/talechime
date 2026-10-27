@@ -33,7 +33,7 @@ fn real_bf16_decoder_graph_matches_eager_full_request() -> anyhow::Result<()> {
             GenerateRequest {
                 text: text.trim(),
                 reference: None,
-                identity: None,
+
                 options: &options,
             },
             &|| false,

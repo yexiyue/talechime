@@ -136,9 +136,6 @@ pub struct Capabilities {
     pub style: bool,
     pub cloning: bool,
     pub pronunciation: bool,
-    /// Previous text/audio conditioning supported by this model.
-    #[serde(default)]
-    pub continuation: bool,
     /// Generation parameters this model accepts; see [`crate::ParameterSpec`].
     #[serde(default)]
     pub parameters: Vec<ParameterSpec>,
@@ -332,24 +329,6 @@ pub enum PlanPlayback {
     AfterChapterReady,
 }
 
-/// Source structure that resets the previous-segment continuation chain.
-/// Only meaningful while `continuation` is enabled; hosts pick the policy
-/// that matches their text layout instead of the worker guessing.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ContinuationBoundary {
-    /// Every paragraph gap, heading or decoration line resets the chain.
-    /// This keeps the v7 behavior when the field is omitted.
-    #[default]
-    Paragraph,
-    /// Only headings and decorative separators reset; blank paragraph gaps
-    /// stay soft so narration keeps one voice across a whole chapter.
-    Scene,
-    /// Source structure never resets; only voice changes and reference
-    /// limits (duration, byte budget) can break the chain.
-    None,
-}
-
 /// Proposed transport assignment. Domain validation happens before acceptance.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -374,16 +353,6 @@ pub struct PlanRequest {
     pub playback: PlanPlayback,
     pub resume_byte: Option<usize>,
     pub restore_checkpoint: bool,
-    #[serde(default = "enabled")]
-    pub continuation: bool,
-    /// Structural resets of the continuation chain; omitted keeps v7 behavior.
-    #[serde(default)]
-    pub continuation_boundary: ContinuationBoundary,
-    /// Maximum chained seconds before the reference re-anchors on the static
-    /// voice, applied at the next paragraph gap (or immediately at twice the
-    /// span). Omitted uses the worker default.
-    #[serde(default)]
-    pub continuation_span: Option<u64>,
     /// Generation parameters validated against the prepared model's catalog.
     #[serde(default)]
     pub params: BTreeMap<String, ParamValue>,
@@ -418,10 +387,6 @@ pub struct PlanProgressSnapshot {
 pub const MAX_PLAN_BATCH_SPANS: usize = 4096;
 /// Maximum accepted assignments per execution at the transport boundary.
 pub const MAX_PLAN_SPANS: usize = 65536;
-
-fn enabled() -> bool {
-    true
-}
 
 #[cfg(test)]
 mod voice_command_tests {

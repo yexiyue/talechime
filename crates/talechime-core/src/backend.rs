@@ -46,7 +46,7 @@ pub type Synthesis<'a> = Pin<Box<dyn Future<Output = Result<Pcm, BackendError>> 
 
 /// One synthesis request crossing the backend boundary.
 ///
-/// Style, continuation context, the concrete sampling seed and validated
+/// Style, the concrete sampling seed and validated
 /// generation parameters travel together; backends reject what their model
 /// does not support instead of silently ignoring it.
 pub struct SegmentRequest<'a> {
@@ -54,8 +54,7 @@ pub struct SegmentRequest<'a> {
     pub voice: &'a str,
     /// Optional per-utterance style instruction.
     pub style: Option<&'a str>,
-    /// Optional previous complete utterance, owned by this execution rather than a voice cache.
-    pub context: Option<&'a crate::SpeechContext>,
+
     /// Concrete sampling seed resolved by the session producer for this attempt.
     pub seed: u64,
     /// Host-supplied generation parameters, validated at session start.
@@ -63,16 +62,11 @@ pub struct SegmentRequest<'a> {
 }
 
 impl SegmentRequest<'_> {
-    /// Reject a style or continuation conditioning the model does not support.
-    pub fn reject_unsupported(&self, style: bool, continuation: bool) -> Result<(), BackendError> {
+    /// Reject a style instruction the model does not support.
+    pub fn reject_unsupported(&self, style: bool) -> Result<(), BackendError> {
         if !style && self.style.is_some_and(|value| !value.trim().is_empty()) {
             return Err(BackendError::Unsupported(
                 "this model does not support speaking style".into(),
-            ));
-        }
-        if !continuation && self.context.is_some() {
-            return Err(BackendError::Unsupported(
-                "this model does not support continuation".into(),
             ));
         }
         Ok(())

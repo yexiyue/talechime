@@ -151,7 +151,7 @@ Metal 有 Indirect Command Buffer，但 Candle 没有公开的 Metal 图式录�
 
 - 先记录官方源在目标设备的**实际** dtype、权重格式、公共 API 的缓存边界和输出长度。
   VoxCPM 固定官方源码在 MPS 上把 BF16/FP16 自动改为 F32；官方非流式 `generate()` 还会
-  在每段内部准备参考。它与 Candle F16、已缓存参考的测量不构成 Rust/Python 的 runtime A/B。还必须核对 continuation 与隔离 identity 是否同时开启、badcase 重试是否改变实际 seed。
+  在每段内部准备参考。它与 Candle F16、已缓存参考的测量不构成 Rust/Python 的 runtime A/B。当前产品已移除滚动/双参考；官方对照应固定为匹配的单参考模式，并核对 badcase 重试是否改变实际 seed。
 - `optimize()` / `torch.compile` 被调用不等于有效加速。VoxCPM 官方实现的 optimize 明确只
   允许 CUDA，在 MPS 上捕获错误后回退 eager；没有有效编译组件时，不创建 eager/optimize
   吞吐对照，也不据此迁移生产路径。

@@ -163,8 +163,8 @@ let options = talechime::PlanSessionOptions {
 新值÷原生值 换算 sink，不叠加。未声明 `speed` 的后端维持播放端变速。
 
 自定义 Backend 实现者现在实现单个入口 `fn stream(&self, request: SegmentRequest)
--> Streaming`；请求携带 text/voice/style/context、本次尝试的具体 `seed` 与已校验的
-`params`。不支持逐段风格或接续的后端用 `request.reject_unsupported(style, continuation)`
+-> Streaming`；请求携带 text/voice/style、本次尝试的具体 `seed` 与已校验的
+`params`。不支持逐段风格的后端用 `request.reject_unsupported(style)`
 显式拒绝，不要静默忽略。
 
 ## 风格与情绪
@@ -176,40 +176,16 @@ CosyVoice3 使用指令；VoxCPM2 使用官方描述前缀；OmniVoice 使用其
 控制方法与边界见 [CosyVoice3](cosyvoice3.md#逐段风格) 和 [IndexTTS](indextts.md#情绪控制)。
 这些能力不要求开启接续，能力声明也不等同于所有情绪或语言的听感验收。
 
-## 段落内接续
+## 固定参考合成
 
-`PlanSessionOptions::continuation` 与 `SynthesisOptions::continuation` 默认开启；
-配套的 `continuation_boundary`（协议 `PlanRequest.continuation_boundary`，v7 加法字段，
-缺省 `paragraph`）决定哪些原文结构会清空链：`paragraph` 空行/装饰线/标题均清空（旧行为），
-`scene` 仅标题与装饰线清空、空段落间隔保持接续，`none` 不因原文结构清空。
-自链生成会随跳数累积音色漂移，因此 `continuation_span`（协议
-`PlanRequest.continuation_span`，秒，1..=3600）限制单条链的累计音频时长：预算耗尽后在
-下一个段落间隔重锚到静态音色参考，没有段落间隔的流在两倍预算处中途重锚；缺省 45 秒。
-`Engine::synthesize_with_options` / `synthesize_pcm_with_options` 接收直接合成选项；
-原便利入口使用默认设置。一次调用内部滚动使用上一段完整的生成文字与原始 PCM，
-独立调用不共享历史。只有能力目录 `continuation=true` 的 OmniVoice、Qwen **0.6B / 1.7B Base**、
-VoxCPM2、MOSS Nano / Realtime 使用这一条件；Qwen CustomVoice 不支持，音色设计生成器
-（Qwen `1.7b-voicedesign` 与 MOSS `voice-design-1.7b`）只产出参考录音，不进入产品模型目录。
+每个片段复用所选音色的固定条件。Nano 使用固定参考 codes，Qwen Base 使用固定完整 ICL prompt，
+VoxCPM 使用官方单参考，OmniVoice、CosyVoice3、IndexTTS 使用固定 clone prompt/说话人条件，
+MOSS Realtime 使用独立请求的固定参考。预置音色和无参考自然生成遵循模型原有接口。
+需要跨块保持一个设计音色时，先通过 VoiceStudio 生成一次、试听并选用该音色资产，再使用其固定参考。
 
-```rust,ignore
-let mut stream = engine.synthesize_with_options(
-    text, voice, None,
-    talechime::SynthesisOptions { continuation: false, ..Default::default() },
-).await?;
-```
-
-软换行、生成分块与相同音色/风格的连续 span 保留一段参考。按 `continuation_boundary`
-命中的结构行、音色或风格变化清空；新执行、seek、恢复、停止和失败也清空。两种播放策略遵循相同规则。
-参考是静音边界处理、音量、响度对齐与变速之前的完整音频，只接受 1–20 秒、最多 2048 UTF-8
-文字字节、非静音且有限的 PCM。前段与候选参考合计最多 16 MiB，超限整段丢弃并记录原因。
-只有显式 End 和成功交付的段落可以更新参考；门禁重试始终使用同一前段。
-回读发现异常但仍交付的音频不作为下一段参考。接续编码或推理失败会终止合成。
-交付侧在同一次执行内做有界响度对齐：慢基线跟踪有声段响度，逐包以约 ±3 dB 限幅、
-线性斜坡的增益逼近基线，低于语音门限的停顿不参与跟踪，峰值超过 0.99 时整包回缩。
-
-Qwen `0.6b-base` / `1.7b-base` 必须先导入带准确转写的参考音色，其资源与 CustomVoice
-隔离，默认模型仍为 CustomVoice。接续不写入临时音色、不自动迁移或生成预置参考。
-能力标记表示实现已提供，听感改善须试听对照音频后单独验收。
+`PlanSessionOptions`、`SynthesisOptions` 和 `SegmentRequest` 不提供前段音频或重锚配置。
+协议旧滚动字段作为未知字段拒绝。原生单请求流式/KV/codec 状态、语义分段、门禁与取消保持不变。
+参考不会被新生成 PCM 替换；不会自动添加静音。完整策略及官方依据见[固定参考合成](reference-synthesis.md)。
 
 ## 音色资产（VoiceStudio）
 

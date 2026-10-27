@@ -103,20 +103,6 @@ struct Args {
     /// Generate and verify the whole chapter on disk before playback.
     #[arg(long, conflicts_with = "protocol")]
     after_chapter: bool,
-    /// Disable previous-segment conditioning, including when a plan enables it.
-    #[arg(long, conflicts_with = "protocol")]
-    no_continuation: bool,
-    /// Structure that resets the continuation chain (paragraph|scene|none);
-    /// defaults to the plan's policy, then paragraph gaps.
-    #[arg(
-        long,
-        value_parser = parse_continuation_boundary,
-        conflicts_with = "protocol"
-    )]
-    continuation_boundary: Option<talechime_protocol::ContinuationBoundary>,
-    /// Chained seconds before the voice re-anchors (default 45).
-    #[arg(long, conflicts_with = "protocol")]
-    continuation_span: Option<u64>,
     /// Explicitly restart this file from its beginning, ignoring a stored checkpoint.
     #[arg(long, conflicts_with = "protocol")]
     restart: bool,
@@ -135,13 +121,6 @@ struct Args {
     /// Override the independent listening checkpoint directory.
     #[arg(long, global = true)]
     checkpoint_dir: Option<PathBuf>,
-}
-
-fn parse_continuation_boundary(
-    raw: &str,
-) -> Result<talechime_protocol::ContinuationBoundary, String> {
-    serde_json::from_value::<talechime_protocol::ContinuationBoundary>(serde_json::json!(raw))
-        .map_err(|_| format!("expected paragraph, scene or none, got {raw}"))
 }
 
 /// Parse name=value where the value is an int, float or quoted-by-shape text.
@@ -332,9 +311,7 @@ async fn main() -> anyhow::Result<()> {
                     restore_checkpoint: !args.restart,
                     plan,
                     after_chapter: args.after_chapter,
-                    no_continuation: args.no_continuation,
-                    continuation_boundary: args.continuation_boundary,
-                    continuation_span: args.continuation_span,
+
                     params: args.param,
                     seed: args.seed,
                     verification: talechime_protocol::VerificationOptions {
@@ -374,6 +351,22 @@ fn parse_device(value: &str) -> Result<talechime_protocol::Device, String> {
 mod argument_tests {
     use super::*;
     #[test]
+    fn removed_reference_strategy_flags_are_rejected() {
+        for args in [
+            vec!["talechime", "chapter.txt", "--no-continuation"],
+            vec![
+                "talechime",
+                "chapter.txt",
+                "--continuation-boundary",
+                "scene",
+            ],
+            vec!["talechime", "chapter.txt", "--continuation-span", "45"],
+        ] {
+            assert!(Args::try_parse_from(args).is_err());
+        }
+    }
+
+    #[test]
     fn param_flags_parse_typed_values_and_seed() {
         let args = Args::try_parse_from([
             "talechime",
@@ -412,26 +405,6 @@ mod argument_tests {
                 .iter()
                 .any(|(name, _)| name == "steps")
         );
-    }
-    #[test]
-    fn continuation_flag_defaults_on_and_can_override_a_plan() {
-        assert!(
-            !Args::try_parse_from(["talechime", "chapter.txt"])
-                .unwrap()
-                .no_continuation
-        );
-        assert!(
-            Args::try_parse_from([
-                "talechime",
-                "chapter.txt",
-                "--plan",
-                "p.json",
-                "--no-continuation"
-            ])
-            .unwrap()
-            .no_continuation
-        );
-        assert!(Args::try_parse_from(["talechime", "--protocol", "--no-continuation"]).is_err());
     }
     #[test]
     fn plan_and_playback_flags_do_not_change_machine_mode_or_voice_selection() {

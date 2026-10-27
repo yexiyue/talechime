@@ -706,7 +706,7 @@ mod tests {
         let first = chart_label("short-case", &conditions);
         let second = chart_label("multi-case", &conditions);
         assert_ne!(first, second);
-        conditions.mode = "continuation".into();
+        conditions.mode = "whole_segment".into();
         assert_ne!(first, chart_label("short-case", &conditions));
         let json = chart_json(&[ChartPoint {
             case: first.clone(),

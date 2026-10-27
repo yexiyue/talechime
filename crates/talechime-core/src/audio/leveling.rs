@@ -1,7 +1,7 @@
 //! Session-level loudness alignment across synthesis segments.
 //!
-//! Segment-local sampling re-rolls audible energy even when the continuation
-//! chain keeps the voice itself stable. The aligner tracks a slow baseline of
+//! Segment-local sampling varies audible energy even with the same fixed
+//! reference voice. The aligner tracks a slow baseline of
 //! voiced loudness and pulls each packet toward it with a bounded, gently
 //! smoothed gain: loudness steps between segments become gradual drift while
 //! pauses (below the voice floor) freeze tracking so gaps never pump.

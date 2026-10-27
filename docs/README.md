@@ -28,6 +28,8 @@
 - [CosyVoice3 后端](cosyvoice3.md)：实验性零样本克隆、原生流式、固定本地转换文件与音色导入。
 - [IndexTTS 2.5 后端](indextts.md)：实验性参考克隆、源码 feature、本地转换文件与设备边界。
 
+- [固定参考合成](reference-synthesis.md)：所有后端当前的官方输入路径、已移除接口、存储与验收边界。
+
 ## 历史记录（records/）
 
 Windows CPU / CUDA 的新增调查见 [CosyVoice3 性能记录](records/cosyvoice3/cosyvoice3-windows-performance-2026-10-19.md)：

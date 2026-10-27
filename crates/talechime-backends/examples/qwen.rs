@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
                 text: &text,
                 voice: &voice,
                 style: None,
-                context: None,
+
                 seed: 42,
                 params: &params,
             })
@@ -56,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
             text: &text,
             voice: &voice,
             style: style.as_deref(),
-            context: None,
+
             seed: 42,
             params: &params,
         })

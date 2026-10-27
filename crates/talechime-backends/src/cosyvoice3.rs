@@ -32,7 +32,7 @@ pub fn capabilities(directory: &Path) -> anyhow::Result<Capabilities> {
         style: true,
         compiled_devices: Vec::new(),
         pronunciation: false,
-        continuation: false,
+
         parameters: Vec::new(),
     })
 }
@@ -104,7 +104,7 @@ impl Backend for CosyBackend {
     }
     fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            request.reject_unsupported(self.caps.style, self.caps.continuation)?;
+            request.reject_unsupported(self.caps.style)?;
             let instruction = runtime::instruction(request.style)?;
             request
                 .params
@@ -155,7 +155,7 @@ mod tests {
             text: "测试。",
             voice: "custom:reader",
             style,
-            context: None,
+
             seed: 7,
             params: &params,
         };
@@ -186,7 +186,7 @@ mod tests {
         let caps = registry.capabilities("cosyvoice3")?;
         assert_eq!(caps.model.as_deref(), Some(MODEL));
         assert!(caps.native_streaming && caps.cloning);
-        assert!(caps.style && !caps.continuation);
+        assert!(caps.style);
         assert!(caps.voices.is_empty() && caps.default_voice.is_empty());
         assert_eq!(caps.compiled_devices, compiled_devices());
         assert!(

@@ -16,7 +16,6 @@ use tokio::sync::mpsc;
 #[derive(Debug, PartialEq)]
 struct Call {
     text: String,
-    previous: Option<(String, f32)>,
     seed: u64,
     params: Vec<(String, talechime_protocol::ParamValue)>,
 }
@@ -26,7 +25,6 @@ struct Fixture {
     calls: RefCell<Vec<Call>>,
     estimates: RefCell<Vec<(String, String, f64)>>,
     missing_end: Cell<bool>,
-    reject_context: Cell<bool>,
     seconds: Cell<usize>,
 }
 impl Backend for Fixture {
@@ -43,7 +41,6 @@ impl Backend for Fixture {
             style: true,
             cloning: false,
             pronunciation: false,
-            continuation: true,
             parameters: vec![talechime_protocol::ParameterSpec {
                 name: "gain".into(),
                 kind: talechime_protocol::ParamKind::Int { min: 0, max: 10 },
@@ -54,12 +51,8 @@ impl Backend for Fixture {
     }
     fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            let previous = request
-                .context
-                .map(|c| (c.text().to_owned(), c.pcm().samples[0]));
             self.calls.borrow_mut().push(Call {
                 text: request.text.into(),
-                previous,
                 seed: request.seed,
                 params: request
                     .params
@@ -67,9 +60,6 @@ impl Backend for Fixture {
                     .map(|(name, value)| (name.to_owned(), value.clone()))
                     .collect(),
             });
-            if request.context.is_some() && self.reject_context.get() {
-                return Err(BackendError::Synthesis("reference encoding failed".into()));
-            }
             let value = self.calls.borrow().len() as f32 / 100.0;
             let count = self.seconds.get().max(1) * 1000;
             let (tx, rx) = mpsc::channel(2);
@@ -121,247 +111,32 @@ async fn drain(stream: &mut SynthesisStream) -> Result<(), BackendError> {
     assert_eq!(stream.state(), SynthesisState::Completed);
     Ok(())
 }
-fn start(backend: Rc<Fixture>, text: &str, continuation: bool) -> SynthesisStream {
-    SynthesisStream::start_with_options(
-        backend,
-        text,
-        "a",
-        None,
-        None,
-        SynthesisOptions {
-            continuation,
-            ..Default::default()
-        },
-    )
-    .unwrap()
-}
-#[tokio::test]
-async fn direct_synthesis_rejects_invalid_chain_span_before_starting() {
-    tokio::task::LocalSet::new()
-        .run_until(async {
-            let backend = Rc::new(Fixture::default());
-            for span in [0, 3601] {
-                assert!(
-                    SynthesisStream::start_with_options(
-                        backend.clone(),
-                        "甲。",
-                        "a",
-                        None,
-                        None,
-                        SynthesisOptions {
-                            continuation_span: Some(span),
-                            ..Default::default()
-                        }
-                    )
-                    .is_err()
-                );
-            }
-            assert!(backend.calls.borrow().is_empty());
-        })
-        .await;
+fn start(backend: Rc<Fixture>, text: &str) -> SynthesisStream {
+    SynthesisStream::start_with_options(backend, text, "a", None, None, SynthesisOptions::default())
+        .unwrap()
 }
 
-#[tokio::test]
-async fn defaults_soft_lines_hard_paragraphs_and_independent_calls() {
-    tokio::task::LocalSet::new()
-        .run_until(async {
-            let backend = Rc::new(Fixture::default());
-            let mut stream =
-                SynthesisStream::start(backend.clone(), "甲。\n乙。\n\n丙。丁。", "a", None)
-                    .unwrap();
-            drain(&mut stream).await.unwrap();
-            {
-                let calls = backend.calls.borrow();
-                assert!(calls[0].previous.is_none());
-                assert_eq!(calls[1].previous, Some(("甲。".into(), 0.01)));
-                assert!(calls[2].previous.is_none());
-                assert_eq!(calls[3].previous, Some(("丙。".into(), 0.03)));
-            }
-            let mut next = start(backend.clone(), "戊。己。", true);
-            drain(&mut next).await.unwrap();
-            assert!(backend.calls.borrow()[4].previous.is_none());
-            let mut off = start(backend.clone(), "庚。辛。", false);
-            drain(&mut off).await.unwrap();
-            assert!(
-                backend.calls.borrow()[6..]
-                    .iter()
-                    .all(|c| c.previous.is_none())
-            );
-        })
-        .await;
-}
-#[tokio::test]
-async fn spent_chain_reanchors_at_paragraph_gaps_under_scene_policy() {
-    tokio::task::LocalSet::new()
-        .run_until(async {
-            let backend = Rc::new(Fixture::default());
-            let mut stream = SynthesisStream::start_with_options(
-                backend.clone(),
-                "甲。乙。\n\n丙。丁。\n\n戊。己。",
-                "a",
-                None,
-                None,
-                SynthesisOptions {
-                    continuation_boundary: talechime_protocol::ContinuationBoundary::Scene,
-                    continuation_span: Some(2),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-            drain(&mut stream).await.unwrap();
-            let previous: Vec<Option<String>> = backend
-                .calls
-                .borrow()
-                .iter()
-                .map(|call| call.previous.as_ref().map(|p| p.0.clone()))
-                .collect();
-            // Two 1s segments per span: the budget expires exactly at each
-            // paragraph gap, so every third segment re-anchors.
-            assert_eq!(
-                previous,
-                vec![
-                    None,
-                    Some("甲。".into()),
-                    None,
-                    Some("丙。".into()),
-                    None,
-                    Some("戊。".into()),
-                ]
-            );
-        })
-        .await;
-}
-#[tokio::test]
-async fn streams_without_paragraph_gaps_hit_the_mid_stream_ceiling() {
-    tokio::task::LocalSet::new()
-        .run_until(async {
-            let backend = Rc::new(Fixture::default());
-            let mut stream = SynthesisStream::start_with_options(
-                backend.clone(),
-                "甲。乙。丙。丁。戊。",
-                "a",
-                None,
-                None,
-                SynthesisOptions {
-                    continuation_boundary: talechime_protocol::ContinuationBoundary::None,
-                    continuation_span: Some(2),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-            drain(&mut stream).await.unwrap();
-            let previous: Vec<Option<String>> = backend
-                .calls
-                .borrow()
-                .iter()
-                .map(|call| call.previous.as_ref().map(|p| p.0.clone()))
-                .collect();
-            // No gap ever qualifies, so the chain runs to twice the span and
-            // then re-anchors mid-stream.
-            assert_eq!(
-                previous,
-                vec![
-                    None,
-                    Some("甲。".into()),
-                    Some("乙。".into()),
-                    Some("丙。".into()),
-                    None,
-                ]
-            );
-        })
-        .await;
-}
 #[tokio::test]
 async fn concurrent_executions_and_cancelled_or_disconnected_streams_are_isolated() {
     tokio::task::LocalSet::new()
         .run_until(async {
             let backend = Rc::new(Fixture::default());
-            let mut a = start(backend.clone(), "甲。乙。", true);
-            let mut b = start(backend.clone(), "丙。丁。", true);
+            let mut a = start(backend.clone(), "甲。乙。");
+            let mut b = start(backend.clone(), "丙。丁。");
             let (a, b) = tokio::join!(drain(&mut a), drain(&mut b));
             a.unwrap();
             b.unwrap();
-            for call in backend.calls.borrow().iter() {
-                match call.text.as_str() {
-                    "甲。" | "丙。" => assert!(call.previous.is_none()),
-                    "乙。" => assert_eq!(call.previous.as_ref().unwrap().0, "甲。"),
-                    "丁。" => assert_eq!(call.previous.as_ref().unwrap().0, "丙。"),
-                    _ => unreachable!(),
-                }
-            }
-            let mut cancelled = start(backend.clone(), "戊。己。", true);
+            let mut cancelled = start(backend.clone(), "戊。己。");
             cancelled.recv().await.unwrap().unwrap();
             cancelled.cancel().await;
             backend.missing_end.set(true);
-            let mut broken = start(backend.clone(), "庚。辛。", true);
+            let mut broken = start(backend.clone(), "庚。辛。");
             assert!(drain(&mut broken).await.is_err());
             assert_eq!(broken.state(), SynthesisState::Failed);
             backend.missing_end.set(false);
-            let mut fresh = start(backend.clone(), "壬。", true);
+            let mut fresh = start(backend.clone(), "壬。");
             drain(&mut fresh).await.unwrap();
-            assert!(backend.calls.borrow().last().unwrap().previous.is_none());
-        })
-        .await;
-}
-#[tokio::test]
-async fn overlong_reference_resets_without_interrupting_delivery() {
-    tokio::task::LocalSet::new()
-        .run_until(async {
-            let backend = Rc::new(Fixture::default());
-            backend.seconds.set(21);
-            let mut stream = start(backend.clone(), "甲。乙。", true);
-            drain(&mut stream).await.unwrap();
-            assert!(backend.calls.borrow().iter().all(|c| c.previous.is_none()));
-        })
-        .await;
-}
-#[tokio::test]
-async fn scene_policy_keeps_the_chain_across_paragraph_gaps() {
-    tokio::task::LocalSet::new()
-        .run_until(async {
-            let backend = Rc::new(Fixture::default());
-            let text = "甲。\n乙。\n\n丙。\n\n第二章\n丁。";
-            let mut scene = SynthesisStream::start_with_options(
-                backend.clone(),
-                text,
-                "a",
-                None,
-                None,
-                SynthesisOptions {
-                    continuation_boundary: talechime_protocol::ContinuationBoundary::Scene,
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-            drain(&mut scene).await.unwrap();
-            {
-                let calls = backend.calls.borrow();
-                assert!(calls[0].previous.is_none());
-                // Soft newline and blank paragraph gap both keep the chain.
-                assert_eq!(calls[1].previous.as_ref().unwrap().0, "甲。");
-                assert_eq!(calls[2].previous.as_ref().unwrap().0, "乙。");
-                // A heading line still resets under the scene policy.
-                assert!(calls[3].previous.is_none());
-            }
-            backend.calls.borrow_mut().clear();
-            let mut unlimited = SynthesisStream::start_with_options(
-                backend.clone(),
-                text,
-                "a",
-                None,
-                None,
-                SynthesisOptions {
-                    continuation_boundary: talechime_protocol::ContinuationBoundary::None,
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-            drain(&mut unlimited).await.unwrap();
-            let calls = backend.calls.borrow();
-            assert!(calls[0].previous.is_none());
-            for call in &calls[1..] {
-                assert!(call.previous.is_some());
-            }
+            assert_eq!(backend.calls.borrow().last().unwrap().text, "壬。");
         })
         .await;
 }
@@ -403,7 +178,7 @@ fn verifier(main: Vec<&'static str>, second: Vec<&'static str>) -> Rc<Verifier> 
     )
 }
 #[tokio::test]
-async fn gate_retries_snapshot_previous_and_report_only_errors_clear_it() {
+async fn gate_retries_only_the_rejected_text_and_report_only_preserves_delivery() {
     tokio::task::LocalSet::new()
         .run_until(async {
             let backend = Rc::new(Fixture::default());
@@ -438,12 +213,11 @@ async fn gate_retries_snapshot_previous_and_report_only_errors_clear_it() {
             {
                 let calls = backend.calls.borrow();
                 assert_eq!(calls.len(), 4);
-                assert_eq!(calls[1].previous, calls[2].previous);
-                // The gated retry resamples: identical context, different seed.
+                assert_eq!(calls[1].text, calls[2].text);
+                // The gated retry resamples the same text with a different seed.
                 assert_ne!(calls[1].seed, calls[2].seed);
                 assert_ne!(calls[0].seed, calls[1].seed);
-                assert_eq!(calls[3].previous.as_ref().unwrap().0, "阳光照亮河面。");
-                assert_eq!(calls[3].previous.as_ref().unwrap().1, 0.03);
+                assert_eq!(calls[3].text, "小鸟飞向远方。");
             }
             backend.calls.borrow_mut().clear();
             let mut stream = SynthesisStream::start_with_options(
@@ -465,22 +239,7 @@ async fn gate_retries_snapshot_previous_and_report_only_errors_clear_it() {
             )
             .unwrap();
             drain(&mut stream).await.unwrap();
-            assert!(backend.calls.borrow()[2].previous.is_none());
-        })
-        .await;
-}
-
-#[tokio::test]
-async fn prefix_failure_terminates_without_independent_fallback() {
-    tokio::task::LocalSet::new()
-        .run_until(async {
-            let backend = Rc::new(Fixture::default());
-            backend.reject_context.set(true);
-            let mut stream = start(backend.clone(), "甲。乙。丙。", true);
-            assert!(drain(&mut stream).await.is_err());
-            assert_eq!(stream.state(), SynthesisState::Failed);
-            assert_eq!(backend.calls.borrow().len(), 2);
-            assert!(backend.calls.borrow()[1].previous.is_some());
+            assert_eq!(backend.calls.borrow()[2].text, "小鸟飞向远方。");
         })
         .await;
 }
@@ -586,8 +345,8 @@ async fn duration_learning_is_local_to_interleaved_executions_and_resets_after_f
     tokio::task::LocalSet::new()
         .run_until(async {
             let backend = Rc::new(Fixture::default());
-            let mut first = start(backend.clone(), "甲。乙。", false);
-            let mut second = start(backend.clone(), "丙。丁。", false);
+            let mut first = start(backend.clone(), "甲。乙。");
+            let mut second = start(backend.clone(), "丙。丁。");
             let (a, b) = tokio::join!(drain(&mut first), drain(&mut second));
             a.unwrap();
             b.unwrap();
@@ -598,14 +357,14 @@ async fn duration_learning_is_local_to_interleaved_executions_and_resets_after_f
                     _ => unreachable!(),
                 }
             }
-            let mut cancelled = start(backend.clone(), "戊。己。", false);
+            let mut cancelled = start(backend.clone(), "戊。己。");
             cancelled.recv().await.unwrap().unwrap();
             cancelled.cancel().await;
             backend.missing_end.set(true);
-            let mut broken = start(backend.clone(), "庚。辛。", false);
+            let mut broken = start(backend.clone(), "庚。辛。");
             assert!(drain(&mut broken).await.is_err());
             backend.missing_end.set(false);
-            let mut fresh = start(backend.clone(), "壬。癸。", false);
+            let mut fresh = start(backend.clone(), "壬。癸。");
             drain(&mut fresh).await.unwrap();
             assert_eq!(
                 backend

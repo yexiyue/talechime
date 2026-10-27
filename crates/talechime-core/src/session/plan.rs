@@ -6,14 +6,6 @@ use tokio::sync::Notify;
 /// Playback and recovery settings independent of a plan's voice assignments.
 #[derive(Debug, Clone)]
 pub struct PlanSessionOptions {
-    /// Keep one complete previous segment within a paragraph (default enabled).
-    pub continuation: bool,
-    /// Source structure that resets the continuation chain; hosts own this
-    /// policy because only they know their text layout.
-    pub continuation_boundary: talechime_protocol::ContinuationBoundary,
-    /// Chained seconds before the reference re-anchors on the static voice;
-    /// `None` uses the core default.
-    pub continuation_span: Option<u64>,
     /// Generation parameters validated against the prepared model's catalog.
     pub params: crate::params::GenerationParams,
     /// Sampling seed policy; Auto draws fresh randomness per attempt.
@@ -37,9 +29,6 @@ pub struct PlanSessionOptions {
 impl Default for PlanSessionOptions {
     fn default() -> Self {
         Self {
-            continuation: true,
-            continuation_boundary: talechime_protocol::ContinuationBoundary::Paragraph,
-            continuation_span: None,
             params: crate::params::GenerationParams::default(),
             seed: crate::params::SeedPolicy::default(),
             volume: 1.0,
@@ -71,9 +60,6 @@ pub struct PlanProgress {
 }
 
 pub(super) struct PlanInput {
-    pub(super) continuation: bool,
-    pub(super) continuation_boundary: talechime_protocol::ContinuationBoundary,
-    pub(super) continuation_span: Option<u64>,
     pub(super) params: crate::params::GenerationParams,
     pub(super) seed: crate::params::SeedPolicy,
     pub(super) plan: RefCell<SpeechPlan>,
@@ -88,9 +74,6 @@ pub(super) struct PlanInput {
 impl PlanInput {
     pub(super) fn new(plan: SpeechPlan, byte: usize) -> Self {
         Self {
-            continuation: true,
-            continuation_boundary: talechime_protocol::ContinuationBoundary::Paragraph,
-            continuation_span: None,
             params: crate::params::GenerationParams::default(),
             seed: crate::params::SeedPolicy::default(),
             plan: RefCell::new(plan),

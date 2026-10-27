@@ -46,7 +46,7 @@ pub fn capabilities() -> Capabilities {
         style: false,
         compiled_devices: Vec::new(),
         pronunciation: false,
-        continuation: false,
+
         parameters: params::catalog(),
     }
 }
@@ -54,7 +54,6 @@ pub fn model_capabilities(model: models::Model) -> Capabilities {
     let mut caps = capabilities();
     caps.model = Some(model.id().into());
     caps.model_name = model.name().into();
-    caps.continuation = model.is_base();
     caps.style = model == models::Model::Custom17;
     if model.is_base() {
         caps.voices.clear();
@@ -199,13 +198,7 @@ impl Backend for QwenBackend {
     }
     fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            let (text, voice, style, context) =
-                (request.text, request.voice, request.style, request.context);
-            if context.is_some() && !self.model.is_base() {
-                return Err(BackendError::Unsupported(
-                    "continuation requires Qwen Base".into(),
-                ));
-            }
+            let (text, voice, style) = (request.text, request.voice, request.style);
             if style.is_some_and(|v| !v.trim().is_empty())
                 && (self.model != models::Model::Custom17
                     || style.is_some_and(|v| v.chars().count() > 200))
@@ -242,7 +235,7 @@ impl Backend for QwenBackend {
                     perf: crate::performance::OwnerContext::capture(),
                     text,
                     voice: voice.into(),
-                    context: context.cloned(),
+
                     style: style.filter(|v| !v.trim().is_empty()).map(str::to_owned),
                     options: resolved.options,
                     language: resolved.language,
@@ -283,13 +276,13 @@ mod tests {
     use talechime_core::backend::AudioChunk;
     use talechime_qwen3_tts::Speaker;
     #[test]
-    fn continuation_is_only_exposed_for_base_with_imported_voices() {
+    fn base_cloning_uses_imported_fixed_references() {
         for model in [
             models::Model::Custom06,
             models::Model::Custom17,
             models::Model::Design17,
         ] {
-            assert!(!model_capabilities(model).continuation);
+            assert!(!model_capabilities(model).cloning);
         }
         let temp = tempfile::tempdir().unwrap();
         let reference = temp.path().join("test.wav");
@@ -297,7 +290,7 @@ mod tests {
         for model in [models::Model::Base06, models::Model::Base17] {
             let directory = model.directory(temp.path());
             let caps = capabilities_at(&directory, model).unwrap();
-            assert!(caps.continuation && caps.cloning && caps.voices.is_empty());
+            assert!(caps.cloning && caps.voices.is_empty());
             voice_store(&directory, model)
                 .unwrap()
                 .import("custom:test", "Test", &reference, "准确参考转写", None)
@@ -341,7 +334,7 @@ mod tests {
             text,
             voice,
             style: None,
-            context: None,
+
             seed: 42,
             params,
         }

@@ -26,7 +26,7 @@ impl Backend for DemoBackend {
             style: false,
             cloning: false,
             pronunciation: false,
-            continuation: false,
+
             parameters: vec![],
         }
     }

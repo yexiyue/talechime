@@ -9,7 +9,6 @@ repository = "https://github.com/yexiyue/talechime"
 
 [features]
 default = []
-experimental-dual-reference = []
 # Test-only codec replay. macOS now always enables Accelerate; retain the
 # historical accelerate-experiment feature for existing replay commands.
 codec-experiment = []

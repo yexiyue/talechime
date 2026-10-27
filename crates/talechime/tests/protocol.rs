@@ -244,9 +244,7 @@ fn library_voice_override_is_validated_without_materializing_or_loading_models()
         playback: talechime_protocol::PlanPlayback::Streaming,
         resume_byte: Some(0),
         restore_checkpoint: false,
-        continuation: true,
-        continuation_boundary: Default::default(),
-        continuation_span: None,
+
         params: Default::default(),
         seed: None,
         verification: Default::default(),
@@ -453,17 +451,8 @@ fn backend_directory_and_switch_are_lightweight() {
     );
     assert_eq!(catalog[0].default_voice, "Weiguo");
     for caps in &catalog {
-        let supported = match (caps.backend.as_str(), caps.model.as_deref()) {
-            ("qwen", Some("0.6b-base" | "1.7b-base")) => true,
-            ("qwen" | "cosyvoice3" | "indextts", _) => false,
-            ("moss" | "voxcpm" | "omnivoice", _) => true,
-            _ => panic!("unexpected model in catalog"),
-        };
-        assert_eq!(
-            caps.continuation, supported,
-            "{}/ {:?}",
-            caps.backend, caps.model
-        );
+        let json = serde_json::to_value(caps).unwrap();
+        assert!(json.get("continuation").is_none());
     }
     // Declared generation catalogs are model-specific and self-consistent.
     for caps in &catalog {
@@ -576,9 +565,7 @@ fn cli_rejects_open_or_mismatched_plan_before_model_preparation() {
             playback: talechime_protocol::PlanPlayback::Streaming,
             resume_byte: Some(resume_byte),
             restore_checkpoint: false,
-            continuation: true,
-            continuation_boundary: Default::default(),
-            continuation_span: None,
+
             params: Default::default(),
             seed: None,
             verification: Default::default(),

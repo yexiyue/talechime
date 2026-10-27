@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         style: false,
         cloning: false,
         pronunciation: false,
-        continuation: false,
+
         parameters: vec![],
     };
     let text = "他说：走吧。";

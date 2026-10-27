@@ -7,9 +7,7 @@ use tokio::sync::{mpsc, oneshot};
 pub(super) struct Request {
     #[cfg(feature = "performance-tools")]
     pub(crate) perf: crate::performance::OwnerContext,
-    #[cfg(feature = "experimental-dual-reference")]
-    pub dual_reference: bool,
-    pub context: Option<talechime_core::SpeechContext>,
+
     pub text: String,
     pub voice: String,
     pub options: Options,
@@ -73,29 +71,7 @@ fn generate(
     request: &Request,
 ) -> Result<(), BackendError> {
     let cancel = || request.audio.is_closed();
-    #[cfg(feature = "experimental-dual-reference")]
-    let dual_reference = request.dual_reference;
-    #[cfg(not(feature = "experimental-dual-reference"))]
-    let dual_reference = false;
-    #[cfg(feature = "experimental-dual-reference")]
-    let identity = if request.dual_reference {
-        Some(
-            cache
-                .isolated_reference(model, variant, directory, &request.voice, &cancel)
-                .map_err(|e| BackendError::Synthesis(e.to_string()))?,
-        )
-    } else {
-        None
-    };
-    let reference = if let Some(context) = &request.context {
-        let samples = crate::reference::mono(context.pcm(), 16000)
-            .map_err(|e| BackendError::Synthesis(e.to_string()))?;
-        Some(
-            model
-                .reference(&samples, Some(context.text().into()), &cancel)
-                .map_err(|e| BackendError::Synthesis(e.to_string()))?,
-        )
-    } else if request.voice.starts_with("custom:") && !dual_reference {
+    let reference = if request.voice.starts_with("custom:") {
         Some(
             cache
                 .reference(model, variant, device, directory, &request.voice, &cancel)
@@ -139,28 +115,6 @@ fn generate(
         channel_wait += waiting.elapsed();
         Ok(())
     };
-    #[cfg(feature = "experimental-dual-reference")]
-    let result = if let Some(identity) = &identity {
-        model.generate_dual(
-            &request.text,
-            talechime_voxcpm::DualReference {
-                identity,
-                continuation: reference.as_ref(),
-            },
-            &request.options,
-            &cancel,
-            deliver,
-        )
-    } else {
-        model.generate(
-            &request.text,
-            reference.as_ref(),
-            &request.options,
-            &cancel,
-            deliver,
-        )
-    };
-    #[cfg(not(feature = "experimental-dual-reference"))]
     let result = model.generate(
         &request.text,
         reference.as_ref(),

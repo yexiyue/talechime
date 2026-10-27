@@ -64,23 +64,24 @@ impl ChapterCache {
         // Structured encoding prevents separator collisions in arbitrary
         // resource identities, parameter strings and model names.
         let canonical = serde_json::json!({
-            "version": "chapter-cache-v2",
+            "version": "chapter-cache-v3-fixed-reference",
             "core": env!("CARGO_PKG_VERSION"),
             "identity": identity,
             "backend": backend,
             "model": model,
             "text_hash": text_hash,
             "seed": seed,
-            "continuation": input.continuation,
-            "boundary": input.continuation_boundary,
-            "span": input.continuation_span.unwrap_or(crate::continuation::DEFAULT_CHAIN_SPAN_SECONDS),
+
+
+
             "params": input.params.iter().collect::<std::collections::BTreeMap<_, _>>(),
             "spans": spans.iter().map(|span| serde_json::json!({
                 "range": [span.range().start, span.range().end],
                 "voice": span.voice(),
                 "style": span.style(),
             })).collect::<Vec<_>>(),
-        }).to_string();
+        })
+        .to_string();
         format!("{:x}", Sha256::digest(canonical.as_bytes()))
     }
 
@@ -256,12 +257,6 @@ mod tests {
         );
         assert_ne!(
             ChapterCache::key("fixture-v1", "moss", None, "h1", 8, &input, &spans),
-            base
-        );
-        let (mut other, other_spans) = build(None);
-        other.continuation = false;
-        assert_ne!(
-            ChapterCache::key("fixture-v1", "moss", None, "h1", 7, &other, &other_spans),
             base
         );
         let (styled, styled_spans) = build(Some("cheerful"));

@@ -7,8 +7,6 @@ pub mod audio;
 pub mod backend;
 pub mod checkpoint;
 pub mod config;
-mod continuation;
-pub use continuation::SpeechContext;
 pub mod design;
 pub mod params;
 pub mod paths;

@@ -15,9 +15,7 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
     let start = Instant::now();
-    let mut stream = backend
-        .stream_seeded_with_context(&text, "Weiguo", 42, None)
-        .await?;
+    let mut stream = backend.stream_seeded(&text, "Weiguo", 42).await?;
     let mut wav = hound::WavWriter::create(
         &args[3],
         hound::WavSpec {

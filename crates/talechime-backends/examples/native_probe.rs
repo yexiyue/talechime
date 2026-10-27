@@ -74,7 +74,7 @@ async fn run() -> anyhow::Result<()> {
                 text: &text,
                 voice: &args[6],
                 style: None,
-                context: None,
+
                 seed: 42,
                 params: &params,
             })
@@ -92,7 +92,7 @@ async fn run() -> anyhow::Result<()> {
                 text: &text,
                 voice: &args[6],
                 style: None,
-                context: None,
+
                 seed: 42,
                 params: &params,
             })
@@ -117,7 +117,7 @@ async fn run() -> anyhow::Result<()> {
                 text: &segment.text,
                 voice: &args[6],
                 style: style.as_deref(),
-                context: None,
+
                 seed: 42,
                 params: &params,
             })
@@ -194,7 +194,7 @@ async fn run() -> anyhow::Result<()> {
                 text: &text,
                 voice: &args[6],
                 style: None,
-                context: None,
+
                 seed: 42,
                 params: &params,
             })

@@ -13,7 +13,7 @@ fn request(params: &GenerationParams) -> SegmentRequest<'_> {
         text: TEXT,
         voice: "narrator",
         style: None,
-        context: None,
+
         seed: talechime_core::SeedPolicy::Pinned(42).resolve(0, 0),
         params,
     }
@@ -121,7 +121,7 @@ impl Drop for TemporaryVoice {
     }
 }
 
-async fn check_reference_and_continuation(mode: Mode) -> anyhow::Result<()> {
+async fn check_fixed_reference(mode: Mode) -> anyhow::Result<()> {
     tokio::task::LocalSet::new()
         .run_until(async {
             let root = PathBuf::from(
@@ -134,14 +134,6 @@ async fn check_reference_and_continuation(mode: Mode) -> anyhow::Result<()> {
             let narrator = collect(&backend, &params).await?;
             drop(backend);
             let samples: Vec<f32> = narrator.iter().copied().map(f32::from_bits).collect();
-            let context = talechime_core::SpeechContext::new(
-                TEXT,
-                talechime_core::backend::Pcm {
-                    samples: samples.clone(),
-                    sample_rate: 24000,
-                    channels: 1,
-                },
-            )?;
             let temporary = tempfile::tempdir()?;
             let wav = temporary.path().join("generated-reference.wav");
             let mut writer = hound::WavWriter::create(
@@ -184,26 +176,16 @@ async fn check_reference_and_continuation(mode: Mode) -> anyhow::Result<()> {
             assert_eq!(std::fs::read(&cache_path)?, cache);
             assert_eq!(collect(&backend, &params).await?, narrator);
 
-            let continuation_request = || SegmentRequest {
-                text: "今天的故事开始了。",
-                context: Some(&context),
-                ..request(&params)
-            };
-            let continued = collect_request(&backend, continuation_request()).await?;
-            assert_eq!(collect_request(&backend, continuation_request()).await?, continued);
-            let mut stream = backend.stream(continuation_request()).await?;
+            let mut stream = backend.stream(clone_request()).await?;
             anyhow::ensure!(matches!(
                 tokio::time::timeout(Duration::from_secs(60), stream.recv()).await?,
                 Some(Ok(AudioChunk::Pcm(_)))
             ));
             drop(stream);
-            assert_eq!(collect_request(&backend, continuation_request()).await?, continued);
             assert_eq!(collect_request(&backend, clone_request()).await?, cloned);
+            assert_eq!(std::fs::read(&cache_path)?, cache);
             assert_eq!(collect(&backend, &params).await?, narrator);
-            eprintln!(
-                "{}: cold/warm reference {} PCM samples; continuation {} samples repeated and recovered after partial cancellation; narrator {} samples unchanged; cache {} bytes unchanged",
-                mode.id(), cloned.len(), continued.len(), narrator.len(), cache.len()
-            );
+
             drop(backend);
             voice.store.take().unwrap().remove(&voice.id)?;
             anyhow::ensure!(!voice_path.exists(), "test voice cleanup failed");
@@ -213,7 +195,7 @@ async fn check_reference_and_continuation(mode: Mode) -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "explicit local MOSS Realtime 1.7B CUDA reference/continuation gate; no downloads"]
-async fn real_cuda_realtime_reference_and_continuation_reuse() -> anyhow::Result<()> {
-    check_reference_and_continuation(Mode::Realtime).await
+#[ignore = "explicit local MOSS Realtime 1.7B CUDA fixed reference gate; no downloads"]
+async fn real_cuda_realtime_fixed_reference_reuse() -> anyhow::Result<()> {
+    check_fixed_reference(Mode::Realtime).await
 }

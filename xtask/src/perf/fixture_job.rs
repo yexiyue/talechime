@@ -38,9 +38,9 @@ pub fn create_mode(build_path: &Path, output: &Path, mode: &str) -> anyhow::Resu
     plan.observation = mode.into();
     let plan_path = output.join("plan.json");
     publish_json(&plan_path, &plan)?;
-    let request = serde_json::json!({"resources_root":output.join("resources"),"backend":"fixture","model":"deterministic","device":"cpu","corpus":corpus,"corpus_sha256":digest(bytes),"voice":"fixture","style":null,"continuation":false,"seed":42,"params":{},"max_pcm_bytes":4*1024*1024,"fixture":true});
+    let request = serde_json::json!({"resources_root":output.join("resources"),"backend":"fixture","model":"deterministic","device":"cpu","corpus":corpus,"corpus_sha256":digest(bytes),"voice":"fixture","style":null,"seed":42,"params":{},"max_pcm_bytes":4*1024*1024,"fixture":true});
     let mut parameters = BTreeMap::new();
-    for name in ["voice", "style", "seed", "continuation"] {
+    for name in ["voice", "style", "seed"] {
         parameters.insert(format!("request.{name}"), request[name].to_string());
     }
     let conditions = Conditions {

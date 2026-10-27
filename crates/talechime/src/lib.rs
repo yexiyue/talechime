@@ -45,8 +45,8 @@ pub use talechime_core::voices::library::{VoiceAsset, VoiceLibrary, VoiceSource}
 pub use talechime_core::{
     CancellationHandle, ChapterCacheOptions, DEFAULT_MAX_BYTES, GenerationParams, PlanError,
     PlanProgress, PlanSessionOptions, PlanState, Playback, PlaybackPolicy, SeedPolicy,
-    SourceSnapshot, SpeechAudio, SpeechContext, SpeechPlan, SpeechSpan, StagingError,
-    StagingOptions, SynthesisItem, SynthesisOptions, SynthesisState, VoiceSnapshot,
+    SourceSnapshot, SpeechAudio, SpeechPlan, SpeechSpan, StagingError, StagingOptions,
+    SynthesisItem, SynthesisOptions, SynthesisState, VoiceSnapshot,
     backend::{
         AudioChunk, Backend, BackendError, Pcm, SegmentRequest, Segmentation, SegmentationRequest,
         Streaming,

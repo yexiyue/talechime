@@ -26,7 +26,7 @@ struct Request {
     corpus_sha256: String,
     voice: String,
     style: Option<String>,
-    continuation: bool,
+
     seed: u64,
     params: std::collections::BTreeMap<String, talechime_protocol::ParamValue>,
     warmup_rounds: u32,
@@ -240,7 +240,6 @@ async fn prepare_reference(
         request.style.clone(),
         None,
         SynthesisOptions {
-            continuation: request.continuation,
             params: parameters(request),
             seed: talechime_core::SeedPolicy::Pinned(request.seed),
             ..Default::default()
@@ -307,7 +306,6 @@ async fn round(
         request.style.clone(),
         None,
         SynthesisOptions {
-            continuation: request.continuation,
             params: parameters(request),
             seed: talechime_core::SeedPolicy::Pinned(request.seed),
             ..Default::default()
@@ -558,7 +556,7 @@ impl Backend for Fixture {
             style: false,
             cloning: false,
             pronunciation: false,
-            continuation: false,
+
             parameters: vec![],
         }
     }
@@ -830,7 +828,7 @@ mod tests {
             .await
     }
     fn request() -> Request {
-        serde_json::from_value(serde_json::json!({"schema":"talechime/performance-request/1","attempt_id":"fixture","resources_root":"not_used","backend":"fixture","model":"deterministic","device":"cpu","corpus":"not_used","corpus_sha256":hash(b"fixture."),"voice":"fixture","style":null,"continuation":false,"seed":42,"params":{},"warmup_rounds":1,"hot_rounds":1,"max_pcm_bytes":1024,"fixture":true,"request_timeout_seconds":1,"observation_mode":"off"})).unwrap()
+        serde_json::from_value(serde_json::json!({"schema":"talechime/performance-request/1","attempt_id":"fixture","resources_root":"not_used","backend":"fixture","model":"deterministic","device":"cpu","corpus":"not_used","corpus_sha256":hash(b"fixture."),"voice":"fixture","style":null,"seed":42,"params":{},"warmup_rounds":1,"hot_rounds":1,"max_pcm_bytes":1024,"fixture":true,"request_timeout_seconds":1,"observation_mode":"off"})).unwrap()
     }
     #[tokio::test(flavor = "current_thread")]
     async fn invalid_streams_and_pcm_budget_do_not_become_success() -> anyhow::Result<()> {

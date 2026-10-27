@@ -15,7 +15,7 @@ fn capabilities() -> Capabilities {
         cloning: false,
         style: false,
         pronunciation: false,
-        continuation: false,
+
         parameters: vec![],
     }
 }
