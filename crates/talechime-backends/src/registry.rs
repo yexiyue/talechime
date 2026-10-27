@@ -13,6 +13,8 @@ use tokio::sync::mpsc;
 mod cosyvoice3;
 #[cfg(feature = "indextts")]
 mod indextts;
+#[cfg(feature = "kokoro")]
+mod kokoro;
 #[cfg(feature = "moss")]
 mod moss;
 #[cfg(feature = "omnivoice")]
@@ -84,6 +86,8 @@ struct Registration {
     models: fn() -> Vec<Rc<dyn ModelAdapter>>,
 }
 static ADAPTERS: &[Registration] = &[
+    #[cfg(feature = "kokoro")]
+    kokoro::REGISTRATION,
     #[cfg(feature = "moss")]
     moss::REGISTRATION,
     #[cfg(feature = "voxcpm")]
@@ -181,7 +185,11 @@ impl Registry {
     pub fn feature_exists(feature: &str) -> bool {
         matches!(
             feature,
-            "moss"
+            "kokoro"
+                | "kokoro-metal"
+                | "kokoro-g2pw"
+                | "kokoro-cuda"
+                | "moss"
                 | "moss-candle"
                 | "moss-candle-cuda"
                 | "moss-candle-metal"

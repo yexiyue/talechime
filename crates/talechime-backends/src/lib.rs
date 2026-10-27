@@ -20,6 +20,8 @@ pub mod devices;
 mod download;
 #[cfg(feature = "indextts")]
 pub mod indextts;
+#[cfg(feature = "kokoro")]
+pub mod kokoro;
 #[cfg(feature = "moss")]
 pub mod moss;
 #[cfg(any(
@@ -54,6 +56,7 @@ pub mod reference;
     feature = "omnivoice",
     feature = "asr",
     feature = "performance-tools",
+    feature = "kokoro",
 ))]
 mod resources;
 #[cfg(feature = "voxcpm")]

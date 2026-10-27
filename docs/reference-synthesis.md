@@ -7,6 +7,7 @@
 | 后端 / 模型 | 保留的合成条件 | 官方依据 |
 | --- | --- | --- |
 | MOSS Nano Candle | 固定内置或导入 codes，使用 voice-clone user reference 模板；不把生成 codes 注入 assistant prefix | [官方 infer.py](https://github.com/OpenMOSS/MOSS-TTS-Nano/blob/main/infer.py) 的默认 `voice_clone`，固定实现模板 revision 仍由资源清单约束 |
+| Kokoro v1.1-zh（源码实验） | 官方预置中文 voice style 表，按当前音素长度选行；可选 g2pW 只改变前端多音字读音 | [官方模型入口](https://github.com/hexgrad/kokoro/blob/dfb907a02bba8152ca444717ca5d78747ccb4bec/kokoro/model.py)与[当前移植边界](kokoro.md) |
 | MOSS Realtime 1.7B | 所选固定参考，独立请求；保留单请求内部原生文字/音频调度和流式解码 | [官方模型卡](https://github.com/OpenMOSS/MOSS-TTS/blob/main/docs/moss_tts_realtime_model_card.md) 的参考与 single-turn 用法 |
 | Qwen 0.6B / 1.7B Base | 从导入原始录音和准确转写建立固定完整 ICL prompt，重复使用同一音色缓存 | [官方 create_voice_clone_prompt](https://github.com/QwenLM/Qwen3-TTS/blob/main/qwen_tts/inference/qwen3_tts_model.py) |
 | Qwen CustomVoice | 官方预置 speaker；1.7B 可带其支持的 style | [官方模型用法](https://github.com/QwenLM/Qwen3-TTS) |

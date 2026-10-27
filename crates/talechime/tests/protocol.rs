@@ -26,6 +26,18 @@ impl Worker {
             .unwrap(),
         )
         .unwrap();
+        #[cfg(all(not(feature = "moss"), not(feature = "qwen"), feature = "kokoro"))]
+        std::fs::write(
+            directory.path().join("config.json"),
+            serde_json::to_vec(&talechime_protocol::Config {
+                backend: "kokoro".into(),
+                model: Some("1.1-zh".into()),
+                voice: "zf_001".into(),
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
         let mut child = ProcessCommand::new(env!("CARGO_BIN_EXE_talechime"))
             .args(["--protocol", "--config"])
             .arg(directory.path().join("config.json"))

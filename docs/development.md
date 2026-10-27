@@ -35,6 +35,10 @@ cargo build --locked -p talechime --bins
 GPU feature 必须按目标平台显式选择，不能用 `--all-features` 同时启用 CUDA 和 Metal；
 移除 platform 辅助包后，Cargo 不再自动过滤异平台 GPU feature。CUDA 与 Metal 编译分别在原生 CI 中检查。普通测试不下载大模型；真实模型测试使用显式环境变量，保留历史 `TRNOVEL_*` 变量以兼容已有验收脚本。历史 `tools/` 脚本已删除；性能工具使用 Rust `cargo xtask perf`。历史对照和转换脚本可从 Git revision `e591c94` 取回，不是当前运行时依赖。
 
+Kokoro 的源码实验使用 `kokoro` / `kokoro-metal` / `kokoro-cuda`，可选
+`kokoro-g2pw` 单独启用上下文读音模型。显式官方导出与无下载测试入口见
+[Kokoro 指南](kokoro.md)；跨框架数值对照、真模型生命周期与试听分别记录。
+
 最小 CLI 组合也须运行测试；仅 Clippy 不能发现运行期的默认模型假设：
 
 ```bash

@@ -12,6 +12,7 @@
 | `tts-core/` | 与具体后端无关的引擎能力：参数/seed、风格、播放、缓冲、解耦与基线 |
 | `cosyvoice3/` | CosyVoice 3 移植、验收、审查与性能 |
 | `indextts/` | IndexTTS 2.5 移植、验收、审查与性能 |
+| `kokoro/` | Kokoro 官方研究、原生移植、前端和数值验收 |
 | `moss/` | MOSS 后端各阶段验收与实验 |
 | `omnivoice/` | OmniVoice 0.6B 后端验收与性能 |
 | `qwen/` | Qwen TTS 后端验收 |

@@ -31,7 +31,7 @@ flowchart TD
 - `crates/talechime-protocol`：协议 v7、配置、能力、来源身份与 UTF-8 范围，不链接音频和模型。
 - `crates/talechime-core`：Backend / Playback 接口、会话、背压、音频预算、实际播放进度、配置和检查点。
 - `crates/talechime-backends`：Registry、资源清单、参考音频、设备与具体模型适配。
-- `crates/{qwen3-tts,moss-tts,voxcpm,omnivoice,cosyvoice3,indextts}`：模型计算；发布包名统一加 `talechime-` 前缀，目录保留短名，Rust 导入名统一使用 `talechime_` 前缀。
+- `crates/{qwen3-tts,moss-tts,voxcpm,omnivoice,cosyvoice3,indextts,kokoro}`：模型计算；发布包名统一加 `talechime-` 前缀，目录保留短名，Rust 导入名统一使用 `talechime_` 前缀。
 - VoxCPM 原生 C++ 开发对照已退役；生产适配器使用 Candle，[归档来源](legal/retired-voxcpm-native/README.md)保留旧源码恢复说明。
 
 ## 所有权与故障边界

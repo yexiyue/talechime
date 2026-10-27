@@ -15,6 +15,10 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [features]
+kokoro = ["talechime-backends/kokoro"]
+kokoro-g2pw = ["kokoro", "talechime-backends/kokoro-g2pw"]
+kokoro-metal = ["kokoro", "talechime-backends/kokoro-metal"]
+kokoro-cuda = ["kokoro", "talechime-backends/kokoro-cuda"]
 indextts = ["talechime-backends/indextts"]
 indextts-metal = ["indextts", "talechime-backends/indextts-metal"]
 indextts-cuda-cudnn = ["indextts", "talechime-backends/indextts-cuda-cudnn"]
@@ -75,3 +79,7 @@ required-features = ["asr", "cli"]
 [[example]]
 name = "cosyvoice3_backend"
 required-features = ["cosyvoice3"]
+
+[[example]]
+name = "kokoro_backend"
+required-features = ["kokoro"]

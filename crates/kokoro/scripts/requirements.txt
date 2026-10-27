@@ -1,0 +1,15 @@
+# Development-only environment used by the independent official exporters.
+# The scripts additionally verify actual imported official source file hashes.
+torch==2.7.1
+transformers==4.51.3
+numpy==2.4.6
+safetensors==0.8.0
+soundfile==0.14.0
+kokoro==0.9.4
+misaki[zh]==0.9.4
+jieba==0.42.1
+pypinyin==0.55.0
+pypinyin-dict==0.9.0
+cn2an==0.5.24
+onnxruntime==1.28.0
+g2pW @ git+https://github.com/GitYCC/g2pW.git@b9328ce8129c4717a70f16a2688542a0197541dd

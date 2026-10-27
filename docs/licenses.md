@@ -8,6 +8,7 @@ Talechime 原创项目代码沿用仓库根目录 MIT 许可证。第三方代�
 | SenseVoiceSmall 回读资源 | `crates/talechime-backends/src/asr/SOURCE.md`、固定资源清单；权重许可遵循 FunASR，不能当作 MIT |
 | Qwen3-TTS Rust 计算库 | `crates/qwen3-tts/SOURCE.md` 与组件许可证 |
 | MOSS Candle 计算库 | `crates/moss-tts/SOURCE.md`、LICENSE / NOTICE |
+| Kokoro / Misaki / 可选 g2pW | `crates/kokoro/SOURCE.md`、Apache LICENSE、`licenses/PYTORCH-LICENSE`；资源导出保留各前端/模型许可证 |
 | MOSS Nano 资源 | `crates/talechime-backends/src/moss/assets/LICENSE.OpenMOSS` 与固定资源清单 |
 | VoxCPM Candle 计算库 | `crates/voxcpm/SOURCE.md` 与许可证 |
 | 已退役的 VoxCPM 原生开发对照（历史归档） | [固定来源、许可证与源码恢复说明](legal/retired-voxcpm-native/README.md) |

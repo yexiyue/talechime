@@ -27,6 +27,7 @@
 - [会话与宿主集成](knowledge/booksource.md)：从 TRNovel 提取的听书知识；原阅读器专属条目为历史背景。
 - [CosyVoice3 后端](cosyvoice3.md)：实验性零样本克隆、原生流式、固定本地转换文件与音色导入。
 - [IndexTTS 2.5 后端](indextts.md)：实验性参考克隆、源码 feature、本地转换文件与设备边界。
+- [Kokoro 后端](kokoro.md)：官方 v1.1-zh 原生移植、中文预置音色、可选 g2pW 与独立数值对照。
 
 - [固定参考合成](reference-synthesis.md)：所有后端当前的官方输入路径、已移除接口、存储与验收边界。
 

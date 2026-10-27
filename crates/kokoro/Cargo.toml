@@ -1,0 +1,32 @@
+[package]
+name = "talechime-kokoro"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "Apache-2.0"
+description = "Native Kokoro inference from official weights for Talechime"
+repository = "https://github.com/yexiyue/talechime"
+
+[dependencies]
+candle-core.workspace = true
+candle-nn.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rustfft.workspace = true
+rand.workspace = true
+regex.workspace = true
+jieba-rs.workspace = true
+ort = { workspace = true, optional = true }
+tokenizers = { workspace = true, optional = true, features = ["fancy-regex"] }
+
+[features]
+default = []
+g2pw = ["dep:ort", "dep:tokenizers"]
+metal = ["candle-core/metal", "candle-nn/metal"]
+cuda = ["candle-core/cuda", "candle-nn/cuda"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { workspace = true, features = ["accelerate"] }
+
+[dev-dependencies]
+hound.workspace = true

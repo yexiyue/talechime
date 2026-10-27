@@ -8,5 +8,6 @@ pub mod calibration;
     feature = "omnivoice",
     feature = "cosyvoice3",
     feature = "indextts",
+    feature = "kokoro",
 ))]
 pub(crate) mod metal;

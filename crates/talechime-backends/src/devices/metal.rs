@@ -6,6 +6,7 @@ pub(crate) fn metal_is_available() -> bool {
         target_os = "macos",
         any(
             feature = "indextts-metal",
+            feature = "kokoro-metal",
             feature = "cosyvoice3-metal",
             feature = "moss-nano-candle-metal",
             feature = "moss-candle-metal",
@@ -21,6 +22,7 @@ pub(crate) fn metal_is_available() -> bool {
         target_os = "macos",
         any(
             feature = "indextts-metal",
+            feature = "kokoro-metal",
             feature = "cosyvoice3-metal",
             feature = "moss-nano-candle-metal",
             feature = "moss-candle-metal",

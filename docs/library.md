@@ -158,7 +158,7 @@ let options = talechime::PlanSessionOptions {
 每后端的类型化构造器（`VoxCpmParams` / `QwenParams` / `OmniVoiceParams` /
 `MossParams` / `IndexTtsParams`，`to_generation_params()` 转换）随对应后端 feature 从本 crate 导出。
 
-会话 `speed` 在模型声明 `speed` 参数（当前仅 OmniVoice）且宿主未显式设置时自动路由
+会话 `speed` 在模型声明 `speed` 参数（包括 OmniVoice、Kokoro）且宿主未显式设置时自动路由
 到生成期无损变速，播放 sink 置 1.0；运行期 `configure_playback` 的改速按
 新值÷原生值 换算 sink，不叠加。未声明 `speed` 的后端维持播放端变速。
 

@@ -21,7 +21,26 @@ pub(crate) struct Resource {
     pub size: u64,
 }
 
+#[cfg(any(
+    test,
+    feature = "moss",
+    feature = "qwen",
+    feature = "voxcpm",
+    feature = "omnivoice",
+    feature = "cosyvoice3",
+    feature = "asr",
+    feature = "performance-tools"
+))]
 pub(crate) fn verify(path: &Path, resource: &Resource) -> anyhow::Result<()> {
+    verify_cancellable(path, resource, || false)
+}
+
+pub(crate) fn verify_cancellable(
+    path: &Path,
+    resource: &Resource,
+    cancelled: impl Fn() -> bool,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(!cancelled(), "model verification cancelled");
     let mut file = std::fs::File::open(path)?;
     anyhow::ensure!(
         file.metadata()?.len() == resource.size,
@@ -31,6 +50,7 @@ pub(crate) fn verify(path: &Path, resource: &Resource) -> anyhow::Result<()> {
     let mut hash = Sha256::new();
     let mut buffer = [0u8; 65536];
     loop {
+        anyhow::ensure!(!cancelled(), "model verification cancelled");
         let count = file.read(&mut buffer)?;
         if count == 0 {
             break;
