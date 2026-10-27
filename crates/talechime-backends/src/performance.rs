@@ -44,6 +44,14 @@ pub fn manifest(root: &Path, directory: &Path, json: &str) -> anyhow::Result<Vec
     let value: serde_json::Value = serde_json::from_str(json)?;
     let resources: Vec<crate::resources::Resource> =
         serde_json::from_value(value.get("resources").unwrap_or(&value).clone())?;
+    verify_resources(root, directory, resources)
+}
+
+fn verify_resources(
+    root: &Path,
+    directory: &Path,
+    resources: Vec<crate::resources::Resource>,
+) -> anyhow::Result<Vec<VerifiedFile>> {
     let canonical_root = root.canonicalize()?;
     let mut files = Vec::new();
     for resource in resources {
@@ -73,6 +81,15 @@ pub fn verify(registry: &crate::Registry, backend: &str, model: &str) -> anyhow:
     registry.capabilities_for(backend, Some(model))?;
     let root = registry.root();
     let files = match backend {
+        #[cfg(feature = "kokoro")]
+        "kokoro" => {
+            let directory = crate::kokoro::directory_for(root, model);
+            verify_resources(
+                root,
+                &directory,
+                crate::kokoro::resources::performance_resources(&directory, model)?,
+            )?
+        }
         #[cfg(feature = "qwen")]
         "qwen" => {
             let selected = crate::qwen::models::Model::parse(Some(model))?;
@@ -141,7 +158,7 @@ pub fn verify(registry: &crate::Registry, backend: &str, model: &str) -> anyhow:
         backend: backend.into(),
         model: model.into(),
         resources_root: root.to_owned(),
-        verification: if backend == "indextts" {
+        verification: if backend == "indextts" || backend == "kokoro" {
             "verified_conversion_manifest"
         } else {
             "production_manifest"
@@ -165,6 +182,7 @@ pub async fn load(
         feature = "omnivoice",
         feature = "cosyvoice3",
         feature = "indextts",
+        feature = "kokoro",
         feature = "moss"
     ))]
     {
@@ -183,6 +201,15 @@ pub async fn load(
     }
     let root = registry.root();
     let loaded: Option<std::rc::Rc<dyn talechime_core::backend::Backend>> = match backend {
+        #[cfg(feature = "kokoro")]
+        "kokoro" => Some(std::rc::Rc::new(
+            crate::kokoro::KokoroBackend::load_model_on(
+                crate::kokoro::directory_for(root, model),
+                model,
+                device,
+            )
+            .await?,
+        )),
         #[cfg(feature = "qwen")]
         "qwen" => Some(std::rc::Rc::new(
             crate::qwen::QwenBackend::load_on(
@@ -243,6 +270,62 @@ pub async fn load(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "kokoro")]
+    #[test]
+    fn kokoro_conversion_is_verified_offline_without_accepting_wrong_modes() -> anyhow::Result<()> {
+        use sha2::{Digest, Sha256};
+        let root = tempfile::tempdir()?;
+        let directory = crate::kokoro::directory(root.path());
+        std::fs::create_dir_all(directory.join("frontend"))?;
+        std::fs::create_dir_all(directory.join("voices"))?;
+        let mut files = serde_json::Map::new();
+        for path in [
+            "model.safetensors",
+            "config.json",
+            "frontend/frontend.json",
+            "frontend/jieba.dict",
+            "official-export.json",
+            "KOKORO-LICENSE",
+            "voices/zf_001.safetensors",
+        ] {
+            std::fs::write(directory.join(path), b"fixture")?;
+            files.insert(
+                path.into(),
+                serde_json::json!({"bytes":7,"sha256":format!("{:x}",Sha256::digest(b"fixture"))}),
+            );
+        }
+        let voices: serde_json::Value =
+            serde_json::from_str(talechime_kokoro::BUILTIN_VOICES_JSON)?;
+        let voice = voices
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["id"] == "zf_001")
+            .unwrap();
+        let manifest = serde_json::json!({
+            "format":"kokoro-native-v1", "model_revision":talechime_kokoro::MODEL_REVISION,
+            "contextual":false, "files":files,
+            "voices":{"zf_001":{"path":"voices/zf_001.safetensors","source_sha256":voice["sha256"]}}
+        });
+        std::fs::write(
+            directory.join("manifest.json"),
+            serde_json::to_vec(&manifest)?,
+        )?;
+        let registry = crate::Registry::new(Some(root.path().to_owned()))?;
+        let receipt = verify(&registry, "kokoro", crate::kokoro::MODEL)?;
+        assert_eq!(receipt.verification, "verified_conversion_manifest");
+        assert_eq!(receipt.files.len(), 7);
+        assert!(
+            crate::kokoro::resources::performance_resources(&directory, "1.1-zh-g2pw").is_err()
+        );
+        std::fs::write(directory.join("model.safetensors"), b"corrupt")?;
+        assert!(verify(&registry, "kokoro", crate::kokoro::MODEL).is_err());
+        assert_eq!(
+            std::fs::read(directory.join("model.safetensors"))?,
+            b"corrupt"
+        );
+        Ok(())
+    }
     #[test]
     fn verification_preserves_corrupt_and_missing_resources() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;

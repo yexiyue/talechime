@@ -15,7 +15,12 @@ facade 和 backends 的开关一致：`kokoro`、`kokoro-metal`、`kokoro-cuda`�
 `kokoro-g2pw`。Cargo 默认 feature 不启用 Kokoro；标准发行配置启用 kokoro-g2pw，macOS 另启用 kokoro-metal。默认后端仍为 MOSS Nano。
 CPU 使用 F32；在 macOS 上启用 Accelerate。Metal/CUDA 开关选择解码器设备，
 编码器、时长/F0 预测和 FFT 保留 CPU，因此 GPU 路径是混合执行。
-CUDA 尚未完成本阶段硬件验收，不能由 feature 存在推断为已验证。
+Windows CPU 使用保留原 GEMM 布局的并行卷积窗口构造；CPU 与 CUDA 混合路径的
+输出保持、性能及未通过的官方数值门禁分别见
+[Windows 记录](records/kokoro/kokoro-windows-performance-2026-10-27.md)。
+后续输出布局优化与 MKL/AVX2/AVX-512 调查见
+[Windows CPU 第二轮](records/kokoro/kokoro-windows-cpu-round2-2026-10-27.md)。
+不能由 feature 存在或输出保持型提速推断跨平台数值/音质已验收。
 
 ```sh
 cargo run --release --locked -p talechime --no-default-features \
@@ -109,6 +114,19 @@ g2pW 对照要求输入张量完全一致、概率绝对误差不超过 1e-5，�
 五轮无 trace 的声学计时，并导出本地 WAV/JSON。前面的数值预检也执行过一次
 同形状 forward。此计时使用固定官方激励，不包含前端、加载和随机数生成；
 单进程结果只能作为性能筛查，不能代替正式的进程交错对比。
+
+固定官方输入的优化 A/B 可用以下独立探针，输出目录必须不存在。它每轮保存完整
+F32 PCM，并检查同 owner 重复和中途取消后的逐位恢复；计时包括获取主机 PCM。
+它不代替前述官方 SNR 门禁，也不包含中文前端、原生噪声生成、加载或实际播放。
+
+```sh
+cargo run --release --locked -p talechime-kokoro --example performance -- \
+  NEW_MODEL_EXPORT cpu NEW_EVIDENCE_DIRECTORY 5
+```
+
+`performance_probe` / `performance_catalog` 已支持 Kokoro 的生产资源验证与 owner
+加载，编译时显式启用 `kokoro,performance-tools` 或 `kokoro-cuda,performance-tools`；
+可选 g2pW 仍需单独准备对应资源。生产整链与固定激励声学探针的 RTF 分别报告。
 
 M4 Pro / CPU F32 开启 g2pW，最新八线程对照中长文原生 RTF 为 0.06522、官方组合为
 0.06637；短句分别为 0.07010 / 0.06944。公共 Engine RTF 为 0.07259，约 13.8 倍实时。

@@ -113,6 +113,24 @@ pub(super) fn read_for(directory: &Path, model: &str) -> anyhow::Result<Manifest
     Ok(manifest)
 }
 
+/// Reuse production format/voice checks before the offline performance audit.
+#[cfg(feature = "performance-tools")]
+pub(crate) fn performance_resources(
+    directory: &Path,
+    model: &str,
+) -> anyhow::Result<Vec<crate::resources::Resource>> {
+    Ok(read_for(directory, model)?
+        .files
+        .into_iter()
+        .map(|(path, file)| crate::resources::Resource {
+            path,
+            size: file.bytes,
+            sha256: file.sha256,
+            url: String::new(),
+        })
+        .collect())
+}
+
 pub(super) fn verify_cancellable(
     directory: &Path,
     cancelled: &dyn Fn() -> bool,

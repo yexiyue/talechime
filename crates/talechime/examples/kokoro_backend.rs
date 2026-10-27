@@ -21,7 +21,7 @@ async fn main() -> anyhow::Result<()> {
         };
         let mut engine = Engine::prepare(options, |_| {}).await?;
         let text = "春天来了，院子里的花开了。";
-        let mut baseline = None;
+        let mut baseline: Option<Vec<f32>> = None;
         for run in 0..2 {
             let mut stream = engine
                 .synthesize_with_options(
@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
                 samples.len()
             );
             if let Some(first) = &baseline {
-                anyhow::ensure!(first == &samples, "same-seed requests differ");
+                anyhow::ensure!(same_bits(first, &samples), "same-seed requests differ");
             } else {
                 baseline = Some(samples);
             }
@@ -65,10 +65,44 @@ async fn main() -> anyhow::Result<()> {
         anyhow::ensure!(stream.state() == SynthesisState::Cancelled);
         drop(stream);
         println!("cancelled before first PCM; checking owner reuse");
+        // Exercise a different shape and another installed voice on this owner.
+        for voice in engine
+            .capabilities()?
+            .voices
+            .iter()
+            .filter(|v| *v != &args[2])
+            .take(1)
+        {
+            let pcm = engine
+                .synthesize_pcm_with_options(
+                    "今天天气很好。",
+                    voice,
+                    None,
+                    8 * 1024 * 1024,
+                    SynthesisOptions {
+                        seed: SeedPolicy::Pinned(7),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            anyhow::ensure!(!pcm.samples.is_empty());
+        }
         let pcm = engine
-            .synthesize_pcm(text, &args[2], None, 8 * 1024 * 1024)
+            .synthesize_pcm_with_options(
+                text,
+                &args[2],
+                None,
+                8 * 1024 * 1024,
+                SynthesisOptions {
+                    seed: SeedPolicy::Pinned(7),
+                    ..Default::default()
+                },
+            )
             .await?;
-        anyhow::ensure!(!pcm.samples.is_empty());
+        anyhow::ensure!(
+            same_bits(baseline.as_deref().unwrap(), &pcm.samples),
+            "cancel/shape/voice changes altered the restored request"
+        );
         println!(
             "post-cancel request completed: {} samples",
             pcm.samples.len()
@@ -78,4 +112,8 @@ async fn main() -> anyhow::Result<()> {
         Ok(())
     })
     .await
+}
+
+fn same_bits(a: &[f32], b: &[f32]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.to_bits() == b.to_bits())
 }

@@ -1,6 +1,6 @@
 ---
 name: candle-performance
-description: "诊断与优化 Rust Candle 推理性能，覆盖 Metal、macOS Accelerate/AMX 和 CUDA；用于热点分析、算子/缓存/图回放优化、性能退化调查及上游补丁评估，并验证数值和端到端行为。"
+description: "诊断与优化 Rust Candle 推理性能，覆盖 Windows CPU、Metal、macOS Accelerate/AMX 和 CUDA；用于热点分析、算子/缓存/图回放优化、性能退化调查及上游补丁评估，并验证数值和端到端行为。"
 ---
 
 # Candle 性能优化
@@ -26,6 +26,7 @@ TTS 是经验来源，不是目标项目必须采用的结构。按用户要求�
 | Metal 的成本模型、thin-M GEMM 与权重布局、排序/卷积、小张量与主机同步 | [Metal](references/metal.md) |
 | OmniVoice Metal 的 GQA、RoPE 布局、decoder 快路径及已排除的候选 | [OmniVoice Metal 经验](references/omnivoice-metal.md) |
 | macOS CPU BLAS、AMX、线程争用 | [Accelerate/AMX](references/accelerate-amx.md) |
+| Windows CPU SIMD/BLAS feature、卷积布局、跨平台数值与资源准备 | [Windows CPU](references/windows-cpu.md) |
 | OmniVoice CPU 的真实输入归因、GQA、权重缓存与卷积布局 | [OmniVoice CPU 经验](references/omnivoice-cpu.md) |
 | OmniVoice CUDA 的官方对照、GQA、图回放与 decoder 归因 | [OmniVoice CUDA 调查](references/omnivoice-cuda.md) |
 | IndexTTS CUDA 的生产参考复用、转换来源、随机流与官方运行失败 | [IndexTTS CUDA 经验](references/indextts-cuda.md) |

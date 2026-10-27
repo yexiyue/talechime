@@ -56,6 +56,15 @@ impl Weights {
             })?;
             return crate::blas::conv(x, w, bias, stride, dilation, &mut scratch);
         }
+        #[cfg(target_os = "windows")]
+        if x.device().is_cpu()
+            && w.device().is_cpu()
+            && x.dtype() == DType::F32
+            && w.dtype() == DType::F32
+            && w.dim(2)? > 1
+        {
+            return self.bias_conv(crate::cpu_conv::forward(x, w, stride, dilation)?, name);
+        }
         let padding = (w.dim(2)? - 1) * dilation / 2;
         let y = if w.dim(2)? == 1 && stride == 1 {
             // PyTorch's pointwise convolution is a matrix product in channel-
@@ -83,7 +92,7 @@ impl Weights {
         groups: usize,
     ) -> Result<Tensor> {
         let w = self.get(&format!("{name}.weight"))?;
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         if groups == 1
             && padding > 0
             && x.device().is_cpu()
@@ -92,7 +101,7 @@ impl Weights {
             && w.dtype() == DType::F32
         {
             return self.bias_conv(
-                crate::blas::transpose(x, w, stride, padding, output_padding)?,
+                crate::cpu_transpose::transpose(x, w, stride, padding, output_padding)?,
                 name,
             );
         }

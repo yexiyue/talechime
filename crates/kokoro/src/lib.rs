@@ -8,6 +8,10 @@ mod attention;
 mod blas;
 #[cfg(feature = "g2pw")]
 pub mod context;
+#[cfg(target_os = "windows")]
+mod cpu_conv;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod cpu_transpose;
 mod decoder;
 mod encoder;
 pub mod frontend;
