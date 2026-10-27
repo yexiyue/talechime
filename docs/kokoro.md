@@ -2,7 +2,7 @@
 
 Kokoro 是可选的中文预置音色后端，当前源码提供 `1.1-zh` 和显式启用的
 `1.1-zh-g2pw`。声学网络直接对照 hexgrad 官方 Python 实现移植到 Candle；
-运行时不调用 Python。该实现尚未发布，本机 CPU/Metal 对照结果和失败过程见
+运行时不调用 Python。0.6.0 标准发行配置已编入该后端，本机 CPU/Metal 对照结果见
 [实现记录](records/kokoro/kokoro-native-validation-2026-10-27.md)。
 
 输出为 24 kHz 单声道，每个模型片段生成完毕后交付 PCM。没有原生流式、音色克隆、
@@ -12,7 +12,7 @@ Kokoro 是可选的中文预置音色后端，当前源码提供 `1.1-zh` 和显
 ## 编译与执行
 
 facade 和 backends 的开关一致：`kokoro`、`kokoro-metal`、`kokoro-cuda`、
-`kokoro-g2pw`。默认构建不启用 Kokoro；启用它不改变默认后端。
+`kokoro-g2pw`。Cargo 默认 feature 不启用 Kokoro；标准发行配置启用 kokoro-g2pw，macOS 另启用 kokoro-metal。默认后端仍为 MOSS Nano。
 CPU 使用 F32；在 macOS 上启用 Accelerate。Metal/CUDA 开关选择解码器设备，
 编码器、时长/F0 预测和 FFT 保留 CPU，因此 GPU 路径是混合执行。
 CUDA 尚未完成本阶段硬件验收，不能由 feature 存在推断为已验证。
@@ -109,3 +109,11 @@ g2pW 对照要求输入张量完全一致、概率绝对误差不超过 1e-5，�
 五轮无 trace 的声学计时，并导出本地 WAV/JSON。前面的数值预检也执行过一次
 同形状 forward。此计时使用固定官方激励，不包含前端、加载和随机数生成；
 单进程结果只能作为性能筛查，不能代替正式的进程交错对比。
+
+M4 Pro / CPU F32 开启 g2pW，最新八线程对照中长文原生 RTF 为 0.06522、官方组合为
+0.06637；短句分别为 0.07010 / 0.06944。公共 Engine RTF 为 0.07259，约 13.8 倍实时。
+完整 PCM 保持逐字节一致，见[缓冲、归一化与向量优化记录](records/kokoro/kokoro-cpu-buffer-vector-2026-10-27.md)。
+该样本的模型内窗口缓冲保留约 297 MiB；内存峰值与线程条件在记录中分别列出。
+历史阶段见[第一轮 CPU 优化](records/kokoro/kokoro-cpu-optimization-2026-10-27.md)、
+[四线程官方对照](records/kokoro/kokoro-cpu-parity-2026-10-27.md)和
+[原始性能记录](records/kokoro/kokoro-g2pw-performance-2026-10-27.md)。

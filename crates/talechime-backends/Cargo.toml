@@ -1,6 +1,6 @@
 [package]
 name = "talechime-backends"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
@@ -53,8 +53,8 @@ talechime-voxcpm = { workspace = true, optional = true }
 talechime-qwen3-asr = { workspace = true, optional = true }
 kaldi-fbank = { workspace = true, optional = true }
 talechime-qwen3-tts = { workspace = true, optional = true }
-talechime-core = { path = "../talechime-core", version = "0.5.0" }
-talechime-protocol = { path = "../talechime-protocol", version = "0.3.1" }
+talechime-core = { path = "../talechime-core", version = "0.6.0" }
+talechime-protocol = { path = "../talechime-protocol", version = "0.4.0" }
 ort = { workspace = true, optional = true }
 sentencepiece-rs = { version = "0.2.2", optional = true }
 hound = { workspace = true, optional = true }

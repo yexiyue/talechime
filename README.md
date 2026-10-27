@@ -20,12 +20,13 @@ Talechime 是用 Rust 编写的本地语音合成与长文播放引擎。它提�
 
 正文和参考音频由本地模型处理。模型权重按需准备，安装包不包含权重；CosyVoice3 需要先转换并放置本地模型文件。
 
-## 0.5.0 更新
+## 0.6.0 更新
 
-本版加入 CosyVoice3 实验后端与风格控制，并提供 IndexTTS 2.5 的源码构建与情绪参数；
-同时合入多后端 CPU、Metal、CUDA 优化，修复 Qwen 分块解码的局部噪音及 CUDA 图布局差异，
-校正 VoxCPM2 的单段时长预算。协议仍为 JSON Lines v7，用户数据仍位于 `~/.talechime/`。
-完整变化见[更新日志](CHANGELOG.md)；安装包包含的后端与平台限制见下文。
+标准包加入 Kokoro 中文预置音色后端与可选 g2pW 多音字消歧，macOS 同时编入 Metal
+解码路径；转换后的本地资源仍需显式准备。新增模型目录与模型无关的 VoiceStudio API，
+统一采用官方固定参考或预置音色合成。移除滚动/双参考、历史数据迁移与旧接口；
+宿主须更新已移除的 API 和请求字段，JSON Lines 仍为 v7，历史文件保持原样。
+完整变化见[更新日志](CHANGELOG.md)。
 
 ## 快速开始
 
@@ -72,7 +73,7 @@ cargo run --release -- --backend moss --model nano-candle --tts-device cpu chapt
 | 后端 / `--backend` | 模型或实现 | 音色与输出 | 构建和资源边界 |
 | --- | --- | --- | --- |
 | MOSS / `moss` | Nano Candle `nano-candle`（默认）；Realtime `realtime-1.7b` | Nano 内置或固定导入音色；两档均不提供 style/instruction/language | Nano 默认 CPU，Metal / CUDA 需显式 feature；Realtime 为需 `moss-candle-*` 的 GPU 模型 |
-| Kokoro / `kokoro` | `1.1-zh`；可选 `1.1-zh-g2pw`，源码实验移植 | 官方中文预置音色，24 kHz 分段 PCM；支持 speed，无克隆/风格/原生流式 | Candle F32，CPU/Metal 已做官方对照，CUDA 待实机验证；须先[转换官方资源](docs/kokoro.md)，未随发行包发布 |
+| Kokoro / `kokoro` | `1.1-zh`；可选 `1.1-zh-g2pw` | 官方中文预置音色，24 kHz 分段 PCM；支持 speed，无克隆/风格/原生流式 | Candle F32，CPU/Metal 已做官方对照，CUDA 待实机验证；须先[转换官方资源](docs/kokoro.md)；0.6.0 标准包包含 CPU/g2pW，macOS 另含 Metal |
 | Qwen3-TTS / `qwen` | 0.6B、1.7B CustomVoice；0.6B、1.7B Base | CustomVoice 预置音色；1.7B CustomVoice 支持风格；Base 可导入参考音频克隆 | Candle CPU；Metal / CUDA 需 `qwen-metal` / `qwen-cuda` |
 | VoxCPM2 / `voxcpm` | 2B Q8 GGUF；另有实验 BF16 路径 | 固定参考音色、音色设计与原生流式 PCM | Candle CPU；Metal / CUDA 需 `voxcpm-metal` / `voxcpm-cuda` |
 | OmniVoice / `omnivoice` | 0.6B | 参考音色、音色设计、风格和生成期语速；按语义段输出 | Candle CPU；Metal / CUDA 需 `omnivoice-metal` / `omnivoice-cuda`；当前不是模型原生实时流式 |
@@ -160,7 +161,7 @@ Windows CUDA 的新声码器图已通过 Base 0.6B codes/PCM 逐位对照及取�
 `talechime-omnivoice`、`talechime-cosyvoice3` 和 `talechime-indextts`。
 源码目录保留短名，Rust 导入名统一使用 `talechime_` 前缀；GPU 平台配置及图回放作为内部实现维护，不单独发布辅助包。
 
-crates.io 的统一入口为 `talechime = "0.5.0"`；嵌入时关闭默认 feature，再按需选择模型。
+crates.io 的统一入口为 `talechime = "0.6.0"`；嵌入时关闭默认 feature，再按需选择模型。
 只接入 worker 协议的宿主使用 `talechime-protocol = "0.3.1"`。示例与各包版本见
 [Rust 库入口](docs/library.md)及[库发布说明](docs/development.md#rust-库发布)。
 

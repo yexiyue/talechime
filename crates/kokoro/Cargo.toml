@@ -14,6 +14,7 @@ serde.workspace = true
 serde_json.workspace = true
 rustfft.workspace = true
 rand.workspace = true
+rayon.workspace = true
 regex.workspace = true
 jieba-rs.workspace = true
 ort = { workspace = true, optional = true }

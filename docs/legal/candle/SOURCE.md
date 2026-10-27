@@ -24,7 +24,7 @@ fork 内部路径依赖解析到同一 revision，不另写重复 patch。
 - fork 内的补丁必须是**行为级、可上游**的改动：不新增/删除/改变公开 API。
   原因：`cargo publish` 会剥离 `[patch]`，本仓库发布的 candle 消费库
   （`voxcpm` / `indextts` / `cosyvoice3` / `moss-tts` / `qwen3-tts` /
-  `omnivoice` / `talechime-backends`）在下游会解析 registry 版本；若代码
+  `omnivoice` / `kokoro` / `talechime-backends`）在下游会解析 registry 版本；若代码
   依赖 fork 独有 API，发布版本将无法编译。
 - 每个补丁在 fork 的 `FORK.md` 中登记：上游 issue/PR 链接、改动摘要。
 - 若将来确实需要新增 candle API（判据：图级 KV 预分配写入等无法用现有公开

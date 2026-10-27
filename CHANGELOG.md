@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — 2026-10-27
+
+- Include Kokoro v1.1-zh and optional g2pW pronunciation in standard CPU distributions, with decoder Metal offload on macOS. Official converted resources remain explicit; no weights are bundled or silently downloaded.
+- Optimize Kokoro CPU window buffers, normalization and vector Snake operations while preserving complete PCM in the recorded validation corpus. Same-machine eight-thread comparisons and memory evidence are linked from docs/kokoro.md.
+- Publish talechime-kokoro 0.1.0 and refresh the Rust dependency graph. Facade/core are 0.6.0, backends/protocol 0.4.0 and MOSS/VoxCPM 0.2.0 for removed public APIs; protocol wire version remains v7.
+- Add model discovery and model-independent VoiceStudio. Hosts must update removed rolling/dual-reference fields and APIs; only current data formats are supported.
+- Retire MOSS Local 1.7B, Nano ONNX, the old nano model ID and DirectML paths. MOSS supports nano-candle and realtime-1.7b; unsupported legacy selections fail without migration or overwrite.
 
 - Use official fixed-reference or preset synthesis for every backend. Remove host rolling PCM, dual-reference and reference-anchor experiments, related CLI/wire/API fields, and old comparison runners. Chapter caches use a new fixed-reference policy key; existing voice assets remain untouched.
 

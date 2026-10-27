@@ -448,6 +448,8 @@ fn backend_directory_and_switch_are_lightweight() {
                 backends
             }),
         vec![
+            #[cfg(feature = "kokoro")]
+            "kokoro",
             "moss",
             #[cfg(feature = "voxcpm")]
             "voxcpm",
@@ -461,7 +463,24 @@ fn backend_directory_and_switch_are_lightweight() {
             "qwen"
         ]
     );
-    assert_eq!(catalog[0].default_voice, "Weiguo");
+    let moss = catalog.iter().find(|caps| caps.backend == "moss").unwrap();
+    assert_eq!(moss.default_voice, "Weiguo");
+    #[cfg(feature = "kokoro")]
+    {
+        let models = catalog
+            .iter()
+            .filter(|caps| caps.backend == "kokoro")
+            .map(|caps| caps.model.as_deref().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            models,
+            vec![
+                "1.1-zh",
+                #[cfg(feature = "kokoro-g2pw")]
+                "1.1-zh-g2pw"
+            ]
+        );
+    }
     for caps in &catalog {
         let json = serde_json::to_value(caps).unwrap();
         assert!(json.get("continuation").is_none());
@@ -472,6 +491,12 @@ fn backend_directory_and_switch_are_lightweight() {
             assert!(spec.has_valid_default(), "{}", spec.name);
         }
         match caps.backend.as_str() {
+            #[cfg(feature = "kokoro")]
+            "kokoro" => {
+                assert_eq!(caps.default_voice, "zf_001");
+                assert!(!caps.cloning && !caps.style && !caps.native_streaming);
+                assert!(caps.parameters.iter().any(|spec| spec.name == "speed"));
+            }
             #[cfg(feature = "cosyvoice3")]
             "cosyvoice3" => assert!(caps.style),
             #[cfg(feature = "indextts")]

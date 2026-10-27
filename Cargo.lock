@@ -4096,7 +4096,7 @@ dependencies = [
 
 [[package]]
 name = "talechime"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4117,7 +4117,7 @@ dependencies = [
 
 [[package]]
 name = "talechime-backends"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "candle-core",
@@ -4152,7 +4152,7 @@ dependencies = [
 
 [[package]]
 name = "talechime-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "chinese-number",
@@ -4177,7 +4177,7 @@ dependencies = [
 
 [[package]]
 name = "talechime-cosyvoice3"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "candle-core",
@@ -4195,7 +4195,7 @@ dependencies = [
 
 [[package]]
 name = "talechime-indextts"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "candle-core",
@@ -4221,6 +4221,7 @@ dependencies = [
  "jieba-rs",
  "ort",
  "rand 0.9.5",
+ "rayon",
  "regex",
  "rustfft",
  "serde",
@@ -4230,7 +4231,7 @@ dependencies = [
 
 [[package]]
 name = "talechime-moss-tts"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "candle-core",
@@ -4246,7 +4247,7 @@ dependencies = [
 
 [[package]]
 name = "talechime-omnivoice"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -4270,7 +4271,7 @@ dependencies = [
 
 [[package]]
 name = "talechime-protocol"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4280,7 +4281,7 @@ dependencies = [
 
 [[package]]
 name = "talechime-qwen3-asr"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "candle-core",
@@ -4295,7 +4296,7 @@ dependencies = [
 
 [[package]]
 name = "talechime-qwen3-tts"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "approx",
@@ -4324,7 +4325,7 @@ dependencies = [
 
 [[package]]
 name = "talechime-voxcpm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "candle-core",

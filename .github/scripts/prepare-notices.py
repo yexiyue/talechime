@@ -12,7 +12,7 @@ output = root / 'target' / 'third-party-licenses'
 def collect(directory, destination):
     for path in directory.rglob('*'):
         if path.is_file() and (path.name.upper().startswith(('LICENSE', 'COPYING', 'NOTICE'))
-                              or path.name == 'SOURCE.md'):
+                              or path.name.upper().endswith('-LICENSE') or path.name == 'SOURCE.md'):
             target = destination / path.relative_to(directory)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, target)

@@ -1,7 +1,7 @@
 //! AdaIN residual decoder and iSTFTNet, following official PyTorch inference.
 use crate::{
     ExcitationNoise, Trace,
-    ops::{Weights, leaky, nearest_double},
+    ops::{Weights, leaky, nearest_double, snake},
     spectral,
 };
 use candle_core::{Result, Tensor};
@@ -13,7 +13,7 @@ impl Weights {
         } else {
             x.clone()
         };
-        if self.0.contains_key(&format!("{p}.conv1x1.weight")) {
+        if self.tensors.contains_key(&format!("{p}.conv1x1.weight")) {
             shortcut = self.conv(&shortcut, &format!("{p}.conv1x1"), 1, 1)?;
         }
         let mut y = leaky(&self.adain(x, style, &format!("{p}.norm1"))?, 0.2)?;
@@ -53,11 +53,11 @@ impl Weights {
         for (index, dilation) in [1, 3, 5].into_iter().enumerate() {
             let mut y = self.adain(&x, style, &format!("{p}.adain1.{index}"))?;
             let a = self.get(&format!("{p}.alpha1.{index}"))?;
-            y = (&y + y.broadcast_mul(a)?.sin()?.sqr()?.broadcast_div(a)?)?;
+            y = snake(&y, a)?;
             y = self.conv(&y, &format!("{p}.convs1.{index}"), 1, dilation)?;
             y = self.adain(&y, style, &format!("{p}.adain2.{index}"))?;
             let a = self.get(&format!("{p}.alpha2.{index}"))?;
-            y = (&y + y.broadcast_mul(a)?.sin()?.sqr()?.broadcast_div(a)?)?;
+            y = snake(&y, a)?;
             y = self.conv(&y, &format!("{p}.convs2.{index}"), 1, 1)?;
             x = (x + y)?;
         }

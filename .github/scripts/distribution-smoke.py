@@ -48,7 +48,7 @@ def main(app, target, skip_build=False, build_installers=False):
         base = Path(temporary)
         shutil.unpack_archive(archive, base / 'install')
         suffix = '.exe' if sys.platform == 'win32' else ''
-        programs = [app] if app == 'talechime' else ['trnovel', 'trn']
+        programs = [app]
         installed = next((base / 'install').rglob(app + suffix)).parent
         files = list((base / 'install').rglob('*'))
         assert not any((path.suffix.lower() in ['.dll', '.dylib'] or '.so' in path.name)
@@ -56,46 +56,34 @@ def main(app, target, skip_build=False, build_installers=False):
                        for path in files), 'Standard archive contains CUDA libraries'
         assert not any(path.name in ['novel-tts', 'novel-tts.exe'] for path in files)
         assert not any(path.suffix in ['.onnx', '.gguf', '.safetensors'] for path in files)
-        if app == 'trnovel':
-            assert not any('talechime' in path.name or 'onnxruntime' in path.name for path in files)
-        else:
-            assert (installed / 'third-party-licenses' / 'dependencies.json').is_file()
-            assert (installed / 'docs/legal/onnxruntime/ThirdPartyNotices.txt').is_file()
+        assert (installed / 'third-party-licenses' / 'dependencies.json').is_file()
+        assert (installed / 'docs/legal/onnxruntime/ThirdPartyNotices.txt').is_file()
         home = base / 'home'
         home.mkdir()
         env = dict(os.environ, HOME=str(home), USERPROFILE=str(home))
         for key in ['LD_LIBRARY_PATH', 'DYLD_LIBRARY_PATH', 'CUDA_PATH', 'CUDA_HOME']:
             env.pop(key, None)
-        preserved = [home / '.novel/history.json', home / '.trnovel/config.toml',
-                     home / '.trnovel/data/book_sources.json',
-                     home / '.trnovel/data/source-state/login.json']
-        if app == 'trnovel':
-            for path in preserved:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text('sentinel', encoding='utf-8')
         for program in programs:
             binary = str(installed / (program + suffix))
             installed_version = run(binary, '--version', env=env, cwd=home,
                                     capture_output=True, text=True, encoding='utf-8').stdout.strip()
             assert installed_version == f'talechime {version}', installed_version
-            help_text = run(binary, '--help', env=env, cwd=home, capture_output=True,
-                            text=True, encoding='utf-8').stdout
-            if app == 'trnovel':
-                assert '--tts-program' in help_text
-                history = home / '.trnovel/data/history.json'
-                history.write_text('clear this record', encoding='utf-8')
-                run(binary, 'clear', env=env, cwd=home)
-                assert not history.exists()
-                assert all(path.read_text() == 'sentinel' for path in preserved)
-            else:
-                wire_version = protocol_version()
-                requests = ''.join(json.dumps(dict(protocol_version=wire_version, request_id=kind,
-                    session_id=None, type=kind)) + '\n' for kind in ['hello', 'shutdown'])
-                result = run(binary, '--protocol', input=requests, capture_output=True,
-                    text=True, encoding='utf-8', env=env, cwd=home)
-                messages = [json.loads(line) for line in result.stdout.splitlines()]
-                assert messages[0]['type'] == 'ready' and messages[0]['protocol_version'] == wire_version
-                assert messages[-1]['type'] == 'accepted'
+            run(binary, '--help', env=env, cwd=home, capture_output=True,
+                text=True, encoding='utf-8')
+            catalog = json.loads(run(binary, 'models', '--json', env=env, cwd=home,
+                                     capture_output=True, text=True, encoding='utf-8').stdout)
+            kokoro = {info['capabilities']['model'] for info in catalog
+                      if info['capabilities']['backend'] == 'kokoro'}
+            assert kokoro == {'1.1-zh', '1.1-zh-g2pw'}, 'Standard archive lacks Kokoro models'
+            assert (installed / 'third-party-licenses/crates/kokoro/licenses/PYTORCH-LICENSE').is_file()
+            wire_version = protocol_version()
+            requests = ''.join(json.dumps(dict(protocol_version=wire_version, request_id=kind,
+                session_id=None, type=kind)) + '\n' for kind in ['hello', 'shutdown'])
+            result = run(binary, '--protocol', input=requests, capture_output=True,
+                text=True, encoding='utf-8', env=env, cwd=home)
+            messages = [json.loads(line) for line in result.stdout.splitlines()]
+            assert messages[0]['type'] == 'ready' and messages[0]['protocol_version'] == wire_version
+            assert messages[-1]['type'] == 'accepted'
         assert not list(home.rglob('*.onnx')), 'Handshake downloaded weights'
         assert not list(home.rglob('config.json')), 'Handshake persisted configuration'
         # Exercise the generated platform installer against local build artifacts.

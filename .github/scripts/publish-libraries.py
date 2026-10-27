@@ -23,6 +23,7 @@ PACKAGES = (
     "omnivoice",
     "cosyvoice3",
     "indextts",
+    "kokoro",
     "talechime-backends",
     "talechime",
 )

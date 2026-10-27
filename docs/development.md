@@ -35,7 +35,7 @@ cargo build --locked -p talechime --bins
 GPU feature 必须按目标平台显式选择，不能用 `--all-features` 同时启用 CUDA 和 Metal；
 移除 platform 辅助包后，Cargo 不再自动过滤异平台 GPU feature。CUDA 与 Metal 编译分别在原生 CI 中检查。普通测试不下载大模型；真实模型测试使用显式环境变量，保留历史 `TRNOVEL_*` 变量以兼容已有验收脚本。历史 `tools/` 脚本已删除；性能工具使用 Rust `cargo xtask perf`。历史对照和转换脚本可从 Git revision `e591c94` 取回，不是当前运行时依赖。
 
-Kokoro 的源码实验使用 `kokoro` / `kokoro-metal` / `kokoro-cuda`，可选
+Kokoro 的构建使用 `kokoro` / `kokoro-metal` / `kokoro-cuda`，可选
 `kokoro-g2pw` 单独启用上下文读音模型。显式官方导出与无下载测试入口见
 [Kokoro 指南](kokoro.md)；跨框架数值对照、真模型生命周期与试听分别记录。
 
@@ -88,11 +88,11 @@ MOSS Candle 的共用 codec 在注意力完成后才裁剪 K/V，避免提前丢
 `talechime-libs-v*` 标签触发独立库发布流程，不触发应用安装包构建。流程先完成 CPU
 模型组合的测试、Clippy、格式、rustdoc 和纯库检查，再按依赖顺序执行 `cargo publish`。
 协议仍为 v7；当前源码已移除滚动参考字段，旧宿主须更新请求，不提供旧策略兼容层。
-已发布包的历史行为以对应版本为准；本轮源码修改尚未发布。
+已发布包的历史行为以对应版本为准；宿主需适配已移除的 Rust API 和请求字段。
 
-库发布批次 `talechime-libs-v0.5.0` 包含 facade/core 0.5.0、backends 0.3.0、
-protocol 0.3.1、Qwen3-TTS 0.4.0、Qwen3-ASR 0.1.1，以及五个首次使用品牌包名的
-模型库 0.1.0：MOSS、VoxCPM、OmniVoice、CosyVoice3、IndexTTS。
+库发布批次 `talechime-libs-v0.6.0` 包含 facade/core 0.6.0、backends/protocol 0.4.0、
+MOSS/VoxCPM 0.2.0、Kokoro 0.1.0、Qwen3-TTS 0.4.1、Qwen3-ASR 0.1.2，
+以及 OmniVoice/CosyVoice3/IndexTTS 0.1.1。公共 API 移除以次版本升级标记。
 协议 wire version 不变；protocol 补丁版不增加 wire 字段。各包在 Cargo 发布校验中
 使用 registry 依赖验证打包源码，不能以工作区 fork 下编译成功替代下游编译。
 所有对外模型计算库统一使用 `talechime-` 前缀，包括 MOSS、VoxCPM、OmniVoice、CosyVoice3、IndexTTS 和 Qwen；
@@ -146,8 +146,8 @@ Qwen 的设备传输与 CPU 采样策略分别负责；depthwise fast path 封�
 
 只保留 dist-workspace.toml，使用 cargo-dist 0.32.0 的原生 Cargo 构建。运行 `dist generate`、`dist generate --check` 和 `dist plan`。`.github/workflows/ci.yml` 在三个平台构建标准包、解压至隔离目录并执行无模型、无 CUDA 的帮助/握手检查；Mac 标准包编译全部 Metal 路径。许可证由 `.github/scripts/prepare-notices.py` 汇集到 target/third-party-licenses 并随包分发。
 
-应用 0.5.0 的发布入口为 `talechime-v0.5.0` 标签。此次仅更新应用安装包版本，
-不自动发布 crates.io 库或移动既有标签。发布流水线先运行 CPU CI 与三平台性能契约，
+应用 0.6.0 的发布入口为 `talechime-v0.6.0` 标签；Rust 库另由
+`talechime-libs-v0.6.0` 发布，两类标签独立触发，不移动既有标签。发布流水线先运行 CPU CI 与三平台性能契约，
 再构建安装包；发布前的 `release-smoke.yml` 下载实际归档，在原生平台验证帮助、
 v7 握手与本地生成的同版本 shell/PowerShell 安装器，检查无模型权重及 CUDA 库。
 各阶段通过后才公开 GitHub Release 并更新 Homebrew tap。

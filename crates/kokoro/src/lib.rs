@@ -173,8 +173,8 @@ impl Model {
             }
         }
         Ok(Self {
-            weights: ops::Weights(decoder),
-            encoder: ops::Weights(encoder),
+            weights: ops::Weights::new(decoder),
+            encoder: ops::Weights::new(encoder),
             config,
             device: device.clone(),
         })
@@ -360,8 +360,8 @@ mod tests {
     #[test]
     fn invalid_inputs_fail_before_accessing_model_weights() -> Result<()> {
         let model = Model {
-            weights: ops::Weights(HashMap::new()),
-            encoder: ops::Weights(HashMap::new()),
+            weights: ops::Weights::new(HashMap::new()),
+            encoder: ops::Weights::new(HashMap::new()),
             config: Config {
                 vocab: [('ㄚ', 100)].into(),
                 n_token: 178,
