@@ -248,11 +248,13 @@ jobs:
   host:
     needs:
       - plan
+      - custom-ci
+      - custom-performance-contracts
       - build-local-artifacts
       - build-global-artifacts
       - custom-release-smoke
-    # Only run if we're "publishing", and only if plan, local and global didn't fail (skipped is fine)
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.custom-release-smoke.result == 'skipped' || needs.custom-release-smoke.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') }}
+    # Every validation and artifact job must succeed before publishing.
+    if: ${{ always() && needs.plan.outputs.publishing == 'true' && needs.plan.result == 'success' && needs.custom-ci.result == 'success' && needs.custom-performance-contracts.result == 'success' && needs.build-local-artifacts.result == 'success' && needs.build-global-artifacts.result == 'success' && needs.custom-release-smoke.result == 'success' }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: "ubuntu-24.04"

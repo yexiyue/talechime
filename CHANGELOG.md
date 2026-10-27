@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1 — 2026-10-27
+
+- Require successful CPU CI, platform contracts, artifact builds and archive smoke before hosting a release; skipped jobs cannot publish an empty release. Regenerate the pinned cargo-dist workflow through the checked repository script.
+- Isolate invalid UTF-8/missing-file CLI tests from the user configuration, including CLI builds without a model backend. Runtime synthesis is unchanged.
+- Publish the application and facade patch; reuse the libraries published in the 0.6.0 batch. The incomplete application 0.6.0 release remains a draft and its tag is preserved.
+
 ## 0.6.0 — 2026-10-27
 
 - Include Kokoro v1.1-zh and optional g2pW pronunciation in standard CPU distributions, with decoder Metal offload on macOS. Official converted resources remain explicit; no weights are bundled or silently downloaded.

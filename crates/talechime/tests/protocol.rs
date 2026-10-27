@@ -367,11 +367,20 @@ fn eof_duplicate_invalid_json_and_incompatible_version() {
 #[test]
 fn invalid_utf8_and_missing_files_exit_before_preparation() {
     let directory = tempfile::tempdir().unwrap();
+    let config_path = directory.path().join("config.json");
+    let config = serde_json::to_vec(&talechime_protocol::Config::default()).unwrap();
+    std::fs::write(&config_path, &config).unwrap();
     let path = directory.path().join("invalid.txt");
     std::fs::write(&path, [0xff, 0xfe]).unwrap();
     for path in [path, directory.path().join("missing.txt")] {
         let output = ProcessCommand::new(env!("CARGO_BIN_EXE_talechime"))
             .arg(path)
+            .arg("--config")
+            .arg(&config_path)
+            .arg("--checkpoint-dir")
+            .arg(directory.path().join("positions"))
+            .env("HOME", directory.path())
+            .env("USERPROFILE", directory.path())
             .arg("--model-dir")
             .arg(directory.path().join("models"))
             .output()
@@ -380,7 +389,9 @@ fn invalid_utf8_and_missing_files_exit_before_preparation() {
         assert!(String::from_utf8_lossy(&output.stderr).contains("cannot read UTF-8 file"));
         assert!(output.stdout.is_empty());
     }
+    assert_eq!(std::fs::read(config_path).unwrap(), config);
     assert!(!directory.path().join("models").exists());
+    assert!(!directory.path().join("positions").exists());
 }
 
 #[test]

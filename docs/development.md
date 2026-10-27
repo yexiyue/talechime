@@ -144,10 +144,10 @@ Qwen 的设备传输与 CPU 采样策略分别负责；depthwise fast path 封�
 
 ## 发行
 
-只保留 dist-workspace.toml，使用 cargo-dist 0.32.0 的原生 Cargo 构建。运行 `dist generate`、`dist generate --check` 和 `dist plan`。`.github/workflows/ci.yml` 在三个平台构建标准包、解压至隔离目录并执行无模型、无 CUDA 的帮助/握手检查；Mac 标准包编译全部 Metal 路径。许可证由 `.github/scripts/prepare-notices.py` 汇集到 target/third-party-licenses 并随包分发。
+只保留 dist-workspace.toml，使用 cargo-dist 0.32.0 的原生 Cargo 构建。运行 `python3 .github/scripts/generate-release.py`、同脚本的 `--check` 和 `dist plan`。生成脚本使用固定版本 cargo-dist，再从 `dist-workspace.toml` 的 `required-host-jobs` 生成严格门禁；任何前置作业失败、取消或跳过都不能进入 host。原生 `dist generate --check` 通过 `allow-dirty = ["ci"]` 将 CI 定制交由此脚本检查。`.github/workflows/ci.yml` 在三个平台构建标准包、解压至隔离目录并执行无模型、无 CUDA 的帮助/握手检查；Mac 标准包编译全部 Metal 路径。许可证由 `.github/scripts/prepare-notices.py` 汇集到 target/third-party-licenses 并随包分发。
 
-应用 0.6.0 的发布入口为 `talechime-v0.6.0` 标签；Rust 库另由
-`talechime-libs-v0.6.0` 发布，两类标签独立触发，不移动既有标签。发布流水线先运行 CPU CI 与三平台性能契约，
+应用 0.6.1 的发布入口为 `talechime-v0.6.1` 标签；Rust 库另由
+`talechime-libs-v0.6.1` 发布 facade 0.6.1，并复用 0.6.0 批次已发布的其余库，两类标签独立触发，不移动既有标签。发布流水线先运行 CPU CI 与三平台性能契约，
 再构建安装包；发布前的 `release-smoke.yml` 下载实际归档，在原生平台验证帮助、
 v7 握手与本地生成的同版本 shell/PowerShell 安装器，检查无模型权重及 CUDA 库。
 各阶段通过后才公开 GitHub Release 并更新 Homebrew tap。

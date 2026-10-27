@@ -23,6 +23,11 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: python3 -m unittest discover -s .github/scripts -p "test_*.py"
+      - name: Check generated release workflow
+        shell: bash
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
+          python3 .github/scripts/generate-release.py --check
       - run: cargo fmt --all --check
       - run: cargo test --locked --workspace --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/cosyvoice3,talechime/moss-candle,talechime/asr,talechime/indextts,talechime/kokoro-g2pw,talechime-backends/performance-tools --lib --tests --examples
       - run: cargo clippy --locked --workspace --all-targets --features talechime/qwen,talechime/voxcpm,talechime/omnivoice,talechime/cosyvoice3,talechime/moss-candle,talechime/asr,talechime/indextts,talechime/kokoro-g2pw,talechime-backends/performance-tools -- -D warnings

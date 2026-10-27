@@ -20,7 +20,7 @@ Talechime 是用 Rust 编写的本地语音合成与长文播放引擎。它提�
 
 正文和参考音频由本地模型处理。模型权重按需准备，安装包不包含权重；CosyVoice3 需要先转换并放置本地模型文件。
 
-## 0.6.0 更新
+## 0.6.1 更新
 
 标准包加入 Kokoro 中文预置音色后端与可选 g2pW 多音字消歧，macOS 同时编入 Metal
 解码路径；转换后的本地资源仍需显式准备。新增模型目录与模型无关的 VoiceStudio API，
@@ -73,7 +73,7 @@ cargo run --release -- --backend moss --model nano-candle --tts-device cpu chapt
 | 后端 / `--backend` | 模型或实现 | 音色与输出 | 构建和资源边界 |
 | --- | --- | --- | --- |
 | MOSS / `moss` | Nano Candle `nano-candle`（默认）；Realtime `realtime-1.7b` | Nano 内置或固定导入音色；两档均不提供 style/instruction/language | Nano 默认 CPU，Metal / CUDA 需显式 feature；Realtime 为需 `moss-candle-*` 的 GPU 模型 |
-| Kokoro / `kokoro` | `1.1-zh`；可选 `1.1-zh-g2pw` | 官方中文预置音色，24 kHz 分段 PCM；支持 speed，无克隆/风格/原生流式 | Candle F32，CPU/Metal 已做官方对照，CUDA 待实机验证；须先[转换官方资源](docs/kokoro.md)；0.6.0 标准包包含 CPU/g2pW，macOS 另含 Metal |
+| Kokoro / `kokoro` | `1.1-zh`；可选 `1.1-zh-g2pw` | 官方中文预置音色，24 kHz 分段 PCM；支持 speed，无克隆/风格/原生流式 | Candle F32，CPU/Metal 已做官方对照，CUDA 待实机验证；须先[转换官方资源](docs/kokoro.md)；0.6.1 标准包包含 CPU/g2pW，macOS 另含 Metal |
 | Qwen3-TTS / `qwen` | 0.6B、1.7B CustomVoice；0.6B、1.7B Base | CustomVoice 预置音色；1.7B CustomVoice 支持风格；Base 可导入参考音频克隆 | Candle CPU；Metal / CUDA 需 `qwen-metal` / `qwen-cuda` |
 | VoxCPM2 / `voxcpm` | 2B Q8 GGUF；另有实验 BF16 路径 | 固定参考音色、音色设计与原生流式 PCM | Candle CPU；Metal / CUDA 需 `voxcpm-metal` / `voxcpm-cuda` |
 | OmniVoice / `omnivoice` | 0.6B | 参考音色、音色设计、风格和生成期语速；按语义段输出 | Candle CPU；Metal / CUDA 需 `omnivoice-metal` / `omnivoice-cuda`；当前不是模型原生实时流式 |

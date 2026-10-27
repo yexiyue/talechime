@@ -3,6 +3,9 @@ members = ["cargo:."]
 
 [dist]
 cargo-dist-version = "0.32.0"
+# generate-release.py regenerates CI and applies our strict host gate. Native
+# dist checks cannot reproduce that gate; the wrapper is checked in CPU CI.
+allow-dirty = ["ci"]
 ci = "github"
 recursive-tarball = false
 packages = ["talechime"]
@@ -38,4 +41,5 @@ pkg-config = "*"
 # cargo-dist 0.32 has one Cargo feature list. The build-setup selector adds
 # these features only on the native macOS builder, before notices/builds.
 [talechime-release]
+required-host-jobs = ["plan", "custom-ci", "custom-performance-contracts", "build-local-artifacts", "build-global-artifacts", "custom-release-smoke"]
 macos-features = ["qwen-metal", "voxcpm-metal", "omnivoice-metal", "cosyvoice3-metal", "moss-candle-metal", "moss-nano-candle-metal", "kokoro-metal"]

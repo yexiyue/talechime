@@ -19,7 +19,7 @@ Registry 与 facade 已提供两种模型及 feature；本次将 `kokoro-g2pw` �
 配置，`kokoro-metal` 加入 macOS 配置，并将计算库加入库发布依赖顺序。
 归档 smoke 会查询真实可执行文件的模型目录并检查两种模型及 PyTorch 许可副本。
 
-应用/facade/core 为 0.6.0，backends/protocol 为 0.4.0，MOSS/VoxCPM 为 0.2.0，
+应用/facade 为 0.6.1，core 为 0.6.0，backends/protocol 为 0.4.0，MOSS/VoxCPM 为 0.2.0，
 Kokoro 首发 0.1.0；其余依赖图使用新的补丁版本。协议 wire version 仍为 v7。
 发布身份检查要求根 Cargo.toml 改变后不复用旧包版本，故整个依赖图统一登记本次批次。
 
@@ -54,12 +54,31 @@ Kokoro 模型，避免依赖目录首项。
 
 ## 发布入口
 
-应用由 `talechime-v0.6.0` 触发；库由 `talechime-libs-v0.6.0` 触发，分别运行原生
+应用由 `talechime-v0.6.1` 触发；facade 补丁由 `talechime-libs-v0.6.1` 触发，其余库复用已成功发布的 0.6.0 批次，分别运行原生
 归档与依赖顺序发布流程。上传、平台 smoke 与发布结果以服务端记录为准：
 
-- [0.6.0 安装包](https://github.com/yexiyue/talechime/releases/tag/talechime-v0.6.0)
+- [0.6.1 安装包](https://github.com/yexiyue/talechime/releases/tag/talechime-v0.6.1)
 - [库发布工作流](https://github.com/yexiyue/talechime/actions/workflows/publish-libraries.yml)
-- [talechime 0.6.0](https://crates.io/crates/talechime/0.6.0)
+- [talechime 0.6.1](https://crates.io/crates/talechime/0.6.1)
 - [talechime-kokoro 0.1.0](https://crates.io/crates/talechime-kokoro/0.1.0)
 
 Standards：0 项；Spec：0 项；两轴均无剩余最高严重度问题。
+
+## 0.6.0 远端失败与补丁恢复
+
+Rust 库批次已全部成功发布。应用发布的最小 `cli` 测试在干净 CI 用户目录下失败：
+非法 UTF-8/缺失文件用例没有提供配置，先触发“没有可用后端”。本地用户配置掩盖了问题。
+测试现使用临时当前格式配置、HOME、模型与检查点目录，并验证配置不变且不创建资源目录。
+
+cargo-dist 0.32.0 生成的 host 条件接受跳过的构建与 smoke，导致只有清单的空应用
+Release 被公开。已将其转回草稿，保留原标签；不改写已发布 crate。应用/facade 补丁
+改为 0.6.1，模型计算库版本保持不变。
+
+`.github/scripts/generate-release.py` 先运行固定版本 cargo-dist，再按配置生成严格
+host needs/if：CPU CI、性能契约、两级构建及归档 smoke 均须 success。生成器在 CPU CI
+检查；回归测试覆盖每个前置作业的失败、跳过、取消及缺失作业/模板变动时拒绝生成。
+安装包仅在这一门禁全部满足后才发布。
+
+补丁本地验收：五种最小 CLI 组合全部通过，非法文件用例以临时 HOME/配置执行；
+19 项 Python 回归、真实固定版本生成检查、dist plan、格式、Clippy `-D warnings`
+和严格 rustdoc 均通过。两轴增量复查均无剩余发现。补丁不改变推理数值路径。
