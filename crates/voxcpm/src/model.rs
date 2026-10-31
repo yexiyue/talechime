@@ -495,6 +495,8 @@ impl Model {
                 .map(|_| noise.normal() * o.temperature as f32)
                 .collect();
             let initial = Tensor::from_vec(values, (1, 64, 4), &self.device)?;
+            #[cfg(all(test, feature = "codec-experiment", target_os = "macos"))]
+            accelerate_experiment::trace_cfm_step(i, &mu, &prefix, &initial)?;
             let (patch, elapsed) = measure(o.measure_modules, &self.device, || {
                 // Module timing synchronizes inside the measured region, which
                 // a captured graph cannot contain, so profiling stays eager.

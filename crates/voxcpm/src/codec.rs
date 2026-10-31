@@ -388,6 +388,14 @@ mod tests {
             .to_dtype(DType::F32)?
             .flatten_all()?
             .to_vec1::<f32>()?;
+        if let Some(path) = std::env::var_os("VOX_CODEC_TEST_OUTPUT") {
+            use std::io::Write;
+            let mut output = std::fs::File::create_new(path)?;
+            for sample in &full {
+                output.write_all(&sample.to_le_bytes())?;
+            }
+            output.sync_all()?;
+        }
         for block_patches in [1, 2, 7] {
             codec.reset();
             let mut samples = Vec::new();

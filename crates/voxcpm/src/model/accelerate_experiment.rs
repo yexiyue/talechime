@@ -21,6 +21,256 @@ use std::{
 const PATCH_SHAPE: (usize, usize, usize) = (1, 64, 4);
 const PATCH_VALUES: usize = PATCH_SHAPE.0 * PATCH_SHAPE.1 * PATCH_SHAPE.2;
 
+#[test]
+#[ignore = "explicit local latent/conditioning files for onset diagnosis; no downloads"]
+fn replay_decoder_onsets() -> Result<()> {
+    let case: serde_json::Value =
+        serde_json::from_slice(&fs::read(required_path("VOX_FIDELITY_CASE")?)?)?;
+    let model = PathBuf::from(case["model"].as_str().context("model path missing")?);
+    let output = PathBuf::from(case["output"].as_str().context("output path missing")?);
+    fs::create_dir(&output)?;
+    let cache: serde_json::Value = serde_json::from_slice(&fs::read(
+        case["reference_cache"]
+            .as_str()
+            .context("reference cache missing")?,
+    )?)?;
+    let frames = cache["frames"]
+        .as_u64()
+        .context("reference frames missing")? as usize;
+    ensure!(
+        (1..=188).contains(&frames),
+        "reference frame budget exceeded"
+    );
+    let features: Vec<f32> = serde_json::from_value(cache["features"].clone())?;
+    ensure!(
+        features.len() == frames * 256 && features.iter().all(|v| v.is_finite()),
+        "invalid reference features"
+    );
+    let device = Device::new_metal(0)?;
+    let prefix = Tensor::from_vec(features, (frames, 4, 64), &device)?
+        .narrow(0, frames.saturating_sub(3), frames.min(3))?
+        .permute((2, 0, 1))?
+        .contiguous()?
+        .reshape((1, 64, frames.min(3) * 4))?;
+    let mut codec = load_codec(&model, &device, DType::F32)?;
+    let cases = case["cases"].as_array().context("cases missing")?;
+    ensure!(
+        !cases.is_empty() && cases.len() <= 8,
+        "one to eight bounded cases required"
+    );
+    for (index, item) in cases.iter().enumerate() {
+        let values = read_f32le(Path::new(
+            item["patches"].as_str().context("patches missing")?,
+        ))?;
+        ensure!(
+            values.len().is_multiple_of(256) && values.len() <= 187 * 256,
+            "patch budget exceeded"
+        );
+        let expected = fs::read(item["expected_cold"].as_str().context("cold PCM missing")?)?;
+        for warm in [false, true] {
+            codec.reset();
+            if warm {
+                let _ = codec.decode(&prefix, &|| false)?;
+            }
+            let mut pcm = Vec::new();
+            for patch in values.as_chunks::<256>().0 {
+                let input = Tensor::from_slice(patch, (1, 64, 4), &device)?;
+                pcm.extend(
+                    codec
+                        .decode(&input, &|| false)?
+                        .flatten_all()?
+                        .to_vec1::<f32>()?,
+                );
+            }
+            ensure!(
+                pcm.len() * 4 == expected.len() && pcm.iter().all(|v| v.is_finite()),
+                "decoded sample coverage changed"
+            );
+            let mut bytes = Vec::with_capacity(pcm.len() * 4);
+            write_f32le(&mut bytes, &pcm)?;
+            if !warm {
+                ensure!(
+                    bytes == expected,
+                    "cold replay differs from actual generated PCM"
+                );
+            }
+            let name = format!(
+                "segment-{:02}-{}.f32le",
+                index + 6,
+                if warm { "warm" } else { "cold" }
+            );
+            let mut file = File::create_new(output.join(name))?;
+            file.write_all(&bytes)?;
+        }
+        println!(
+            "onset case {} cold replay matched; warm replay preserved sample count",
+            index + 1
+        );
+    }
+    Ok(())
+}
+
+pub(super) fn trace_cfm_step(
+    index: usize,
+    mu: &Tensor,
+    cond: &Tensor,
+    noise: &Tensor,
+) -> candle_core::Result<()> {
+    let Some(root) = env::var_os("VOX_FIDELITY_TRACE") else {
+        return Ok(());
+    };
+    if index != 0 && index != 42 {
+        return Ok(());
+    }
+    let dump = |tensor: &Tensor| -> candle_core::Result<serde_json::Value> {
+        Ok(
+            serde_json::json!({"shape":tensor.dims(),"data":tensor.to_dtype(DType::F32)?.flatten_all()?.to_vec1::<f32>()?}),
+        )
+    };
+    let value =
+        serde_json::json!({"index":index,"mu":dump(mu)?,"cond":dump(cond)?,"x":dump(noise)?});
+    let mut file = candle_io(File::create_new(
+        PathBuf::from(root).join(format!("cfm-{index:03}.json")),
+    ))?;
+    let bytes = serde_json::to_vec(&value).map_err(|e| candle_core::Error::Msg(e.to_string()))?;
+    candle_io(file.write_all(&bytes))
+}
+
+/// Reproduce one reported fixed-reference request, preserving the actual cached
+/// conditioning and seed, then expose its latents for an independent decoder.
+#[test]
+#[ignore = "explicit local fixed-reference fidelity case; no downloads"]
+fn capture_fidelity_case() -> Result<()> {
+    let case_path = required_path("VOX_FIDELITY_CASE")?;
+    let case: serde_json::Value = serde_json::from_slice(&fs::read(&case_path)?)?;
+    let path = |key: &str| -> Result<PathBuf> {
+        Ok(PathBuf::from(
+            case[key].as_str().context("missing case path")?,
+        ))
+    };
+    let output = path("output")?;
+    fs::create_dir(&output)?;
+    if case["reference_only"] == true {
+        let samples = load_reference(&path("reference_wav")?)?;
+        let mut writer = BufWriter::new(File::create_new(output.join("reference-16k.f32le"))?);
+        write_f32le(&mut writer, &samples)?;
+        writer.flush()?;
+        return Ok(());
+    }
+    let device = Device::new_metal(0)?;
+    let mut model = Model::load(&path("model")?, &device)?;
+    if case["acoustic_precision"] == "f32" {
+        let mut base = Weights::open(
+            &path("model")?.join("VoxCPM2-BaseLM-Q8_0.gguf"),
+            &device,
+            DType::F32,
+        )?;
+        let rope = base.tensor("rope_factors_short.weight")?;
+        let mut weights = Weights::open(
+            &path("model")?.join("VoxCPM2-Acoustic-F16.gguf"),
+            &device,
+            DType::F32,
+        )?;
+        model.residual = crate::transformer::Transformer::load(
+            &mut weights,
+            "residual_lm.",
+            8,
+            "residual_lm.output_norm.weight",
+            None,
+            true,
+        )?;
+        model.acoustic = crate::acoustic::Acoustic::load(&mut weights, &rope)?;
+        model.codec = Codec::load(&mut weights)?;
+        model.dtype = DType::F32;
+        model.codec_dtype = DType::F32;
+    }
+    let reference = if case["no_reference"] == true {
+        ensure!(
+            case["context_wav"].is_null(),
+            "unconditioned case has context"
+        );
+        None
+    } else if case["context_wav"].is_string() {
+        let samples = load_reference(&path("context_wav")?)?;
+        let transcript = fs::read_to_string(path("context_text")?)?;
+        Some(model.reference(&samples, Some(transcript), &|| false)?)
+    } else {
+        let cached: serde_json::Value =
+            serde_json::from_slice(&fs::read(path("reference_cache")?)?)?;
+        let frames = cached["frames"]
+            .as_u64()
+            .context("missing reference frames")? as usize;
+        ensure!(
+            (1..=188).contains(&frames),
+            "reference exceeds bounded frames"
+        );
+        let values: Vec<f32> = serde_json::from_value(cached["features"].clone())?;
+        ensure!(
+            values.len() == frames * 256 && values.iter().all(|x| x.is_finite()),
+            "invalid reference features"
+        );
+        let voice: serde_json::Value = serde_json::from_slice(&fs::read(path("voice")?)?)?;
+        Some(super::super::Reference {
+            features: Tensor::from_vec(values, (frames, 4, 64), &device)?.to_dtype(model.dtype)?,
+            transcript: Some(
+                voice["transcript"]
+                    .as_str()
+                    .context("missing transcript")?
+                    .to_owned(),
+            ),
+        })
+    };
+    if let Some(reference) = &reference {
+        let values = reference
+            .features
+            .to_dtype(DType::F32)?
+            .flatten_all()?
+            .to_vec1::<f32>()?;
+        let snapshot = serde_json::json!({
+            "frames": reference.features.dim(0)?,
+            "features": values,
+        });
+        serde_json::to_writer(
+            File::create_new(output.join("reference-features.json"))?,
+            &snapshot,
+        )?;
+    }
+    let text = fs::read_to_string(path("text")?)?;
+    ensure!(text.len() <= 16_384, "case text exceeds budget");
+    let options = Options {
+        seed: case["seed"].as_u64().context("missing seed")?,
+        max_frames: 187,
+        ..Default::default()
+    };
+    let mut patches = BufWriter::new(File::create_new(output.join("patches.f32le"))?);
+    let mut pcm = BufWriter::new(File::create_new(output.join("raw.f32le"))?);
+    let result = model.generate_inner(
+        GenerateRequest {
+            text: &text,
+            reference: reference.as_ref(),
+
+            options: &options,
+        },
+        &|| false,
+        &mut |samples| candle_io(write_f32le(&mut pcm, samples)),
+        &mut |patch| {
+            let values = patch
+                .to_dtype(DType::F32)?
+                .flatten_all()?
+                .to_vec1::<f32>()?;
+            candle_io(write_f32le(&mut patches, &values))
+        },
+    )?;
+    ensure!(result == Outcome::Eos, "fidelity case did not reach EOS");
+    patches.flush()?;
+    pcm.flush()?;
+    println!(
+        "captured fixed-reference fidelity case at {}",
+        output.display()
+    );
+    Ok(())
+}
+
 struct CapturedSegment {
     patches: Vec<Tensor>,
     pcm: Vec<f32>,
