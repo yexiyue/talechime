@@ -1,10 +1,10 @@
-//! MOSS dedicated design engine (`voice-design-1.7b` + shared codec, CUDA only).
+//! MOSS dedicated design engine (`voice-design-1.7b` + shared codec, CUDA/Metal).
 use crate::moss::candle::{self, resources};
 use std::path::{Path, PathBuf};
 use talechime_core::design::{
     DesignOutput, DesignRequest, Designing, EngineInfo, InputConstraints, Preparing, VoiceDesigner,
 };
-use talechime_protocol::{Device, Event};
+use talechime_protocol::Event;
 use tokio::sync::mpsc;
 
 pub(super) const ID: &str = "moss-voicedesign";
@@ -21,14 +21,10 @@ impl VoiceDesigner for Engine {
             (design, &resources::design_directory(root)),
             (codec, &resources::codec_directory(root)),
         ]);
-        let devices = if candle::available_devices().contains(&Device::Cuda) {
-            vec![Device::Cuda]
-        } else {
-            Vec::new()
-        };
+        let devices = candle::available_devices();
         EngineInfo {
             id: ID,
-            name: "MOSS 1.7B · 音色设计（CUDA）",
+            name: "MOSS 1.7B · 音色设计",
             devices,
             inputs: InputConstraints {
                 text_max_chars: 60,
@@ -61,5 +57,35 @@ impl VoiceDesigner for Engine {
                 wav: std::fs::read(output.path())?,
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_uses_compiled_gpu_devices_without_preparing_resources() {
+        let root = tempfile::tempdir().unwrap();
+        let info = Engine.info(root.path());
+        assert_eq!(info.devices, candle::available_devices());
+        assert!(!info.devices.contains(&talechime_protocol::Device::Cpu));
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn unsupported_design_device_does_not_prepare_or_publish() {
+        let root = tempfile::tempdir().unwrap();
+        let result = candle::design::reference(
+            root.path().to_path_buf(),
+            talechime_protocol::Device::Cpu,
+            "你好。".into(),
+            "自然男声".into(),
+            root.path().join("output.wav"),
+            None,
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
 }

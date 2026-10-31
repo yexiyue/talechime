@@ -16,8 +16,8 @@ pub async fn reference(
     seed: Option<u64>,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
-        selected == talechime_protocol::Device::Cuda,
-        "MOSS voice design currently requires verified CUDA/BF16"
+        super::available_devices().contains(&selected),
+        "MOSS voice design requires an available compiled CUDA or Metal device"
     );
     anyhow::ensure!(
         !text.trim().is_empty() && text.chars().count() <= 60,
@@ -34,6 +34,8 @@ pub async fn reference(
         .name("moss-voice-design".into())
         .spawn(move || {
             let generated = (|| -> anyhow::Result<()> {
+                let check = || signal.load(Ordering::Relaxed) || reply.is_closed();
+                anyhow::ensure!(!check(), "voice design cancelled");
                 let device = runtime::device(selected)?;
                 let mut model = talechime_moss_tts::Model::load(
                     "voice-design-1.7b",
@@ -41,13 +43,19 @@ pub async fn reference(
                     &device,
                     runtime::model_dtype(&device),
                 )?;
-                let check = || signal.load(Ordering::Relaxed) || reply.is_closed();
+                if device.is_metal() {
+                    device.synchronize()?;
+                }
                 anyhow::ensure!(!check(), "voice design cancelled");
                 let mut codec = talechime_moss_tts::codec::AudioCodec::load(
                     &resources::codec_directory(&root),
                     &device,
                     candle_core::DType::F16,
                 )?;
+                if device.is_metal() {
+                    device.synchronize()?;
+                }
+                anyhow::ensure!(!check(), "voice design cancelled");
                 let mut request = talechime_moss_tts::Generation::new(&text);
                 request.instruction = Some(&description);
                 request.max_frames = 125;

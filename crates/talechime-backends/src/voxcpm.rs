@@ -7,7 +7,10 @@ pub mod models;
 pub mod params;
 pub mod resources;
 mod runtime;
-use std::path::{Path, PathBuf};
+use std::{
+    cell::RefCell,
+    path::{Path, PathBuf},
+};
 use talechime_core::backend::{Backend, BackendError, Segmentation, Streaming};
 use talechime_protocol::{Capabilities, Device};
 use tokio::sync::{mpsc, oneshot};
@@ -80,7 +83,9 @@ pub fn available_devices() -> Vec<Device> {
 pub struct VoxBackend {
     requests: Option<mpsc::Sender<runtime::Request>>,
     thread: Option<std::thread::JoinHandle<()>>,
-    caps: Capabilities,
+    caps: RefCell<Capabilities>,
+    directory: PathBuf,
+    model: models::Model,
     cache_identity: String,
 }
 impl VoxBackend {
@@ -103,6 +108,7 @@ impl VoxBackend {
             crate::cache_identity::identity("voxcpm-candle", model.revision(), device, &directory);
         let (requests, jobs) = mpsc::channel(1);
         let (ready, loaded) = oneshot::channel();
+        let voice_directory = directory.clone();
         let thread = std::thread::Builder::new()
             .name("voxcpm-inference".into())
             .spawn(move || runtime::run(directory, model, device, jobs, ready))
@@ -111,7 +117,9 @@ impl VoxBackend {
         let backend = Self {
             requests: Some(requests),
             thread: Some(thread),
-            caps,
+            caps: RefCell::new(caps),
+            directory: voice_directory,
+            model,
             cache_identity,
         };
         loaded
@@ -133,16 +141,27 @@ impl Backend for VoxBackend {
         Some(self.cache_identity.clone())
     }
     fn capabilities(&self) -> Capabilities {
-        self.caps.clone()
+        self.caps.borrow().clone()
+    }
+    fn refresh_reference_voices(&self) -> Result<(), BackendError> {
+        let updated = capabilities_for(&self.directory, self.model)
+            .map_err(|error| BackendError::Unsupported(error.to_string()))?;
+        let mut caps = self.caps.borrow_mut();
+        caps.voices = updated.voices;
+        caps.voice_names = updated.voice_names;
+        Ok(())
     }
     fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            request.reject_unsupported(self.caps.style)?;
             let (text, voice) = (request.text, request.voice);
-            if !self.caps.voices.iter().any(|id| id == voice) || text.trim().is_empty() {
-                return Err(BackendError::Unsupported(
-                    "unknown Vox voice or empty text".into(),
-                ));
+            {
+                let caps = self.caps.borrow();
+                request.reject_unsupported(caps.style)?;
+                if !caps.voices.iter().any(|id| id == voice) || text.trim().is_empty() {
+                    return Err(BackendError::Unsupported(
+                        "unknown Vox voice or empty text".into(),
+                    ));
+                }
             }
             let text = styled_text(request.style, text)?;
             let resolved = params::resolve(request.params, request.seed);
@@ -200,6 +219,47 @@ fn styled_text(style: Option<&str>, text: &str) -> Result<String, BackendError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn installed_reference_refreshes_a_loaded_catalog_and_errors_are_atomic() -> anyhow::Result<()>
+    {
+        let root = tempfile::tempdir()?;
+        let model = models::Model::Q8;
+        let directory = model.directory(root.path());
+        let backend = VoxBackend {
+            requests: None,
+            thread: None,
+            caps: RefCell::new(capabilities_for(&directory, model)?),
+            directory: directory.clone(),
+            model,
+            cache_identity: "fixture".into(),
+        };
+        let original = backend.capabilities();
+        let wav = root.path().join("reference.wav");
+        // This checks metadata publication only, not model inference.
+        std::fs::write(&wav, b"reference fixture")?;
+        let store = voice_store_for(&directory, model)?;
+        store.import("custom:late", "Late voice", &wav, "你好。", None)?;
+        assert!(
+            !backend
+                .capabilities()
+                .voices
+                .contains(&"custom:late".into())
+        );
+        backend.refresh_reference_voices()?;
+        let updated = backend.capabilities();
+        assert!(updated.voices.contains(&"custom:late".into()));
+        assert_eq!(updated.default_voice, original.default_voice);
+        assert_eq!(updated.model, original.model);
+        assert_eq!(updated.voice_names["custom:late"], "Late voice");
+        std::fs::write(
+            store.path("custom:late")?.join("voice.json"),
+            b"invalid JSON",
+        )?;
+        assert!(backend.refresh_reference_voices().is_err());
+        assert_eq!(backend.capabilities().voices, updated.voices);
+        Ok(())
+    }
+
     #[test]
     fn both_weight_variants_support_fixed_reference_without_preparing_assets() -> anyhow::Result<()>
     {

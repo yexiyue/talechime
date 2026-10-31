@@ -76,6 +76,12 @@ impl SegmentRequest<'_> {
 /// Domain interface shared by real and deterministic testing backends.
 pub trait Backend {
     fn capabilities(&self) -> Capabilities;
+    /// Refresh reference-voice metadata after the host installs a library asset.
+    /// Static catalogs need no action. This must not reload weights or change
+    /// the voice snapshot of an execution that has already started.
+    fn refresh_reference_voices(&self) -> Result<(), BackendError> {
+        Ok(())
+    }
     /// Stable identity of the prepared implementation, device, model and voice
     /// resources. Return `None` when reproducible cache reuse cannot be proven.
     /// Changing any synthesis resource must change this identity.

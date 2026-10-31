@@ -148,14 +148,23 @@ impl Engine {
     }
     async fn voice_snapshot(&self, voices: Vec<String>) -> Result<VoiceSnapshot, EngineError> {
         let caps = self.capabilities()?;
-        match &self.voice_studio {
+        let snapshot = match &self.voice_studio {
             Some(studio) => studio
                 .voice_snapshot(&caps, &voices)
                 .await
                 .map_err(|error| EngineError::Voice(error.to_string())),
             None => VoiceSnapshot::new(&caps.backend, caps.model.as_deref(), &caps, voices)
                 .map_err(|error| EngineError::Session(SessionError::Plan(error))),
+        }?;
+        if snapshot
+            .voices()
+            .any(|voice| !caps.voices.iter().any(|id| id == voice))
+        {
+            self.backend()?
+                .refresh_reference_voices()
+                .map_err(|error| EngineError::Voice(error.to_string()))?;
         }
+        Ok(snapshot)
     }
     /// Explicitly prepare (and if necessary download) the requested model.
     /// Progress is drained concurrently, so no forwarding task needs shutdown.
@@ -217,13 +226,19 @@ impl Engine {
     }
     async fn resolve_voice(&self, voice: &str) -> Result<String, EngineError> {
         let caps = self.capabilities()?;
-        match &self.voice_studio {
+        let resolved = match &self.voice_studio {
             Some(studio) => studio
                 .resolve_voice(&caps, voice)
                 .await
                 .map_err(|error| EngineError::Voice(error.to_string())),
             None => Ok(voice.to_owned()),
+        }?;
+        if !caps.voices.contains(&resolved) {
+            self.backend()?
+                .refresh_reference_voices()
+                .map_err(|error| EngineError::Voice(error.to_string()))?;
         }
+        Ok(resolved)
     }
     /// Attach reusable prepared ASR resources while idle. Verification remains opt-in per execution.
     pub fn set_verifier(&mut self, verifier: Rc<crate::Verifier>) -> Result<(), EngineError> {
@@ -484,19 +499,14 @@ mod tests {
 
     struct RecordingBackend {
         resources: PathBuf,
+        installed: RefCell<Vec<String>>,
         voices: RefCell<Vec<String>>,
     }
     impl Backend for RecordingBackend {
         fn capabilities(&self) -> Capabilities {
-            // Mirror real adapters: reference stores are listed dynamically.
+            // Match native adapters that freeze their catalog when loaded.
             let mut voices = vec!["builtin".to_owned()];
-            if let Ok(store) = talechime_backends::qwen::voice_store(
-                &talechime_backends::qwen::models::Model::Base17.directory(&self.resources),
-                talechime_backends::qwen::models::Model::Base17,
-            ) && let Ok(listed) = store.list()
-            {
-                voices.extend(listed.into_iter().map(|voice| voice.id));
-            }
+            voices.extend(self.installed.borrow().iter().cloned());
             Capabilities {
                 backend: "qwen".into(),
                 model: Some("1.7b-base".into()),
@@ -512,6 +522,18 @@ mod tests {
                 compiled_devices: vec![Device::Cpu],
                 parameters: vec![],
             }
+        }
+        fn refresh_reference_voices(&self) -> Result<(), BackendError> {
+            let store = talechime_backends::qwen::voice_store(
+                &talechime_backends::qwen::models::Model::Base17.directory(&self.resources),
+                talechime_backends::qwen::models::Model::Base17,
+            )
+            .map_err(|error| BackendError::Unsupported(error.to_string()))?;
+            let voices = store
+                .list()
+                .map_err(|error| BackendError::Unsupported(error.to_string()))?;
+            *self.installed.borrow_mut() = voices.into_iter().map(|voice| voice.id).collect();
+            Ok(())
         }
         fn stream<'a>(
             &'a self,
@@ -536,6 +558,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn first_use_refreshes_frozen_catalogs_for_direct_and_plan_paths() -> anyhow::Result<()> {
+        for planned in [false, true] {
+            run_local(async {
+                let roots = tempfile::tempdir()?;
+                let resources = roots.path().join("res");
+                let library_root = roots.path().join("lib");
+                let library = VoiceLibrary::open(&library_root)?;
+                library.create(
+                    "hero",
+                    "主角",
+                    &riff_wav(6000),
+                    "你好。",
+                    None,
+                    VoiceSource::Imported,
+                )?;
+                let backend = Rc::new(RecordingBackend {
+                    resources: resources.clone(),
+                    installed: RefCell::new(Vec::new()),
+                    voices: RefCell::new(Vec::new()),
+                });
+                let mut engine = Engine::from_backend(backend);
+                engine.attach_voice_studio(VoiceStudio::at(&resources, &library_root)?);
+                assert!(
+                    !engine
+                        .capabilities()?
+                        .voices
+                        .contains(&"custom:hero".into())
+                );
+                if planned {
+                    let text = "你好。";
+                    let source = SourceSnapshot::new(
+                        talechime_protocol::SourceId {
+                            namespace: "test".into(),
+                            book: "book".into(),
+                            chapter: "one".into(),
+                        },
+                        text,
+                        &talechime_protocol::text_hash(text),
+                    )?;
+                    let plan = engine
+                        .single_voice_plan(source, "hero", None, PlaybackPolicy::Streaming)
+                        .await?;
+                    assert_eq!(plan.voices().voices().collect::<Vec<_>>(), ["custom:hero"]);
+                } else {
+                    let pcm = engine
+                        .synthesize_pcm("你好。", "hero", None, 1 << 20)
+                        .await?;
+                    assert_eq!(pcm.samples.len(), 2);
+                }
+                assert!(
+                    engine
+                        .capabilities()?
+                        .voices
+                        .contains(&"custom:hero".into())
+                );
+                engine.close().await?;
+                Ok::<_, anyhow::Error>(())
+            })
+            .await?;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn library_voices_materialize_and_builtin_ids_pass_through() -> anyhow::Result<()> {
         run_local(async {
             let roots = tempfile::tempdir()?;
@@ -552,6 +638,7 @@ mod tests {
             )?;
             let backend = Rc::new(RecordingBackend {
                 resources: resources.clone(),
+                installed: RefCell::new(Vec::new()),
                 voices: RefCell::new(Vec::new()),
             });
             let mut engine = Engine::from_backend(backend.clone());
