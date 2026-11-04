@@ -118,15 +118,14 @@ pub(super) fn read_for(directory: &Path, model: &str) -> anyhow::Result<Manifest
 pub(crate) fn performance_resources(
     directory: &Path,
     model: &str,
-) -> anyhow::Result<Vec<crate::resources::Resource>> {
+) -> anyhow::Result<Vec<crate::resources::LocalResource>> {
     Ok(read_for(directory, model)?
         .files
         .into_iter()
-        .map(|(path, file)| crate::resources::Resource {
+        .map(|(path, file)| crate::resources::LocalResource {
             path,
             size: file.bytes,
             sha256: file.sha256,
-            url: String::new(),
         })
         .collect())
 }
@@ -140,23 +139,33 @@ pub(super) fn verify_cancellable(
     Ok(manifest)
 }
 
+/// Offline readiness from the on-disk conversion manifest.
+pub(crate) fn conversion_status(directory: &Path) -> crate::resource_state::ResourceStatus {
+    match read(directory) {
+        Ok(manifest) => {
+            let entries: Vec<(String, u64)> = manifest
+                .files
+                .iter()
+                .map(|(path, file)| (path.clone(), file.bytes))
+                .collect();
+            crate::resource_state::status_of(&entries, directory)
+        }
+        Err(_) => crate::resource_state::ResourceStatus::Missing { missing_bytes: 0 },
+    }
+}
+
 fn verify_files(
     directory: &Path,
     manifest: &Manifest,
     cancelled: &dyn Fn() -> bool,
 ) -> anyhow::Result<()> {
     for (path, file) in &manifest.files {
-        let resource = crate::resources::Resource {
+        let resource = crate::resources::LocalResource {
             path: path.clone(),
-            url: String::new(),
             sha256: file.sha256.clone(),
             size: file.bytes,
         };
-        crate::resources::verify_cancellable(
-            &directory.join(&resource.path),
-            &resource,
-            cancelled,
-        )?;
+        crate::resources::verify_local_cancellable(directory, &resource, cancelled)?;
     }
     Ok(())
 }

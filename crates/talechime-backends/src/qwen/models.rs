@@ -110,11 +110,10 @@ mod tests {
         ] {
             let resources: Vec<crate::resources::Resource> =
                 serde_json::from_str(model.manifest()).unwrap();
-            assert!(
-                resources.iter().all(|r| r.url.contains(model.revision())
-                    && r.sha256.len() == 64
-                    && r.size > 0)
-            );
+            assert!(resources.iter().all(|r| r.revision == model.revision()
+                && r.repo.contains('/')
+                && !r.filename.is_empty()
+                && r.size > 0));
         }
     }
 }

@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 
 pub(super) const ID: &str = "omnivoice";
 
-pub(super) struct Engine;
+pub(super) struct Engine(pub(crate) crate::downloads::Downloads);
 impl VoiceDesigner for Engine {
     fn id(&self) -> &'static str {
         ID
@@ -34,7 +34,8 @@ impl VoiceDesigner for Engine {
     }
     fn prepare<'a>(&'a self, root: &'a Path, progress: mpsc::Sender<Event>) -> Preparing<'a> {
         let directory = omnivoice::directory(root);
-        Box::pin(async move { resources::prepare(&directory, progress).await })
+        let downloads = self.0.clone();
+        Box::pin(async move { resources::prepare(&directory, &downloads, progress).await })
     }
     fn design<'a>(&'a self, root: &'a Path, request: DesignRequest) -> Designing<'a> {
         let directory = omnivoice::directory(root);

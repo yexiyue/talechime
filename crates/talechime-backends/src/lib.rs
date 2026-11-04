@@ -10,14 +10,7 @@ pub mod asr;
 mod cache_identity;
 pub mod design;
 pub mod devices;
-#[cfg(any(
-    feature = "moss",
-    feature = "qwen",
-    feature = "voxcpm",
-    feature = "omnivoice",
-    feature = "asr"
-))]
-mod download;
+pub mod downloads;
 #[cfg(feature = "indextts")]
 pub mod indextts;
 #[cfg(feature = "kokoro")]
@@ -67,3 +60,5 @@ pub mod cosyvoice3;
 
 mod registry;
 pub use registry::{PrepareOptions, ReferenceVoice, Registry, ResolvedModel};
+pub mod resource_state;
+pub use resource_state::ResourceStatus;

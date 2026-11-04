@@ -66,11 +66,18 @@ fn verify_resources(
             path.canonicalize()?.starts_with(&canonical_root),
             "model file escapes resources root"
         );
-        crate::resources::verify(&path, &resource)?;
+        // Downloaded manifests pin revisions without content hashes; the
+        // receipt records the recomputed digest as run evidence.
+        let sha256 = crate::resources::sha256_of(&path)?;
+        anyhow::ensure!(
+            path.metadata()?.len() == resource.size,
+            "unexpected size for {}",
+            path.display()
+        );
         files.push(VerifiedFile {
             path: path.strip_prefix(root)?.to_owned(),
             size: resource.size,
-            sha256: resource.sha256,
+            sha256,
         });
     }
     Ok(files)
@@ -84,11 +91,24 @@ pub fn verify(registry: &crate::Registry, backend: &str, model: &str) -> anyhow:
         #[cfg(feature = "kokoro")]
         "kokoro" => {
             let directory = crate::kokoro::directory_for(root, model);
-            verify_resources(
-                root,
-                &directory,
-                crate::kokoro::resources::performance_resources(&directory, model)?,
-            )?
+            let canonical_root = root.canonicalize()?;
+            crate::kokoro::resources::performance_resources(&directory, model)?
+                .into_iter()
+                .map(|resource| {
+                    let path = directory.join(&resource.path);
+                    anyhow::ensure!(
+                        path.canonicalize()?.starts_with(&canonical_root),
+                        "model file escapes resources root"
+                    );
+                    // Conversion manifests pin content hashes: verify exactly.
+                    crate::resources::verify_local(&directory, &resource)?;
+                    Ok(VerifiedFile {
+                        path: path.strip_prefix(root)?.to_owned(),
+                        size: resource.size,
+                        sha256: resource.sha256,
+                    })
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?
         }
         #[cfg(feature = "qwen")]
         "qwen" => {

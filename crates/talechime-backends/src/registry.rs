@@ -29,7 +29,9 @@ mod qwen;
 mod voxcpm;
 
 pub use preparation::PrepareOptions;
-type Preparing<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>>;
+/// Resource preparation futures are `Send`: they only download and verify.
+/// Model loading stays non-Send (inference objects live on their owner).
+type Preparing<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>;
 type Loading<'a> = Pin<Box<dyn Future<Output = anyhow::Result<Rc<dyn Backend>>> + 'a>>;
 type Installing<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>>;
 trait ModelAdapter {
@@ -44,7 +46,14 @@ trait ModelAdapter {
     fn supports_recovery(&self) -> bool {
         false
     }
-    fn prepare<'a>(&'a self, root: &'a Path, progress: mpsc::Sender<Event>) -> Preparing<'a>;
+    /// Offline readiness of this model's resources in the engine layout.
+    fn resource_status(&self, root: &Path) -> crate::resource_state::ResourceStatus;
+    fn prepare<'a>(
+        &'a self,
+        root: &'a Path,
+        downloads: &'a crate::downloads::Downloads,
+        progress: mpsc::Sender<Event>,
+    ) -> Preparing<'a>;
     fn load<'a>(
         &'a self,
         root: &'a Path,
@@ -61,6 +70,7 @@ trait ModelAdapter {
     fn install_reference(
         &self,
         _root: &Path,
+        _downloads: &crate::downloads::Downloads,
         _wav: &Path,
         _id: &str,
         _name: &str,
@@ -72,12 +82,13 @@ trait ModelAdapter {
     fn install_reference_async<'a>(
         &'a self,
         root: &'a Path,
+        downloads: &'a crate::downloads::Downloads,
         wav: &'a Path,
         id: &'a str,
         name: &'a str,
         transcript: &'a str,
     ) -> Installing<'a> {
-        Box::pin(async move { self.install_reference(root, wav, id, name, transcript) })
+        Box::pin(async move { self.install_reference(root, downloads, wav, id, name, transcript) })
     }
 }
 struct Registration {
@@ -107,6 +118,7 @@ static ADAPTERS: &[Registration] = &[
 pub struct ResolvedModel {
     adapter: Rc<dyn ModelAdapter>,
     root: PathBuf,
+    downloads: crate::downloads::Downloads,
     capabilities: Capabilities,
 }
 impl ResolvedModel {
@@ -136,22 +148,35 @@ impl ResolvedModel {
 #[derive(Clone)]
 pub struct Registry {
     root: PathBuf,
+    downloads: crate::downloads::Downloads,
 }
 impl Registry {
     pub fn new(root: Option<PathBuf>) -> anyhow::Result<Self> {
+        Self::with_downloads(root, &crate::downloads::DownloadConfig::default())
+    }
+    /// Hosts with explicit download settings (cache directory, mirror endpoint,
+    /// access token); CLI hosts use [`Registry::new`] with shared-cache defaults.
+    pub fn with_downloads(
+        root: Option<PathBuf>,
+        config: &crate::downloads::DownloadConfig,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
             root: match root {
                 Some(root) => root,
                 None => talechime_core::paths::AppPaths::user_default()?.resources(),
             },
+            downloads: crate::downloads::Downloads::new(config)?,
         })
+    }
+    pub fn downloads(&self) -> &crate::downloads::Downloads {
+        &self.downloads
     }
     pub fn root(&self) -> &Path {
         &self.root
     }
     /// Engine info for every design engine compiled into this build.
     pub fn designers(&self) -> Vec<talechime_core::design::EngineInfo> {
-        crate::design::designers(&self.root)
+        crate::design::designers(&self.root, &self.downloads)
     }
     /// Materialize a library asset; unmarked custom references are never replaced.
     pub async fn install_reference(
@@ -161,7 +186,7 @@ impl Registry {
         voice: ReferenceVoice<'_>,
     ) -> anyhow::Result<()> {
         let adapter = self.adapter(backend, model)?;
-        reference::install(adapter.as_ref(), &self.root, voice).await
+        reference::install(adapter.as_ref(), &self.root, &self.downloads, voice).await
     }
     /// Check both the asset fingerprint and the installed payload integrity.
     pub fn reference_fresh(
@@ -235,6 +260,7 @@ impl Registry {
             adapter,
             capabilities,
             root: self.root.clone(),
+            downloads: self.downloads.clone(),
         })
     }
     pub fn catalog(&self) -> anyhow::Result<Vec<Capabilities>> {
@@ -248,6 +274,14 @@ impl Registry {
             }
         }
         Ok(catalog)
+    }
+    /// Offline resource readiness for one model; never touches the network.
+    pub fn resource_status(
+        &self,
+        backend: &str,
+        model: Option<&str>,
+    ) -> anyhow::Result<crate::resource_state::ResourceStatus> {
+        Ok(self.adapter(backend, model)?.resource_status(&self.root))
     }
     pub fn capabilities(&self, backend: &str) -> anyhow::Result<Capabilities> {
         self.capabilities_for(backend, None)

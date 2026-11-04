@@ -29,6 +29,7 @@ impl ReadbackModelOptions {
 /// Download/check immutable manifests, then initialize both models on their owners.
 pub async fn prepare(
     options: &ReadbackModelOptions,
+    downloads: &crate::downloads::Downloads,
     progress: tokio::sync::mpsc::Sender<Event>,
 ) -> anyhow::Result<Rc<Verifier>> {
     anyhow::ensure!(
@@ -43,6 +44,7 @@ pub async fn prepare(
             &options.resources.join("asr").join(name),
             &format!("asr/{name}"),
             serde_json::from_str(manifest)?,
+            downloads,
             progress.clone(),
         )
         .await?;
@@ -65,12 +67,23 @@ pub async fn load_local(
     let reviewer = load_sensevoice(sensevoice, threads).await?;
     Ok(Rc::new(Verifier::new(primary, reviewer)?))
 }
+/// Size-only presence check: downloaded manifests pin revisions but no
+/// content hashes, so local reloads detect truncation, not bit rot.
 async fn verify_local(dir: &Path, manifest: &str) -> anyhow::Result<()> {
     let resources: Vec<crate::resources::Resource> = serde_json::from_str(manifest)?;
     let directory = dir.to_path_buf();
     tokio::task::spawn_blocking(move || {
         for resource in &resources {
-            crate::resources::verify(&directory.join(&resource.path), resource)?;
+            let path = directory.join(&resource.path);
+            let size = std::fs::metadata(&path)
+                .map_err(|error| anyhow::anyhow!("missing ASR file {}: {error}", path.display()))?
+                .len();
+            anyhow::ensure!(
+                size == resource.size,
+                "unexpected ASR file size for {}: {size} != {}",
+                path.display(),
+                resource.size
+            );
         }
         Ok::<_, anyhow::Error>(())
     })

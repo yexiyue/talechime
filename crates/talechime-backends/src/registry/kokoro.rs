@@ -32,7 +32,15 @@ impl ModelAdapter for Adapter {
     fn calibrates(&self) -> bool {
         false
     }
-    fn prepare<'a>(&'a self, root: &'a Path, progress: mpsc::Sender<Event>) -> Preparing<'a> {
+    fn resource_status(&self, root: &Path) -> crate::resource_state::ResourceStatus {
+        model::resources::conversion_status(&model::directory_for(root, self.0))
+    }
+    fn prepare<'a>(
+        &'a self,
+        root: &'a Path,
+        _downloads: &'a crate::downloads::Downloads,
+        progress: mpsc::Sender<Event>,
+    ) -> Preparing<'a> {
         Box::pin(async move {
             model::resources::prepare_for(&model::directory_for(root, self.0), self.0, progress)
                 .await

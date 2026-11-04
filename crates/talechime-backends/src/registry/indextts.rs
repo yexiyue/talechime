@@ -30,6 +30,7 @@ impl ModelAdapter for Adapter {
     fn install_reference(
         &self,
         root: &Path,
+        _downloads: &crate::downloads::Downloads,
         wav: &Path,
         id: &str,
         name: &str,
@@ -48,7 +49,15 @@ impl ModelAdapter for Adapter {
     fn calibrates(&self) -> bool {
         false
     }
-    fn prepare<'a>(&'a self, root: &'a Path, progress: mpsc::Sender<Event>) -> Preparing<'a> {
+    fn resource_status(&self, root: &Path) -> crate::resource_state::ResourceStatus {
+        model::resources::conversion_status(&model::directory(root))
+    }
+    fn prepare<'a>(
+        &'a self,
+        root: &'a Path,
+        _downloads: &'a crate::downloads::Downloads,
+        progress: mpsc::Sender<Event>,
+    ) -> Preparing<'a> {
         Box::pin(async move { model::resources::prepare(&model::directory(root), progress).await })
     }
     fn load<'a>(

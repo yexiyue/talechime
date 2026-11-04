@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 /// Pinned upstream checkpoint plus the local conversion layout.
 pub const REVISION: &str = "c39ce5ba-candle-v1";
 
-const FILES: &[&str] = &[
+pub(crate) const FILES: &[&str] = &[
     "config.json",
     "gpt.safetensors",
     "codec.safetensors",
@@ -19,6 +19,11 @@ const FILES: &[&str] = &[
     "w2v-bert-2.0/model.safetensors",
     "w2v-bert-2.0/config.json",
 ];
+
+/// Offline readiness over the converted-file list; sizes are unknown here.
+pub(crate) fn conversion_status(directory: &Path) -> crate::resource_state::ResourceStatus {
+    crate::resource_state::status_of_names(FILES, directory)
+}
 
 pub async fn prepare(directory: &Path, progress: mpsc::Sender<Event>) -> anyhow::Result<()> {
     let _ = progress

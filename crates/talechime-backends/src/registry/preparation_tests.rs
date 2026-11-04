@@ -1,5 +1,6 @@
 use super::*;
 use std::cell::RefCell;
+
 use talechime_core::backend::{BackendError, SegmentRequest, Streaming};
 
 fn capabilities() -> Capabilities {
@@ -30,7 +31,7 @@ impl Backend for Prepared {
 }
 struct Trace {
     loads: RefCell<Vec<(Device, bool)>>,
-    prepares: std::cell::Cell<usize>,
+    prepares: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 struct Adapter {
     trace: Rc<Trace>,
@@ -55,9 +56,19 @@ impl ModelAdapter for Adapter {
     fn supports_recovery(&self) -> bool {
         true
     }
-    fn prepare<'a>(&'a self, _: &'a Path, _: mpsc::Sender<Event>) -> Preparing<'a> {
+    fn resource_status(&self, _: &Path) -> crate::resource_state::ResourceStatus {
+        crate::resource_state::ResourceStatus::Ready
+    }
+    fn prepare<'a>(
+        &'a self,
+        _: &'a Path,
+        _: &crate::downloads::Downloads,
+        _: mpsc::Sender<Event>,
+    ) -> Preparing<'a> {
+        let prepares = self.trace.prepares.clone();
         Box::pin(async move {
-            self.trace.prepares.set(self.trace.prepares.get() + 1);
+            use std::sync::atomic::Ordering;
+            prepares.fetch_add(1, Ordering::SeqCst);
             Ok(())
         })
     }
@@ -81,7 +92,7 @@ impl ModelAdapter for Adapter {
 fn model(root: &Path, fail_gpu: bool) -> (ResolvedModel, Rc<Trace>) {
     let loads = Rc::new(Trace {
         loads: RefCell::new(vec![]),
-        prepares: std::cell::Cell::new(0),
+        prepares: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     });
     (
         ResolvedModel {
@@ -90,6 +101,7 @@ fn model(root: &Path, fail_gpu: bool) -> (ResolvedModel, Rc<Trace>) {
                 fail_gpu,
             }),
             root: root.into(),
+            downloads: crate::downloads::Downloads::test(root),
             capabilities: capabilities(),
         },
         loads,
@@ -227,6 +239,9 @@ async fn cached_accelerator_uses_adapter_owned_recovery_only_when_requested() {
             expected.push((Device::Cuda, true));
         }
         assert_eq!(*loads.loads.borrow(), expected);
-        assert_eq!(loads.prepares.get(), if recovery { 2 } else { 1 });
+        assert_eq!(
+            loads.prepares.load(std::sync::atomic::Ordering::SeqCst),
+            if recovery { 2 } else { 1 }
+        );
     }
 }

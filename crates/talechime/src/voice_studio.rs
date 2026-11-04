@@ -167,6 +167,18 @@ impl VoiceStudio {
             designers: None,
         })
     }
+    /// Build from an existing registry, sharing its download settings (cache
+    /// directory, mirror endpoint, token) with the host that configured it.
+    pub fn at_registry(
+        registry: &Registry,
+        voices: impl Into<PathBuf>,
+    ) -> Result<Self, VoiceStudioError> {
+        Ok(Self {
+            registry: registry.clone(),
+            library: VoiceLibrary::open(voices).map_err(VoiceStudioError::from)?,
+            designers: None,
+        })
+    }
     /// Replace the design engine list. Hosts embed custom engines the same way
     /// they inject custom synthesis backends; tests use it to avoid downloads.
     pub fn set_designers(&mut self, engines: Vec<talechime_backends::design::DesignerHandle>) {
@@ -302,9 +314,10 @@ impl VoiceStudio {
                 .find(|engine| engine.id() == chosen.id)
                 .cloned()
                 .ok_or_else(|| VoiceStudioError::new("design engine is unavailable"))?,
-            None => talechime_backends::design::designer(chosen.id).ok_or_else(|| {
-                VoiceStudioError::new("design engine is unavailable in this build")
-            })?,
+            None => talechime_backends::design::designer(chosen.id, self.registry.downloads())
+                .ok_or_else(|| {
+                    VoiceStudioError::new("design engine is unavailable in this build")
+                })?,
         };
         let text = options
             .text

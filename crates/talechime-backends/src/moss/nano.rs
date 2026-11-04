@@ -9,6 +9,7 @@ use talechime_core::backend::{AudioChunk, Backend, BackendError, Pcm, Segmentati
 use talechime_protocol::{Capabilities, Device, Event};
 use tokio::sync::{mpsc, oneshot};
 pub const REVISION: &str = "44502f80dbf9743528fa921cc544d662c685ebec";
+pub(crate) const MANIFEST: &str = include_str!("nano/resources.json");
 pub fn directory(root: &Path) -> PathBuf {
     root.join("moss/models/nano-candle").join(REVISION)
 }
@@ -56,11 +57,16 @@ pub fn available_devices() -> Vec<Device> {
         .filter(|d| device(*d).is_ok())
         .collect()
 }
-pub async fn prepare(root: &Path, progress: mpsc::Sender<Event>) -> anyhow::Result<()> {
+pub async fn prepare(
+    root: &Path,
+    downloads: &crate::downloads::Downloads,
+    progress: mpsc::Sender<Event>,
+) -> anyhow::Result<()> {
     crate::resources::prepare(
         &directory(root),
         "moss/nano-candle",
-        serde_json::from_str(include_str!("nano/resources.json"))?,
+        serde_json::from_str(MANIFEST)?,
+        downloads,
         progress,
     )
     .await
@@ -598,6 +604,7 @@ mod tests {
 /// Missing codec resources are prepared on demand; synthesis weights are not downloaded.
 pub async fn import_voice(
     root: PathBuf,
+    downloads: &crate::downloads::Downloads,
     id: String,
     name: String,
     wav: PathBuf,
@@ -617,6 +624,7 @@ pub async fn import_voice(
         &directory(&root),
         "moss/nano-candle/reference",
         codec,
+        downloads,
         progress,
     )
     .await?;

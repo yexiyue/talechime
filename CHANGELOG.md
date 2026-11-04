@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Replace the hand-written resource downloader with hf-hub 1.0: model weights now live in the shared Hugging Face cache (blobs by etag, snapshots per pinned commit) and are hardlinked into the engine layout, so other Hub tools on the same machine share downloads. Hosts configure cache directory, mirror endpoint and token explicitly via `Registry::with_downloads` / `DownloadConfig`; hf-hub's cwd-relative builder defaults are never used.
+- Slim embedded manifests from per-file URLs to `repo + revision + filename + size`; the pinned commit preserves reproducibility while content integrity follows the Hub's etag-named blobs. Local-conversion manifests (CosyVoice3, Kokoro, IndexTTS) keep explicit size + SHA-256 verification.
+- Add offline inventory: `Registry::resource_status` reports `Missing / Partial / Ready` per model from the engine layout without network access, including conversion-backed models. Inventory and preparation now share one readiness predicate (`resource_state::entry_ready`): a present file whose size mismatches the manifest counts as missing and is re-downloaded, so truncated entries heal on the next prepare instead of being skipped forever.
+- `ModelAdapter::prepare`, reference install and design-engine construction now receive the registry's `Downloads`; `VoiceStudio::at_registry` shares a host registry's download settings. Event protocol stays v7 unchanged (`ModelProgress` bytes now come from hf-hub progress deltas).
+- Known limitation: no single-file resumable range downloads; interrupted files restart from zero while completed files are never re-fetched. Model weights no longer appear under `~/.talechime` (conversion assets and voices stay).
+
 ## 0.6.1 — 2026-10-27
 
 - Require successful CPU CI, platform contracts, artifact builds and archive smoke before hosting a release; skipped jobs cannot publish an empty release. Regenerate the pinned cargo-dist workflow through the checked repository script.

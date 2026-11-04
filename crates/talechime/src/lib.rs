@@ -34,6 +34,12 @@ mod player;
 mod voice_studio;
 
 pub use catalog::{ModelInfo, model_catalog};
+/// Host-facing download configuration and registry access for model resources.
+pub use talechime_backends::downloads::{
+    DownloadConfig, DownloadFailure, Downloads, default_cache_dir,
+};
+pub use talechime_backends::resource_state::ResourceStatus;
+pub use talechime_backends::{PrepareOptions, Registry, ResolvedModel};
 pub use talechime_core::design;
 pub use talechime_core::design::{
     DesignOutput, DesignRequest, EngineInfo, InputConstraints, VoiceDesigner,

@@ -21,6 +21,14 @@ impl Default for PrepareOptions {
     }
 }
 impl ResolvedModel {
+    /// Download and verify this model's resources without loading it. Hosts use
+    /// this for explicit resource preparation; [`Self::prepare`] still runs the
+    /// same download pass before loading.
+    pub async fn prepare_resources(&self, progress: mpsc::Sender<Event>) -> anyhow::Result<()> {
+        self.adapter
+            .prepare(&self.root, &self.downloads, progress)
+            .await
+    }
     pub async fn prepare(
         &self,
         options: PrepareOptions,
@@ -68,7 +76,9 @@ impl ResolvedModel {
         if let Some(record) = &cached {
             selected = record.device;
         }
-        self.adapter.prepare(&self.root, progress.clone()).await?;
+        self.adapter
+            .prepare(&self.root, &self.downloads, progress.clone())
+            .await?;
         let mut backend = match self
             .adapter
             .load(&self.root, progress.clone(), selected, false)

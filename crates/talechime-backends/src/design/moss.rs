@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 
 pub(super) const ID: &str = "moss-voicedesign";
 
-pub(super) struct Engine;
+pub(super) struct Engine(pub(crate) crate::downloads::Downloads);
 impl VoiceDesigner for Engine {
     fn id(&self) -> &'static str {
         ID
@@ -38,7 +38,8 @@ impl VoiceDesigner for Engine {
         }
     }
     fn prepare<'a>(&'a self, root: &'a Path, progress: mpsc::Sender<Event>) -> Preparing<'a> {
-        Box::pin(async move { resources::prepare_design(root, progress).await })
+        let downloads = self.0.clone();
+        Box::pin(async move { resources::prepare_design(root, &downloads, progress).await })
     }
     fn design<'a>(&'a self, root: &'a Path, request: DesignRequest) -> Designing<'a> {
         let root: PathBuf = root.to_path_buf();
@@ -67,7 +68,8 @@ mod tests {
     #[test]
     fn catalog_uses_compiled_gpu_devices_without_preparing_resources() {
         let root = tempfile::tempdir().unwrap();
-        let info = Engine.info(root.path());
+        let engine = Engine(crate::downloads::Downloads::test(root.path()));
+        let info = engine.info(root.path());
         assert_eq!(info.devices, candle::available_devices());
         assert!(!info.devices.contains(&talechime_protocol::Device::Cpu));
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);

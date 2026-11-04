@@ -20,32 +20,35 @@ pub(crate) mod thread;
 
 pub type DesignerHandle = Rc<dyn VoiceDesigner>;
 
-static DESIGNERS: &[fn() -> DesignerHandle] = &[
+static DESIGNERS: &[fn(crate::downloads::Downloads) -> DesignerHandle] = &[
     #[cfg(feature = "voxcpm")]
-    || Rc::new(voxcpm::Engine),
+    |downloads| Rc::new(voxcpm::Engine(downloads)),
     #[cfg(feature = "omnivoice")]
-    || Rc::new(omnivoice::Engine),
+    |downloads| Rc::new(omnivoice::Engine(downloads)),
     #[cfg(feature = "qwen")]
-    || Rc::new(qwen::Engine),
+    |downloads| Rc::new(qwen::Engine(downloads)),
     #[cfg(feature = "moss")]
-    || Rc::new(moss::Engine),
+    |downloads| Rc::new(moss::Engine(downloads)),
 ];
 
 /// Engine info for every design engine compiled into this build.
-pub fn designers(root: &Path) -> Vec<EngineInfo> {
-    DESIGNERS.iter().map(|new| new().info(root)).collect()
+pub fn designers(root: &Path, downloads: &crate::downloads::Downloads) -> Vec<EngineInfo> {
+    DESIGNERS
+        .iter()
+        .map(|new| new(downloads.clone()).info(root))
+        .collect()
 }
 
 /// Exact engine lookup by id.
-pub fn designer(id: &str) -> Option<DesignerHandle> {
+pub fn designer(id: &str, downloads: &crate::downloads::Downloads) -> Option<DesignerHandle> {
     DESIGNERS
         .iter()
-        .map(|new| new())
+        .map(|new| new(downloads.clone()))
         .find(|engine| engine.id() == id)
 }
 
 /// Cheap readiness probe: every manifest file exists with its declared size.
-/// Size-only so probing never hashes gigabytes; full hashes still guard prepare.
+/// Size-only so probing never hashes gigabytes; shares the inventory predicate.
 #[cfg(any(
     feature = "moss",
     feature = "qwen",
@@ -54,30 +57,11 @@ pub fn designer(id: &str) -> Option<DesignerHandle> {
     test
 ))]
 pub(crate) fn manifest_state(manifests: &[(&'static str, &Path)]) -> (bool, u64) {
-    let mut ready = true;
-    let mut missing = 0u64;
-    for (manifest, directory) in manifests {
-        let parsed: serde_json::Value =
-            serde_json::from_str(manifest).expect("embedded manifests parse");
-        let resources = parsed.as_array().cloned().unwrap_or_else(|| {
-            parsed["resources"]
-                .as_array()
-                .cloned()
-                .expect("embedded manifests are arrays or {resources}")
-        });
-        for resource in resources {
-            let path = resource["path"].as_str().expect("manifest path");
-            let size = resource["size"].as_u64().expect("manifest size");
-            match std::fs::metadata(directory.join(path)) {
-                Ok(metadata) if metadata.len() == size => {}
-                _ => {
-                    ready = false;
-                    missing += size;
-                }
-            }
-        }
+    match crate::resource_state::status_of_manifests(manifests) {
+        crate::ResourceStatus::Ready => (true, 0),
+        crate::ResourceStatus::Missing { missing_bytes }
+        | crate::ResourceStatus::Partial { missing_bytes, .. } => (false, missing_bytes),
     }
-    (ready, missing)
 }
 
 #[cfg(test)]
@@ -86,7 +70,7 @@ mod tests {
     #[test]
     fn engine_ids_are_unique_and_reported_for_every_feature() {
         let root = tempfile::tempdir().unwrap();
-        let infos = designers(root.path());
+        let infos = designers(root.path(), &crate::downloads::Downloads::test(root.path()));
         let mut ids: Vec<_> = infos.iter().map(|info| info.id).collect();
         let total = ids.len();
         ids.sort_unstable();
@@ -97,7 +81,7 @@ mod tests {
     #[test]
     fn manifest_state_detects_missing_files_and_sizes() {
         let root = tempfile::tempdir().unwrap();
-        let manifest = r#"[{"path":"model.bin","sha256":"x","size":10,"url":""}]"#;
+        let manifest = r#"[{"path":"model.bin","repo":"o/m","revision":"1234567890123456789012345678901234567890","filename":"model.bin","size":10}]"#;
         std::fs::write(root.path().join("model.bin"), vec![0u8; 4]).unwrap();
         let (ready, missing) = manifest_state(&[(manifest, root.path())]);
         assert!(!ready && missing == 10);

@@ -1,5 +1,4 @@
 use super::Mode;
-use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use talechime_protocol::Event;
 use tokio::sync::mpsc;
@@ -12,45 +11,65 @@ pub fn design_directory(root: &Path) -> PathBuf {
     root.join("moss/models/voice-design-1.7b")
         .join(DESIGN_REVISION)
 }
-#[derive(Deserialize)]
-struct Manifest {
-    resources: Vec<crate::resources::Resource>,
-}
 async fn manifest(
     directory: &Path,
     id: &str,
     json: &str,
+    downloads: &crate::downloads::Downloads,
     progress: mpsc::Sender<Event>,
 ) -> anyhow::Result<()> {
     crate::resources::prepare(
         directory,
         &format!("moss/{id}"),
-        serde_json::from_str::<Manifest>(json)?.resources,
+        serde_json::from_str::<Vec<crate::resources::Resource>>(json)?,
+        downloads,
         progress,
     )
     .await
 }
-pub async fn prepare(root: &Path, mode: Mode, progress: mpsc::Sender<Event>) -> anyhow::Result<()> {
+pub async fn prepare(
+    root: &Path,
+    mode: Mode,
+    downloads: &crate::downloads::Downloads,
+    progress: mpsc::Sender<Event>,
+) -> anyhow::Result<()> {
     let json = talechime_moss_tts::manifests::REALTIME;
-    manifest(&mode.directory(root), mode.id(), json, progress.clone()).await?;
-    codec(root, progress).await
+    manifest(
+        &mode.directory(root),
+        mode.id(),
+        json,
+        downloads,
+        progress.clone(),
+    )
+    .await?;
+    codec(root, downloads, progress).await
 }
-async fn codec(root: &Path, progress: mpsc::Sender<Event>) -> anyhow::Result<()> {
+async fn codec(
+    root: &Path,
+    downloads: &crate::downloads::Downloads,
+    progress: mpsc::Sender<Event>,
+) -> anyhow::Result<()> {
     manifest(
         &codec_directory(root),
         "codec",
         talechime_moss_tts::manifests::CODEC,
+        downloads,
         progress,
     )
     .await
 }
-pub async fn prepare_design(root: &Path, progress: mpsc::Sender<Event>) -> anyhow::Result<()> {
+pub async fn prepare_design(
+    root: &Path,
+    downloads: &crate::downloads::Downloads,
+    progress: mpsc::Sender<Event>,
+) -> anyhow::Result<()> {
     manifest(
         &design_directory(root),
         "voice-design-1.7b",
         talechime_moss_tts::manifests::VOICE_DESIGN,
+        downloads,
         progress.clone(),
     )
     .await?;
-    codec(root, progress).await
+    codec(root, downloads, progress).await
 }

@@ -46,6 +46,7 @@ impl ModelAdapter for Adapter {
     fn install_reference(
         &self,
         root: &Path,
+        _downloads: &crate::downloads::Downloads,
         wav: &Path,
         id: &str,
         name: &str,
@@ -64,9 +65,18 @@ impl ModelAdapter for Adapter {
     fn supports_recovery(&self) -> bool {
         true
     }
-    fn prepare<'a>(&'a self, root: &'a Path, progress: mpsc::Sender<Event>) -> Preparing<'a> {
+    fn resource_status(&self, root: &Path) -> crate::resource_state::ResourceStatus {
+        crate::resource_state::status_of_manifests(&[(self.0.manifest(), &self.0.directory(root))])
+    }
+    fn prepare<'a>(
+        &'a self,
+        root: &'a Path,
+        downloads: &'a crate::downloads::Downloads,
+        progress: mpsc::Sender<Event>,
+    ) -> Preparing<'a> {
         Box::pin(async move {
-            qwen::resources::prepare_model(&self.0.directory(root), self.0, progress).await
+            qwen::resources::prepare_model(&self.0.directory(root), self.0, downloads, progress)
+                .await
         })
     }
     fn load<'a>(

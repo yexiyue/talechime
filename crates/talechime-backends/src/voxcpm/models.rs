@@ -113,9 +113,9 @@ mod tests {
         assert!(
             resources
                 .iter()
-                .all(|file| file.url.contains(Model::OriginalBf16.revision())
-                    && file.size > 0
-                    && file.sha256.len() == 64)
+                .all(|file| file.revision == Model::OriginalBf16.revision()
+                    && file.repo.contains('/')
+                    && file.size > 0)
         );
     }
 }

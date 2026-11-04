@@ -212,6 +212,7 @@ impl Drop for Replacement<'_> {
 pub(super) async fn install(
     adapter: &dyn ModelAdapter,
     root: &Path,
+    downloads: &crate::downloads::Downloads,
     voice: ReferenceVoice<'_>,
 ) -> anyhow::Result<()> {
     validate_id(&voice.asset.id)?;
@@ -235,6 +236,7 @@ pub(super) async fn install(
     adapter
         .install_reference_async(
             root,
+            downloads,
             wav.path(),
             &custom,
             &voice.asset.name,
@@ -247,6 +249,10 @@ pub(super) async fn install(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn downloads() -> crate::downloads::Downloads {
+        let dir = tempfile::tempdir().expect("tempdir");
+        crate::downloads::Downloads::test(dir.path())
+    }
     use crate::registry::{Installing, Loading, Preparing};
     use std::cell::Cell;
     use talechime_core::voices::library::{VoiceSource, fingerprint};
@@ -285,7 +291,15 @@ mod tests {
         fn revision(&self) -> &'static str {
             "fixture"
         }
-        fn prepare<'a>(&'a self, _: &'a Path, _: mpsc::Sender<Event>) -> Preparing<'a> {
+        fn resource_status(&self, _: &Path) -> crate::resource_state::ResourceStatus {
+            crate::resource_state::ResourceStatus::Ready
+        }
+        fn prepare<'a>(
+            &'a self,
+            _: &'a Path,
+            _: &crate::downloads::Downloads,
+            _: mpsc::Sender<Event>,
+        ) -> Preparing<'a> {
             Box::pin(async { anyhow::bail!("no model preparation in reference tests") })
         }
         fn load<'a>(
@@ -307,6 +321,7 @@ mod tests {
         fn install_reference_async<'a>(
             &'a self,
             root: &'a Path,
+            _downloads: &'a crate::downloads::Downloads,
             wav: &'a Path,
             id: &'a str,
             _: &'a str,
@@ -355,15 +370,15 @@ mod tests {
                 asset: &old,
                 wav: b"old",
             };
-            install(&adapter, root.path(), voice).await?;
-            install(&adapter, root.path(), voice).await?;
+            install(&adapter, root.path(), &downloads(), voice).await?;
+            install(&adapter, root.path(), &downloads(), voice).await?;
             assert_eq!(adapter.installs.get(), 1);
             let new = asset(b"new");
             let voice = ReferenceVoice {
                 asset: &new,
                 wav: b"new",
             };
-            install(&adapter, root.path(), voice).await?;
+            install(&adapter, root.path(), &downloads(), voice).await?;
             let entry = adapter.reference_entry(root.path(), "custom:hero")?;
             assert!(entry.fresh("hero", &new.fingerprint));
             assert!(!entry.fresh("hero", &old.fingerprint));
@@ -374,10 +389,10 @@ mod tests {
             };
             std::fs::write(&payload, b"damaged")?;
             assert!(!entry.fresh("hero", &new.fingerprint));
-            install(&adapter, root.path(), voice).await?;
+            install(&adapter, root.path(), &downloads(), voice).await?;
             std::fs::remove_file(&payload)?;
             assert!(!entry.fresh("hero", &new.fingerprint));
-            install(&adapter, root.path(), voice).await?;
+            install(&adapter, root.path(), &downloads(), voice).await?;
             assert!(entry.fresh("hero", &new.fingerprint));
             assert_eq!(adapter.installs.get(), 4);
             assert_ne!(entry.marker().extension().unwrap(), "json");
@@ -412,6 +427,7 @@ mod tests {
                     install(
                         &adapter,
                         root.path(),
+                        &downloads(),
                         ReferenceVoice {
                             asset: &asset,
                             wav: b"new"
@@ -441,6 +457,7 @@ mod tests {
             install(
                 &adapter,
                 root.path(),
+                &downloads(),
                 ReferenceVoice {
                     asset: &old,
                     wav: b"old",
@@ -453,6 +470,7 @@ mod tests {
                 install(
                     &adapter,
                     root.path(),
+                    &downloads(),
                     ReferenceVoice {
                         asset: &new,
                         wav: b"new"
@@ -466,9 +484,11 @@ mod tests {
             adapter.fail.set(false);
             adapter.pending.set(true);
             {
+                let downloads = downloads();
                 let operation = install(
                     &adapter,
                     root.path(),
+                    &downloads,
                     ReferenceVoice {
                         asset: &new,
                         wav: b"new",

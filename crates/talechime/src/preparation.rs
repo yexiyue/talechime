@@ -28,7 +28,8 @@ pub fn voice_studio(
         .parent()
         .ok_or_else(|| anyhow::anyhow!("config path needs a parent directory"))?
         .join("voices");
-    Ok(talechime::VoiceStudio::at(resources.root(), voices)?)
+    // Share the host registry's download settings (cache dir, mirror, token).
+    Ok(talechime::VoiceStudio::at_registry(resources, voices)?)
 }
 
 pub fn validate_device(
