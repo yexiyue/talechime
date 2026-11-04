@@ -545,7 +545,7 @@ impl<T: RepoType> HFRepository<T> {
 
         let head_response = self
             .hf_client
-            .head_with_relative_redirects(&url, &head_headers)
+            .head_with_metadata_redirects(&url, &head_headers)
             .await?;
 
         let status = head_response.status();
@@ -902,7 +902,7 @@ impl<T: RepoType> HFRepository<T> {
                     let url = self
                         .hf_client
                         .download_url(self.repo_type.url_prefix(), repo_path_ref, commit_hash_ref, &filename)?;
-                    let resp = self.hf_client.head_with_relative_redirects(&url, &auth).await?;
+                    let resp = self.hf_client.head_with_metadata_redirects(&url, &auth).await?;
                     // Per-file 404 resilience: write a .no_exist marker and skip
                     // the file rather than aborting the entire snapshot download.
                     // This matches the Python huggingface_hub library behavior.

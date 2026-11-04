@@ -427,44 +427,64 @@ impl HFClient {
         format!("{}/api/buckets/{}", self.endpoint(), bucket_id)
     }
 
-    /// Issue a HEAD request via the no-redirect client, manually following
-    /// *relative* redirects (Location without a host).
-    ///
-    /// The Hub 307s to the canonical repo path when a repo id differs in
-    /// casing (e.g. `snowflake/…` → `Snowflake/…`); that response carries no
-    /// ETag, so metadata extraction must happen after following it. Absolute
-    /// redirects (e.g. to the CDN) are returned as-is — their headers already
-    /// carry the linked metadata. Mirrors `huggingface_hub`'s
-    /// `follow_relative_redirects` behavior.
+    /// Resolve Hub metadata through canonical-path and metadata-less mirror redirects.
+    /// Stop before CDN redirects carrying ETag metadata. Crossing an origin strips
+    /// request credentials; HTTPS redirects cannot downgrade to HTTP.
     #[cfg(not(target_family = "wasm"))]
-    pub(crate) async fn head_with_relative_redirects(
+    pub(crate) async fn head_with_metadata_redirects(
         &self,
         url: &str,
         headers: &HeaderMap,
     ) -> HFResult<reqwest::Response> {
-        const MAX_RELATIVE_REDIRECTS: usize = 10;
+        const MAX_METADATA_REDIRECTS: usize = 10;
         let mut url = Url::parse(url)?;
-        for _ in 0..=MAX_RELATIVE_REDIRECTS {
-            let response = retry::retry(self.retry_config(), || {
-                self.no_redirect_client()
+        let mut strip_credentials = false;
+        for _ in 0..=MAX_METADATA_REDIRECTS {
+            let response = retry::retry(self.retry_config(), || async {
+                let mut request = self
+                    .no_redirect_client()
                     .head(url.clone())
                     .headers(headers.clone())
-                    .send()
+                    .build()?;
+                // Remove credentials after request construction, including client defaults.
+                if strip_credentials {
+                    for name in [
+                        reqwest::header::AUTHORIZATION,
+                        reqwest::header::COOKIE,
+                        reqwest::header::PROXY_AUTHORIZATION,
+                    ] {
+                        request.headers_mut().remove(name);
+                    }
+                }
+                self.no_redirect_client().execute(request).await
             })
             .await?;
             if response.status().is_redirection()
                 && let Some(location) = response.headers().get(reqwest::header::LOCATION)
                 && let Ok(location) = location.to_str()
-                && is_relative_location(location)
             {
-                url = url.join(location)?;
-                continue;
+                // Hub/CDN redirects carry cache metadata: do not follow those.
+                // A mirror's metadata-less absolute redirect must resolve first.
+                let has_metadata = response.headers().contains_key("x-linked-etag")
+                    || response.headers().contains_key(reqwest::header::ETAG);
+                if is_relative_location(location) || !has_metadata {
+                    let next = url.join(location)?;
+                    if !matches!(next.scheme(), "http" | "https")
+                        || (url.scheme() == "https" && next.scheme() != "https")
+                    {
+                        return Err(HFError::InvalidParameter(
+                            "unsafe Hub metadata redirect".into(),
+                        ));
+                    }
+                    strip_credentials |= next.origin() != url.origin();
+                    url = next;
+                    continue;
+                }
             }
             return Ok(response);
         }
-        Err(HFError::malformed_response_at(
-            "too many relative redirects",
-            url.to_string(),
+        Err(HFError::malformed_response(
+            "too many Hub metadata redirects",
         ))
     }
 

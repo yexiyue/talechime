@@ -42,8 +42,40 @@ impl ProgressHandler for Raw {
         }
     }
 }
+// Summarize failures without printing tokens, signed URLs or request headers.
+struct DiagnosticWarnings;
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for DiagnosticWarnings {
+    fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        struct Failure {
+            tls_eof: bool,
+            timeout: bool,
+        }
+        impl tracing::field::Visit for Failure {
+            fn record_debug(&mut self, _: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                let text = format!("{value:?}").to_lowercase();
+                self.tls_eof |= text.contains("tls handshake eof");
+                self.timeout |= text.contains("timed out") || text.contains("timeout");
+            }
+        }
+        let mut failure = Failure {
+            tls_eof: false,
+            timeout: false,
+        };
+        event.record(&mut failure);
+        eprintln!(
+            "transport diagnostic: target={} tls_handshake_eof={} timeout={}",
+            event.metadata().target(),
+            failure.tls_eof,
+            failure.timeout
+        );
+    }
+}
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
+    let _ = tracing_subscriber::registry()
+        .with(DiagnosticWarnings.with_filter(tracing_subscriber::filter::LevelFilter::WARN))
+        .try_init();
     let args: Vec<_> = std::env::args().collect();
     anyhow::ensure!(args.len() >= 3, "raw|bridge CACHE_DIR [ENDPOINT]");
     let cache_dir = std::path::PathBuf::from(&args[2]);

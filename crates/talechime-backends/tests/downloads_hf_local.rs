@@ -225,3 +225,72 @@ async fn http_resume_validates_ranges_status_and_length_before_publication() {
         get.assert_calls(1);
     }
 }
+
+#[tokio::test]
+async fn mirror_absolute_metadata_redirect_drops_credentials_across_origins() {
+    let payload = b"model-payload";
+    let hub = httpmock::MockServer::start();
+    let mirror = httpmock::MockServer::start();
+    let mirror_request = mirror.mock(|when, then| {
+        when.path_includes(FILENAME)
+            .header("authorization", "Bearer diagnostic-test-token");
+        then.status(308)
+            .header("location", format!("{}/{FILENAME}", hub.base_url()));
+    });
+    let hub_request = hub.mock(|when, then| {
+        when.path(format!("/{FILENAME}"))
+            .header_missing("authorization");
+        then.status(200)
+            .header("ETag", format!("\"{}\"", sha256_hex(payload)))
+            .header("X-Repo-Commit", REVISION)
+            .body(payload.as_slice());
+    });
+    let root = tempfile::tempdir().unwrap();
+    let client = Downloads::new(&DownloadConfig {
+        cache_dir: root.path().join("cache"),
+        endpoint: Some(mirror.base_url()),
+        token: Some("diagnostic-test-token".into()),
+    })
+    .unwrap();
+    let dest = root.path().join("engine/model.bin");
+    client
+        .ensure(&dest, REPO, REVISION, FILENAME, bridge(FILENAME, 13))
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(dest).unwrap(), payload);
+    mirror_request.assert_calls(2);
+    hub_request.assert_calls(2);
+}
+
+#[tokio::test]
+async fn metadata_bearing_redirect_does_not_head_the_cdn() {
+    let payload = b"model-payload";
+    let hub = httpmock::MockServer::start();
+    let cdn = httpmock::MockServer::start();
+    let head = hub.mock(|when, then| {
+        when.method("HEAD").path_includes(FILENAME);
+        then.status(302)
+            .header("location", format!("{}/{FILENAME}", cdn.base_url()))
+            .header("X-Linked-Etag", format!("\"{}\"", sha256_hex(payload)))
+            .header("X-Linked-Size", "13")
+            .header("X-Repo-Commit", REVISION);
+    });
+    let cdn_head = cdn.mock(|when, then| {
+        when.method("HEAD");
+        then.status(500);
+    });
+    let get = hub.mock(|when, then| {
+        when.method("GET").path_includes(FILENAME);
+        then.status(200).body(payload.as_slice());
+    });
+    let root = tempfile::tempdir().unwrap();
+    let dest = root.path().join("engine/model.bin");
+    downloads(&hub.base_url(), root.path().join("cache"))
+        .ensure(&dest, REPO, REVISION, FILENAME, bridge(FILENAME, 13))
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(dest).unwrap(), payload);
+    head.assert_calls(1);
+    get.assert_calls(1);
+    cdn_head.assert_calls(0);
+}
