@@ -118,45 +118,79 @@ impl Downloads {
             size: progress.size,
             latest: progress.latest.subscribe(),
         };
+        let activity = progress.latest.subscribe();
         relay
-            .run(async {
-                let (owner, name) = split_repo(repo)?;
-                let model = self.client.model(owner, name);
-                let progress = hf_hub::progress::Progress::new(progress);
-                let download = model
-                    .download_file()
-                    .filename(filename)
-                    .revision(revision)
-                    .progress(progress);
-                let mut path =
-                    download.clone().send().await.map_err(|error| {
+            .run(with_progress_timeout(
+                async {
+                    let (owner, name) = split_repo(repo)?;
+                    let model = self.client.model(owner, name);
+                    let progress = hf_hub::progress::Progress::new(progress);
+                    let download = model
+                        .download_file()
+                        .filename(filename)
+                        .revision(revision)
+                        .use_xet(false)
+                        .progress(progress);
+                    let mut path = download.clone().send().await.map_err(|error| {
                         download_error(repo, revision, filename, classify(error))
                     })?;
-                // A cache hit may itself be truncated (the layout can share its inode).
-                // Let hf-hub replace the blob using its own locks and atomic writes.
-                if !crate::resource_state::entry_ready(&path, expected_size) {
-                    path = download
-                        .force_download(true)
-                        .send()
-                        .await
-                        .map_err(|error| {
-                            download_error(repo, revision, filename, classify(error))
-                        })?;
-                }
-                anyhow::ensure!(
-                    crate::resource_state::entry_ready(&path, expected_size),
-                    "downloaded file size does not match manifest: {repo}@{revision}/{filename}"
-                );
-                link_into_layout(&path, dest).map_err(|error| {
-                    download_error(
-                        repo,
-                        revision,
-                        filename,
-                        DownloadFailure::Disk(error.to_string()),
-                    )
-                })
-            })
+                    // A cache hit may itself be truncated (the layout can share its inode).
+                    // Let hf-hub replace the blob using its own locks and atomic writes.
+                    if !crate::resource_state::entry_ready(&path, expected_size) {
+                        path = download
+                            .force_download(true)
+                            .send()
+                            .await
+                            .map_err(|error| {
+                                download_error(repo, revision, filename, classify(error))
+                            })?;
+                    }
+                    anyhow::ensure!(
+                        crate::resource_state::entry_ready(&path, expected_size),
+                        "downloaded file size does not match manifest: {repo}@{revision}/{filename}"
+                    );
+                    link_into_layout(&path, dest).map_err(|error| {
+                        download_error(
+                            repo,
+                            revision,
+                            filename,
+                            DownloadFailure::Disk(error.to_string()),
+                        )
+                    })
+                },
+                activity,
+                std::time::Duration::from_secs(90),
+            ))
             .await
+    }
+}
+
+/// Bound network stalls using byte growth, independently of observer backpressure.
+async fn with_progress_timeout(
+    operation: impl std::future::Future<Output = anyhow::Result<()>>,
+    mut activity: watch::Receiver<Option<u64>>,
+    idle: std::time::Duration,
+) -> anyhow::Result<()> {
+    let mut high_watermark = activity.borrow_and_update().unwrap_or(0);
+    let deadline = tokio::time::sleep(idle);
+    tokio::pin!(deadline, operation);
+    let mut watching = true;
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut operation => return result,
+            () = &mut deadline => return Err(anyhow::Error::new(DownloadFailure::Network(
+                format!("no download byte progress for {} seconds", idle.as_secs())
+            ))),
+            changed = activity.changed(), if watching => {
+                if changed.is_err() { watching = false; continue; }
+                let bytes = activity.borrow_and_update().unwrap_or(0);
+                if bytes > high_watermark {
+                    high_watermark = bytes;
+                    deadline.as_mut().reset(tokio::time::Instant::now() + idle);
+                }
+            }
+        }
     }
 }
 
@@ -367,6 +401,47 @@ impl ProgressRelay {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[tokio::test(start_paused = true)]
+    async fn idle_timeout_ignores_zero_callbacks_but_resets_on_byte_growth() {
+        use std::time::Duration;
+        let (tx, rx) = watch::channel(None);
+        let task = tokio::spawn(with_progress_timeout(
+            std::future::pending(),
+            rx,
+            Duration::from_secs(90),
+        ));
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(80)).await;
+        tx.send_replace(Some(10));
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(80)).await;
+        assert!(!task.is_finished());
+        tx.send_replace(Some(10));
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(11)).await;
+        let error = task.await.unwrap().unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<DownloadFailure>(),
+            Some(DownloadFailure::Network(_))
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn no_first_byte_times_out_even_when_observer_is_closed() {
+        let (tx, rx) = watch::channel(None);
+        drop(tx);
+        let result = with_progress_timeout(
+            std::future::pending(),
+            rx,
+            std::time::Duration::from_secs(90),
+        )
+        .await;
+        assert!(matches!(
+            result.unwrap_err().downcast_ref::<DownloadFailure>(),
+            Some(DownloadFailure::Network(_))
+        ));
+    }
 
     #[tokio::test]
     async fn progress_backpressure_keeps_latest_without_blocking_download_completion() {

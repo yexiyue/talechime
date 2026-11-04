@@ -197,3 +197,9 @@ CosyVoice3 资源准备与检查见[后端说明](cosyvoice3.md)。
 ## Mac 性能工具契约
 
 `cargo test --locked -p xtask` 包含 Mac 原生进程/采集测试。构建免模型 performance_probe 后设置 `TALECHIME_PERF_PROBE_BUILD` 为 build receipt 的绝对路径，再运行 `cargo test --locked -p xtask --test cancellation_cli`，才能验证实际 SIGINT/SIGTERM CLI 取消；未设置时测试仅提示跳过。Mac CI 运行相同显式流程，不下载模型。命令与平台保证见 [性能工具](performance-harness.md#mac-原生工具接线)。
+
+## 有界真实下载诊断
+
+`cargo run -p talechime-backends --no-default-features --example download_progress_probe -- bridge /绝对路径/独立缓存`：通过当前 Downloads 通道下载固定 MOSS Realtime 权重，120 秒后取消，不加载模型；`raw` 模式对比上游默认 Xet。诊断日志不输出令牌或签名 URL；缓存目录须与用户正在下载的缓存分开。普通测试不联网，HTTP 续传/错误响应和超时使用本地服务器/暂停时钟测试。
+
+当前 hf-hub 本地补丁不等于 registry 已发布能力，库发布前必须处理 [来源与发布限制](../vendor/hf-hub/SOURCE.md)。

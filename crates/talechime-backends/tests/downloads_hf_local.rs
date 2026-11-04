@@ -31,6 +31,7 @@ async fn ensure_downloads_links_and_skips_existing_dest() {
         then.status(200)
             .header("ETag", &etag)
             .header("X-Repo-Commit", REVISION)
+            .header("X-Xet-Hash", "should-not-use-xet")
             .body(payload.clone());
     });
     let root = tempfile::tempdir().expect("tempdir");
@@ -149,4 +150,78 @@ async fn ensure_reports_server_errors() {
 fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(bytes))
+}
+
+// Exercise the real HTTP cache path even when the Hub advertises Xet.
+#[tokio::test]
+async fn http_resume_validates_ranges_status_and_length_before_publication() {
+    for case in [
+        "resume",
+        "ignored-range",
+        "bad-range",
+        "short-body",
+        "forbidden",
+    ] {
+        let payload = b"model-payload";
+        let hash = sha256_hex(payload);
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method("HEAD").path_includes(FILENAME);
+            then.status(200)
+                .header("ETag", format!("\"{hash}\""))
+                .header("X-Repo-Commit", REVISION)
+                .header("X-Xet-Hash", "unused")
+                .header("Content-Length", "13");
+        });
+        let get = server.mock(|when, then| {
+            when.method("GET")
+                .path_includes(FILENAME)
+                .header("range", "bytes=4-");
+            match case {
+                "resume" => {
+                    then.status(206)
+                        .header("Content-Range", "bytes 4-12/13")
+                        .body(&payload[4..]);
+                }
+                "ignored-range" => {
+                    then.status(200).body(payload.as_slice());
+                }
+                "bad-range" => {
+                    then.status(206)
+                        .header("Content-Range", "bytes 0-8/13")
+                        .body(&payload[4..]);
+                }
+                "short-body" => {
+                    then.status(200).body(&payload[..3]);
+                }
+                _ => {
+                    then.status(403).body("forbidden");
+                }
+            }
+        });
+        let root = tempfile::tempdir().unwrap();
+        let cache = root.path().join("hf-cache");
+        let blobs = cache.join("models--example-team--example-model/blobs");
+        std::fs::create_dir_all(&blobs).unwrap();
+        let incomplete = blobs.join(format!("{hash}.incomplete"));
+        std::fs::write(&incomplete, &payload[..4]).unwrap();
+        let dest = root.path().join("engine/model.bin");
+        let result = downloads(&server.base_url(), cache)
+            .ensure(&dest, REPO, REVISION, FILENAME, bridge(FILENAME, 13))
+            .await;
+        if case == "resume" || case == "ignored-range" {
+            result.unwrap();
+            assert_eq!(std::fs::read(dest).unwrap(), payload);
+            assert!(!incomplete.exists());
+        } else {
+            assert!(result.is_err(), "{case}");
+            assert!(!dest.exists(), "{case}: must not publish");
+            assert!(
+                !blobs.join(&hash).exists(),
+                "{case}: must not finalize cache"
+            );
+            assert!(incomplete.exists());
+        }
+        get.assert_calls(1);
+    }
 }

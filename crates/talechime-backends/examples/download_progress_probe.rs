@@ -1,0 +1,141 @@
+//! Bounded real-network diagnostic. No model loading; never prints credentials or signed URLs.
+//! cargo run -p talechime-backends --no-default-features --example download_progress_probe -- raw|bridge CACHE_DIR [ENDPOINT]
+use hf_hub::progress::{DownloadEvent, ProgressEvent, ProgressHandler};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Instant,
+};
+use talechime_backends::downloads::{DownloadConfig, Downloads, FileProgressBridge};
+use talechime_protocol::Event;
+const REPO: &str = "OpenMOSS-Team/MOSS-TTS-Realtime";
+const REVISION: &str = "75682787d8e2fcc73faca37ba2931453ca9c4022";
+const FILE: &str = "model.safetensors";
+const SIZE: u64 = 4_663_931_664;
+struct Raw {
+    start: Instant,
+    events: AtomicU64,
+    bytes: Arc<AtomicU64>,
+}
+impl ProgressHandler for Raw {
+    fn on_progress(&self, event: &ProgressEvent) {
+        let count = self.events.fetch_add(1, Ordering::Relaxed);
+        let (kind, bytes) = match event {
+            ProgressEvent::Download(DownloadEvent::Progress { files }) => (
+                "file",
+                files.iter().map(|f| f.bytes_completed).max().unwrap_or(0),
+            ),
+            ProgressEvent::Download(DownloadEvent::AggregateProgress {
+                bytes_completed, ..
+            }) => ("aggregate", *bytes_completed),
+            ProgressEvent::Download(DownloadEvent::Complete) => ("complete", SIZE),
+            _ => ("lifecycle", 0),
+        };
+        self.bytes.fetch_max(bytes, Ordering::Relaxed);
+        if count < 3 || count.is_multiple_of(20) || (bytes > 0 && count.is_multiple_of(5)) {
+            eprintln!(
+                "{:.2}s raw {kind}: {bytes} bytes",
+                self.start.elapsed().as_secs_f64()
+            );
+        }
+    }
+}
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let args: Vec<_> = std::env::args().collect();
+    anyhow::ensure!(args.len() >= 3, "raw|bridge CACHE_DIR [ENDPOINT]");
+    let cache_dir = std::path::PathBuf::from(&args[2]);
+    let endpoint = args.get(3).cloned();
+    let start = Instant::now();
+    let bytes = Arc::new(AtomicU64::new(0));
+    let observed = bytes.clone();
+    let timeout = std::time::Duration::from_secs(120);
+    let operation = async {
+        if args[1] == "raw" {
+            let mut builder = hf_hub::HFClient::builder().cache_dir(cache_dir);
+            if let Some(endpoint) = endpoint {
+                builder = builder.endpoint(endpoint);
+            }
+            let client = builder.build()?;
+            let result = client
+                .model("OpenMOSS-Team", "MOSS-TTS-Realtime")
+                .download_file()
+                .filename(FILE)
+                .revision(REVISION)
+                .progress(hf_hub::progress::Progress::new(Raw {
+                    start,
+                    events: AtomicU64::new(0),
+                    bytes,
+                }))
+                .send()
+                .await;
+            match result {
+                Ok(_) => eprintln!("raw completed"),
+                Err(error) => eprintln!(
+                    "raw failed: {}",
+                    error
+                        .to_string()
+                        .split('?')
+                        .next()
+                        .unwrap_or("download error")
+                ),
+            }
+        } else {
+            let client = Downloads::new(&DownloadConfig {
+                cache_dir,
+                endpoint,
+                token: None,
+            })?;
+            let target = tempfile::tempdir()?;
+            let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+            let destination = target.path().join(FILE);
+            let download = client.ensure(
+                &destination,
+                REPO,
+                REVISION,
+                FILE,
+                FileProgressBridge::new(tx, FILE.into(), SIZE),
+            );
+            let sink = async {
+                while let Some(event) = rx.recv().await {
+                    if let Event::ModelProgress {
+                        downloaded, total, ..
+                    } = event
+                    {
+                        bytes.fetch_max(downloaded, Ordering::Relaxed);
+                        eprintln!(
+                            "{:.2}s bridge {downloaded}/{total}",
+                            start.elapsed().as_secs_f64()
+                        );
+                    }
+                }
+            };
+            let (result, ()) = tokio::join!(download, sink);
+            match result {
+                Ok(()) => eprintln!("bridge completed"),
+                Err(error) => eprintln!(
+                    "bridge failed: {}",
+                    error
+                        .to_string()
+                        .split('?')
+                        .next()
+                        .unwrap_or("download error")
+                ),
+            }
+        }
+        Ok::<_, anyhow::Error>(())
+    };
+    tokio::select! {
+        result = operation => result?,
+        () = async {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                if observed.load(Ordering::Relaxed) >= 64 * 1024 * 1024 { break; }
+            }
+        } => eprintln!("stopped at 64 MiB progress budget; observed {} bytes", observed.load(Ordering::Relaxed)),
+        _ = tokio::time::sleep(timeout) => eprintln!("stopped after 120s; observed {} bytes", observed.load(Ordering::Relaxed)),
+    }
+    Ok(())
+}
