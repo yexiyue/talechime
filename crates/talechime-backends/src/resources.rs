@@ -97,18 +97,8 @@ pub(crate) fn verify_local_cancellable(
         "invalid model size: {}",
         path.display()
     );
-    let mut hash = Sha256::new();
-    let mut buffer = [0u8; 65536];
-    loop {
-        anyhow::ensure!(!cancelled(), "model verification cancelled");
-        let count = file.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        hash.update(&buffer[..count]);
-    }
     anyhow::ensure!(
-        format!("{:x}", hash.finalize()) == resource.sha256,
+        hash_file(&mut file, cancelled)? == resource.sha256,
         "model checksum mismatch: {}",
         path.display()
     );
@@ -120,9 +110,20 @@ pub(crate) fn verify_local_cancellable(
 #[cfg(any(feature = "performance-tools", test))]
 pub(crate) fn sha256_of(path: &Path) -> anyhow::Result<String> {
     let mut file = std::fs::File::open(path)?;
+    hash_file(&mut file, || false)
+}
+
+#[cfg(any(
+    feature = "cosyvoice3",
+    feature = "kokoro",
+    feature = "performance-tools",
+    test
+))]
+fn hash_file(file: &mut std::fs::File, cancelled: impl Fn() -> bool) -> anyhow::Result<String> {
     let mut hash = Sha256::new();
     let mut buffer = [0u8; 65536];
     loop {
+        anyhow::ensure!(!cancelled(), "model verification cancelled");
         let count = file.read(&mut buffer)?;
         if count == 0 {
             break;
@@ -194,11 +195,30 @@ mod tests {
     fn sha256_of_matches_reference_digest() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("model");
-        std::fs::write(&path, b"abc").unwrap();
+        let contents = vec![42u8; 65537];
+        std::fs::write(&path, &contents).unwrap();
         assert_eq!(
             sha256_of(&path).unwrap(),
-            format!("{:x}", Sha256::digest(b"abc"))
+            format!("{:x}", Sha256::digest(&contents))
         );
+    }
+
+    #[test]
+    fn verification_checks_cancellation_between_hash_blocks() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("model"), vec![0u8; 131072]).unwrap();
+        let resource = LocalResource {
+            path: "model".into(),
+            size: 131072,
+            sha256: String::new(),
+        };
+        let checks = std::cell::Cell::new(0);
+        let error = verify_local_cancellable(directory.path(), &resource, || {
+            checks.set(checks.get() + 1);
+            checks.get() == 3 // Before opening, before first block, then before second block.
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "model verification cancelled");
     }
 
     #[cfg(any(

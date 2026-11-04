@@ -57,11 +57,11 @@ pub fn designer(id: &str, downloads: &crate::downloads::Downloads) -> Option<Des
     test
 ))]
 pub(crate) fn manifest_state(manifests: &[(&'static str, &Path)]) -> (bool, u64) {
-    match crate::resource_state::status_of_manifests(manifests) {
-        crate::ResourceStatus::Ready => (true, 0),
-        crate::ResourceStatus::Missing { missing_bytes }
-        | crate::ResourceStatus::Partial { missing_bytes, .. } => (false, missing_bytes),
-    }
+    let status = crate::resource_state::status_of_manifests(manifests);
+    (
+        status == crate::ResourceStatus::Ready,
+        status.missing_bytes(),
+    )
 }
 
 #[cfg(test)]

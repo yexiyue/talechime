@@ -23,6 +23,16 @@ pub enum ResourceStatus {
     Ready,
 }
 
+impl ResourceStatus {
+    /// Bytes still missing; zero when ready or when resource sizes are unknown.
+    pub fn missing_bytes(self) -> u64 {
+        match self {
+            Self::Missing { missing_bytes } | Self::Partial { missing_bytes, .. } => missing_bytes,
+            Self::Ready => 0,
+        }
+    }
+}
+
 /// Single source of readiness: an entry is usable iff present with its pinned
 /// size. Inventory aggregates and preparation skips MUST agree on this
 /// predicate, otherwise a truncated file reports missing but never heals.

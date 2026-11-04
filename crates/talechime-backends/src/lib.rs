@@ -60,5 +60,5 @@ pub mod cosyvoice3;
 
 mod registry;
 pub use registry::{PrepareOptions, ReferenceVoice, Registry, ResolvedModel};
-pub mod resource_state;
+mod resource_state;
 pub use resource_state::ResourceStatus;
