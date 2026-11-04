@@ -94,8 +94,9 @@ MOSS 两档均使用 Candle；各模型通过自己的 feature 启用 GPU。详�
 
 ### 音色和生成参数
 
-音色资产存放在独立的音色库（`~/.talechime/voices/`），与任何后端/模型解耦：
-同一条音色可被所有支持参考克隆的模型使用，首次引用时自动物化进所选模型。
+音色资产存放在独立的音色库（`~/.talechime/voices-v2/`），与任何后端/模型解耦：
+同一条音色可交给支持参考克隆的模型使用，具体录音仍须通过对应模型的限制校验；首次引用时物化进所选模型。
+音色包支持多个音色，先检查再按选择导入；不覆盖已有声音。当前仅支持 v2 记录与包，旧数据保持原样，不提供兼容或转换。
 
 ```sh
 talechime models                             # 模型、设备、内建音色和参数
@@ -104,8 +105,8 @@ talechime voices list                        # 库内音色（与 --backend 无�
 talechime voices engines                     # 可用设计引擎与代价
 talechime voices design --name "我的朗读音色" --description "低沉温和的中年男声"
 talechime voices import reference.wav --name "导入音色" --text "参考音频的准确文字"
-talechime voices export my-voice --output my-voice.voice
-talechime voices import-bundle my-voice.voice
+talechime voices export my-voice another-voice --output voices.voice
+talechime voices import-packages voices.voice another.voice --inspect
 talechime --voice my-voice chapter.txt       # 库音色直接朗读，隐式物化
 
 talechime --backend voxcpm --param steps=32 --param temperature=0.9 --seed 7 chapter.txt
@@ -206,7 +207,7 @@ Talechime 不获取章节、不分析角色，也不决定下一章。TRNovel �
 | --- | --- |
 | 配置 | `~/.talechime/config.json` |
 | 播放检查点 | `~/.talechime/checkpoints/` |
-| 音色库（设计/导入音色的唯一事实源） | `~/.talechime/voices/` |
+| 音色库（设计/导入音色的唯一事实源） | `~/.talechime/voices-v2/` |
 | 模型及可再生音色缓存 | `~/.talechime/resources/` |
 
 可用 `--config`、`--checkpoint-dir`、`--model-dir` 指定自定义路径。程序只使用当前目录与格式，不扫描或迁移旧 `novel-tts` 数据；旧文件保留原位，详见[数据目录说明](docs/migration.md)。

@@ -474,7 +474,7 @@ mod tests {
     use crate::VoiceStudio;
     use std::cell::RefCell;
     use talechime_core::backend::{AudioChunk, SegmentRequest};
-    use talechime_core::voices::library::{VoiceLibrary, VoiceSource};
+    use talechime_core::voices::{VoiceLibrary, VoiceSource};
 
     /// Minimal 16-bit mono RIFF header plus samples, for store validation.
     fn riff_wav(samples: i16) -> Vec<u8> {

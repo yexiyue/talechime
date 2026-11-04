@@ -23,11 +23,12 @@ pub fn voice_studio(
     store: &talechime_core::config::ConfigStore,
     resources: &Registry,
 ) -> anyhow::Result<talechime::VoiceStudio> {
-    let voices = store
-        .path()
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("config path needs a parent directory"))?
-        .join("voices");
+    let voices = talechime_core::paths::AppPaths::voice_library_at(
+        store
+            .path()
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("config path needs a parent directory"))?,
+    );
     // Share the host registry's download settings (cache dir, mirror, token).
     Ok(talechime::VoiceStudio::at_registry(resources, voices)?)
 }

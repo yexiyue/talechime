@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Breaking:** replace single-voice bundles with current-format multi-voice packages and the model-free `VoiceLibrary` inspect/plan/import/export API. Old transfer methods and CLI `import-bundle` are removed; `voices import-packages` accepts multiple files and `voices export` accepts multiple IDs. The new asset root is `voices-v2`; historical data is never scanned, converted or removed. Typed failures, bounded validation, immutable previews, explicit conflict decisions, per-item reports and cooperative cancellation replace string-based transfer orchestration.
+
+
 - Replace the hand-written resource downloader with hf-hub 1.0: model weights now live in the shared Hugging Face cache (blobs by etag, snapshots per pinned commit) and are hardlinked into the engine layout, so other Hub tools on the same machine share downloads. Hosts configure cache directory, mirror endpoint and token explicitly via `Registry::with_downloads` / `DownloadConfig`; hf-hub's cwd-relative builder defaults are never used.
 - Slim embedded manifests from per-file URLs to `repo + revision + filename + size`; the pinned commit preserves reproducibility while content integrity follows the Hub's etag-named blobs. Local-conversion manifests (CosyVoice3, Kokoro, IndexTTS) keep explicit size + SHA-256 verification.
 - Add offline inventory: `Registry::resource_status` reports `Missing / Partial / Ready` per model from the engine layout without network access, including conversion-backed models. Inventory and preparation now share one readiness predicate (`resource_state::entry_ready`): a present file whose size mismatches the manifest counts as missing and is re-downloaded, so truncated entries heal on the next prepare instead of being skipped forever.

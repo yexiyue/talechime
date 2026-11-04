@@ -189,7 +189,7 @@ MOSS Realtime 使用独立请求的固定参考。预置音色和无参考自然
 
 ## 音色资产（VoiceStudio）
 
-音色库是模型无关的资产层：设计/导入音色存于 `~/.talechime/voices/`（`ModelOptions.voices`
+音色库是模型无关的资产层：设计/导入音色存于 `~/.talechime/voices-v2/`（`ModelOptions.voices`
 可覆盖），一条音色 = 原始 WAV + 转写 + 描述 + 来源，可跨模型使用、单文件导出导入。
 `VoiceStudio` 与 `Engine` 相互独立——设计不需要先准备任何合成模型。
 
@@ -200,13 +200,13 @@ use talechime::{Engine, ModelOptions, SynthesisState, VoiceStudio, run_local};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_local(async {
         let root = std::path::PathBuf::from("./my-app-speech");
-        let studio = VoiceStudio::at(root.join("resources"), root.join("voices"))?;
+        let studio = VoiceStudio::at(root.join("resources"), root.join("voices-v2"))?;
         let asset = studio.design("低沉温和的中年男声").await?;
         let mut options = ModelOptions::new("qwen", root.join("resources"));
         options.model = Some("1.7b-base".into());
-        options.voices = Some(root.join("voices"));
+        options.voices = Some(root.join("voices-v2"));
         let mut engine = Engine::prepare(options, |_| {}).await?;
-        let mut stream = engine.synthesize("你好。", &asset.id, None).await?;
+        let mut stream = engine.synthesize("你好。", asset.id(), None).await?;
         while let Some(block) = stream.recv().await { let _ = block?; }
         if stream.state() != SynthesisState::Completed {
             return Err("synthesis did not complete".into());
@@ -220,7 +220,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 显式层暴露同一内部路径的全部控制点：`engines()`（设备/就绪/下载代价）、
 `design_with(DesignOptions { engine, id, name, text, device, seed, .. }, progress)`
 （future drop 即取消）、`install_voice_for(backend, model, id)`（显式物化，含 MOSS Nano
-的后台编码，缺失时仅准备编码器资源）、`import_voice` / `export` / `import_bundle` / `rename` / `remove`。
+的后台编码，缺失时仅准备编码器资源）、`import_voice` / `rename` / `remove`；批量搬运由独立 `VoiceLibrary` API 提供。
 `list()` 返回 `Result`；损坏、未知格式或不可读的库不会伪装成空清单。
 `Engine::synthesize`、`synthesize_verified`、`synthesize_with_options`、`plan` 与
 `single_voice_plan` 均为异步方法，调用时需要 `.await`。
@@ -270,3 +270,28 @@ Qwen 和 MOSS ONNX 若启用非 CPU 设备故障恢复，执行设备可能切�
 `ModelOptions` 的 `device` 可选择 Auto，`calibrate` / `recovery` 默认 false；准备通过 backends 的 ResolvedModel 和 PrepareOptions 执行。开启校准可能额外准备 CPU 与加速模型并写入所选资源目录的校准记录。
 
 具体播放器位于 facade 私有模块，仅 `playback` feature 开放 Engine::listen/listen_to；注入播放器的方法无需该 feature。core 不再导出 AudioPlayer、download、ResourceError 或通用 Result 别名。
+
+## 模型无关音色库与批量搬运
+
+`VoiceLibrary` 独立于 `VoiceStudio` / Registry，可直接在没有模型与网络的环境使用。
+资产字段只读，`VoiceId` 通过校验构造；包格式、锁、暂存和发布实现保持私有。
+传输用 `inspect_import → plan_import → import_selected`，导出用 `export_bundle`；
+检查返回拥有冻结参考录音的 `ImportPreview`，释放它会回收暂存。`TransferLimits` 只允许收紧硬上限。
+错误为 `VoiceLibraryError`，输入包错误保留索引和嵌套的类型化原因，调用方不解析错误文本。
+模型适配器只消费已验证资产，角色与工程绑定继续归宿主。
+
+库默认数据根为 `~/.talechime/voices-v2`，宿主可显式传入自己的独立目录。
+当前记录是 `talechime/voice/2`，包是 `talechime/voice-bundle/2`，不读旧格式、不迁移或删除历史目录。
+包内 `manifest.json` 的 `assets` 数组和 `voices/<id>/reference.wav` 构成自包含资产；
+原始创建时间、来源及精确录音保留，本机导入时间和内部重试标识不随包输出。
+同 ID 不同声音必须跳过或 `ImportAsNew`；同名允许共存；相同内容提示重复；本地信息不默认覆盖。
+导入逐项原子发布，报告区分成功、已存在、跳过、失败、取消与未执行，已完成项不回滚；
+作为新音色导入的同一输入重试返回既有本地 ID。导出整体原子发布，替换目标需要 `ReplaceConfirmed`。
+
+上限：32 个输入包、合计 256 个资产，单清单 4 MiB、清单合计 16 MiB，单 WAV 64 MiB，
+输入文件及解压音频分别合计 1 GiB。不载入整批 WAV 到内存，不支持模型 prompt/embedding 缓存搬运。
+取消由 `TransferControl` 协作执行，已经进入原子发布的单项允许完成，结果以实际文件事实为准。
+
+可运行示例：`cargo run -p talechime-core --example voice_transfer`，只使用合成短 WAV 和临时目录。
+CLI 对应 `voices export reader hero --output voices.voice` 与 `voices import-packages a.voice b.voice --inspect`；
+确认后去掉 `--inspect`，有身份冲突时显式使用 `--as-new`。旧 `import-bundle` 命令和单包 API 已删除。

@@ -11,51 +11,13 @@ use crate::Event;
 use std::path::{Path, PathBuf};
 use talechime_backends::Registry;
 use talechime_core::design::EngineInfo;
-use talechime_core::voices::library::{VoiceAsset, VoiceLibrary, VoiceSource};
+#[cfg(test)]
+use talechime_core::voices::VoiceId;
+use talechime_core::voices::{VoiceAsset, VoiceLibrary, VoiceSource};
 use talechime_protocol::Device;
 
 /// Default spoken trial text recorded into designed references.
 pub const DEFAULT_TRIAL_TEXT: &str = "你好，欢迎收听今天的故事。山风吹过松林，星光照亮归途。";
-
-/// Library voice identity; distinct type so hosts cannot mix it with
-/// model-local `custom:` strings.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub struct VoiceId(String);
-impl VoiceId {
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-impl TryFrom<String> for VoiceId {
-    type Error = VoiceStudioError;
-    fn try_from(id: String) -> Result<Self, Self::Error> {
-        talechime_core::voices::library::validate_id(&id).map_err(VoiceStudioError::from)?;
-        Ok(Self(id))
-    }
-}
-impl std::str::FromStr for VoiceId {
-    type Err = VoiceStudioError;
-    fn from_str(id: &str) -> Result<Self, Self::Err> {
-        Self::try_from(id.to_owned())
-    }
-}
-impl From<VoiceId> for String {
-    fn from(id: VoiceId) -> Self {
-        id.0
-    }
-}
-impl std::ops::Deref for VoiceId {
-    type Target = str;
-    fn deref(&self) -> &str {
-        self.as_str()
-    }
-}
-impl std::fmt::Display for VoiceId {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
 
 /// Voice studio failure. Automatic design hides native model details in its source.
 #[derive(Debug, thiserror::Error)]
@@ -71,6 +33,11 @@ impl VoiceStudioError {
             message: message.into(),
             source: None,
         }
+    }
+}
+impl From<talechime_core::voices::VoiceLibraryError> for VoiceStudioError {
+    fn from(error: talechime_core::voices::VoiceLibraryError) -> Self {
+        Self::from(anyhow::Error::new(error))
     }
 }
 impl From<anyhow::Error> for VoiceStudioError {
@@ -198,21 +165,9 @@ impl VoiceStudio {
     pub fn remove(&self, id: &str) -> Result<(), VoiceStudioError> {
         self.library.remove(id).map_err(VoiceStudioError::from)
     }
-    /// Export one voice as a single self-contained file.
-    pub fn export(&self, id: &str, path: &Path) -> Result<(), VoiceStudioError> {
-        self.library
-            .export(id, path)
-            .map_err(VoiceStudioError::from)
-    }
-    /// Import a bundle file; `new_id` overrides the recorded id.
-    pub fn import_bundle(
-        &self,
-        path: &Path,
-        new_id: Option<&str>,
-    ) -> Result<VoiceAsset, VoiceStudioError> {
-        self.library
-            .import_bundle(path, new_id)
-            .map_err(VoiceStudioError::from)
+    /// The model-independent library; transfer operations need no model objects.
+    pub fn library(&self) -> &VoiceLibrary {
+        &self.library
     }
     /// Install a reference recording as a new library voice.
     pub fn import_voice(
@@ -324,7 +279,7 @@ impl VoiceStudio {
             .clone()
             .unwrap_or_else(|| DEFAULT_TRIAL_TEXT.to_owned());
         if let Some(id) = options.id.as_deref() {
-            talechime_core::voices::library::validate_id(id).map_err(VoiceStudioError::from)?;
+            talechime_core::voices::validate_id(id).map_err(VoiceStudioError::from)?;
             self.unique_id(Some(id))?;
         }
         let name = options.name.as_deref().unwrap_or(&options.description);
@@ -427,7 +382,7 @@ impl VoiceStudio {
             )
             .await
             .map_err(VoiceStudioError::from)?;
-        Ok(format!("custom:{}", asset.id))
+        Ok(format!("custom:{}", asset.id()))
     }
 
     /// Resolve a model voice or materialize a library id, preserving failures.
@@ -701,17 +656,17 @@ mod tests {
                 })
                 .await
                 .unwrap();
-            assert_eq!(asset.id, "voice");
-            assert_eq!(asset.name, "低沉温和的中年男声");
-            assert_eq!(asset.transcript, DEFAULT_TRIAL_TEXT);
+            assert_eq!(asset.id(), "voice");
+            assert_eq!(asset.name(), "低沉温和的中年男声");
+            assert_eq!(asset.transcript(), DEFAULT_TRIAL_TEXT);
             assert_eq!(
-                asset.source,
-                VoiceSource::Designed("fake-designer".to_owned())
+                asset.source(),
+                &VoiceSource::Designed("fake-designer".to_owned())
             );
             assert!(matches!(events.as_slice(), [Event::ResourceState { .. }]));
             // Automatic design is exactly the explicit tier with defaults.
             let auto = studio.design("另一个声音").await.unwrap();
-            assert_eq!(auto.id, "voice-2");
+            assert_eq!(auto.id(), "voice-2");
             // Explicit unknown engine lists what exists.
             let error = studio
                 .design_with(

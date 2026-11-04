@@ -37,7 +37,11 @@ impl AppPaths {
         self.root.join("resources")
     }
     pub fn voices(&self) -> PathBuf {
-        self.root.join("voices")
+        Self::voice_library_at(&self.root)
+    }
+    /// Resolve the current asset namespace under an explicitly selected app/config root.
+    pub fn voice_library_at(root: impl AsRef<Path>) -> PathBuf {
+        root.as_ref().join("voices-v2")
     }
 }
 
@@ -71,6 +75,7 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        assert_eq!(paths.voices(), home.path().join(".talechime/voices-v2"));
         assert!(!paths.root().exists());
         assert_eq!(
             std::fs::read_to_string(old_config).unwrap(),

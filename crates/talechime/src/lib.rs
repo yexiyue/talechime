@@ -46,7 +46,12 @@ pub use talechime_core::design::{
 pub type DesignerHandle = std::rc::Rc<dyn VoiceDesigner>;
 pub use engine::{Engine, EngineError, ModelOptions, PcmStream, run_local};
 pub use listening::{Listening, ListeningHandle, ListeningOptions, ListeningSession};
-pub use talechime_core::voices::library::{VoiceAsset, VoiceLibrary, VoiceSource};
+pub use talechime_core::voices::{
+    ExportReport, ExportTarget, ImportAction, ImportConflict, ImportDecision, ImportEntry,
+    ImportItemResult, ImportPlan, ImportPreview, ImportReport, ImportSource, ImportStatus,
+    LibraryInventory, TransferControl, TransferLimits, TransferProgress, TransferStage, VoiceAsset,
+    VoiceId, VoiceLibrary, VoiceLibraryError, VoiceSource,
+};
 pub use talechime_core::{
     CancellationHandle, ChapterCacheOptions, DEFAULT_MAX_BYTES, GenerationParams, PlanError,
     PlanProgress, PlanSessionOptions, PlanState, Playback, PlaybackPolicy, SeedPolicy,
@@ -62,7 +67,7 @@ pub use talechime_protocol::{
     Capabilities, Device, EndReason, Event, ParamKind, ParamValue, ParameterSpec, SessionState,
     SourceId, TextRange, text_hash,
 };
-pub use voice_studio::{DEFAULT_TRIAL_TEXT, DesignOptions, VoiceId, VoiceStudio, VoiceStudioError};
+pub use voice_studio::{DEFAULT_TRIAL_TEXT, DesignOptions, VoiceStudio, VoiceStudioError};
 
 pub use talechime_core::verification::{
     DifferenceKind, ReadbackAudio, ReadbackDifference, ReadbackEvidence, ReadbackRequest,

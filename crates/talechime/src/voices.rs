@@ -2,7 +2,10 @@
 //! These never read or write the backend/model selection in the config file.
 use clap::Subcommand;
 use std::path::PathBuf;
-use talechime::{DEFAULT_TRIAL_TEXT, DesignOptions, VoiceStudio};
+use talechime::{
+    DEFAULT_TRIAL_TEXT, DesignOptions, ExportTarget, ImportAction, ImportConflict, ImportDecision,
+    TransferControl, TransferLimits, VoiceStudio,
+};
 use talechime_protocol::{Device, Event};
 
 #[derive(Subcommand)]
@@ -53,18 +56,25 @@ pub enum VoiceCommand {
     },
     /// Delete a library voice.
     Remove { id: String },
-    /// Export one voice as a single self-contained file.
+    /// Export selected library IDs into one package.
     Export {
-        id: String,
+        #[arg(required = true, num_args = 1..)]
+        ids: Vec<String>,
         #[arg(long)]
-        output: Option<PathBuf>,
+        output: PathBuf,
+        /// Explicitly replace an existing output file.
+        #[arg(long)]
+        replace: bool,
     },
-    /// Import a voice bundle file exported on this or another machine.
-    ImportBundle {
-        path: PathBuf,
-        /// Override the recorded ID (required on collision).
+    /// Inspect and optionally import one or more current-format packages.
+    ImportPackages {
+        #[arg(required = true, num_args = 1..)]
+        paths: Vec<PathBuf>,
         #[arg(long)]
-        id: Option<String>,
+        inspect: bool,
+        /// Import conflicting identities with new IDs; existing voices are never overwritten.
+        #[arg(long)]
+        as_new: bool,
     },
 }
 
@@ -76,11 +86,11 @@ pub async fn run(command: VoiceCommand, studio: VoiceStudio) -> anyhow::Result<(
                 println!("voice library is empty; design or import a voice first");
             }
             for asset in voices {
-                let source = match asset.source {
+                let source = match asset.source() {
                     talechime::VoiceSource::Designed(engine) => format!("designed by {engine}"),
                     talechime::VoiceSource::Imported => "imported".to_owned(),
                 };
-                println!("{}\t{}\t{}", asset.id, asset.name, source);
+                println!("{}\t{}\t{}", asset.id(), asset.name(), source);
             }
         }
         VoiceCommand::Engines => {
@@ -128,7 +138,8 @@ pub async fn run(command: VoiceCommand, studio: VoiceStudio) -> anyhow::Result<(
             let asset = studio.design_with(options, |event| report(&event)).await?;
             println!(
                 "Saved voice {}; read with --voice {} (first use materializes it into the model)",
-                asset.id, asset.id
+                asset.id(),
+                asset.id()
             );
         }
         VoiceCommand::Import {
@@ -138,24 +149,86 @@ pub async fn run(command: VoiceCommand, studio: VoiceStudio) -> anyhow::Result<(
             id,
         } => {
             let asset = studio.import_voice(id.as_deref(), &name, &wav, &text)?;
-            println!("Imported {}", asset.id);
+            println!("Imported {}", asset.id());
         }
         VoiceCommand::Rename { id, name } => {
             let asset = studio.rename(&id, &name)?;
-            println!("Renamed {} to {}", asset.id, asset.name);
+            println!("Renamed {} to {}", asset.id(), asset.name());
         }
         VoiceCommand::Remove { id } => {
             studio.remove(&id)?;
             println!("Removed {id}");
         }
-        VoiceCommand::Export { id, output } => {
-            let path = output.unwrap_or_else(|| format!("{id}.voice").into());
-            studio.export(&id, &path)?;
-            println!("Exported {} to {}", id, path.display());
+        VoiceCommand::Export {
+            ids,
+            output,
+            replace,
+        } => {
+            let ids = ids
+                .into_iter()
+                .map(|id| id.parse())
+                .collect::<Result<Vec<_>, _>>()?;
+            let report = studio.library().export_bundle(
+                &ids,
+                &output,
+                if replace {
+                    ExportTarget::ReplaceConfirmed
+                } else {
+                    ExportTarget::CreateNew
+                },
+                TransferLimits::default(),
+                &TransferControl::default(),
+            )?;
+            println!("Exported {} voices ({} bytes)", report.voices, report.bytes);
         }
-        VoiceCommand::ImportBundle { path, id } => {
-            let asset = studio.import_bundle(&path, id.as_deref())?;
-            println!("Imported {}", asset.id);
+        VoiceCommand::ImportPackages {
+            paths,
+            inspect,
+            as_new,
+        } => {
+            let preview = studio.library().inspect_import(
+                &paths,
+                TransferLimits::default(),
+                &TransferControl::default(),
+            )?;
+            for entry in preview.entries() {
+                println!(
+                    "{}\t{}\t{:?}",
+                    entry.asset.id(),
+                    entry.asset.name(),
+                    entry.conflicts
+                );
+            }
+            if inspect {
+                return Ok(());
+            }
+            let decisions = preview
+                .entries()
+                .iter()
+                .map(|entry| ImportDecision {
+                    entry: entry.index,
+                    action: if as_new && entry.conflicts.contains(&ImportConflict::IdentityConflict)
+                    {
+                        ImportAction::ImportAsNew
+                    } else {
+                        ImportAction::Import
+                    },
+                })
+                .collect();
+            let plan = studio.library().plan_import(preview, decisions)?;
+            let report = studio
+                .library()
+                .import_selected(plan, &TransferControl::default());
+            let failed = report.items.iter().any(|item| item.error.is_some());
+            for item in report.items {
+                println!(
+                    "{}\t{:?}\t{}",
+                    item.entry,
+                    item.status,
+                    item.local_id.unwrap_or_default()
+                );
+            }
+            anyhow::ensure!(!failed, "one or more voices failed to import");
         }
     }
     Ok(())

@@ -6,7 +6,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
 };
-use talechime_core::voices::library::{VoiceAsset, validate_id};
+use talechime_core::voices::{VoiceAsset, validate_id};
 
 /// A library asset and its verbatim reference recording, borrowed for installation.
 #[derive(Clone, Copy)]
@@ -174,8 +174,8 @@ impl<'a> Replacement<'a> {
     }
     fn commit(mut self, voice: ReferenceVoice<'_>) -> anyhow::Result<()> {
         let marker = Materialization {
-            library_id: voice.asset.id.clone(),
-            fingerprint: voice.asset.fingerprint.clone(),
+            library_id: voice.asset.id().to_owned(),
+            fingerprint: voice.asset.fingerprint().to_owned(),
             payload_digest: self.entry.digest()?,
         };
         let mut file = tempfile::NamedTempFile::new_in(
@@ -215,18 +215,19 @@ pub(super) async fn install(
     downloads: &crate::downloads::Downloads,
     voice: ReferenceVoice<'_>,
 ) -> anyhow::Result<()> {
-    validate_id(&voice.asset.id)?;
+    validate_id(voice.asset.id())?;
     anyhow::ensure!(
-        talechime_core::voices::library::fingerprint(
-            &voice.asset.transcript,
-            voice.asset.description.as_deref(),
+        talechime_core::voices::fingerprint(
+            voice.asset.transcript(),
+            voice.asset.description(),
             voice.wav
-        ) == voice.asset.fingerprint,
+        ) == voice.asset.fingerprint(),
         "reference recording does not match library fingerprint"
     );
-    let custom = format!("custom:{}", voice.asset.id);
+    let custom = format!("custom:{}", voice.asset.id());
     let entry = adapter.reference_entry(root, &custom)?;
-    let Some(replacement) = Replacement::begin(&entry, &voice.asset.id, &voice.asset.fingerprint)?
+    let Some(replacement) =
+        Replacement::begin(&entry, voice.asset.id(), voice.asset.fingerprint())?
     else {
         return Ok(());
     };
@@ -239,8 +240,8 @@ pub(super) async fn install(
             downloads,
             wav.path(),
             &custom,
-            &voice.asset.name,
-            &voice.asset.transcript,
+            voice.asset.name(),
+            voice.asset.transcript(),
         )
         .await?;
     replacement.commit(voice)
@@ -255,7 +256,7 @@ mod tests {
     }
     use crate::registry::{Installing, Loading, Preparing};
     use std::cell::Cell;
-    use talechime_core::voices::library::{VoiceSource, fingerprint};
+    use talechime_core::voices::{VoiceLibrary, VoiceSource};
     use talechime_protocol::{Capabilities, Device, Event};
     use tokio::sync::mpsc;
 
@@ -349,15 +350,11 @@ mod tests {
         }
     }
     fn asset(wav: &[u8]) -> VoiceAsset {
-        VoiceAsset {
-            id: "hero".into(),
-            name: "Hero".into(),
-            transcript: "Hello".into(),
-            description: None,
-            source: VoiceSource::Imported,
-            created_at_unix: 0,
-            fingerprint: fingerprint("Hello", None, wav),
-        }
+        let root = tempfile::tempdir().unwrap();
+        VoiceLibrary::open(root.path())
+            .unwrap()
+            .create("hero", "Hero", wav, "Hello", None, VoiceSource::Imported)
+            .unwrap()
     }
 
     #[tokio::test]
@@ -365,35 +362,51 @@ mod tests {
         for file in [false, true] {
             let root = tempfile::tempdir()?;
             let adapter = Adapter::new(file);
-            let old = asset(b"old");
+            let old = asset(&[
+                82, 73, 70, 70, 44, 0, 0, 0, 87, 65, 86, 69, 102, 109, 116, 32, 16, 0, 0, 0, 1, 0,
+                1, 0, 192, 93, 0, 0, 128, 187, 0, 0, 2, 0, 16, 0, 100, 97, 116, 97, 8, 0, 0, 0,
+                100, 0, 156, 255, 100, 0, 156, 255,
+            ]);
             let voice = ReferenceVoice {
                 asset: &old,
-                wav: b"old",
+                wav: &[
+                    82, 73, 70, 70, 44, 0, 0, 0, 87, 65, 86, 69, 102, 109, 116, 32, 16, 0, 0, 0, 1,
+                    0, 1, 0, 192, 93, 0, 0, 128, 187, 0, 0, 2, 0, 16, 0, 100, 97, 116, 97, 8, 0, 0,
+                    0, 100, 0, 156, 255, 100, 0, 156, 255,
+                ],
             };
             install(&adapter, root.path(), &downloads(), voice).await?;
             install(&adapter, root.path(), &downloads(), voice).await?;
             assert_eq!(adapter.installs.get(), 1);
-            let new = asset(b"new");
+            let new = asset(&[
+                82, 73, 70, 70, 44, 0, 0, 0, 87, 65, 86, 69, 102, 109, 116, 32, 16, 0, 0, 0, 1, 0,
+                1, 0, 192, 93, 0, 0, 128, 187, 0, 0, 2, 0, 16, 0, 100, 97, 116, 97, 8, 0, 0, 0,
+                200, 0, 56, 255, 200, 0, 56, 255,
+            ]);
             let voice = ReferenceVoice {
                 asset: &new,
-                wav: b"new",
+                wav: &[
+                    82, 73, 70, 70, 44, 0, 0, 0, 87, 65, 86, 69, 102, 109, 116, 32, 16, 0, 0, 0, 1,
+                    0, 1, 0, 192, 93, 0, 0, 128, 187, 0, 0, 2, 0, 16, 0, 100, 97, 116, 97, 8, 0, 0,
+                    0, 200, 0, 56, 255, 200, 0, 56, 255,
+                ],
             };
             install(&adapter, root.path(), &downloads(), voice).await?;
             let entry = adapter.reference_entry(root.path(), "custom:hero")?;
-            assert!(entry.fresh("hero", &new.fingerprint));
-            assert!(!entry.fresh("hero", &old.fingerprint));
+            assert!(entry.fresh("hero", new.fingerprint()));
+            assert!(!entry.fresh("hero", old.fingerprint()));
             let payload = if file {
                 entry.path().to_path_buf()
             } else {
                 entry.path().join("reference.wav")
             };
             std::fs::write(&payload, b"damaged")?;
-            assert!(!entry.fresh("hero", &new.fingerprint));
+            assert!(!entry.fresh("hero", new.fingerprint()));
             install(&adapter, root.path(), &downloads(), voice).await?;
             std::fs::remove_file(&payload)?;
-            assert!(!entry.fresh("hero", &new.fingerprint));
+            assert!(!entry.fresh("hero", new.fingerprint()));
             install(&adapter, root.path(), &downloads(), voice).await?;
-            assert!(entry.fresh("hero", &new.fingerprint));
+            assert!(entry.fresh("hero", new.fingerprint()));
             assert_eq!(adapter.installs.get(), 4);
             assert_ne!(entry.marker().extension().unwrap(), "json");
         }
@@ -412,7 +425,11 @@ mod tests {
                 std::fs::create_dir(entry.path())?;
                 std::fs::write(entry.path().join("user.wav"), b"user audio")?;
             }
-            let asset = asset(b"new");
+            let asset = asset(&[
+                82, 73, 70, 70, 44, 0, 0, 0, 87, 65, 86, 69, 102, 109, 116, 32, 16, 0, 0, 0, 1, 0,
+                1, 0, 192, 93, 0, 0, 128, 187, 0, 0, 2, 0, 16, 0, 100, 97, 116, 97, 8, 0, 0, 0,
+                200, 0, 56, 255, 200, 0, 56, 255,
+            ]);
             for marker in [
                 None,
                 Some(b"unknown".as_slice()),
@@ -430,7 +447,11 @@ mod tests {
                         &downloads(),
                         ReferenceVoice {
                             asset: &asset,
-                            wav: b"new"
+                            wav: &[
+                                82, 73, 70, 70, 44, 0, 0, 0, 87, 65, 86, 69, 102, 109, 116, 32, 16,
+                                0, 0, 0, 1, 0, 1, 0, 192, 93, 0, 0, 128, 187, 0, 0, 2, 0, 16, 0,
+                                100, 97, 116, 97, 8, 0, 0, 0, 200, 0, 56, 255, 200, 0, 56, 255
+                            ]
                         }
                     )
                     .await
@@ -453,18 +474,30 @@ mod tests {
         for file in [false, true] {
             let root = tempfile::tempdir()?;
             let adapter = Adapter::new(file);
-            let old = asset(b"old");
+            let old = asset(&[
+                82, 73, 70, 70, 44, 0, 0, 0, 87, 65, 86, 69, 102, 109, 116, 32, 16, 0, 0, 0, 1, 0,
+                1, 0, 192, 93, 0, 0, 128, 187, 0, 0, 2, 0, 16, 0, 100, 97, 116, 97, 8, 0, 0, 0,
+                100, 0, 156, 255, 100, 0, 156, 255,
+            ]);
             install(
                 &adapter,
                 root.path(),
                 &downloads(),
                 ReferenceVoice {
                     asset: &old,
-                    wav: b"old",
+                    wav: &[
+                        82, 73, 70, 70, 44, 0, 0, 0, 87, 65, 86, 69, 102, 109, 116, 32, 16, 0, 0,
+                        0, 1, 0, 1, 0, 192, 93, 0, 0, 128, 187, 0, 0, 2, 0, 16, 0, 100, 97, 116,
+                        97, 8, 0, 0, 0, 100, 0, 156, 255, 100, 0, 156, 255,
+                    ],
                 },
             )
             .await?;
-            let new = asset(b"new");
+            let new = asset(&[
+                82, 73, 70, 70, 44, 0, 0, 0, 87, 65, 86, 69, 102, 109, 116, 32, 16, 0, 0, 0, 1, 0,
+                1, 0, 192, 93, 0, 0, 128, 187, 0, 0, 2, 0, 16, 0, 100, 97, 116, 97, 8, 0, 0, 0,
+                200, 0, 56, 255, 200, 0, 56, 255,
+            ]);
             adapter.fail.set(true);
             assert!(
                 install(
@@ -473,14 +506,18 @@ mod tests {
                     &downloads(),
                     ReferenceVoice {
                         asset: &new,
-                        wav: b"new"
+                        wav: &[
+                            82, 73, 70, 70, 44, 0, 0, 0, 87, 65, 86, 69, 102, 109, 116, 32, 16, 0,
+                            0, 0, 1, 0, 1, 0, 192, 93, 0, 0, 128, 187, 0, 0, 2, 0, 16, 0, 100, 97,
+                            116, 97, 8, 0, 0, 0, 200, 0, 56, 255, 200, 0, 56, 255
+                        ]
                     }
                 )
                 .await
                 .is_err()
             );
             let entry = adapter.reference_entry(root.path(), "custom:hero")?;
-            assert!(entry.fresh("hero", &old.fingerprint));
+            assert!(entry.fresh("hero", old.fingerprint()));
             adapter.fail.set(false);
             adapter.pending.set(true);
             {
@@ -491,7 +528,11 @@ mod tests {
                     &downloads,
                     ReferenceVoice {
                         asset: &new,
-                        wav: b"new",
+                        wav: &[
+                            82, 73, 70, 70, 44, 0, 0, 0, 87, 65, 86, 69, 102, 109, 116, 32, 16, 0,
+                            0, 0, 1, 0, 1, 0, 192, 93, 0, 0, 128, 187, 0, 0, 2, 0, 16, 0, 100, 97,
+                            116, 97, 8, 0, 0, 0, 200, 0, 56, 255, 200, 0, 56, 255,
+                        ],
                     },
                 );
                 tokio::pin!(operation);
@@ -500,9 +541,9 @@ mod tests {
                     result = &mut operation => panic!("should remain pending: {result:?}"),
                     _ = std::future::ready(()) => {}
                 }
-                assert!(!entry.fresh("hero", &old.fingerprint));
+                assert!(!entry.fresh("hero", old.fingerprint()));
             }
-            assert!(entry.fresh("hero", &old.fingerprint));
+            assert!(entry.fresh("hero", old.fingerprint()));
         }
         Ok(())
     }

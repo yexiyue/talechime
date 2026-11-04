@@ -181,7 +181,7 @@ async fn main() -> anyhow::Result<()> {
         let voices = config
             .path()
             .parent()
-            .map(|root| root.join("voices"))
+            .map(talechime_core::paths::AppPaths::voice_library_at)
             .ok_or_else(|| anyhow::anyhow!("config path needs a parent directory"))?;
         let studio = talechime::VoiceStudio::at(resources.root(), voices)?;
         return talechime::run_local(voices::run(command, studio)).await;

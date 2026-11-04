@@ -196,7 +196,7 @@ impl Registry {
         voice_id: &str,
         fingerprint: &str,
     ) -> bool {
-        talechime_core::voices::library::validate_id(voice_id).is_ok()
+        talechime_core::voices::validate_id(voice_id).is_ok()
             && self
                 .adapter(backend, model)
                 .ok()
@@ -477,17 +477,13 @@ mod tests {
             .join("reference.wav")
     }
     #[cfg(feature = "qwen")]
-    fn reference_asset(id: &str, wav: &[u8]) -> talechime_core::voices::library::VoiceAsset {
-        use talechime_core::voices::library::{VoiceAsset, VoiceSource, fingerprint};
-        VoiceAsset {
-            id: id.into(),
-            name: "主角".into(),
-            transcript: "试音转写".into(),
-            description: None,
-            source: VoiceSource::Imported,
-            created_at_unix: 0,
-            fingerprint: fingerprint("试音转写", None, wav),
-        }
+    fn reference_asset(id: &str, wav: &[u8]) -> talechime_core::voices::VoiceAsset {
+        use talechime_core::voices::{VoiceLibrary, VoiceSource};
+        let root = tempfile::tempdir().unwrap();
+        VoiceLibrary::open(root.path())
+            .unwrap()
+            .create(id, "主角", wav, "试音转写", None, VoiceSource::Imported)
+            .unwrap()
     }
     #[cfg(feature = "qwen")]
     #[tokio::test]
@@ -505,7 +501,7 @@ mod tests {
         registry
             .install_reference("qwen", Some("1.7b-base"), voice)
             .await?;
-        assert!(registry.reference_fresh("qwen", Some("1.7b-base"), "hero", &asset.fingerprint));
+        assert!(registry.reference_fresh("qwen", Some("1.7b-base"), "hero", &asset.fingerprint()));
         let voice_wav = talechime_backends_qwen_voice_wav(root.path(), "hero");
         let before = std::fs::read(&voice_wav)?;
         registry
@@ -529,7 +525,7 @@ mod tests {
             "qwen",
             Some("1.7b-base"),
             "hero",
-            &changed_asset.fingerprint
+            &changed_asset.fingerprint()
         ));
         assert_ne!(std::fs::read(&voice_wav)?, before);
         // Damage must not make catalog enumeration prevent repairing the entry.
@@ -538,7 +534,7 @@ mod tests {
             "qwen",
             Some("1.7b-base"),
             "hero",
-            &changed_asset.fingerprint
+            &changed_asset.fingerprint()
         ));
         registry
             .install_reference(
@@ -554,7 +550,7 @@ mod tests {
             "qwen",
             Some("1.7b-base"),
             "hero",
-            &changed_asset.fingerprint
+            &changed_asset.fingerprint()
         ));
         Ok(())
     }

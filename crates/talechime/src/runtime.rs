@@ -82,7 +82,7 @@ impl Worker {
         let voices = store
             .path()
             .parent()
-            .map(|root| root.join("voices"))
+            .map(talechime_core::paths::AppPaths::voice_library_at)
             .and_then(|voices| talechime::VoiceStudio::at(resources.root(), voices).ok());
         Self {
             readback_models: false,
@@ -209,8 +209,8 @@ impl Worker {
         self.background.take();
         match finished {
             Ok(Ok(asset)) => Response::global(Event::VoiceReady {
-                voice: asset.id,
-                name: asset.name,
+                voice: asset.id().to_owned(),
+                name: asset.name().to_owned(),
             }),
             Ok(Err(error)) => Response::error("design_failed", "voice", error),
             Err(error) => Response::error("design_failed", "voice", error),
@@ -496,8 +496,8 @@ impl Worker {
             }
             Command::CancelPrepare => match self.cancel_prepare().await {
                 Some(asset) => Response::global(Event::VoiceReady {
-                    voice: asset.id,
-                    name: asset.name,
+                    voice: asset.id().to_owned(),
+                    name: asset.name().to_owned(),
                 }),
                 None => Response::global(Event::Accepted),
             },
@@ -558,12 +558,12 @@ impl Worker {
                         voices
                             .into_iter()
                             .map(|asset| talechime_protocol::VoiceAssetRecord {
-                                id: asset.id,
-                                name: asset.name,
-                                transcript: asset.transcript,
-                                description: asset.description,
+                                id: asset.id().to_owned(),
+                                name: asset.name().to_owned(),
+                                transcript: asset.transcript().to_owned(),
+                                description: asset.description().map(str::to_owned),
                                 designed: matches!(
-                                    asset.source,
+                                    asset.source(),
                                     talechime::VoiceSource::Designed(_)
                                 ),
                             })

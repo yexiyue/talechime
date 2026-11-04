@@ -184,7 +184,8 @@ fn model_catalog_is_read_only_and_uses_global_paths_after_subcommands() {
 fn library_voice_override_is_validated_without_materializing_or_loading_models() {
     let directory = tempfile::tempdir().unwrap();
     let resources = directory.path().join("resources");
-    let studio = talechime::VoiceStudio::at(&resources, directory.path().join("voices")).unwrap();
+    let studio =
+        talechime::VoiceStudio::at(&resources, directory.path().join("voices-v2")).unwrap();
     let mut wav = b"RIFF".to_vec();
     wav.extend_from_slice(&38u32.to_le_bytes());
     wav.extend_from_slice(b"WAVEfmt ");

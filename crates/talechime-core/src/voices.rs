@@ -1,6 +1,16 @@
 //! Model-scoped reference recordings. Adapter encoding caches live beside the reference.
-pub mod bundle;
-pub mod library;
+mod asset;
+mod library;
+mod package;
+mod store;
+mod transfer;
+pub use asset::{VoiceAsset, VoiceId, VoiceSource, fingerprint, validate_id};
+pub use library::{LibraryDiagnostic, LibraryInventory, VoiceLibrary, VoiceLibraryError};
+pub use transfer::{
+    ExportReport, ExportTarget, ImportAction, ImportConflict, ImportDecision, ImportEntry,
+    ImportItemResult, ImportPlan, ImportPreview, ImportReport, ImportSource, ImportStatus,
+    TransferControl, TransferLimits, TransferProgress, TransferStage,
+};
 
 use serde::{Deserialize, Serialize};
 use std::{

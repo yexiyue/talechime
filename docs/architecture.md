@@ -151,7 +151,7 @@ VoxCPM2（上游 `(description)text` 前缀）、OmniVoice
 [风格记录](records/tts-core/style-exposure-2026-10-10.md)。
 ### 音色资产层
 
-音色库（`~/.talechime/voices/`，`VoiceLibrary`）是设计/导入音色的唯一事实源：每条音色
+音色库（`~/.talechime/voices-v2/`，`VoiceLibrary`）是设计/导入音色的唯一事实源：每条音色
 = 原始参考 WAV + 准确转写 + 描述与来源标注，与模型资源目录彻底分离，可单文件导出搬运。
 各模型的 per-model `VoiceStore` 降级为可再生物化缓存：按库音色的内容指纹
 （转写+描述+WAV 的 sha256）和缓存内容摘要写入相邻 `.library` 标记，缺失或损坏即重物化；
