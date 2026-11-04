@@ -37,16 +37,33 @@ async fn ensure_downloads_links_and_skips_existing_dest() {
     let client = downloads(&server.base_url(), root.path().join("hf-cache"));
     let dest = root.path().join("engine/moss/model.bin");
 
-    client
-        .ensure(
-            &dest,
-            REPO,
-            REVISION,
-            FILENAME,
-            bridge("test/model.bin", 13),
-        )
-        .await
-        .expect("first ensure downloads from the local hub");
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let ensure = client.ensure(
+        &dest,
+        REPO,
+        REVISION,
+        FILENAME,
+        FileProgressBridge::new(tx, "test/model.bin".into(), 13),
+    );
+    let collect = async move {
+        let mut values = Vec::new();
+        while let Some(talechime_protocol::Event::ModelProgress {
+            downloaded, total, ..
+        }) = rx.recv().await
+        {
+            assert_eq!(total, 13);
+            values.push(downloaded);
+        }
+        values
+    };
+    let (result, values) = tokio::join!(ensure, collect);
+    result.expect("first ensure downloads from the local hub");
+    assert_eq!(
+        values.last(),
+        Some(&13),
+        "publication must flush exact file completion"
+    );
+    assert!(values.windows(2).all(|w| w[0] <= w[1]));
 
     assert!(
         dest.is_file(),

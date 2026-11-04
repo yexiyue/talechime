@@ -19,7 +19,7 @@ use std::{
 
 use hf_hub::progress::{DownloadEvent, FileStatus, ProgressEvent, ProgressHandler};
 use talechime_protocol::Event;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 /// Host-provided download configuration.
 #[derive(Debug, Clone)]
@@ -112,40 +112,51 @@ impl Downloads {
         if crate::resource_state::entry_ready(dest, expected_size) {
             return Ok(());
         }
-        let (owner, name) = split_repo(repo)?;
-        let model = self.client.model(owner, name);
-        let progress = hf_hub::progress::Progress::new(progress);
-        let download = model
-            .download_file()
-            .filename(filename)
-            .revision(revision)
-            .progress(progress);
-        let mut path = download
-            .clone()
-            .send()
+        let relay = ProgressRelay {
+            tx: progress.tx.clone(),
+            resource: progress.resource.clone(),
+            size: progress.size,
+            latest: progress.latest.subscribe(),
+        };
+        relay
+            .run(async {
+                let (owner, name) = split_repo(repo)?;
+                let model = self.client.model(owner, name);
+                let progress = hf_hub::progress::Progress::new(progress);
+                let download = model
+                    .download_file()
+                    .filename(filename)
+                    .revision(revision)
+                    .progress(progress);
+                let mut path =
+                    download.clone().send().await.map_err(|error| {
+                        download_error(repo, revision, filename, classify(error))
+                    })?;
+                // A cache hit may itself be truncated (the layout can share its inode).
+                // Let hf-hub replace the blob using its own locks and atomic writes.
+                if !crate::resource_state::entry_ready(&path, expected_size) {
+                    path = download
+                        .force_download(true)
+                        .send()
+                        .await
+                        .map_err(|error| {
+                            download_error(repo, revision, filename, classify(error))
+                        })?;
+                }
+                anyhow::ensure!(
+                    crate::resource_state::entry_ready(&path, expected_size),
+                    "downloaded file size does not match manifest: {repo}@{revision}/{filename}"
+                );
+                link_into_layout(&path, dest).map_err(|error| {
+                    download_error(
+                        repo,
+                        revision,
+                        filename,
+                        DownloadFailure::Disk(error.to_string()),
+                    )
+                })
+            })
             .await
-            .map_err(|error| download_error(repo, revision, filename, classify(error)))?;
-        // A cache hit may itself be truncated (the layout can share its inode).
-        // Let hf-hub replace the blob using its own locks and atomic writes.
-        if !crate::resource_state::entry_ready(&path, expected_size) {
-            path = download
-                .force_download(true)
-                .send()
-                .await
-                .map_err(|error| download_error(repo, revision, filename, classify(error)))?;
-        }
-        anyhow::ensure!(
-            crate::resource_state::entry_ready(&path, expected_size),
-            "downloaded file size does not match manifest: {repo}@{revision}/{filename}"
-        );
-        link_into_layout(&path, dest).map_err(|error| {
-            download_error(
-                repo,
-                revision,
-                filename,
-                DownloadFailure::Disk(error.to_string()),
-            )
-        })
     }
 }
 
@@ -255,12 +266,13 @@ fn link_into_layout(cached: &Path, dest: &Path) -> anyhow::Result<()> {
 ///
 /// hf-hub progress is a delta stream keyed by filename; this handler tracks the
 /// high-water mark for the single file being fetched. Handlers run on the
-/// stream-read path and must never block, hence `try_send`.
+/// stream-read path and never block: a watch slot retains only the latest value.
 pub struct FileProgressBridge {
     tx: mpsc::Sender<Event>,
     resource: String,
     size: u64,
     downloaded: AtomicU64,
+    latest: watch::Sender<Option<u64>>,
 }
 
 impl FileProgressBridge {
@@ -270,6 +282,7 @@ impl FileProgressBridge {
             resource,
             size,
             downloaded: AtomicU64::new(0),
+            latest: watch::channel(None).0,
         }
     }
 }
@@ -289,11 +302,64 @@ impl ProgressHandler for FileProgressBridge {
                     .fetch_max(file.bytes_completed, Ordering::Relaxed);
             }
         }
-        let _ = self.tx.try_send(Event::ModelProgress {
-            resource: self.resource.clone(),
-            downloaded: self.downloaded.load(Ordering::Relaxed),
-            total: self.size,
-        });
+        self.latest
+            .send_replace(Some(self.downloaded.load(Ordering::Relaxed)));
+    }
+}
+
+/// Forwarding can wait for capacity without blocking hf-hub callbacks or spawning
+/// detached tasks. When the download ends, flush the latest value before returning.
+struct ProgressRelay {
+    tx: mpsc::Sender<Event>,
+    resource: String,
+    size: u64,
+    latest: watch::Receiver<Option<u64>>,
+}
+impl ProgressRelay {
+    async fn run(
+        mut self,
+        operation: impl std::future::Future<Output = anyhow::Result<()>>,
+    ) -> anyhow::Result<()> {
+        let mut latest = self.latest.clone();
+        let forward = async {
+            while latest.changed().await.is_ok() {
+                let value = *latest.borrow_and_update();
+                if let Some(downloaded) = value
+                    && self
+                        .tx
+                        .send(Event::ModelProgress {
+                            resource: self.resource.clone(),
+                            downloaded,
+                            total: self.size,
+                        })
+                        .await
+                        .is_err()
+                {
+                    break;
+                }
+            }
+        };
+        tokio::pin!(operation);
+        let result = tokio::select! {
+            result = &mut operation => result,
+            () = forward => operation.await,
+        };
+        let final_bytes = if result.is_ok() {
+            Some(self.size)
+        } else {
+            *self.latest.borrow_and_update()
+        };
+        if let Some(downloaded) = final_bytes {
+            let _ = self
+                .tx
+                .send(Event::ModelProgress {
+                    resource: self.resource,
+                    downloaded,
+                    total: self.size,
+                })
+                .await;
+        }
+        result
     }
 }
 
@@ -302,6 +368,95 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    #[tokio::test]
+    async fn progress_backpressure_keeps_latest_without_blocking_download_completion() {
+        let (tx, mut rx) = mpsc::channel(1);
+        tx.send(Event::ModelProgress {
+            resource: "queued".into(),
+            downloaded: 0,
+            total: 1000,
+        })
+        .await
+        .unwrap();
+        let (latest, updates) = watch::channel(None);
+        let relay = ProgressRelay {
+            tx,
+            resource: "weights".into(),
+            size: 1000,
+            latest: updates,
+        };
+        let (complete, completed) = tokio::sync::oneshot::channel();
+        let operation = async move {
+            for value in 1..=1000 {
+                latest.send_replace(Some(value));
+            }
+            complete.send(()).unwrap();
+            Ok(())
+        };
+        let consume = async move {
+            tokio::time::timeout(std::time::Duration::from_secs(2), completed)
+                .await
+                .unwrap()
+                .unwrap();
+            let mut last = 0;
+            while let Some(Event::ModelProgress { downloaded, .. }) = rx.recv().await {
+                last = downloaded;
+                if last == 1000 {
+                    break;
+                }
+            }
+            last
+        };
+        let (result, last) = tokio::join!(relay.run(operation), consume);
+        result.unwrap();
+        assert_eq!(last, 1000);
+    }
+    #[tokio::test]
+    async fn failed_download_flushes_real_bytes_without_reporting_completion() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let (latest, updates) = watch::channel(None);
+        let relay = ProgressRelay {
+            tx,
+            resource: "weights".into(),
+            size: 100,
+            latest: updates,
+        };
+        let operation = async move {
+            latest.send_replace(Some(25));
+            Err(anyhow::anyhow!("download failed"))
+        };
+        let consume = async move {
+            let mut values = Vec::new();
+            while let Some(Event::ModelProgress { downloaded, .. }) = rx.recv().await {
+                values.push(downloaded);
+            }
+            values
+        };
+        let (result, values) = tokio::join!(relay.run(operation), consume);
+        assert!(result.is_err());
+        assert_eq!(values.last(), Some(&25));
+        assert!(values.iter().all(|value| *value < 100));
+    }
+    #[tokio::test]
+    async fn closed_progress_receiver_does_not_cancel_download() {
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        let (latest, updates) = watch::channel(None);
+        let relay = ProgressRelay {
+            tx,
+            resource: "weights".into(),
+            size: 100,
+            latest: updates,
+        };
+        relay
+            .run(async move {
+                latest.send_replace(Some(50));
+                tokio::task::yield_now().await;
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
     fn tempdir() -> tempfile::TempDir {
         tempfile::tempdir().expect("tempdir")
     }

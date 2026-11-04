@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Coalesce download callback progress in a latest-value watch slot instead of dropping full-queue notifications. Forwarding belongs to the download future and flushes exact completion or last real bytes before return; disconnected progress consumers do not cancel the download.
+
 - **Breaking:** replace single-voice bundles with current-format multi-voice packages and the model-free `VoiceLibrary` inspect/plan/import/export API. Old transfer methods and CLI `import-bundle` are removed; `voices import-packages` accepts multiple files and `voices export` accepts multiple IDs. The new asset root is `voices-v2`; historical data is never scanned, converted or removed. Typed failures, bounded validation, immutable previews, explicit conflict decisions, per-item reports and cooperative cancellation replace string-based transfer orchestration.
 
 
