@@ -99,7 +99,7 @@ version = "2"
 
 [dependencies.tokio]
 version = "1"
-features = ["io-util"]
+features = ["io-util", "sync", "rt", "time"]
 
 [dependencies.tokio-retry]
 version = "0.3"
@@ -117,7 +117,7 @@ version = "2"
 [dev-dependencies.serial_test]
 version = "3"
 
-[dev-dependencies.tempfile]
+[target.'cfg(not(target_family = "wasm"))'.dependencies.tempfile]
 version = "3"
 
 [dev-dependencies.tokio]

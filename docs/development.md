@@ -205,3 +205,5 @@ CosyVoice3 资源准备与检查见[后端说明](cosyvoice3.md)。
 当前 hf-hub 本地补丁不等于 registry 已发布能力，库发布前必须处理 [来源与发布限制](../vendor/hf-hub/SOURCE.md)。
 
 Xet 的文件进度为零不代表网络没收到数据；真实对照、小批量实验命令与镜像重定向问题见 [Xet 与镜像诊断](records/downloads/xet-mirror-diagnosis-2026-11-05.md)。
+
+`DownloadOptions { connections: 2 }` 可显式选择每文件并发（1–4），多个客户端仍共享四路上限。诊断例子新增连接数、秒数、字节预算参数；原文件级无字节 watchdog 已移除，改用在途请求超时，避免全局调度等待误判。分片与暂停回归命令：`cargo test -p talechime-backends --no-default-features --lib --test downloads_hf_local --test downloads_parallel`。结果见[分片下载验收](records/downloads/parallel-download-acceptance-2026-11-05.md)。

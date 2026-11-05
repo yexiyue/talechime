@@ -160,12 +160,21 @@ impl Registry {
         root: Option<PathBuf>,
         config: &crate::downloads::DownloadConfig,
     ) -> anyhow::Result<Self> {
+        Self::with_download_options(root, config, crate::downloads::DownloadOptions::default())
+    }
+    /// Resource registry with an explicit HTTP transfer policy. The process-wide
+    /// connection budget remains shared with every other registry and client.
+    pub fn with_download_options(
+        root: Option<PathBuf>,
+        config: &crate::downloads::DownloadConfig,
+        options: crate::downloads::DownloadOptions,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
             root: match root {
                 Some(root) => root,
                 None => talechime_core::paths::AppPaths::user_default()?.resources(),
             },
-            downloads: crate::downloads::Downloads::new(config)?,
+            downloads: crate::downloads::Downloads::with_options(config, options)?,
         })
     }
     pub fn downloads(&self) -> &crate::downloads::Downloads {

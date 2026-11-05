@@ -592,6 +592,7 @@ impl<T: RepoType> HFRepository<T> {
         let etag = extract_etag(&head_response)
             .ok_or_else(|| HFError::malformed_response_at("missing ETag header", url.clone()));
         let commit_hash = extract_commit_hash(&head_response);
+        let resolved_body_url = crate::http_transfer::body_url(&head_response)?;
         let xet_hash = extract_xet_hash(&head_response);
         let has_xet_hash = xet_hash.is_some();
         let file_size: u64 = extract_file_size(&head_response).unwrap_or_else(|| {
@@ -694,68 +695,88 @@ impl<T: RepoType> HFRepository<T> {
             )
             .await;
         }
-        let offset = if force_download {
-            0
+        let source = crate::http_transfer::Source::new(
+            self.hf_client.clone(),
+            url.clone(),
+            resolved_body_url,
+            file_size,
+            etag.clone(),
+        );
+        let parallel = file_size >= 8 * 1024 * 1024;
+        let ranged = if parallel {
+            crate::http_transfer::download(
+                &source,
+                &incomplete_path,
+                &params.filename,
+                &params.progress,
+                force_download,
+            )
+            .await?
         } else {
-            std::fs::metadata(&incomplete_path)
-                .map(|m| m.len())
-                .unwrap_or(0)
+            false
         };
-        let offset = if offset < file_size { offset } else { 0 };
-        let mut dl_headers = self.hf_client.auth_headers();
-        if offset > 0 {
-            dl_headers.insert(
-                reqwest::header::RANGE,
-                format!("bytes={offset}-").parse().unwrap(),
-            );
-        }
-        let response = retry::retry(self.hf_client.retry_config(), || {
-            self.hf_client
-                .http_client()
-                .get(&url)
-                .headers(dl_headers.clone())
-                .send()
-        })
-        .await?;
-        let response = self
-            .hf_client
-            .check_response(
+        if !ranged {
+            let _permit = crate::http_transfer::permit().await?;
+            let offset = if force_download {
+                0
+            } else {
+                std::fs::metadata(&incomplete_path)
+                    .map(|m| m.len())
+                    .unwrap_or(0)
+            };
+            let offset = if offset < file_size { offset } else { 0 };
+            let range = (offset > 0).then(|| format!("bytes={offset}-"));
+            let response = source.fetch(range.as_deref()).await?;
+            let response = self
+                .hf_client
+                .check_response(
+                    response,
+                    Some(&repo_path),
+                    crate::error::NotFoundContext::Entry {
+                        path: params.filename.clone(),
+                    },
+                )
+                .await?;
+            let initial_bytes = if response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
+                let range = response
+                    .headers()
+                    .get(reqwest::header::CONTENT_RANGE)
+                    .and_then(|v| v.to_str().ok());
+                let expected = format!(
+                    "bytes {offset}-{}/{}",
+                    file_size.saturating_sub(1),
+                    file_size
+                );
+                if range != Some(expected.as_str()) {
+                    return Err(HFError::malformed_response(
+                        "unexpected Content-Range for resumed download",
+                    ));
+                }
+                offset
+            } else {
+                // A server may ignore Range. Start over rather than appending duplicate bytes.
+                0
+            };
+            stream_response_to_file_with_progress(
                 response,
-                Some(&repo_path),
-                crate::error::NotFoundContext::Entry {
-                    path: params.filename.clone(),
-                },
+                &incomplete_path,
+                &params.progress,
+                Some(&params.filename),
+                file_size,
+                initial_bytes,
             )
             .await?;
-        let initial_bytes = if response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
-            let range = response
-                .headers()
-                .get(reqwest::header::CONTENT_RANGE)
-                .and_then(|v| v.to_str().ok());
-            let expected = format!(
-                "bytes {offset}-{}/{}",
-                file_size.saturating_sub(1),
-                file_size
-            );
-            if range != Some(expected.as_str()) {
-                return Err(HFError::malformed_response(
-                    "unexpected Content-Range for resumed download",
-                ));
-            }
-            offset
-        } else {
-            // A server may ignore Range. Start over rather than appending duplicate bytes.
-            0
-        };
-        stream_response_to_file_with_progress(
-            response,
-            &incomplete_path,
-            &params.progress,
-            Some(&params.filename),
-            file_size,
-            initial_bytes,
-        )
-        .await?;
+        }
+        if std::fs::metadata(&incomplete_path)?.len() != file_size {
+            return Err(HFError::malformed_response(
+                "downloaded size differs from Hub metadata",
+            ));
+        }
+        if let Err(error) = crate::http_transfer::verify(&incomplete_path, &etag).await {
+            crate::http_transfer::clear_checkpoint(&incomplete_path)?;
+            std::fs::File::create(&incomplete_path)?;
+            return Err(error);
+        }
         params.progress.emit(DownloadEvent::Progress {
             files: vec![FileProgress {
                 filename: params.filename.clone(),
@@ -765,6 +786,7 @@ impl<T: RepoType> HFRepository<T> {
             }],
         });
         std::fs::rename(&incomplete_path, &blob)?;
+        crate::http_transfer::clear_checkpoint(&incomplete_path)?;
 
         finalize_cached_file(
             cache_dir,

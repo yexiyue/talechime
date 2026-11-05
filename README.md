@@ -213,3 +213,5 @@ Talechime 不获取章节、不分析角色，也不决定下一章。TRNovel �
 可用 `--config`、`--checkpoint-dir`、`--model-dir` 指定自定义路径。程序只使用当前目录与格式，不扫描或迁移旧 `novel-tts` 数据；旧文件保留原位，详见[数据目录说明](docs/migration.md)。
 
 开发命令、CPU / 原生 CI 与实机验收边界见[开发说明](docs/development.md)。普通测试不下载模型。项目源码采用 MIT；第三方源码和模型各有授权，见[许可说明](docs/licenses.md)。模型权重、用户音频和小说正文不随仓库分发。
+
+嵌入式模型下载现支持受控 HTTP 分片与断点：`Registry::with_download_options` 或 `Downloads::with_options` 接受独立的 `DownloadOptions`，默认每文件两路、进程全局最多四路。宿主 drop future 停止传输，检查 `checkpoint_failed()` 后确认暂停保存；应用任务状态与重启恢复由宿主负责。范围、实测与发布限制见[分片下载验收](docs/records/downloads/parallel-download-acceptance-2026-11-05.md)。

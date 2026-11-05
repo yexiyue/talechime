@@ -1,5 +1,5 @@
 //! Bounded real-network diagnostic. No model loading; never prints credentials or signed URLs.
-//! cargo run -p talechime-backends --no-default-features --example download_progress_probe -- raw|bridge CACHE_DIR [ENDPOINT]
+//! cargo run -p talechime-backends --no-default-features --example download_progress_probe -- raw|bridge CACHE_DIR [ENDPOINT] [CONNECTIONS] [SECONDS] [BYTE_BUDGET]
 use hf_hub::progress::{DownloadEvent, ProgressEvent, ProgressHandler};
 use std::{
     sync::{
@@ -8,7 +8,9 @@ use std::{
     },
     time::Instant,
 };
-use talechime_backends::downloads::{DownloadConfig, Downloads, FileProgressBridge};
+use talechime_backends::downloads::{
+    DownloadConfig, DownloadOptions, Downloads, FileProgressBridge,
+};
 use talechime_protocol::Event;
 const REPO: &str = "OpenMOSS-Team/MOSS-TTS-Realtime";
 const REVISION: &str = "75682787d8e2fcc73faca37ba2931453ca9c4022";
@@ -77,13 +79,26 @@ async fn main() -> anyhow::Result<()> {
         .with(DiagnosticWarnings.with_filter(tracing_subscriber::filter::LevelFilter::WARN))
         .try_init();
     let args: Vec<_> = std::env::args().collect();
-    anyhow::ensure!(args.len() >= 3, "raw|bridge CACHE_DIR [ENDPOINT]");
+    anyhow::ensure!(
+        args.len() >= 3,
+        "raw|bridge CACHE_DIR [ENDPOINT] [CONNECTIONS] [SECONDS] [BYTE_BUDGET]"
+    );
     let cache_dir = std::path::PathBuf::from(&args[2]);
     let endpoint = args.get(3).cloned();
     let start = Instant::now();
     let bytes = Arc::new(AtomicU64::new(0));
     let observed = bytes.clone();
-    let timeout = std::time::Duration::from_secs(120);
+    let seconds: u64 = args
+        .get(5)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(120)
+        .clamp(5, 120);
+    let budget: u64 = args
+        .get(6)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(64 * 1024 * 1024);
+    let connections: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(4);
+    let timeout = std::time::Duration::from_secs(seconds);
     let operation = async {
         if args[1] == "raw" {
             let mut builder = hf_hub::HFClient::builder().cache_dir(cache_dir);
@@ -105,21 +120,26 @@ async fn main() -> anyhow::Result<()> {
                 .await;
             match result {
                 Ok(_) => eprintln!("raw completed"),
-                Err(error) => eprintln!(
-                    "raw failed: {}",
-                    error
-                        .to_string()
-                        .split('?')
-                        .next()
-                        .unwrap_or("download error")
-                ),
+                Err(error) => {
+                    eprintln!(
+                        "raw failed: {}",
+                        format!("{error:#}")
+                            .split('?')
+                            .next()
+                            .unwrap_or("download error")
+                    );
+                    anyhow::bail!("download failed; see sanitized diagnostic above");
+                }
             }
         } else {
-            let client = Downloads::new(&DownloadConfig {
-                cache_dir,
-                endpoint,
-                token: None,
-            })?;
+            let client = Downloads::with_options(
+                &DownloadConfig {
+                    cache_dir,
+                    endpoint,
+                    token: None,
+                },
+                DownloadOptions { connections },
+            )?;
             let target = tempfile::tempdir()?;
             let (tx, mut rx) = tokio::sync::mpsc::channel(64);
             let destination = target.path().join(FILE);
@@ -147,14 +167,16 @@ async fn main() -> anyhow::Result<()> {
             let (result, ()) = tokio::join!(download, sink);
             match result {
                 Ok(()) => eprintln!("bridge completed"),
-                Err(error) => eprintln!(
-                    "bridge failed: {}",
-                    error
-                        .to_string()
-                        .split('?')
-                        .next()
-                        .unwrap_or("download error")
-                ),
+                Err(error) => {
+                    eprintln!(
+                        "bridge failed: {}",
+                        format!("{error:#}")
+                            .split('?')
+                            .next()
+                            .unwrap_or("download error")
+                    );
+                    anyhow::bail!("download failed; see sanitized diagnostic above");
+                }
             }
         }
         Ok::<_, anyhow::Error>(())
@@ -164,10 +186,10 @@ async fn main() -> anyhow::Result<()> {
         () = async {
             loop {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                if observed.load(Ordering::Relaxed) >= 64 * 1024 * 1024 { break; }
+                if observed.load(Ordering::Relaxed) >= budget { break; }
             }
-        } => eprintln!("stopped at 64 MiB progress budget; observed {} bytes", observed.load(Ordering::Relaxed)),
-        _ = tokio::time::sleep(timeout) => eprintln!("stopped after 120s; observed {} bytes", observed.load(Ordering::Relaxed)),
+        } => eprintln!("stopped at progress budget; observed {} bytes", observed.load(Ordering::Relaxed)),
+        _ = tokio::time::sleep(timeout) => eprintln!("stopped after {seconds}s; observed {} bytes", observed.load(Ordering::Relaxed)),
     }
     Ok(())
 }

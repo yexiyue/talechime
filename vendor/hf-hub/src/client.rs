@@ -130,6 +130,8 @@ pub(crate) struct HFClientInner {
     #[cfg(not(target_family = "wasm"))]
     pub(crate) no_redirect_client: reqwest::Client,
     pub(crate) retry_config: RetryConfig,
+    pub(crate) http_download_connections: usize,
+    pub(crate) checkpoint_failed: Arc<std::sync::atomic::AtomicBool>,
     pub(crate) endpoint: String,
     pub(crate) token: Option<String>,
     pub(crate) cache_dir: std::path::PathBuf,
@@ -149,6 +151,7 @@ pub struct HFClientBuilder {
     client: Option<reqwest::Client>,
     cache_dir: Option<std::path::PathBuf>,
     cache_enabled: Option<bool>,
+    http_download_connections: usize,
     retry_max_attempts: Option<usize>,
     retry_base_delay: Option<Duration>,
 }
@@ -164,9 +167,16 @@ impl HFClientBuilder {
             client: None,
             cache_dir: None,
             cache_enabled: None,
+            http_download_connections: 4,
             retry_max_attempts: None,
             retry_base_delay: None,
         }
+    }
+
+    /// Per-file HTTP range concurrency (1..=4), sharing a process-wide limit of four.
+    pub fn http_download_connections(mut self, connections: usize) -> Self {
+        self.http_download_connections = connections.clamp(1, 4);
+        self
     }
 
     /// Overrides the Hub base URL (default: `https://huggingface.co`, or `HF_ENDPOINT` env var).
@@ -264,13 +274,20 @@ impl HFClientBuilder {
 
         let client = match self.client {
             Some(c) => c,
-            None => reqwest::Client::builder()
-                .default_headers(default_headers.clone())
-                .build()?,
+            None => {
+                let builder = reqwest::Client::builder().default_headers(default_headers.clone());
+                #[cfg(not(target_family = "wasm"))]
+                let builder = builder
+                    .connect_timeout(Duration::from_secs(15))
+                    .read_timeout(Duration::from_secs(90));
+                builder.build()?
+            }
         };
 
         #[cfg(not(target_family = "wasm"))]
         let no_redirect_client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(15))
+            .read_timeout(Duration::from_secs(90))
             .default_headers(default_headers)
             .redirect(reqwest::redirect::Policy::none())
             .build()?;
@@ -288,6 +305,8 @@ impl HFClientBuilder {
                 #[cfg(not(target_family = "wasm"))]
                 no_redirect_client,
                 retry_config,
+                http_download_connections: self.http_download_connections,
+                checkpoint_failed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 endpoint: endpoint.trim_end_matches('/').to_string(),
                 token,
                 cache_dir,
@@ -323,6 +342,13 @@ impl Default for HFClientBuilder {
 }
 
 impl HFClient {
+    /// Whether cancellation failed to persist a transfer checkpoint.
+    pub fn download_checkpoint_failed(&self) -> bool {
+        self.inner
+            .checkpoint_failed
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Creates a client with default settings, reading the token and endpoint from the
     /// environment. Equivalent to `HFClient::builder().build()`.
     ///

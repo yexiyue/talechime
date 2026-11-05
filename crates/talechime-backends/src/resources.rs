@@ -147,26 +147,28 @@ pub(crate) async fn prepare(
     downloads: &crate::downloads::Downloads,
     progress: mpsc::Sender<Event>,
 ) -> anyhow::Result<()> {
-    for resource in resources {
-        let dest = directory.join(&resource.path);
-        // 与盘点同一谓词：大小不符的截断文件要重新下载，否则盘点永远
-        // 报缺失而这里永远跳过（见 `resource_state::entry_ready`）。
-        if crate::resource_state::entry_ready(&dest, resource.size) {
-            continue;
-        }
-        let name = format!("{namespace}/{}", resource.path);
-        let handler =
-            crate::downloads::FileProgressBridge::new(progress.clone(), name, resource.size);
-        downloads
-            .ensure(
-                &dest,
-                &resource.repo,
-                &resource.revision,
-                &resource.filename,
-                handler,
-            )
-            .await?;
-    }
+    use futures::{TryStreamExt, stream};
+    stream::iter(resources.into_iter().map(Ok::<_, anyhow::Error>))
+        .try_for_each_concurrent(2, |resource| {
+            let progress = progress.clone();
+            async move {
+                let dest = directory.join(&resource.path);
+                if crate::resource_state::entry_ready(&dest, resource.size) {
+                    return Ok(());
+                }
+                let name = format!("{namespace}/{}", resource.path);
+                downloads
+                    .ensure(
+                        &dest,
+                        &resource.repo,
+                        &resource.revision,
+                        &resource.filename,
+                        crate::downloads::FileProgressBridge::new(progress, name, resource.size),
+                    )
+                    .await
+            }
+        })
+        .await?;
     Ok(())
 }
 

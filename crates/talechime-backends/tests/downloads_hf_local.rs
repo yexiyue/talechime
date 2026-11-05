@@ -258,7 +258,7 @@ async fn mirror_absolute_metadata_redirect_drops_credentials_across_origins() {
         .await
         .unwrap();
     assert_eq!(std::fs::read(dest).unwrap(), payload);
-    mirror_request.assert_calls(2);
+    mirror_request.assert_calls(1);
     hub_request.assert_calls(2);
 }
 
@@ -279,7 +279,7 @@ async fn metadata_bearing_redirect_does_not_head_the_cdn() {
         when.method("HEAD");
         then.status(500);
     });
-    let get = hub.mock(|when, then| {
+    let get = cdn.mock(|when, then| {
         when.method("GET").path_includes(FILENAME);
         then.status(200).body(payload.as_slice());
     });

@@ -211,6 +211,8 @@
 mod client;
 pub(crate) mod constants;
 mod error;
+#[cfg(not(target_family = "wasm"))]
+mod http_transfer;
 mod pagination;
 mod retry;
 
