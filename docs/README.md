@@ -22,6 +22,7 @@
 
 - [开发博客](blog/README.md)：从项目问题出发的原理讲解；首篇介绍 Cargo patch、版本与发包后的依赖。
 - [工具链与平台](knowledge/toolchain.md)：原生依赖、设备探测、构建、平台限制和实验记录。
+- [hf-hub fork 与上游下载能力](knowledge/hf-hub-fork.md)：固定 Git 来源、Python 对照、Xet 上游 PR 与 SDK 发布限制。
 - [TTS 性能优化方法](knowledge/tts-performance.md)：跨后端的测量、准确性门禁、模块边界与优化取舍。
 - [OmniVoice CPU / Metal 优化现状](knowledge/omnivoice-performance.md)：当前执行路径、官方对照口径、受限快路径、撤回项与输出边界。
 - [会话与宿主集成](knowledge/booksource.md)：从 TRNovel 提取的听书知识；原阅读器专属条目为历史背景。

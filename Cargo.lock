@@ -2103,6 +2103,7 @@ checksum = "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
 [[package]]
 name = "hf-hub"
 version = "1.0.0"
+source = "git+https://github.com/yexiyue/hf-hub?rev=b0de8365ed72d88fb8b7534b9e7561f87d6db49d#b0de8365ed72d88fb8b7534b9e7561f87d6db49d"
 dependencies = [
  "base64 0.22.1",
  "bon",
