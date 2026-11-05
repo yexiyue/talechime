@@ -1,10 +1,12 @@
 //! Model-scoped reference recordings. Adapter encoding caches live beside the reference.
 mod asset;
+mod candidate;
 mod library;
 mod package;
 mod store;
 mod transfer;
 pub use asset::{VoiceAsset, VoiceId, VoiceSource, fingerprint, validate_id};
+pub use candidate::VoiceCandidate;
 pub use library::{LibraryDiagnostic, LibraryInventory, VoiceLibrary, VoiceLibraryError};
 pub use transfer::{
     ExportReport, ExportTarget, ImportAction, ImportConflict, ImportDecision, ImportEntry,

@@ -1,5 +1,9 @@
 # CosyVoice3 后端
 
+当前工作区默认使用 `2512-runtime-f64-v3` 成品配方，用户直接下载并校验，无需重复转换。
+下文涉及 `2512-native-f64-v2` 的原生构建与耗时为源配方验证记录。
+固定分发、许可与两类配方边界见[公开成品记录](records/resources/runtime-distribution-2026-11-05.md)。
+
 `cosyvoice3` / 模型 `0.5b` 已接入 Talechime Registry、Rust Engine、CLI 与 JSON Lines v7。
 当前为实验能力：零样本克隆、24 kHz 单声道原生流式输出；必须先导入参考 WAV 和准确转写。
 没有内置音色；支持逐段 style 指令，不开放执行级 continuation、文本正规化或生成参数。
@@ -12,32 +16,22 @@ LLM、Flow/DiT、HiFT 使用 Candle，参考语音 tokenizer 与 campplus 使用
 
 ## 准备模型
 
-模型只从本地加载。后端不会自动下载或调用 Python 转换。
-以 `--model-dir ROOT` 为资源根，转换结果须放在：
+SDK 使用原生固定配方准备资源，不启动 Python。先调用
+`ResolvedModel::native_preparation_plan()`，确认指纹后调用 `prepare_native_resources`；
+`load_existing` 只校验并加载已发布的完整版本，不隐式下载。
+详见[原生准备 API](native-resource-preparation.md)。
 
-```
-ROOT/cosyvoice3/models/0.5b/2512-candle-f64-v1/
-```
+当前版本目录为 `ROOT/cosyvoice3/models/0.5b/2512-runtime-f64-v3/`。
+LLM、Flow、campplus 和语音 tokenizer 四个文件使用已逐字节核验的固定社区版本；
+HiFT 由维护方从固定官方 checkpoint 原生导入后分发，保持 F0 的 F64 路径；完整 tokenizer 补齐官方
+281 个特殊 token（含 EOF），配置采用固定版本。输入、输出摘要与许可见
+`cosyvoice3/native.rs`（源构建）和 `cosyvoice3/distribution-inputs.json`（成品输入）及[核验记录](records/resources/native-preparation-2026-11-05.md)。
+HiFT 共 246 个张量与独立 PyTorch 对照逐字节一致；社区 HiFT 存在 82 个差异张量，
+没有替换原有精度要求或改写历史摘要。发布必须完整验证输出及配方标记，缺件、混合版本
+和损坏资源均拒绝加载。固定组件和 ORT 前端对照通过；完整 CPU/Metal 对照仍分别有 2/1 项历史数值门禁差异，未放宽要求。两设备真实短文本合成均已生成有效 WAV，人工听感未评估，详见同一核验记录。
 
-使用官方 `FunAudioLLM/Fun-CosyVoice3-0.5B-2512` 权重和固定官方源码 commit
-`074ca6dc9e80a2f424f1f74b48bdd7d3fea531cc`，按
-[本机对照记录](records/cosyvoice3/cosyvoice3-local-parity-2026-10-17.md)准备 Python 环境和来源文件。
-`llm.pt`、`flow.pt`、`hift.pt` 的原始 SHA-256 见该记录末尾。
-
-旧转换脚本已删除，可从 [Git 固定快照](https://github.com/yexiyue/talechime/blob/e591c94/tools/tts/cosyvoice3_convert_weights.py) 取回为显式外部工具；以下路径由操作者提供：
-
-```sh
-python /path/to/cosyvoice3_convert_weights.py \
-  --input OFFICIAL_MODEL_DIR \
-  --official_repo PINNED_COSYVOICE_CHECKOUT \
-  --output ROOT/cosyvoice3/models/0.5b/2512-candle-f64-v1
-cargo build --release --locked -p talechime --features cosyvoice3-metal
-```
-
-准备入口逐文件校验 `crates/talechime-backends/src/cosyvoice3/resources.json` 的大小与 SHA-256，
-包括 config、三个 safetensors、完整 tokenizer 和两个 ONNX 前端。
-校验失败保留原文件，并提示重新转换。`rand_noise.safetensors` 是开发对照文件，运行时不需要。
-转换工具与依赖版本会影响导出字节，须使用上述固定环境；更新转换产物时须重新审查 manifest。
+参考音色由 `ROOT/voices/cosyvoice3/` 下的模型音色存储管理，独立于不可变模型版本。
+开发对照可使用 Python 环境，最终用户准备和加载不依赖它。权重与参考音频不进入 Git。
 
 ## 导入与使用
 

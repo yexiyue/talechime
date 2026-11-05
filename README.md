@@ -73,12 +73,12 @@ cargo run --release -- --backend moss --model nano-candle --tts-device cpu chapt
 | 后端 / `--backend` | 模型或实现 | 音色与输出 | 构建和资源边界 |
 | --- | --- | --- | --- |
 | MOSS / `moss` | Nano Candle `nano-candle`（默认）；Realtime `realtime-1.7b` | Nano 内置或固定导入音色；两档均不提供 style/instruction/language | Nano 默认 CPU，Metal / CUDA 需显式 feature；Realtime 为需 `moss-candle-*` 的 GPU 模型 |
-| Kokoro / `kokoro` | `1.1-zh`；可选 `1.1-zh-g2pw` | 官方中文预置音色，24 kHz 分段 PCM；支持 speed，无克隆/风格/原生流式 | Candle F32，CPU/Metal 已做官方对照，CUDA 待实机验证；须先[转换官方资源](docs/kokoro.md)；0.6.1 标准包包含 CPU/g2pW，macOS 另含 Metal |
+| Kokoro / `kokoro` | `1.1-zh`；可选 `1.1-zh-g2pw` | 官方中文预置音色，24 kHz 分段 PCM；支持 speed，无克隆/风格/原生流式 | Candle F32，CPU/Metal 已做官方对照，CUDA 待实机验证；工作区可显式[准备固定成品资源](docs/kokoro.md)，无需用户转换；0.6.1 标准包包含 CPU/g2pW，macOS 另含 Metal |
 | Qwen3-TTS / `qwen` | 0.6B、1.7B CustomVoice；0.6B、1.7B Base | CustomVoice 预置音色；1.7B CustomVoice 支持风格；Base 可导入参考音频克隆 | Candle CPU；Metal / CUDA 需 `qwen-metal` / `qwen-cuda` |
 | VoxCPM2 / `voxcpm` | 2B Q8 GGUF；另有实验 BF16 路径 | 固定参考音色、音色设计与原生流式 PCM | Candle CPU；Metal / CUDA 需 `voxcpm-metal` / `voxcpm-cuda` |
 | OmniVoice / `omnivoice` | 0.6B | 参考音色、音色设计、风格和生成期语速；按语义段输出 | Candle CPU；Metal / CUDA 需 `omnivoice-metal` / `omnivoice-cuda`；当前不是模型原生实时流式 |
-| CosyVoice3 / `cosyvoice3` | 0.5B，实验性 | 导入参考音色克隆，支持风格指令，24 kHz 原生流式输出 | Candle + ORT CPU 前端；可启用 Metal / CUDA；须先[转换官方权重并放入本地目录](docs/cosyvoice3.md)，不自动下载 |
-| IndexTTS 2.5 / `indextts` | 2.5，实验性 | 中文或英文参考克隆，支持命名情绪/向量/情绪参考，22.05 kHz 整段输出 | Candle CPU；Metal / CUDA 需显式 feature 和[本地转换文件](docs/indextts.md)；标准包暂未编入 |
+| CosyVoice3 / `cosyvoice3` | 0.5B，实验性 | 导入参考音色克隆，支持风格指令，24 kHz 原生流式输出 | Candle + ORT CPU 前端；可启用 Metal / CUDA；工作区可显式[准备固定成品](docs/cosyvoice3.md)；CPU/Metal 真实短句通过，旧数值门禁差异仍记录 |
+| IndexTTS 2.5 / `indextts` | 2.5，实验性 | 中文或英文参考克隆，支持命名情绪/向量/情绪参考，22.05 kHz 整段输出 | Candle CPU；Metal / CUDA 需显式 feature 和[固定成品资源](docs/indextts.md)；标准包暂未编入 |
 
 例如在 Apple Silicon 上编译 Qwen Metal，在 NVIDIA 设备上编译 Qwen CUDA：
 
@@ -215,3 +215,5 @@ Talechime 不获取章节、不分析角色，也不决定下一章。TRNovel �
 开发命令、CPU / 原生 CI 与实机验收边界见[开发说明](docs/development.md)。普通测试不下载模型。项目源码采用 MIT；第三方源码和模型各有授权，见[许可说明](docs/licenses.md)。模型权重、用户音频和小说正文不随仓库分发。
 
 嵌入式模型下载现支持受控 HTTP 分片与断点：`Registry::with_download_options` 或 `Downloads::with_options` 接受独立的 `DownloadOptions`，默认每文件两路、进程全局最多四路。宿主 drop future 停止传输，检查 `checkpoint_failed()` 后确认暂停保存；应用任务状态与重启恢复由宿主负责。范围、实测与发布限制见[分片下载验收](docs/records/downloads/parallel-download-acceptance-2026-11-05.md)。
+
+工作区原生资源准备及公开成品分发见[接口说明](docs/native-resource-preparation.md)与[2026-11-05 分发记录](docs/records/resources/runtime-distribution-2026-11-05.md)。这些变更尚未作为新的 SDK/应用版本发布；其他平台与人工听感不随资源就绪自动验收。

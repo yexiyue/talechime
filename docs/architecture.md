@@ -203,3 +203,40 @@ core 保留 `Playback`、配置、检查点和有界暂存。facade 的 `playbac
 资源准备最多并行两个文件，每文件默认两个缺失范围任务、进程共享四个执行槽；Xet 在范围内使用官方自适应块并发。HTTP 与 Xet 共用 4 MiB 断点，乱序块按实际偏移写入，仅记录每片已确认的连续前缀；未补齐的离散片段允许重新请求。旧临时文件没有断点标记时不按长度推断进度。
 
 `DownloadOptions` 与凭据/缓存配置分开；drop future 停止并补存断点，确认 `checkpoint_failed()` 为 false 才可确认暂停。取消、校验失败、磁盘错误不触发 HTTP 回退；Xet 初始化 15 秒、取得执行槽后首片段 30 秒、后续片段 90 秒，等待执行槽和最终哈希校验不纳入无进度判定。私有数据源、覆盖计算和断点类型不进入宿主协议。最新验证见[Xet 自动选择与回退](records/downloads/xet-auto-fallback-2026-11-05.md)。
+
+## 待确认音色候选
+
+`VoiceCandidate` 封装经过同一资产/WAV 校验的参考与只读元数据，构造不写文件。
+`VoiceStudio::design_candidate` 只使用已准备设计资源并返回候选，不下载、不写正式音色库；
+显式 `prepare_design` 沿用调用方 Registry 的下载设置。用户确认后由宿主调用
+`VoiceLibrary::save_candidate`，同一候选重复提交返回相同资产；直接设计入库入口组合相同生成路径。
+候选可通过 `Engine::install_candidate` 适配到模型缓存，正式音色列表保持不变。
+`Engine::load` 先检查资源就绪，再沿用调用方 Registry 装配；`prepare_in` 是显式允许准备资源的入口。
+宿主负责候选身份、暂存预算、用户确认和媒体读取，基础库不引用桌面业务类型。
+
+资源获取方式由 `ResolvedModel::resource_preparation()` 明确返回 Download 或 Native（显式计划及完整发布），
+不能通过缺失字节数推断准备方式；Native 配方也可直接下载已验证成品，转换需求由计划明确返回。
+
+宿主先设计候选并试听，最后显式提交的组合示例：
+
+```rust,no_run
+# async fn example(studio: &talechime::VoiceStudio, engine: &mut talechime::Engine,
+# tx: tokio::sync::mpsc::Sender<talechime::Event>) -> Result<(), Box<dyn std::error::Error>> {
+let candidate = studio.design_candidate(talechime::DesignOptions::auto("温和旁白"), tx).await?;
+let voice = engine.install_candidate(&candidate).await?;
+let pcm = engine.synthesize_pcm("新的试听文字。", &voice, None, 16 * 1024 * 1024).await?;
+// 宿主播放 pcm，用户确认后才调用下面的提交；本例不代表自动确认。
+let asset = studio.library().save_candidate(&candidate)?;
+# let _ = (pcm, asset);
+# Ok(()) }
+```
+
+## 原生资源准备边界
+
+`native_preparation` 为固定资源配方提供计划、协作取消、阶段进度和原子发布基础；`ResolvedModel::native_preparation_plan` 仅对已登记配方返回计划，`prepare_native_resources` 执行确认指纹对应的配方。计划计算在受跟踪 worker 上读取并校验缓存摘要；缺失下载量与含暂存的峰值空间分别表达。网络继续使用同一个 `Downloads`，没有外部脚本入口。`PreparationControl::cancel` 后应等待调用返回，不能直接丢弃未来并宣称资源已释放。模型特定转换归各后端，资源就绪与真实推理分开验收。
+
+Kokoro 两变体、CosyVoice3 和 IndexTTS 均已登记固定配方。维护方完成原生转换与逐张量对照后发布缺少的成品组件，默认运行时只下载/复用成品，不要求用户重复转换。原生源配方保留为显式开发构建路径，没有自动回退。来源、真实输入与验收边界见[2026-11-05 核验](records/resources/native-preparation-2026-11-05.md)。
+
+原生准备 API 的阶段、取消与发布边界见[接口说明](native-resource-preparation.md)。
+
+原生准备的受控工作区统一处理组件缓存与进度。后端只声明组件名称及其转换函数，不能注册任意远端脚本；每次转换回调收到固定输入视图、暂存目标和取消控制。组件摘要验证后可跨失败重试或 Kokoro 变体复用，整个模型仍以独立版本目录原子发布。准备租约覆盖 worker 退出和暂存清理，Registry 构造不会恢复执行。清理与提交后持久化错误语义见 [原生资源准备](native-resource-preparation.md)。

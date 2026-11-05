@@ -34,7 +34,21 @@ pub use preparation::PrepareOptions;
 type Preparing<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>;
 type Loading<'a> = Pin<Box<dyn Future<Output = anyhow::Result<Rc<dyn Backend>>> + 'a>>;
 type Installing<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>>;
+/// How callers obtain this model's resources; independent of missing byte counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourcePreparation {
+    /// Pinned resources can be fetched using the caller's download configuration.
+    Download,
+    /// Pinned inputs and versioned native transforms are prepared by the SDK.
+    Native,
+}
 trait ModelAdapter {
+    fn native_recipe(&self) -> Option<crate::native_preparation::Recipe> {
+        None
+    }
+    fn resource_preparation(&self) -> ResourcePreparation {
+        ResourcePreparation::Download
+    }
     fn id(&self) -> &'static str;
     fn capabilities(&self, root: &Path) -> anyhow::Result<Capabilities>;
     fn compiled_devices(&self) -> Vec<Device>;
@@ -122,6 +136,48 @@ pub struct ResolvedModel {
     capabilities: Capabilities,
 }
 impl ResolvedModel {
+    /// Offline native preparation requirements, when this adapter has a verified recipe.
+    /// Cached input checks run on an owned worker, keeping the engine owner responsive.
+    pub async fn native_preparation_plan(&self) -> anyhow::Result<Option<crate::PreparationPlan>> {
+        let Some(recipe) = self.adapter.native_recipe() else {
+            return Ok(None);
+        };
+        crate::native_preparation::plan_recipe(
+            recipe,
+            self.root.clone(),
+            self.downloads.clone(),
+            crate::PreparationControl::default(),
+        )
+        .await
+        .map(Some)
+    }
+
+    /// Execute exactly the confirmed native recipe with cooperative cancellation.
+    pub async fn prepare_native_resources(
+        &self,
+        fingerprint: String,
+        control: crate::PreparationControl,
+        progress: mpsc::Sender<crate::PreparationProgress>,
+        file_progress: mpsc::Sender<Event>,
+    ) -> anyhow::Result<()> {
+        self.adapter
+            .native_recipe()
+            .ok_or_else(|| anyhow::anyhow!("model has no verified native preparation recipe"))?
+            .execute(
+                self.root.clone(),
+                self.downloads.clone(),
+                fingerprint,
+                control,
+                progress,
+                file_progress,
+            )
+            .await
+    }
+
+    /// Resource acquisition contract, even when the inventory is empty or partial.
+    pub fn resource_preparation(&self) -> ResourcePreparation {
+        self.adapter.resource_preparation()
+    }
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
@@ -510,7 +566,7 @@ mod tests {
         registry
             .install_reference("qwen", Some("1.7b-base"), voice)
             .await?;
-        assert!(registry.reference_fresh("qwen", Some("1.7b-base"), "hero", &asset.fingerprint()));
+        assert!(registry.reference_fresh("qwen", Some("1.7b-base"), "hero", asset.fingerprint()));
         let voice_wav = talechime_backends_qwen_voice_wav(root.path(), "hero");
         let before = std::fs::read(&voice_wav)?;
         registry
@@ -534,7 +590,7 @@ mod tests {
             "qwen",
             Some("1.7b-base"),
             "hero",
-            &changed_asset.fingerprint()
+            changed_asset.fingerprint()
         ));
         assert_ne!(std::fs::read(&voice_wav)?, before);
         // Damage must not make catalog enumeration prevent repairing the entry.
@@ -543,7 +599,7 @@ mod tests {
             "qwen",
             Some("1.7b-base"),
             "hero",
-            &changed_asset.fingerprint()
+            changed_asset.fingerprint()
         ));
         registry
             .install_reference(
@@ -559,7 +615,7 @@ mod tests {
             "qwen",
             Some("1.7b-base"),
             "hero",
-            &changed_asset.fingerprint()
+            changed_asset.fingerprint()
         ));
         Ok(())
     }

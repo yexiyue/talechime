@@ -7,11 +7,17 @@ pub(super) const REGISTRATION: Registration = Registration {
 };
 struct Adapter;
 impl ModelAdapter for Adapter {
+    fn native_recipe(&self) -> Option<crate::native_preparation::Recipe> {
+        Some(model::native_recipe())
+    }
+    fn resource_preparation(&self) -> ResourcePreparation {
+        ResourcePreparation::Native
+    }
     fn id(&self) -> &'static str {
         model::MODEL
     }
     fn capabilities(&self, root: &Path) -> anyhow::Result<Capabilities> {
-        model::capabilities(&model::directory(root))
+        model::capabilities(root)
     }
     fn compiled_devices(&self) -> Vec<Device> {
         model::compiled_devices()
@@ -24,7 +30,7 @@ impl ModelAdapter for Adapter {
     }
     fn reference_entry(&self, root: &Path, id: &str) -> anyhow::Result<ReferenceEntry> {
         Ok(ReferenceEntry::Directory(
-            model::voice_store(&model::directory(root))?.path(id)?,
+            model::voice_store(root)?.path(id)?,
         ))
     }
     fn install_reference(
@@ -37,7 +43,7 @@ impl ModelAdapter for Adapter {
         transcript: &str,
     ) -> anyhow::Result<()> {
         crate::reference::load(wav, 24000)?;
-        let store = model::voice_store(&model::directory(root))?;
+        let store = model::voice_store(root)?;
         store.import(id, name, wav, transcript, None)?;
         Ok(())
     }
@@ -46,10 +52,7 @@ impl ModelAdapter for Adapter {
         false
     }
     fn resource_status(&self, root: &Path) -> crate::resource_state::ResourceStatus {
-        crate::resource_state::status_of_manifests(&[(
-            model::resources::MANIFEST,
-            &model::directory(root),
-        )])
+        model::native_recipe().status(root)
     }
     fn prepare<'a>(
         &'a self,
@@ -67,8 +70,10 @@ impl ModelAdapter for Adapter {
         _recovery: bool,
     ) -> Loading<'a> {
         Box::pin(async move {
-            let directory = model::directory(root);
-            Ok(Rc::new(model::CosyBackend::load_on(directory, device).await?) as Rc<dyn Backend>)
+            Ok(
+                Rc::new(model::CosyBackend::load_on(root.to_owned(), device).await?)
+                    as Rc<dyn Backend>,
+            )
         })
     }
 }

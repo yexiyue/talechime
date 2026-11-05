@@ -25,6 +25,15 @@ impl ResolvedModel {
     /// this for explicit resource preparation; [`Self::prepare`] still runs the
     /// same download pass before loading.
     pub async fn prepare_resources(&self, progress: mpsc::Sender<Event>) -> anyhow::Result<()> {
+        if let Some(recipe) = self.adapter.native_recipe() {
+            return crate::native_preparation::prepare_recipe(
+                recipe,
+                self.root.clone(),
+                self.downloads.clone(),
+                progress,
+            )
+            .await;
+        }
         self.adapter
             .prepare(&self.root, &self.downloads, progress)
             .await
@@ -33,6 +42,26 @@ impl ResolvedModel {
         &self,
         options: PrepareOptions,
         progress: mpsc::Sender<Event>,
+    ) -> anyhow::Result<Rc<dyn Backend>> {
+        self.prepare_inner(options, progress, true).await
+    }
+    /// Load only existing files. This path never invokes resource preparation.
+    pub async fn load_existing(
+        &self,
+        options: PrepareOptions,
+        progress: mpsc::Sender<Event>,
+    ) -> anyhow::Result<Rc<dyn Backend>> {
+        anyhow::ensure!(
+            self.adapter.resource_status(&self.root) == crate::ResourceStatus::Ready,
+            "model resources are not ready; prepare explicitly first"
+        );
+        self.prepare_inner(options, progress, false).await
+    }
+    async fn prepare_inner(
+        &self,
+        options: PrepareOptions,
+        progress: mpsc::Sender<Event>,
+        prepare_resources: bool,
     ) -> anyhow::Result<Rc<dyn Backend>> {
         let available = self.available_devices();
         anyhow::ensure!(
@@ -76,9 +105,9 @@ impl ResolvedModel {
         if let Some(record) = &cached {
             selected = record.device;
         }
-        self.adapter
-            .prepare(&self.root, &self.downloads, progress.clone())
-            .await?;
+        if prepare_resources {
+            self.prepare_resources(progress.clone()).await?;
+        }
         let mut backend = match self
             .adapter
             .load(&self.root, progress.clone(), selected, false)

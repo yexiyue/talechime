@@ -7,11 +7,17 @@ pub(super) const REGISTRATION: Registration = Registration {
 };
 struct Adapter;
 impl ModelAdapter for Adapter {
+    fn native_recipe(&self) -> Option<crate::native_preparation::Recipe> {
+        Some(model::native_recipe())
+    }
+    fn resource_preparation(&self) -> ResourcePreparation {
+        ResourcePreparation::Native
+    }
     fn id(&self) -> &'static str {
         model::MODEL
     }
     fn capabilities(&self, root: &Path) -> anyhow::Result<Capabilities> {
-        model::capabilities(&model::directory(root))
+        model::capabilities(root)
     }
     fn compiled_devices(&self) -> Vec<Device> {
         model::compiled_devices()
@@ -24,7 +30,7 @@ impl ModelAdapter for Adapter {
     }
     fn reference_entry(&self, root: &Path, id: &str) -> anyhow::Result<ReferenceEntry> {
         Ok(ReferenceEntry::Directory(
-            model::voice_store(&model::directory(root))?.path(id)?,
+            model::voice_store(root)?.path(id)?,
         ))
     }
     fn install_reference(
@@ -41,7 +47,7 @@ impl ModelAdapter for Adapter {
             reference.len() <= 15 * 22_050,
             "IndexTTS reference must be at most 15 seconds"
         );
-        let store = model::voice_store(&model::directory(root))?;
+        let store = model::voice_store(root)?;
         store.import(id, name, wav, transcript, None)?;
         Ok(())
     }
@@ -50,7 +56,7 @@ impl ModelAdapter for Adapter {
         false
     }
     fn resource_status(&self, root: &Path) -> crate::resource_state::ResourceStatus {
-        model::resources::conversion_status(&model::directory(root))
+        model::native_recipe().status(root)
     }
     fn prepare<'a>(
         &'a self,
@@ -68,8 +74,10 @@ impl ModelAdapter for Adapter {
         _recovery: bool,
     ) -> Loading<'a> {
         Box::pin(async move {
-            let directory = model::directory(root);
-            Ok(Rc::new(model::IndexBackend::load_on(directory, device).await?) as Rc<dyn Backend>)
+            Ok(
+                Rc::new(model::IndexBackend::load_on(root.to_owned(), device).await?)
+                    as Rc<dyn Backend>,
+            )
         })
     }
 }

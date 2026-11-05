@@ -1,0 +1,136 @@
+{
+  "format": "talechime-indextts-native-v2",
+  "revision": "c39ce5ba-native-f32-v2",
+  "precision": "float32",
+  "source_semantics": "https://github.com/index-tts/index-tts/tree/d9e41aac89fd00b3d71497fddb287b7f24613712",
+  "inputs": [
+    {
+      "path": "gpt.pth",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "gpt.pth",
+      "size": 3259599833,
+      "sha256": "43a8f4c30eccdf201958d3b9713511482c19d56dc20b0b1c4ee1e6b080b19d85"
+    },
+    {
+      "path": "codec.pth",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "codec.pth",
+      "size": 607290935,
+      "sha256": "d15cbed16a40f478438c961fb043f68dfa6353bf56c966761315db3433e9722c"
+    },
+    {
+      "path": "s2mel.pth",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "s2mel.pth",
+      "size": 414908601,
+      "sha256": "9b1b0003fc189c94cc349758d7ebc25f903b7eb2de4602879959cc64ce816456"
+    },
+    {
+      "path": "feat1.pt",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "feat1.pt",
+      "size": 57170,
+      "sha256": "f219cb447d80216ba615666da2ff8d63ac544eee26657f3a7b278692bf7a67c4"
+    },
+    {
+      "path": "feat2.pt",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "feat2.pt",
+      "size": 374866,
+      "sha256": "9c4292e96dee535aea9a6206e9a0c856dd578dde9212acdb16dd3ada4d12bf80"
+    },
+    {
+      "path": "wav2vec2bert_stats.pt",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "wav2vec2bert_stats.pt",
+      "size": 9343,
+      "sha256": "c9c176c2b8850ab2e3ba828bbfa969deaf4566ce55db5f2687b8430b87526ad2"
+    },
+    {
+      "path": "config.yaml",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "config.yaml",
+      "size": 2860,
+      "sha256": "18adf417be3e8f5e2e48e30f7420c719170a6870619436250f360d626877870e"
+    },
+    {
+      "path": "multilingual_zh_ja_yue_char_del.tiktoken",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "multilingual_zh_ja_yue_char_del.tiktoken",
+      "size": 907395,
+      "sha256": "747979631e813193436aabcff7c1c235d37de8097b71c563ec8b63b7a515c718"
+    },
+    {
+      "path": "campplus_cn_common.bin",
+      "repo": "funasr/campplus",
+      "revision": "e4b6ede7ce16997aff4ae69fbca1f0175e2afede",
+      "filename": "campplus_cn_common.bin",
+      "size": 28036335,
+      "sha256": "3388cf5fd3493c9ac9c69851d8e7a8badcfb4f3dc631020c4961371646d5ada8"
+    },
+    {
+      "path": "bigvgan_generator.pt",
+      "repo": "nvidia/bigvgan_v2_22khz_80band_256x",
+      "revision": "633ff708ed5b74903e86ff1298cf4a98e921c513",
+      "filename": "bigvgan_generator.pt",
+      "size": 449228171,
+      "sha256": "e95ba25972d3de0628d99cd156e9315a9c018899bf739988959ebe3544080ced"
+    },
+    {
+      "path": "bigvgan.config.json",
+      "repo": "nvidia/bigvgan_v2_22khz_80band_256x",
+      "revision": "633ff708ed5b74903e86ff1298cf4a98e921c513",
+      "filename": "config.json",
+      "size": 1405,
+      "sha256": "88a1f47acf747db0b21e97a389d838566147f7a5464583ff5c8d819d870f03ee"
+    },
+    {
+      "path": "w2v-bert-2.0/model.safetensors",
+      "repo": "facebook/w2v-bert-2.0",
+      "revision": "da985ba0987f70aaeb84a80f2851cfac8c697a7b",
+      "filename": "model.safetensors",
+      "size": 2322063736,
+      "sha256": "eb890c9660ed6e3414b6812e27257b8ce5454365d5490d3ad581ea60b93be043"
+    },
+    {
+      "path": "w2v-bert-2.0/config.json",
+      "repo": "facebook/w2v-bert-2.0",
+      "revision": "da985ba0987f70aaeb84a80f2851cfac8c697a7b",
+      "filename": "config.json",
+      "size": 1874,
+      "sha256": "f5572bd5998b68182e9c328a43127ed21fed687f6910497136b91a4e3b0e3675"
+    },
+    {
+      "path": "LICENSE-INDEXTTS",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "LICENSE",
+      "size": 10553,
+      "sha256": "cc7da9ea0f8a97ef15ab3bf0389e636ce79ffca1aef5489520796ac87d87a87b"
+    }
+  ],
+  "component_tensor_counts": {
+    "gpt": 456,
+    "codec": 243,
+    "s2mel": 284,
+    "campplus": 937,
+    "bigvgan": 783,
+    "feats": 4
+  },
+  "licenses": {
+    "IndexTeam/IndexTTS-2.5": "bilibili Model Use License Agreement; full text in LICENSE-INDEXTTS",
+    "funasr/campplus": "Apache-2.0",
+    "nvidia/bigvgan_v2_22khz_80band_256x": "MIT",
+    "facebook/w2v-bert-2.0": "MIT"
+  },
+  "changes": "Fixed official checkpoints are converted into F32 safetensors without name/layout changes; S2Mel mappings are flattened under models.; feature variance becomes standard deviation. No FP16 recovery is attempted. BigVGAN normalization remains in the existing loader.",
+  "derivative_statement": "These modifications are not endorsed, warranted, or guaranteed by the original right-holder; the original right-holder disclaims all liability related to this Derivative Work."
+}

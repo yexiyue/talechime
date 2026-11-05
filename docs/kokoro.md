@@ -1,5 +1,9 @@
 # Kokoro 官方权重原生后端
 
+当前工作区默认使用 `01e7505-runtime-f32-v3` 成品配方，用户直接下载并校验，无需重复转换。
+下文涉及 `01e7505-native-f32-v2` 的原生构建与耗时为源配方验证记录。
+固定分发、许可与两类配方边界见[公开成品记录](records/resources/runtime-distribution-2026-11-05.md)。
+
 Kokoro 是可选的中文预置音色后端，当前源码提供 `1.1-zh` 和显式启用的
 `1.1-zh-g2pw`。声学网络直接对照 hexgrad 官方 Python 实现移植到 Candle；
 运行时不调用 Python。0.6.0 标准发行配置已编入该后端，本机 CPU/Metal 对照结果见
@@ -38,14 +42,29 @@ cargo run --release --locked -p talechime --no-default-features \
 内建音色与参数从准备后的 capabilities 查询。推理对象由专用线程持有，
 取消检查覆盖资源哈希、模型阶段和有界 PCM 发送；单次底层算子执行不能抢占。
 
-## 从官方资产准备新资源
+## 准备固定运行资源
 
-此后端使用显式的本地开发转换，prepare 只校验，不自动下载或迁移。
-完整固定版本、SHA-256 和许可证见 [SOURCE.md](../crates/kokoro/SOURCE.md)。
-需要官方 Kokoro/Misaki 固定源码、原始 config/模型、官方中文 voice `.pt`，
-以及独立的 Python 3.11 开发环境（依赖在 `crates/kokoro/scripts/requirements.txt`）。
-导出工具校验实际导入源码与固定 commit，
-转换时折叠 weight normalization，并对照官方输出。
+显式准备通过 `ResolvedModel::native_preparation_plan()` 获取当前缓存需求，确认指纹后
+调用 `prepare_native_resources`。默认下载已验证的完成文件，普通中文与 g2pW 变体的
+`conversions` 均为空；`load_existing` 只校验和加载已发布资源，不隐式下载。
+完整取消、磁盘预算及发布协议见[准备接口](native-resource-preparation.md)。
+
+当前目录分别为 `ROOT/kokoro/models/1.1-zh/01e7505-runtime-f32-v3/` 与
+`ROOT/kokoro/models/1.1-zh-g2pw/01e7505-runtime-f32-v3/`。必须匹配编译清单和发布标记，
+不能把自行导出的旧 `native-v1` 目录放入新版本冒充就绪。正式准备不调用外部脚本，也不
+迁移/删除旧模型、用户音色或原始资产。
+
+维护方的 v2 原生源配方以固定官方/核验社区 F32 输入经 Rust 折叠权重归一化，补齐固定
+官方 AdaIN 参数并组装完整资源。被忽略的准备测试显式设置 `TALECHIME_BUILD_NATIVE_SOURCE=1`
+才选择源构建；默认用户入口不自动回退。运行资源、配方与许可固定在
+`crates/talechime-backends/src/kokoro/` 的 native/distribution 清单，来源对照另见
+[SOURCE.md](../crates/kokoro/SOURCE.md) 和公开成品记录。
+
+## 维护方独立参考导出
+
+以下 Python 工具只为开发者生成官方数值对照，终端用户不需要它们。需要固定官方
+Kokoro/Misaki 源码及原始模型、音色；分词字典完整许可须明确提供。导出目标必须是新目录，
+不会自动注册为当前发布版本。具体依赖版本及完整资产核验见本轮资源记录。
 
 ```sh
 python crates/kokoro/scripts/export_official.py \
@@ -54,18 +73,9 @@ python crates/kokoro/scripts/export_official.py \
   --output NEW_MODEL_EXPORT
 
 python crates/kokoro/scripts/export_frontend.py \
-  --misaki-source MISAKI_CHECKOUT --output NEW_FRONTEND_EXPORT
-
-python crates/kokoro/scripts/prepare_runtime.py \
-  --model-export NEW_MODEL_EXPORT --frontend-export NEW_FRONTEND_EXPORT \
-  --voice OFFICIAL_ASSETS/zf_001.pt --voice OFFICIAL_ASSETS/zm_010.pt \
-  --output RESOURCE_ROOT/kokoro/models/1.1-zh/01e7505-native-v1
+  --misaki-source MISAKI_CHECKOUT --jieba-license JIEBA_LICENSE \
+  --output NEW_FRONTEND_EXPORT
 ```
-
-所有输出路径必须是新目录。CLI 的 RESOURCE_ROOT 是 `~/.talechime/resources`；
-嵌入宿主可指定独立目录。转换保留许可证、模型来源报告、音色身份、大小与 SHA-256
-清单。目录缺失、格式不支持或校验失败会报错，原文件不会被覆盖。
-模型、词典和用户音频不随源码提交。
 
 ## 可选上下文读音
 
@@ -77,7 +87,7 @@ g2pW 是另一个模型，不能保证所有姓名或上下文正确。本阶段
 答对 23 个，“解先生”仍误读为 jie3。该小语料结果不是通用正确率。
 相对原版有 6 例音素结果改变，含重复的姓氏上下文；未以训练或规则硬编码修补测试句。
 
-开发环境还需要作者官方 g2pW 固定源码和验证过的模型压缩包、BERT 中文 tokenizer。
+生成独立对照的开发环境还需要作者官方 g2pW 固定源码和验证过的模型压缩包、BERT 中文 tokenizer。
 只需 tokenizer 文件，不另下载 BERT 权重。
 
 ```sh
@@ -86,10 +96,6 @@ python crates/kokoro/scripts/export_context.py \
   --model-dir EXTRACTED/G2PWModel --tokenizer-dir BERT_TOKENIZER \
   --output NEW_CONTEXT_EXPORT
 
-python crates/kokoro/scripts/prepare_runtime.py \
-  --model-export NEW_MODEL_EXPORT --frontend-export NEW_FRONTEND_EXPORT \
-  --context-export NEW_CONTEXT_EXPORT --voice OFFICIAL_ASSETS/zf_001.pt \
-  --output RESOURCE_ROOT/kokoro/models/1.1-zh-g2pw/01e7505-native-v1
 ```
 
 ## 独立对照
@@ -135,3 +141,28 @@ M4 Pro / CPU F32 开启 g2pW，最新八线程对照中长文原生 RTF 为 0.06
 历史阶段见[第一轮 CPU 优化](records/kokoro/kokoro-cpu-optimization-2026-10-27.md)、
 [四线程官方对照](records/kokoro/kokoro-cpu-parity-2026-10-27.md)和
 [原始性能记录](records/kokoro/kokoro-g2pw-performance-2026-10-27.md)。
+
+### 原生资源准备进展（2026-11-05）
+
+中文前端数据已在公共、无访问审批的
+[yexiyue/talechime-resources](https://huggingface.co/yexiyue/talechime-resources/tree/8eb001f5498e099e6ac929454e7fb28e457bf035/kokoro/misaki-zh-v1)
+发布并逐文件匿名下载校验。运行时为 Rust 词典/规则读取，不需要 Python；生成工具仅供开发环境使用：先运行 `scripts/export_frontend.py`（显式传入固定 Misaki checkout、jieba v0.42.1 LICENSE 和新输出目录），再运行 `frontend_compare`，最后用 `scripts/package_frontend.py` 形成带来源与许可证的分发包。参数以工具的 `--help` 为准。
+
+原生权重转换已与官方完整 599 个张量逐位对齐，并通过 CPU/Metal 固定噪声声学对照。应用内一键准备、g2pW 配方和桌面试听验收仍在接入，不以数据发布或上述数值对照代替。
+详细证据见 [资源核验记录](records/resources/native-preparation-2026-11-05.md)。
+
+#### 已登记的普通中文原生配方
+
+SDK 的 `kokoro/1.1-zh` 已登记 `kokoro-1.1-zh-native-f32-v2`。
+`ResolvedModel::native_preparation_plan().await` 提供离线计划，确认指纹后调用
+`prepare_native_resources`，原生折叠 F32 权重、复用 100 个经官方逐元核对的中文音色，并下载上述固定前端数据。输出版本目录为 `kokoro/models/1.1-zh/01e7505-native-f32-v2`；旧手工导出目录不迁移。
+
+完整目录为 114 个已固定摘要的运行资源，共 396,981,297 字节（另含准备发布标记）。在已核验输入的隔离资源根中，原生准备/校验/发布实际完成约 9.67 秒，随后计划返回就绪、缺失下载量和额外准备空间均为零。推理只接受与编译配方相同的清单及发布标记，修改清单或混用读音变体会被拒绝。缓存中的完成组件按固定输出摘要复核后共享；未完成文件不复用。
+
+宿主模型中心的新准备确认、进度和任务日志尚在接入；此 SDK 记录不表示桌面流程已完成。
+
+#### 可选 g2pW 原生配方
+
+启用 `kokoro-g2pw` 后，`kokoro/1.1-zh-g2pw` 同样通过 SDK 原生准备计划执行。上下文表包固定到资源仓库提交 `ead7e24684eaea42af3dc0fec0bc5c7d9c51bfdf`，ONNX 读音模型从固定官方 ZIP 原生解包，BERT 仅下载词表。声学权重、100 个音色和普通中文前端与普通变体共享完成组件；不切换 ONNX 声学执行。
+
+两变体均已在 CPU、Metal 完成真实加载、短文本合成和有效 WAV 校验。g2pW 24/24 官方输入/输出对照通过；人工目标读音为 23/24，保留上游同一处模型误读，听感尚未人工评价。新配方不接收用户自建的清单或混合版本。公开数据包匿名可下载，运行时不依赖开发阶段 Python 环境。

@@ -27,11 +27,12 @@ pub(super) fn candle_device(device: Device) -> candle_core::Result<candle_core::
 }
 
 pub(super) fn run(
-    directory: PathBuf,
+    root: PathBuf,
     device: Device,
     mut jobs: mpsc::Receiver<Request>,
     ready: oneshot::Sender<Result<(), BackendError>>,
 ) {
+    let directory = super::directory(&root);
     let loaded = candle_device(device)
         .and_then(|device| talechime_indextts::Model::load(&directory, &device));
     let mut model = match loaded {
@@ -55,7 +56,7 @@ pub(super) fn run(
         if request.audio.is_closed() {
             continue;
         }
-        if let Err(error) = generate(&mut model, &mut reference_cache, &directory, &request)
+        if let Err(error) = generate(&mut model, &mut reference_cache, &root, &request)
             && !request.audio.is_closed()
         {
             let _ = crate::observation::send_audio(&request.audio, Err(error));

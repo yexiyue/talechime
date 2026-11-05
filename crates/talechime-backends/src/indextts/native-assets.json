@@ -1,0 +1,183 @@
+{
+  "inputs": [
+    {
+      "path": "gpt.pth",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "gpt.pth",
+      "size": 3259599833,
+      "sha256": "43a8f4c30eccdf201958d3b9713511482c19d56dc20b0b1c4ee1e6b080b19d85"
+    },
+    {
+      "path": "codec.pth",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "codec.pth",
+      "size": 607290935,
+      "sha256": "d15cbed16a40f478438c961fb043f68dfa6353bf56c966761315db3433e9722c"
+    },
+    {
+      "path": "s2mel.pth",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "s2mel.pth",
+      "size": 414908601,
+      "sha256": "9b1b0003fc189c94cc349758d7ebc25f903b7eb2de4602879959cc64ce816456"
+    },
+    {
+      "path": "feat1.pt",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "feat1.pt",
+      "size": 57170,
+      "sha256": "f219cb447d80216ba615666da2ff8d63ac544eee26657f3a7b278692bf7a67c4"
+    },
+    {
+      "path": "feat2.pt",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "feat2.pt",
+      "size": 374866,
+      "sha256": "9c4292e96dee535aea9a6206e9a0c856dd578dde9212acdb16dd3ada4d12bf80"
+    },
+    {
+      "path": "wav2vec2bert_stats.pt",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "wav2vec2bert_stats.pt",
+      "size": 9343,
+      "sha256": "c9c176c2b8850ab2e3ba828bbfa969deaf4566ce55db5f2687b8430b87526ad2"
+    },
+    {
+      "path": "config.yaml",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "config.yaml",
+      "size": 2860,
+      "sha256": "18adf417be3e8f5e2e48e30f7420c719170a6870619436250f360d626877870e"
+    },
+    {
+      "path": "multilingual_zh_ja_yue_char_del.tiktoken",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "multilingual_zh_ja_yue_char_del.tiktoken",
+      "size": 907395,
+      "sha256": "747979631e813193436aabcff7c1c235d37de8097b71c563ec8b63b7a515c718"
+    },
+    {
+      "path": "campplus_cn_common.bin",
+      "repo": "funasr/campplus",
+      "revision": "e4b6ede7ce16997aff4ae69fbca1f0175e2afede",
+      "filename": "campplus_cn_common.bin",
+      "size": 28036335,
+      "sha256": "3388cf5fd3493c9ac9c69851d8e7a8badcfb4f3dc631020c4961371646d5ada8"
+    },
+    {
+      "path": "bigvgan_generator.pt",
+      "repo": "nvidia/bigvgan_v2_22khz_80band_256x",
+      "revision": "633ff708ed5b74903e86ff1298cf4a98e921c513",
+      "filename": "bigvgan_generator.pt",
+      "size": 449228171,
+      "sha256": "e95ba25972d3de0628d99cd156e9315a9c018899bf739988959ebe3544080ced"
+    },
+    {
+      "path": "bigvgan.config.json",
+      "repo": "nvidia/bigvgan_v2_22khz_80band_256x",
+      "revision": "633ff708ed5b74903e86ff1298cf4a98e921c513",
+      "filename": "config.json",
+      "size": 1405,
+      "sha256": "88a1f47acf747db0b21e97a389d838566147f7a5464583ff5c8d819d870f03ee"
+    },
+    {
+      "path": "w2v-bert-2.0/model.safetensors",
+      "repo": "facebook/w2v-bert-2.0",
+      "revision": "da985ba0987f70aaeb84a80f2851cfac8c697a7b",
+      "filename": "model.safetensors",
+      "size": 2322063736,
+      "sha256": "eb890c9660ed6e3414b6812e27257b8ce5454365d5490d3ad581ea60b93be043"
+    },
+    {
+      "path": "w2v-bert-2.0/config.json",
+      "repo": "facebook/w2v-bert-2.0",
+      "revision": "da985ba0987f70aaeb84a80f2851cfac8c697a7b",
+      "filename": "config.json",
+      "size": 1874,
+      "sha256": "f5572bd5998b68182e9c328a43127ed21fed687f6910497136b91a4e3b0e3675"
+    },
+    {
+      "path": "LICENSE-INDEXTTS",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "LICENSE",
+      "size": 10553,
+      "sha256": "cc7da9ea0f8a97ef15ab3bf0389e636ce79ffca1aef5489520796ac87d87a87b"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "gpt.safetensors",
+      "size": 3259446504,
+      "sha256": "9e5e7d192907a24d80f19b587ab9e5fdf8032d679beb36239bd9af3e0c61378b"
+    },
+    {
+      "path": "codec.safetensors",
+      "size": 202358064,
+      "sha256": "30c5e9b989bfb63f77784a2c0753c11f2e2177b0e8be170f587c645c920cc408"
+    },
+    {
+      "path": "s2mel.safetensors",
+      "size": 414778712,
+      "sha256": "edbe644be9538fe3a3e6d98f0ab54603ac3ebdbfa168dcf88d2c4ee62468e4bc"
+    },
+    {
+      "path": "campplus.safetensors",
+      "size": 27831904,
+      "sha256": "2884cfd4a2953c9759a71137a354a61060733dc61a89f9cc0a15a2d151302b67"
+    },
+    {
+      "path": "bigvgan.safetensors",
+      "size": 449018644,
+      "sha256": "5cf00e7802f15a3c2aa24183691d437c7ad5a49fe6174d90f99fce38198368b3"
+    },
+    {
+      "path": "feats.safetensors",
+      "size": 438320,
+      "sha256": "b44309af6529e53412f35bf833ad499b39789b8b4496f1e5592b55774a3f4d77"
+    },
+    {
+      "path": "bigvgan.config.json",
+      "size": 1405,
+      "sha256": "88a1f47acf747db0b21e97a389d838566147f7a5464583ff5c8d819d870f03ee"
+    },
+    {
+      "path": "multilingual_zh_ja_yue_char_del.tiktoken",
+      "size": 907395,
+      "sha256": "747979631e813193436aabcff7c1c235d37de8097b71c563ec8b63b7a515c718"
+    },
+    {
+      "path": "w2v-bert-2.0/model.safetensors",
+      "size": 2322063736,
+      "sha256": "eb890c9660ed6e3414b6812e27257b8ce5454365d5490d3ad581ea60b93be043"
+    },
+    {
+      "path": "w2v-bert-2.0/config.json",
+      "size": 1874,
+      "sha256": "f5572bd5998b68182e9c328a43127ed21fed687f6910497136b91a4e3b0e3675"
+    },
+    {
+      "path": "LICENSE-INDEXTTS",
+      "size": 10553,
+      "sha256": "cc7da9ea0f8a97ef15ab3bf0389e636ce79ffca1aef5489520796ac87d87a87b"
+    },
+    {
+      "path": "config.json",
+      "size": 3269,
+      "sha256": "e3503c2f2e0af0c24fd456e6e02613d1e536b02e4c9bd3da185093db537cf487"
+    },
+    {
+      "path": "SOURCES.json",
+      "size": 5226,
+      "sha256": "5d7177b2f43b6e7ecf3afad22c3e599f7192ef17178413356a41bfdbfd8af04c"
+    }
+  ]
+}

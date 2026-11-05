@@ -61,9 +61,7 @@ pub(crate) fn status_of(entries: &[(String, u64)], directory: &Path) -> Resource
     feature = "qwen",
     feature = "voxcpm",
     feature = "omnivoice",
-    feature = "cosyvoice3",
     feature = "kokoro",
-    feature = "indextts",
     test
 ))]
 fn resource_status(ready: usize, total: usize, missing_bytes: u64) -> ResourceStatus {
@@ -87,7 +85,6 @@ fn resource_status(ready: usize, total: usize, missing_bytes: u64) -> ResourceSt
     feature = "qwen",
     feature = "voxcpm",
     feature = "omnivoice",
-    feature = "cosyvoice3",
     test
 ))]
 pub(crate) fn status_of_manifests(manifests: &[(&str, &Path)]) -> ResourceStatus {
@@ -112,23 +109,6 @@ pub(crate) fn status_of_manifests(manifests: &[(&str, &Path)]) -> ResourceStatus
     resource_status(ready, total, missing_bytes)
 }
 
-/// Readiness for presence-checked conversion layouts without pinned sizes.
-/// `missing_bytes` stays zero because entry sizes are unknown.
-#[cfg(feature = "indextts")]
-pub(crate) fn status_of_names(names: &[&str], directory: &Path) -> ResourceStatus {
-    let total = names.len();
-    let ready = names
-        .iter()
-        .filter(|name| {
-            directory
-                .join(name)
-                .metadata()
-                .is_ok_and(|metadata| metadata.len() > 0)
-        })
-        .count();
-    resource_status(ready, total, 0)
-}
-
 /// Parse `(path, size)` pairs out of an embedded manifest, ignoring other
 /// fields. Works for both remote and local-conversion manifest shapes.
 #[cfg(any(
@@ -136,7 +116,6 @@ pub(crate) fn status_of_names(names: &[&str], directory: &Path) -> ResourceStatu
     feature = "qwen",
     feature = "voxcpm",
     feature = "omnivoice",
-    feature = "cosyvoice3",
     test
 ))]
 pub(crate) fn manifest_entries(json: &str) -> anyhow::Result<Vec<(String, u64)>> {

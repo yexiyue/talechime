@@ -80,7 +80,7 @@ def main():
         )
         if hashlib.sha256(expected).hexdigest() != sha(loaded):
             raise ValueError(f"imported {name} differs from source revision")
-        provenance[name] = dict(path=str(loaded), sha256=sha(loaded))
+        provenance[name] = dict(path=relative.as_posix(), sha256=sha(loaded))
     conv = G2PWConverter(
         model_dir=str(args.model_dir),
         model_source=str(args.tokenizer_dir),

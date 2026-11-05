@@ -11,6 +11,7 @@
 //! environment or token-file configuration. `default_cache_dir` below is NOT in
 //! `talechime-core` paths.rs: the shared cache belongs to the user's Hugging
 //! Face ecosystem, not to TaleChime's own `~/.talechime` layout.
+use sha2::Digest;
 use std::{
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
@@ -21,7 +22,7 @@ use talechime_protocol::Event;
 use tokio::sync::{mpsc, watch};
 
 /// Host-provided download configuration.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DownloadConfig {
     /// Absolute HF cache directory (e.g. `~/.cache/huggingface/hub`).
     pub cache_dir: PathBuf,
@@ -38,6 +39,16 @@ impl Default for DownloadConfig {
             endpoint: None,
             token: None,
         }
+    }
+}
+
+impl std::fmt::Debug for DownloadConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DownloadConfig")
+            .field("cache_dir", &self.cache_dir)
+            .field("endpoint_configured", &self.endpoint.is_some())
+            .field("token_configured", &self.token.is_some())
+            .finish()
     }
 }
 
@@ -84,6 +95,8 @@ impl Default for DownloadOptions {
 #[derive(Clone)]
 pub struct Downloads {
     client: hf_hub::HFClient,
+    cache_dir: PathBuf,
+    source_identity: String,
     transport: DownloadTransport,
 }
 
@@ -121,8 +134,50 @@ impl Downloads {
             .retry_max_attempts(1);
         Ok(Self {
             client: builder.build()?,
+            cache_dir: config.cache_dir.clone(),
+            source_identity: format!(
+                "{:x}",
+                sha2::Sha256::digest(serde_json::to_vec(&(
+                    &config.cache_dir,
+                    config
+                        .endpoint
+                        .as_deref()
+                        .unwrap_or("https://huggingface.co"),
+                    config.token.as_deref(),
+                    options.connections,
+                    format!("{:?}", options.transport),
+                ))?)
+            ),
             transport: options.transport,
         })
+    }
+
+    /// Shared cache used by this explicitly configured client.
+    pub fn cache_dir(&self) -> &Path {
+        &self.cache_dir
+    }
+
+    pub(crate) fn source_identity(&self) -> &str {
+        &self.source_identity
+    }
+
+    pub(crate) fn cached_path(
+        &self,
+        repo: &str,
+        revision: &str,
+        filename: &str,
+    ) -> Option<PathBuf> {
+        let (owner, name) = split_repo(repo).ok()?;
+        let path = self
+            .cache_dir
+            .join(format!("models--{owner}--{name}"))
+            .join("snapshots")
+            .join(revision)
+            .join(filename);
+        let canonical = path.canonicalize().ok()?;
+        canonical
+            .starts_with(self.cache_dir.canonicalize().ok()?)
+            .then_some(canonical)
     }
 
     /// Test-only client with an isolated cache at `root/hf-cache` and the
@@ -155,8 +210,33 @@ impl Downloads {
         filename: &str,
         progress: FileProgressBridge,
     ) -> anyhow::Result<()> {
+        self.ensure_inner(dest, repo, revision, filename, progress, false)
+            .await
+    }
+
+    pub(crate) async fn refresh(
+        &self,
+        dest: &Path,
+        repo: &str,
+        revision: &str,
+        filename: &str,
+        progress: FileProgressBridge,
+    ) -> anyhow::Result<()> {
+        self.ensure_inner(dest, repo, revision, filename, progress, true)
+            .await
+    }
+
+    async fn ensure_inner(
+        &self,
+        dest: &Path,
+        repo: &str,
+        revision: &str,
+        filename: &str,
+        progress: FileProgressBridge,
+        refresh: bool,
+    ) -> anyhow::Result<()> {
         let expected_size = progress.size;
-        if crate::resource_state::entry_ready(dest, expected_size) {
+        if !refresh && crate::resource_state::entry_ready(dest, expected_size) {
             return Ok(());
         }
         let relay = ProgressRelay {
@@ -177,10 +257,13 @@ impl Downloads {
                     .use_xet(self.transport != DownloadTransport::Http)
                     .http_fallback(self.transport == DownloadTransport::Auto)
                     .progress(progress);
-                let mut path =
-                    download.clone().send().await.map_err(|error| {
-                        download_error(repo, revision, filename, classify(error))
-                    })?;
+                let initial = if refresh {
+                    download.clone().force_download(true).send().await
+                } else {
+                    download.clone().send().await
+                };
+                let mut path = initial
+                    .map_err(|error| download_error(repo, revision, filename, classify(error)))?;
                 // A cache hit may itself be truncated (the layout can share its inode).
                 // Let hf-hub replace the blob using its own locks and atomic writes.
                 if !crate::resource_state::entry_ready(&path, expected_size) {

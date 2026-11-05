@@ -1,30 +1,11 @@
-//! Check converted local weights before starting the owner thread.
+//! Offline verification of the compiled native IndexTTS resource recipe.
 use std::path::Path;
 use talechime_protocol::Event;
 use tokio::sync::mpsc;
 
-/// Pinned upstream checkpoint plus the local conversion layout.
-pub const REVISION: &str = "c39ce5ba-candle-v1";
+pub const REVISION: &str = "c39ce5ba-runtime-f32-v3";
 
-pub(crate) const FILES: &[&str] = &[
-    "config.json",
-    "gpt.safetensors",
-    "codec.safetensors",
-    "s2mel.safetensors",
-    "campplus.safetensors",
-    "bigvgan.safetensors",
-    "bigvgan.config.json",
-    "feats.safetensors",
-    "multilingual_zh_ja_yue_char_del.tiktoken",
-    "w2v-bert-2.0/model.safetensors",
-    "w2v-bert-2.0/config.json",
-];
-
-/// Offline readiness over the converted-file list; sizes are unknown here.
-pub(crate) fn conversion_status(directory: &Path) -> crate::resource_state::ResourceStatus {
-    crate::resource_state::status_of_names(FILES, directory)
-}
-
+/// Verify an already published version without downloading or converting.
 pub async fn prepare(directory: &Path, progress: mpsc::Sender<Event>) -> anyhow::Result<()> {
     let _ = progress
         .send(Event::ResourceState {
@@ -32,49 +13,18 @@ pub async fn prepare(directory: &Path, progress: mpsc::Sender<Event>) -> anyhow:
             resource: "indextts/2.5".into(),
         })
         .await;
-    let directory = directory.to_owned();
-    tokio::task::spawn_blocking(move || {
-        for name in FILES {
-            let path = directory.join(name);
-            anyhow::ensure!(
-                path.is_file() && path.metadata()?.len() > 0,
-                "missing or empty IndexTTS converted file {}; see docs/indextts.md",
-                path.display()
-            );
-        }
-        Ok(())
-    })
-    .await?
+    super::native_recipe()
+        .verify_existing(directory.to_owned(), crate::PreparationControl::default())
+        .await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    #[test]
-    fn conversion_manifest_covers_required_layout() {
-        let manifest: serde_json::Value =
-            serde_json::from_str(include_str!("conversion-manifest.json")).unwrap();
-        assert_eq!(manifest["revision"], REVISION);
-        let files = manifest["resources"].as_array().unwrap();
-        let names: std::collections::BTreeSet<_> = files
-            .iter()
-            .map(|file| {
-                assert!(file["size"].as_u64().unwrap() > 0);
-                let hash = file["sha256"].as_str().unwrap();
-                assert_eq!(hash.len(), 64);
-                assert!(hash.bytes().all(|b| b.is_ascii_hexdigit()));
-                file["path"].as_str().unwrap()
-            })
-            .collect();
-        assert_eq!(files.len(), names.len());
-        assert_eq!(names, FILES.iter().copied().collect());
-    }
-
     #[tokio::test]
-    async fn missing_conversion_does_not_create_resources() {
+    async fn missing_resources_are_not_created_implicitly() {
         let root = tempfile::tempdir().unwrap();
-        let (tx, _rx) = mpsc::channel(2);
-        assert!(prepare(root.path(), tx).await.is_err());
+        let (tx, _) = tokio::sync::mpsc::channel(2);
+        assert!(super::prepare(root.path(), tx).await.is_err());
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
 }

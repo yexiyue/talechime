@@ -1,4 +1,6 @@
 //! Official-model Kokoro Mandarin synthesis with built-in voices and segment PCM.
+mod native;
+pub(crate) use native::recipe as native_recipe;
 pub mod resources;
 mod runtime;
 use std::path::{Path, PathBuf};
@@ -302,7 +304,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("prepare the pinned official runtime bundle")
+                .contains("prepare the native resource recipe")
         );
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }

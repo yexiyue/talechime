@@ -53,7 +53,7 @@ def verify_checkout(checkout, revision, modules):
             raise ValueError(
                 f"actually imported {loaded} differs from pinned {revision}"
             )
-        provenance[name] = {"path": str(loaded), "sha256": digest, "revision": revision}
+        provenance[name] = {"path": relative.as_posix(), "sha256": digest, "revision": revision}
     return provenance
 
 

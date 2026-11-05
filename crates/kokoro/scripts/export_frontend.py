@@ -28,10 +28,14 @@ from export_official import MISAKI_REV, verify_checkout
 def main():
     parser = ArgumentParser(description=__doc__)
     parser.add_argument("--misaki-source", type=Path, required=True)
+    parser.add_argument("--jieba-license", type=Path, required=True,
+                        help="LICENSE from the official jieba v0.42.1 source")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.output.exists():
         raise ValueError("output must be a new directory")
+    if hashlib.sha256(args.jieba_license.read_bytes()).hexdigest() != "18ba0984839f85853b29fadaf992f7dba8fd0ca0fbeae34de2b8735222dc7a37":
+        raise ValueError("unexpected jieba v0.42.1 license")
     provenance = verify_checkout(
         args.misaki_source,
         MISAKI_REV,
@@ -157,6 +161,7 @@ def main():
     )
     licenses = args.output / "licenses"
     licenses.mkdir()
+    shutil.copyfile(args.jieba_license, licenses / "jieba-LICENSE")
     shutil.copyfile(args.misaki_source / "LICENSE", licenses / "misaki-APACHE.txt")
     for package in ["jieba", "pypinyin", "pypinyin-dict", "cn2an"]:
         dist = metadata.distribution(package)

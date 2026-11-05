@@ -3,21 +3,11 @@
 //! Every entry pins an immutable upstream commit. Downloads go through the
 //! shared HF cache (see [`crate::downloads`]); integrity for remote entries is
 //! the Hub's etag-named blobs plus transport integrity, and local-conversion
-//! manifests keep explicit size + SHA-256 verification via [`verify_local`].
+//! manifests keep explicit size + SHA-256 verification via `verify_local_cancellable`.
 use serde::Deserialize;
-#[cfg(any(
-    feature = "cosyvoice3",
-    feature = "kokoro",
-    feature = "performance-tools",
-    test
-))]
+#[cfg(any(feature = "kokoro", feature = "performance-tools", test))]
 use sha2::{Digest, Sha256};
-#[cfg(any(
-    feature = "cosyvoice3",
-    feature = "kokoro",
-    feature = "performance-tools",
-    test
-))]
+#[cfg(any(feature = "kokoro", feature = "performance-tools", test))]
 use std::io::Read;
 use std::path::Path;
 #[cfg(any(
@@ -58,12 +48,7 @@ pub(crate) struct Resource {
 }
 
 /// A local-conversion file with explicit integrity pins (CosyVoice3-style).
-#[cfg(any(
-    feature = "cosyvoice3",
-    feature = "kokoro",
-    feature = "performance-tools",
-    test
-))]
+#[cfg(any(feature = "kokoro", feature = "performance-tools", test))]
 #[derive(Deserialize)]
 pub(crate) struct LocalResource {
     pub path: String,
@@ -72,18 +57,13 @@ pub(crate) struct LocalResource {
 }
 
 /// Verify a local converted file against its size and SHA-256 pins.
-#[cfg(any(feature = "cosyvoice3", feature = "performance-tools", test))]
+#[cfg(any(feature = "performance-tools", test))]
 pub(crate) fn verify_local(directory: &Path, resource: &LocalResource) -> anyhow::Result<()> {
     verify_local_cancellable(directory, resource, || false)
 }
 
 /// Cancellable variant for background verification tasks.
-#[cfg(any(
-    feature = "cosyvoice3",
-    feature = "kokoro",
-    feature = "performance-tools",
-    test
-))]
+#[cfg(any(feature = "kokoro", feature = "performance-tools", test))]
 pub(crate) fn verify_local_cancellable(
     directory: &Path,
     resource: &LocalResource,
@@ -113,12 +93,7 @@ pub(crate) fn sha256_of(path: &Path) -> anyhow::Result<String> {
     hash_file(&mut file, || false)
 }
 
-#[cfg(any(
-    feature = "cosyvoice3",
-    feature = "kokoro",
-    feature = "performance-tools",
-    test
-))]
+#[cfg(any(feature = "kokoro", feature = "performance-tools", test))]
 fn hash_file(file: &mut std::fs::File, cancelled: impl Fn() -> bool) -> anyhow::Result<String> {
     let mut hash = Sha256::new();
     let mut buffer = [0u8; 65536];

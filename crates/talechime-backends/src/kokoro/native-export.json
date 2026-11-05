@@ -1,0 +1,19 @@
+{
+  "format": "kokoro-native-export-v2",
+  "model_revision": "01e7505bd6a7a2ac4975463114c3a7650a9f7218",
+  "dtype": "float32",
+  "converter": "talechime-rust-kokoro-v2",
+  "input": {
+    "path": "model-input.safetensors",
+    "repo": "1038lab/Kokoro-82M-zh-MLX",
+    "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+    "filename": "model.safetensors",
+    "size": 327115152,
+    "sha256": "c3e1448dbd823dc54bb950a4f0650975c2385e789e2684fea37c93185bc104a0"
+  },
+  "source": "https://github.com/hexgrad/kokoro/tree/dfb907a02bba8152ca444717ca5d78747ccb4bec",
+  "normalization": "fixed ARM64 PyTorch 2.7.1 reduction order; all 599 output tensors bit-exact against the pinned official model",
+  "defaults": "70 InstanceNorm1d(affine=True) modules initialized by the pinned official AdaIN1d: 140 non-trained unit-weight/zero-bias tensors; not missing learned checkpoint weights",
+  "frontend_revision": "8eb001f5498e099e6ac929454e7fb28e457bf035",
+  "source_license": "Apache-2.0; frontend retains per-source Apache-2.0/MIT terms"
+}

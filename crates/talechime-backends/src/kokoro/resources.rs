@@ -3,13 +3,11 @@ use serde::Deserialize;
 use std::{
     collections::BTreeMap,
     path::{Component, Path},
-    thread::JoinHandle,
 };
 use talechime_protocol::Event;
-use tokio::sync::{mpsc, oneshot};
-use tokio_util::sync::CancellationToken;
+use tokio::sync::mpsc;
 
-pub const REVISION: &str = "01e7505-native-v1";
+pub const REVISION: &str = "01e7505-runtime-f32-v3";
 #[derive(Deserialize)]
 pub(super) struct Voice {
     pub path: String,
@@ -36,8 +34,33 @@ struct OfficialVoice {
 }
 
 pub(super) fn read(directory: &Path) -> anyhow::Result<Manifest> {
-    let manifest: Manifest =
-        serde_json::from_slice(&std::fs::read(directory.join("manifest.json"))?)?;
+    use std::io::Read;
+    let path = directory.join("manifest.json");
+    anyhow::ensure!(
+        std::fs::symlink_metadata(&path)?.is_file(),
+        "invalid Kokoro manifest file"
+    );
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(512 * 1024)
+        .read_to_end(&mut bytes)?;
+    let manifest: Manifest = serde_json::from_slice(&bytes)?;
+    anyhow::ensure!(
+        bytes == super::native::manifest(manifest.contextual),
+        "Kokoro manifest differs from the compiled native recipe"
+    );
+    let marker = super::native::publication_marker(manifest.contextual)?;
+    let path = directory.join("preparation.json");
+    let meta = std::fs::symlink_metadata(&path)?;
+    anyhow::ensure!(
+        meta.is_file() && meta.len() == marker.len() as u64,
+        "Kokoro resources were not published by the native preparation recipe"
+    );
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(marker.len() as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    anyhow::ensure!(bytes == marker, "Kokoro publication recipe differs");
     anyhow::ensure!(
         manifest.format == "kokoro-native-v1"
             && manifest.model_revision == "01e7505bd6a7a2ac4975463114c3a7650a9f7218",
@@ -170,41 +193,6 @@ fn verify_files(
     Ok(())
 }
 
-struct VerificationTask {
-    shutdown: CancellationToken,
-    thread: Option<JoinHandle<()>>,
-    result: oneshot::Receiver<anyhow::Result<()>>,
-}
-
-impl VerificationTask {
-    fn spawn(
-        verify: impl FnOnce(CancellationToken) -> anyhow::Result<()> + Send + 'static,
-    ) -> std::io::Result<Self> {
-        let shutdown = CancellationToken::new();
-        let stop = shutdown.clone();
-        let (answer, result) = oneshot::channel();
-        let thread = std::thread::Builder::new()
-            .name("kokoro-verify".into())
-            .spawn(move || {
-                let _ = answer.send(verify(stop));
-            })?;
-        Ok(Self {
-            shutdown,
-            thread: Some(thread),
-            result,
-        })
-    }
-}
-
-impl Drop for VerificationTask {
-    fn drop(&mut self) {
-        self.shutdown.cancel();
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
-}
-
 pub async fn prepare(directory: &Path, progress: mpsc::Sender<Event>) -> anyhow::Result<()> {
     prepare_for(directory, super::MODEL, progress).await
 }
@@ -219,49 +207,8 @@ pub async fn prepare_for(
             resource: format!("kokoro/{model}"),
         })
         .await;
-    let verification_directory = directory.to_owned();
-    let model = model.to_owned();
-    let verified = async {
-        let mut task = VerificationTask::spawn(move |stop| {
-            let manifest = read_for(&verification_directory, &model)?;
-            verify_files(&verification_directory, &manifest, &|| stop.is_cancelled())
-        })?;
-        (&mut task.result).await?
-    }
-    .await;
-    verified.map_err(|error| anyhow::anyhow!(
-        "Kokoro local conversion verification failed: {error}; prepare the pinned official runtime bundle in {} (see docs/kokoro.md)", directory.display()
-    ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    };
-
-    #[tokio::test]
-    async fn cancelled_preparation_joins_verification_before_returning() {
-        let finished = Arc::new(AtomicBool::new(false));
-        let worker_finished = finished.clone();
-        let (started, running) = oneshot::channel();
-        let preparation = tokio::spawn(async move {
-            let mut task = VerificationTask::spawn(move |stop| {
-                let _ = started.send(());
-                while !stop.is_cancelled() {
-                    std::thread::park_timeout(std::time::Duration::from_millis(1));
-                }
-                worker_finished.store(true, Ordering::Release);
-                Ok(())
-            })
-            .unwrap();
-            (&mut task.result).await.unwrap().unwrap();
-        });
-        running.await.unwrap();
-        preparation.abort();
-        assert!(preparation.await.unwrap_err().is_cancelled());
-        assert!(finished.load(Ordering::Acquire));
-    }
+    let recipe = super::native_recipe(model)
+        .ok_or_else(|| anyhow::anyhow!("unsupported Kokoro native model"))?;
+    recipe.verify_existing(directory.to_owned(), crate::PreparationControl::default()).await
+        .map_err(|error| anyhow::anyhow!("Kokoro native resource verification failed: {error}; prepare the native resource recipe explicitly"))
 }

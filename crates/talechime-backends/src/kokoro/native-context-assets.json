@@ -1,0 +1,1547 @@
+{
+  "inputs": [
+    {
+      "path": "model-input.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "model.safetensors",
+      "size": 327115152,
+      "sha256": "c3e1448dbd823dc54bb950a4f0650975c2385e789e2684fea37c93185bc104a0"
+    },
+    {
+      "path": "voices/zf_001.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_001.safetensors",
+      "size": 522320,
+      "sha256": "19aba9f273067860f5e490bcbbefd6e531b462109413432b80d9d15c53c05748"
+    },
+    {
+      "path": "voices/zf_002.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_002.safetensors",
+      "size": 522320,
+      "sha256": "e712a0aee2426a115a896cac918469668215904423f25cb57d69a6e395eb4632"
+    },
+    {
+      "path": "voices/zf_003.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_003.safetensors",
+      "size": 522320,
+      "sha256": "6ab144eb75f4aeefadbaa86f7799f6c1bc5d346e9e4e0efaa9aeacf63e8727c7"
+    },
+    {
+      "path": "voices/zf_004.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_004.safetensors",
+      "size": 522320,
+      "sha256": "6c11c277daa788bc245e670f90e95ebe8303cc57c390001488d8456eda0c85b8"
+    },
+    {
+      "path": "voices/zf_005.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_005.safetensors",
+      "size": 522320,
+      "sha256": "b549ef39793e7d8cea48192ae8ed5eddafc3a884c2e4917f18aa75b87f5dfe98"
+    },
+    {
+      "path": "voices/zf_006.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_006.safetensors",
+      "size": 522320,
+      "sha256": "85df01cabb704e485f466ff3648e1e8528c1540ace202e7affc5972043e3fe8f"
+    },
+    {
+      "path": "voices/zf_007.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_007.safetensors",
+      "size": 522320,
+      "sha256": "5a106ca31dcae34e4aba08d894146c947ffee073801c42677109a363b626552a"
+    },
+    {
+      "path": "voices/zf_008.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_008.safetensors",
+      "size": 522320,
+      "sha256": "92c3fe5c7f264fabd80df61bcd8a07d23caedc5d9a2482f4b9091627ff1cebc6"
+    },
+    {
+      "path": "voices/zf_017.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_017.safetensors",
+      "size": 522320,
+      "sha256": "b2c043330bca52f1fe13d9862a4817f208b9aa0abbf43a4a041766e004fc4864"
+    },
+    {
+      "path": "voices/zf_018.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_018.safetensors",
+      "size": 522320,
+      "sha256": "0fed27bd26c5452a267721012935adecda13f4d5f1f3b9aa6beebe6e73073212"
+    },
+    {
+      "path": "voices/zf_019.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_019.safetensors",
+      "size": 522320,
+      "sha256": "fb55b972cd8024dae22cbd9b2ac484d568ff48f7dfe74e5cf6bb3ce124bfdd53"
+    },
+    {
+      "path": "voices/zf_021.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_021.safetensors",
+      "size": 522320,
+      "sha256": "6b8c5b982fde82b37c837612d3ac4aa32f6dcf67bf5e3937a750db70a2c7d9b4"
+    },
+    {
+      "path": "voices/zf_022.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_022.safetensors",
+      "size": 522320,
+      "sha256": "8734e3a510e204f743179365a3ac53b2d89b3b44363997b45bac44f9c2a70cee"
+    },
+    {
+      "path": "voices/zf_023.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_023.safetensors",
+      "size": 522320,
+      "sha256": "757187d298a31eb3108b3ac53354bb11785751aa1ef30281a05a5036049ec70c"
+    },
+    {
+      "path": "voices/zf_024.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_024.safetensors",
+      "size": 522320,
+      "sha256": "ac187860846c1627b7fedf5274c24980d4f5357218308a1a358ac9c0222dc4e5"
+    },
+    {
+      "path": "voices/zf_026.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_026.safetensors",
+      "size": 522320,
+      "sha256": "ca2cb0f917a5053f39cb606102a8b5aa72f99570b0be6fa06713e2c8b8d4bd5f"
+    },
+    {
+      "path": "voices/zf_027.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_027.safetensors",
+      "size": 522320,
+      "sha256": "70cb78823603cfcc9121ab8299283e933e975fa0ae2b51279cca04bb36093d33"
+    },
+    {
+      "path": "voices/zf_028.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_028.safetensors",
+      "size": 522320,
+      "sha256": "8fd4ea6822e22559a56d00bcfb5b5fc42b0442ceaad9c44a622b8b2a38ce259b"
+    },
+    {
+      "path": "voices/zf_032.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_032.safetensors",
+      "size": 522320,
+      "sha256": "241d06aebb340738d0b5c680ec81076ea0bdf0c98e0a04499930344a3d8f6720"
+    },
+    {
+      "path": "voices/zf_036.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_036.safetensors",
+      "size": 522320,
+      "sha256": "013dc11f57a16efe2d3a5e24a696d92f31028e97adec5f0dfdbaf200d9327fe3"
+    },
+    {
+      "path": "voices/zf_038.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_038.safetensors",
+      "size": 522320,
+      "sha256": "b6547a051526d6f0d56eacbec390581b2cfbd625eee686792bb1d37129a1598c"
+    },
+    {
+      "path": "voices/zf_039.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_039.safetensors",
+      "size": 522320,
+      "sha256": "8c9c00a98496c1ef992d6bcebc28b200f0a85c69600140a8eeeeebeb2fb65c1d"
+    },
+    {
+      "path": "voices/zf_040.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_040.safetensors",
+      "size": 522320,
+      "sha256": "a36b5e63aadb6e62c545017f67bccb4301aed7236b00ca01e6b5ff53990fd77b"
+    },
+    {
+      "path": "voices/zf_042.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_042.safetensors",
+      "size": 522320,
+      "sha256": "fd0bb0668d912cf6cee895a24fb521891a488de37a2dde82123a534572104415"
+    },
+    {
+      "path": "voices/zf_043.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_043.safetensors",
+      "size": 522320,
+      "sha256": "d6af3465b3560e68df7a4349c1e7240eadc4029aca844977fb2771e3faed091e"
+    },
+    {
+      "path": "voices/zf_044.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_044.safetensors",
+      "size": 522320,
+      "sha256": "4711915ba5e9dc744a2d675cd637a36382237bc888669480d771facbfe842063"
+    },
+    {
+      "path": "voices/zf_046.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_046.safetensors",
+      "size": 522320,
+      "sha256": "9dacf2ec1df56a32a1591bc4e0a786439cc4593a0b0601d1f642fe59c79c0493"
+    },
+    {
+      "path": "voices/zf_047.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_047.safetensors",
+      "size": 522320,
+      "sha256": "d355f5ca857683180df3ef734aca01d44a6f3da964b31e15ea3e12b37ab1b0e1"
+    },
+    {
+      "path": "voices/zf_048.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_048.safetensors",
+      "size": 522320,
+      "sha256": "e884f0a369d7ca9322d0ea63468d1552366757ab1fc055f5bd862d851c8b28e4"
+    },
+    {
+      "path": "voices/zf_049.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_049.safetensors",
+      "size": 522320,
+      "sha256": "5d0ee7c00c8ebcc79e98e7edde369120c3f41dc7acfd6d4086233526e4318682"
+    },
+    {
+      "path": "voices/zf_051.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_051.safetensors",
+      "size": 522320,
+      "sha256": "945f7b9992f62cfbe76c551a6610fa91e77e5c6a8351a142489babbbd5d42029"
+    },
+    {
+      "path": "voices/zf_059.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_059.safetensors",
+      "size": 522320,
+      "sha256": "dee8c3b87fc65aee2c2340387d802ae40ae9d6675a1787a54e08fcf6430316b8"
+    },
+    {
+      "path": "voices/zf_060.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_060.safetensors",
+      "size": 522320,
+      "sha256": "a13686f5af35f62d84e47edc2ce037130ae1ae4171f61da04d1263b263f0a9cf"
+    },
+    {
+      "path": "voices/zf_067.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_067.safetensors",
+      "size": 522320,
+      "sha256": "e6c0f6561f9237828a36876f2be24893eeba56aa37ff821b63fe963cacbcb77e"
+    },
+    {
+      "path": "voices/zf_070.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_070.safetensors",
+      "size": 522320,
+      "sha256": "dbd03c731458beb11983462fd36279b78465cbabb97967a02c3d52d2c99205d5"
+    },
+    {
+      "path": "voices/zf_071.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_071.safetensors",
+      "size": 522320,
+      "sha256": "4346a5753e8cc9f1e039ce5dade3c0f67e44db364f03798947e0569f22467f19"
+    },
+    {
+      "path": "voices/zf_072.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_072.safetensors",
+      "size": 522320,
+      "sha256": "63b278fa51d37b3637b15849323dc65930a06e18d8c69aabe4ad7587ac7599b7"
+    },
+    {
+      "path": "voices/zf_073.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_073.safetensors",
+      "size": 522320,
+      "sha256": "7b71de509b8d6718bac8747990b222bab5956229bfa72581c1c3fecbc28a0e2f"
+    },
+    {
+      "path": "voices/zf_074.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_074.safetensors",
+      "size": 522320,
+      "sha256": "08c4423886d53af1a213a15dd5394ded05119f7b8b190fb344836cde91bf71f3"
+    },
+    {
+      "path": "voices/zf_075.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_075.safetensors",
+      "size": 522320,
+      "sha256": "3dbcaa6426fa6389d72f44418ea19d56c96849257a6afdefc9a8b8ed3ce4c2fa"
+    },
+    {
+      "path": "voices/zf_076.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_076.safetensors",
+      "size": 522320,
+      "sha256": "cf0523831652fa8dd4e50f9064a29a7e133c2d5a8ea7f4fb7e7c49ef62374e5f"
+    },
+    {
+      "path": "voices/zf_077.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_077.safetensors",
+      "size": 522320,
+      "sha256": "00cb293f6f09b726479ef4e1939c55833abeab8b08c6b0223ba2b0ff8522d0ef"
+    },
+    {
+      "path": "voices/zf_078.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_078.safetensors",
+      "size": 522320,
+      "sha256": "84ac80d5a2e458205e192e71e0ac9187db42da12a1b8a7cbdde9aead28f14d76"
+    },
+    {
+      "path": "voices/zf_079.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_079.safetensors",
+      "size": 522320,
+      "sha256": "749e61814009baf12ad00d031b284016c07201b892ae45ca78c53b5585860f3b"
+    },
+    {
+      "path": "voices/zf_083.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_083.safetensors",
+      "size": 522320,
+      "sha256": "d2ce909b2f6ac117d390a48544d2317432e18ff45d4e08c315a375dba426b5c8"
+    },
+    {
+      "path": "voices/zf_084.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_084.safetensors",
+      "size": 522320,
+      "sha256": "e618e49e568ad7be4d15de65710653d0bf11931096686e21f080e4be5345c92f"
+    },
+    {
+      "path": "voices/zf_085.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_085.safetensors",
+      "size": 522320,
+      "sha256": "24e41647e77c9a453aa395f4bb056a11261a38dc952c9b022af154158c412355"
+    },
+    {
+      "path": "voices/zf_086.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_086.safetensors",
+      "size": 522320,
+      "sha256": "7c3e84ae692c4878b35754a028bf3c3e8d75fefb66d5f8108a0204874c21400e"
+    },
+    {
+      "path": "voices/zf_087.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_087.safetensors",
+      "size": 522320,
+      "sha256": "fa2763b0c0d4a235374921494401c91a98d8f651406f1e08481d4f66d698ca73"
+    },
+    {
+      "path": "voices/zf_088.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_088.safetensors",
+      "size": 522320,
+      "sha256": "e2fc5729a45a2cde4be96ef4891f4f57b1697c5dd2ff0d4cc2b4bf83586f5229"
+    },
+    {
+      "path": "voices/zf_090.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_090.safetensors",
+      "size": 522320,
+      "sha256": "f761b23b56491dbc5d95b6f0e7323ccf4e6402927d72ac0688dfe7ff7df6d6b9"
+    },
+    {
+      "path": "voices/zf_092.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_092.safetensors",
+      "size": 522320,
+      "sha256": "592a0b221714d98e9da3c71e894c00c9706ad95e890da9f5a6ebcc9911c549b8"
+    },
+    {
+      "path": "voices/zf_093.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_093.safetensors",
+      "size": 522320,
+      "sha256": "f3fee319270d5ab965a847fcee878c5c47987f495540254212a7e836c66b9ce2"
+    },
+    {
+      "path": "voices/zf_094.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_094.safetensors",
+      "size": 522320,
+      "sha256": "97f7e752eca934144a10398e2138480704dc4012d9ecb88204324192391925d8"
+    },
+    {
+      "path": "voices/zf_099.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zf_099.safetensors",
+      "size": 522320,
+      "sha256": "9386544b03a357bf39ecfb1d27e89f9fe96358dfe88eba9e1b20d43afecbd8cf"
+    },
+    {
+      "path": "voices/zm_009.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_009.safetensors",
+      "size": 522320,
+      "sha256": "15d7f42b0301d71a89a45d539b6cc00001147adff9ecc9db57f1dc23022acdd1"
+    },
+    {
+      "path": "voices/zm_010.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_010.safetensors",
+      "size": 522320,
+      "sha256": "2a6f163f8e32cb8223437419195039056d7840b3a86d033b496e14ccc345610b"
+    },
+    {
+      "path": "voices/zm_011.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_011.safetensors",
+      "size": 522320,
+      "sha256": "e5db989f5084e37a4960e1024aa2a88f732641ef076e4a8d81ceeeb5ab23f143"
+    },
+    {
+      "path": "voices/zm_012.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_012.safetensors",
+      "size": 522320,
+      "sha256": "38adc1139f3ce7cb21924793e50ff423f9e9955137568b1ad12c2dd9a065f71c"
+    },
+    {
+      "path": "voices/zm_013.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_013.safetensors",
+      "size": 522320,
+      "sha256": "e6405fd856580078cfded622ff295c2e5284e7fe502323a36b556a08135bba86"
+    },
+    {
+      "path": "voices/zm_014.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_014.safetensors",
+      "size": 522320,
+      "sha256": "ed98314de64efbfb88fdfcf016a111a99dab9e3c3a00f07b94c7b13e6942cfc9"
+    },
+    {
+      "path": "voices/zm_015.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_015.safetensors",
+      "size": 522320,
+      "sha256": "5c0960efcde703f2e62c99e3ad4a06f4cafaa5578fd7ffe343963ebec1e43a9f"
+    },
+    {
+      "path": "voices/zm_016.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_016.safetensors",
+      "size": 522320,
+      "sha256": "b8d3b05fbd06df0a2bc2a054ded302b2cebc0fee26e3911634d24030849462df"
+    },
+    {
+      "path": "voices/zm_020.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_020.safetensors",
+      "size": 522320,
+      "sha256": "315cdfe6c42fe9b8beb8c895cfb33279e780d9ca59efbde1b4cc67a6151d333c"
+    },
+    {
+      "path": "voices/zm_025.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_025.safetensors",
+      "size": 522320,
+      "sha256": "325a6c80097b0f4a9c42bad3ad4831a6e788c14c753a7b02e1c65c87fb21fe62"
+    },
+    {
+      "path": "voices/zm_029.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_029.safetensors",
+      "size": 522320,
+      "sha256": "1df1fcf46711c5d1c55de9bee60efc98485247a97a60123d1289a0e20b3935ef"
+    },
+    {
+      "path": "voices/zm_030.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_030.safetensors",
+      "size": 522320,
+      "sha256": "e45b5eaf3be13696eb6f2c48d01ad4b999a29d8f3d118ad9853334c2ebdb35c8"
+    },
+    {
+      "path": "voices/zm_031.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_031.safetensors",
+      "size": 522320,
+      "sha256": "a49970ad103430cb101100fb295edc1e2244c14b43f87e0c059ea5e9e0b78fc0"
+    },
+    {
+      "path": "voices/zm_033.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_033.safetensors",
+      "size": 522320,
+      "sha256": "d8b1207fa1db39d93b648331f941bb5769ed766549f0772abd4a13fd1f4794d3"
+    },
+    {
+      "path": "voices/zm_034.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_034.safetensors",
+      "size": 522320,
+      "sha256": "a94e2f8183c7b578b9d1c6458bc88f4fd5f9805094a5adad7ca4a4d9e986ad6a"
+    },
+    {
+      "path": "voices/zm_035.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_035.safetensors",
+      "size": 522320,
+      "sha256": "b436ab3cb5f8e31e6fe5f8c6b4b00dc0304cc598eec1c9e5940b4531f8fdef48"
+    },
+    {
+      "path": "voices/zm_037.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_037.safetensors",
+      "size": 522320,
+      "sha256": "ad59d49b48341e96e0f7b4ec31d004815a5dec57be8edfad2c97c0806d3c6332"
+    },
+    {
+      "path": "voices/zm_041.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_041.safetensors",
+      "size": 522320,
+      "sha256": "72e8ac3b1c7aa3e50c961da7d3e8d5490cdd6c2dbbe22d655bcb2f865757e027"
+    },
+    {
+      "path": "voices/zm_045.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_045.safetensors",
+      "size": 522320,
+      "sha256": "57303812df3de15a4032adfd03106917955bb42fc5bf5cdbf972b249f068baf8"
+    },
+    {
+      "path": "voices/zm_050.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_050.safetensors",
+      "size": 522320,
+      "sha256": "7e2d4aedcc58c5525181e471cb0f99b0439edead4ac9756f96a386ecb00d8020"
+    },
+    {
+      "path": "voices/zm_052.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_052.safetensors",
+      "size": 522320,
+      "sha256": "58aac8bf778fdfc3fd1f422e5279e03572e69677385bd769fc896f29e9fd6ffd"
+    },
+    {
+      "path": "voices/zm_053.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_053.safetensors",
+      "size": 522320,
+      "sha256": "051eaede5ed65ab82225f1095efdfea6b9b615b47d362b5d0ee01fcef56d0d25"
+    },
+    {
+      "path": "voices/zm_054.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_054.safetensors",
+      "size": 522320,
+      "sha256": "2814656cd89a397c919e5a17393d212209a71d505b40a1303dc0876f86808b99"
+    },
+    {
+      "path": "voices/zm_055.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_055.safetensors",
+      "size": 522320,
+      "sha256": "e637ce7fe1ee019f6319b9dd19d69461094c17ca87f6178be347624c629e8b16"
+    },
+    {
+      "path": "voices/zm_056.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_056.safetensors",
+      "size": 522320,
+      "sha256": "ba6f3be7d638b67311bf4e862250683517390bc4ad3dc8e711a6afa2231c5e47"
+    },
+    {
+      "path": "voices/zm_057.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_057.safetensors",
+      "size": 522320,
+      "sha256": "f3bde1a3f4742ca88db34f8013efd7b36897ee290b2d3b7e5f7cdad0af7aabad"
+    },
+    {
+      "path": "voices/zm_058.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_058.safetensors",
+      "size": 522320,
+      "sha256": "03f3a2075c92df4f9b32affe14d7d577ea4cce8c49174e83be5d72adb6ceba7f"
+    },
+    {
+      "path": "voices/zm_061.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_061.safetensors",
+      "size": 522320,
+      "sha256": "ba0b9506eab0eabc32676e79e6a23297fc3c80d70d6ad38e33c0fdce73996998"
+    },
+    {
+      "path": "voices/zm_062.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_062.safetensors",
+      "size": 522320,
+      "sha256": "4df7f3d6337bfa37bd077a1c4ca6c5bda7fc9e08401c3906a8a6d4f9e4ef4386"
+    },
+    {
+      "path": "voices/zm_063.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_063.safetensors",
+      "size": 522320,
+      "sha256": "7616d8da5a5a47447aba638782fe2bb255de69d26c6dd93e3a7dd13d611aa205"
+    },
+    {
+      "path": "voices/zm_064.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_064.safetensors",
+      "size": 522320,
+      "sha256": "b906b914deca01c7ef5aec98899f54fc7ad3d98ba379ce9d2ba03ba30dd0b6ef"
+    },
+    {
+      "path": "voices/zm_065.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_065.safetensors",
+      "size": 522320,
+      "sha256": "5e46bbd1716f723e8ca1e57df28867591e8a87d85b9eed9e26cd93f8031e3deb"
+    },
+    {
+      "path": "voices/zm_066.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_066.safetensors",
+      "size": 522320,
+      "sha256": "4fdb7608a9c8bac8e83bd504d47df955806dd7606dce28b5fbe4a182f57dd760"
+    },
+    {
+      "path": "voices/zm_068.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_068.safetensors",
+      "size": 522320,
+      "sha256": "f399da324799a8fdc3dc4991dd22baf1a8586a1f8343b2dcfc5534bc6ec3adb0"
+    },
+    {
+      "path": "voices/zm_069.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_069.safetensors",
+      "size": 522320,
+      "sha256": "52def71f3cd63ca7b41ce2eb1f5d1d0e0097b47770d56ef3a85419a84447b3e6"
+    },
+    {
+      "path": "voices/zm_080.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_080.safetensors",
+      "size": 522320,
+      "sha256": "21b5fddd2506c3347fbb82399ac3f33807296146bbabc9cc8e92768f21e3dd04"
+    },
+    {
+      "path": "voices/zm_081.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_081.safetensors",
+      "size": 522320,
+      "sha256": "a7b3a13401ccb4ce6fe09c5ae10386ce2422530f97ab5242f310d4185ef64aa4"
+    },
+    {
+      "path": "voices/zm_082.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_082.safetensors",
+      "size": 522320,
+      "sha256": "dfc5fcd8e3cbee0394b8055cf6d4043edfab055e0b17ae14bc34dfae163ae4ca"
+    },
+    {
+      "path": "voices/zm_089.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_089.safetensors",
+      "size": 522320,
+      "sha256": "23e5217f5799962f83bf29fab64d4df75a05eabd797c54fd9e243df7ff433c12"
+    },
+    {
+      "path": "voices/zm_091.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_091.safetensors",
+      "size": 522320,
+      "sha256": "b8f2d3246d90cd199b234d845a37621662508648bc4c05c47e40cfeb9d3ed91e"
+    },
+    {
+      "path": "voices/zm_095.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_095.safetensors",
+      "size": 522320,
+      "sha256": "cf47651df90e412be005775b9c6fb2c679541334e7fbf5d12991add9cca2d1ce"
+    },
+    {
+      "path": "voices/zm_096.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_096.safetensors",
+      "size": 522320,
+      "sha256": "daeb49f0267ca229dc7bfd70cbe29383a22eee0e9cba9adb700ba3e3f89da97f"
+    },
+    {
+      "path": "voices/zm_097.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_097.safetensors",
+      "size": 522320,
+      "sha256": "95bffd0dd57818974afa06c1ba0cee62b6aaa4412afd19b2ecbd7510ccfe55ed"
+    },
+    {
+      "path": "voices/zm_098.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_098.safetensors",
+      "size": 522320,
+      "sha256": "90a3246441116557fc0488270d887cf563ab9e624f3b7a775447af17f9377c90"
+    },
+    {
+      "path": "voices/zm_100.safetensors",
+      "repo": "1038lab/Kokoro-82M-zh-MLX",
+      "revision": "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "filename": "voices/zm_100.safetensors",
+      "size": 522320,
+      "sha256": "be84f772d3a92e1019ed13d8cec5a8942111cf73824bc06201160cc89b99c88e"
+    },
+    {
+      "path": "frontend/frontend.json",
+      "repo": "yexiyue/talechime-resources",
+      "revision": "8eb001f5498e099e6ac929454e7fb28e457bf035",
+      "filename": "kokoro/misaki-zh-v1/frontend.json",
+      "size": 12431804,
+      "sha256": "11f90aa3b1ac73452750d6d30b46178e69f66160a637b4b3d9754075a41837b6"
+    },
+    {
+      "path": "frontend/jieba.dict",
+      "repo": "yexiyue/talechime-resources",
+      "revision": "8eb001f5498e099e6ac929454e7fb28e457bf035",
+      "filename": "kokoro/misaki-zh-v1/jieba.dict",
+      "size": 5071852,
+      "sha256": "7197c3211ddd98962b036cdf40324d1ea2bfaa12bd028e68faa70111a88e12a8"
+    },
+    {
+      "path": "frontend/licenses/misaki-APACHE.txt",
+      "repo": "yexiyue/talechime-resources",
+      "revision": "8eb001f5498e099e6ac929454e7fb28e457bf035",
+      "filename": "kokoro/misaki-zh-v1/licenses/misaki-APACHE.txt",
+      "size": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "frontend/licenses/jieba-LICENSE",
+      "repo": "yexiyue/talechime-resources",
+      "revision": "8eb001f5498e099e6ac929454e7fb28e457bf035",
+      "filename": "kokoro/misaki-zh-v1/licenses/jieba-LICENSE",
+      "size": 1075,
+      "sha256": "18ba0984839f85853b29fadaf992f7dba8fd0ca0fbeae34de2b8735222dc7a37"
+    },
+    {
+      "path": "frontend/licenses/pypinyin-LICENSE.txt",
+      "repo": "yexiyue/talechime-resources",
+      "revision": "8eb001f5498e099e6ac929454e7fb28e457bf035",
+      "filename": "kokoro/misaki-zh-v1/licenses/pypinyin-LICENSE.txt",
+      "size": 1105,
+      "sha256": "1e6c90014b4912815c296ee64bb6f6280af47e6d4c5d80e86232dfc5defe764c"
+    },
+    {
+      "path": "frontend/licenses/pypinyin-dict-LICENSE",
+      "repo": "yexiyue/talechime-resources",
+      "revision": "8eb001f5498e099e6ac929454e7fb28e457bf035",
+      "filename": "kokoro/misaki-zh-v1/licenses/pypinyin-dict-LICENSE",
+      "size": 1076,
+      "sha256": "239199faa0e3098c6b7fc7c5d4c50d623c44b7c4c0d8990c1a030266aa558f2c"
+    },
+    {
+      "path": "frontend/licenses/cn2an-LICENSE",
+      "repo": "yexiyue/talechime-resources",
+      "revision": "8eb001f5498e099e6ac929454e7fb28e457bf035",
+      "filename": "kokoro/misaki-zh-v1/licenses/cn2an-LICENSE",
+      "size": 1062,
+      "sha256": "b18d8d4ad8bc57e00ae80d08d9da80a32176f031062f87c739ea7557c1b5d759"
+    },
+    {
+      "path": "frontend/NOTICE.md",
+      "repo": "yexiyue/talechime-resources",
+      "revision": "8eb001f5498e099e6ac929454e7fb28e457bf035",
+      "filename": "kokoro/misaki-zh-v1/NOTICE.md",
+      "size": 1279,
+      "sha256": "1da92216140d3f67ca63dced91618614c6ce6120c02c9854e3df7ac94312e716"
+    },
+    {
+      "path": "frontend/manifest.json",
+      "repo": "yexiyue/talechime-resources",
+      "revision": "8eb001f5498e099e6ac929454e7fb28e457bf035",
+      "filename": "kokoro/misaki-zh-v1/manifest.json",
+      "size": 1959,
+      "sha256": "a6ad6f559c9bff7971eab1daebe9566ee39748934c41ab2990badb8e4dfb97a3"
+    },
+    {
+      "path": "context/context.json",
+      "repo": "yexiyue/talechime-resources",
+      "revision": "ead7e24684eaea42af3dc0fec0bc5c7d9c51bfdf",
+      "filename": "kokoro/g2pw-context-v1/context.json",
+      "size": 144975,
+      "sha256": "5bedd0e4460625bc57a92d3edd9ff573f68167d8f62fa259ac90a123fc27b381"
+    },
+    {
+      "path": "context/G2PW-LICENSE",
+      "repo": "yexiyue/talechime-resources",
+      "revision": "ead7e24684eaea42af3dc0fec0bc5c7d9c51bfdf",
+      "filename": "kokoro/g2pw-context-v1/G2PW-LICENSE",
+      "size": 11356,
+      "sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+    },
+    {
+      "path": "context/BERT-SOURCE.txt",
+      "repo": "yexiyue/talechime-resources",
+      "revision": "ead7e24684eaea42af3dc0fec0bc5c7d9c51bfdf",
+      "filename": "kokoro/g2pw-context-v1/BERT-SOURCE.txt",
+      "size": 217,
+      "sha256": "49588f4294050f3b02fd5a4e83984a014101198cd6d0d05940fcea250734b6f1"
+    },
+    {
+      "path": "context/NOTICE.md",
+      "repo": "yexiyue/talechime-resources",
+      "revision": "ead7e24684eaea42af3dc0fec0bc5c7d9c51bfdf",
+      "filename": "kokoro/g2pw-context-v1/NOTICE.md",
+      "size": 855,
+      "sha256": "6f54b964a7d3753189a03a386b0295dd19a59ace01e226f5904289315b36d516"
+    },
+    {
+      "path": "context/manifest.json",
+      "repo": "yexiyue/talechime-resources",
+      "revision": "ead7e24684eaea42af3dc0fec0bc5c7d9c51bfdf",
+      "filename": "kokoro/g2pw-context-v1/manifest.json",
+      "size": 1423,
+      "sha256": "01c2f8d5a3fa892e56c4f245a33a760b8a58982ea39bbe720a2c558967860d80"
+    },
+    {
+      "path": "context/archive.zip",
+      "repo": "YC-Chen/g2pW",
+      "revision": "fb4784f7dce8466a53dd4f3552f5a4c5b657b90c",
+      "filename": "G2PWModel-v2-onnx.zip",
+      "size": 589075404,
+      "sha256": "699f3c1fd7fb0e2c2d49ed2486826fd5bff233fee7759350a91c3b49aedc4ed2"
+    },
+    {
+      "path": "context/vocab.txt",
+      "size": 109540,
+      "sha256": "45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c",
+      "repo": "google-bert/bert-base-chinese",
+      "revision": "8f23c25b06e129b6c986331a13d8d025a92cf0ea",
+      "filename": "vocab.txt"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "model.safetensors",
+      "size": 327178648,
+      "sha256": "41ed7fe28189035125f50721b7d456391bd59f5c31b125da8b1ec111d6317c93"
+    },
+    {
+      "path": "voices/zf_001.safetensors",
+      "size": 522320,
+      "sha256": "19aba9f273067860f5e490bcbbefd6e531b462109413432b80d9d15c53c05748"
+    },
+    {
+      "path": "voices/zf_002.safetensors",
+      "size": 522320,
+      "sha256": "e712a0aee2426a115a896cac918469668215904423f25cb57d69a6e395eb4632"
+    },
+    {
+      "path": "voices/zf_003.safetensors",
+      "size": 522320,
+      "sha256": "6ab144eb75f4aeefadbaa86f7799f6c1bc5d346e9e4e0efaa9aeacf63e8727c7"
+    },
+    {
+      "path": "voices/zf_004.safetensors",
+      "size": 522320,
+      "sha256": "6c11c277daa788bc245e670f90e95ebe8303cc57c390001488d8456eda0c85b8"
+    },
+    {
+      "path": "voices/zf_005.safetensors",
+      "size": 522320,
+      "sha256": "b549ef39793e7d8cea48192ae8ed5eddafc3a884c2e4917f18aa75b87f5dfe98"
+    },
+    {
+      "path": "voices/zf_006.safetensors",
+      "size": 522320,
+      "sha256": "85df01cabb704e485f466ff3648e1e8528c1540ace202e7affc5972043e3fe8f"
+    },
+    {
+      "path": "voices/zf_007.safetensors",
+      "size": 522320,
+      "sha256": "5a106ca31dcae34e4aba08d894146c947ffee073801c42677109a363b626552a"
+    },
+    {
+      "path": "voices/zf_008.safetensors",
+      "size": 522320,
+      "sha256": "92c3fe5c7f264fabd80df61bcd8a07d23caedc5d9a2482f4b9091627ff1cebc6"
+    },
+    {
+      "path": "voices/zf_017.safetensors",
+      "size": 522320,
+      "sha256": "b2c043330bca52f1fe13d9862a4817f208b9aa0abbf43a4a041766e004fc4864"
+    },
+    {
+      "path": "voices/zf_018.safetensors",
+      "size": 522320,
+      "sha256": "0fed27bd26c5452a267721012935adecda13f4d5f1f3b9aa6beebe6e73073212"
+    },
+    {
+      "path": "voices/zf_019.safetensors",
+      "size": 522320,
+      "sha256": "fb55b972cd8024dae22cbd9b2ac484d568ff48f7dfe74e5cf6bb3ce124bfdd53"
+    },
+    {
+      "path": "voices/zf_021.safetensors",
+      "size": 522320,
+      "sha256": "6b8c5b982fde82b37c837612d3ac4aa32f6dcf67bf5e3937a750db70a2c7d9b4"
+    },
+    {
+      "path": "voices/zf_022.safetensors",
+      "size": 522320,
+      "sha256": "8734e3a510e204f743179365a3ac53b2d89b3b44363997b45bac44f9c2a70cee"
+    },
+    {
+      "path": "voices/zf_023.safetensors",
+      "size": 522320,
+      "sha256": "757187d298a31eb3108b3ac53354bb11785751aa1ef30281a05a5036049ec70c"
+    },
+    {
+      "path": "voices/zf_024.safetensors",
+      "size": 522320,
+      "sha256": "ac187860846c1627b7fedf5274c24980d4f5357218308a1a358ac9c0222dc4e5"
+    },
+    {
+      "path": "voices/zf_026.safetensors",
+      "size": 522320,
+      "sha256": "ca2cb0f917a5053f39cb606102a8b5aa72f99570b0be6fa06713e2c8b8d4bd5f"
+    },
+    {
+      "path": "voices/zf_027.safetensors",
+      "size": 522320,
+      "sha256": "70cb78823603cfcc9121ab8299283e933e975fa0ae2b51279cca04bb36093d33"
+    },
+    {
+      "path": "voices/zf_028.safetensors",
+      "size": 522320,
+      "sha256": "8fd4ea6822e22559a56d00bcfb5b5fc42b0442ceaad9c44a622b8b2a38ce259b"
+    },
+    {
+      "path": "voices/zf_032.safetensors",
+      "size": 522320,
+      "sha256": "241d06aebb340738d0b5c680ec81076ea0bdf0c98e0a04499930344a3d8f6720"
+    },
+    {
+      "path": "voices/zf_036.safetensors",
+      "size": 522320,
+      "sha256": "013dc11f57a16efe2d3a5e24a696d92f31028e97adec5f0dfdbaf200d9327fe3"
+    },
+    {
+      "path": "voices/zf_038.safetensors",
+      "size": 522320,
+      "sha256": "b6547a051526d6f0d56eacbec390581b2cfbd625eee686792bb1d37129a1598c"
+    },
+    {
+      "path": "voices/zf_039.safetensors",
+      "size": 522320,
+      "sha256": "8c9c00a98496c1ef992d6bcebc28b200f0a85c69600140a8eeeeebeb2fb65c1d"
+    },
+    {
+      "path": "voices/zf_040.safetensors",
+      "size": 522320,
+      "sha256": "a36b5e63aadb6e62c545017f67bccb4301aed7236b00ca01e6b5ff53990fd77b"
+    },
+    {
+      "path": "voices/zf_042.safetensors",
+      "size": 522320,
+      "sha256": "fd0bb0668d912cf6cee895a24fb521891a488de37a2dde82123a534572104415"
+    },
+    {
+      "path": "voices/zf_043.safetensors",
+      "size": 522320,
+      "sha256": "d6af3465b3560e68df7a4349c1e7240eadc4029aca844977fb2771e3faed091e"
+    },
+    {
+      "path": "voices/zf_044.safetensors",
+      "size": 522320,
+      "sha256": "4711915ba5e9dc744a2d675cd637a36382237bc888669480d771facbfe842063"
+    },
+    {
+      "path": "voices/zf_046.safetensors",
+      "size": 522320,
+      "sha256": "9dacf2ec1df56a32a1591bc4e0a786439cc4593a0b0601d1f642fe59c79c0493"
+    },
+    {
+      "path": "voices/zf_047.safetensors",
+      "size": 522320,
+      "sha256": "d355f5ca857683180df3ef734aca01d44a6f3da964b31e15ea3e12b37ab1b0e1"
+    },
+    {
+      "path": "voices/zf_048.safetensors",
+      "size": 522320,
+      "sha256": "e884f0a369d7ca9322d0ea63468d1552366757ab1fc055f5bd862d851c8b28e4"
+    },
+    {
+      "path": "voices/zf_049.safetensors",
+      "size": 522320,
+      "sha256": "5d0ee7c00c8ebcc79e98e7edde369120c3f41dc7acfd6d4086233526e4318682"
+    },
+    {
+      "path": "voices/zf_051.safetensors",
+      "size": 522320,
+      "sha256": "945f7b9992f62cfbe76c551a6610fa91e77e5c6a8351a142489babbbd5d42029"
+    },
+    {
+      "path": "voices/zf_059.safetensors",
+      "size": 522320,
+      "sha256": "dee8c3b87fc65aee2c2340387d802ae40ae9d6675a1787a54e08fcf6430316b8"
+    },
+    {
+      "path": "voices/zf_060.safetensors",
+      "size": 522320,
+      "sha256": "a13686f5af35f62d84e47edc2ce037130ae1ae4171f61da04d1263b263f0a9cf"
+    },
+    {
+      "path": "voices/zf_067.safetensors",
+      "size": 522320,
+      "sha256": "e6c0f6561f9237828a36876f2be24893eeba56aa37ff821b63fe963cacbcb77e"
+    },
+    {
+      "path": "voices/zf_070.safetensors",
+      "size": 522320,
+      "sha256": "dbd03c731458beb11983462fd36279b78465cbabb97967a02c3d52d2c99205d5"
+    },
+    {
+      "path": "voices/zf_071.safetensors",
+      "size": 522320,
+      "sha256": "4346a5753e8cc9f1e039ce5dade3c0f67e44db364f03798947e0569f22467f19"
+    },
+    {
+      "path": "voices/zf_072.safetensors",
+      "size": 522320,
+      "sha256": "63b278fa51d37b3637b15849323dc65930a06e18d8c69aabe4ad7587ac7599b7"
+    },
+    {
+      "path": "voices/zf_073.safetensors",
+      "size": 522320,
+      "sha256": "7b71de509b8d6718bac8747990b222bab5956229bfa72581c1c3fecbc28a0e2f"
+    },
+    {
+      "path": "voices/zf_074.safetensors",
+      "size": 522320,
+      "sha256": "08c4423886d53af1a213a15dd5394ded05119f7b8b190fb344836cde91bf71f3"
+    },
+    {
+      "path": "voices/zf_075.safetensors",
+      "size": 522320,
+      "sha256": "3dbcaa6426fa6389d72f44418ea19d56c96849257a6afdefc9a8b8ed3ce4c2fa"
+    },
+    {
+      "path": "voices/zf_076.safetensors",
+      "size": 522320,
+      "sha256": "cf0523831652fa8dd4e50f9064a29a7e133c2d5a8ea7f4fb7e7c49ef62374e5f"
+    },
+    {
+      "path": "voices/zf_077.safetensors",
+      "size": 522320,
+      "sha256": "00cb293f6f09b726479ef4e1939c55833abeab8b08c6b0223ba2b0ff8522d0ef"
+    },
+    {
+      "path": "voices/zf_078.safetensors",
+      "size": 522320,
+      "sha256": "84ac80d5a2e458205e192e71e0ac9187db42da12a1b8a7cbdde9aead28f14d76"
+    },
+    {
+      "path": "voices/zf_079.safetensors",
+      "size": 522320,
+      "sha256": "749e61814009baf12ad00d031b284016c07201b892ae45ca78c53b5585860f3b"
+    },
+    {
+      "path": "voices/zf_083.safetensors",
+      "size": 522320,
+      "sha256": "d2ce909b2f6ac117d390a48544d2317432e18ff45d4e08c315a375dba426b5c8"
+    },
+    {
+      "path": "voices/zf_084.safetensors",
+      "size": 522320,
+      "sha256": "e618e49e568ad7be4d15de65710653d0bf11931096686e21f080e4be5345c92f"
+    },
+    {
+      "path": "voices/zf_085.safetensors",
+      "size": 522320,
+      "sha256": "24e41647e77c9a453aa395f4bb056a11261a38dc952c9b022af154158c412355"
+    },
+    {
+      "path": "voices/zf_086.safetensors",
+      "size": 522320,
+      "sha256": "7c3e84ae692c4878b35754a028bf3c3e8d75fefb66d5f8108a0204874c21400e"
+    },
+    {
+      "path": "voices/zf_087.safetensors",
+      "size": 522320,
+      "sha256": "fa2763b0c0d4a235374921494401c91a98d8f651406f1e08481d4f66d698ca73"
+    },
+    {
+      "path": "voices/zf_088.safetensors",
+      "size": 522320,
+      "sha256": "e2fc5729a45a2cde4be96ef4891f4f57b1697c5dd2ff0d4cc2b4bf83586f5229"
+    },
+    {
+      "path": "voices/zf_090.safetensors",
+      "size": 522320,
+      "sha256": "f761b23b56491dbc5d95b6f0e7323ccf4e6402927d72ac0688dfe7ff7df6d6b9"
+    },
+    {
+      "path": "voices/zf_092.safetensors",
+      "size": 522320,
+      "sha256": "592a0b221714d98e9da3c71e894c00c9706ad95e890da9f5a6ebcc9911c549b8"
+    },
+    {
+      "path": "voices/zf_093.safetensors",
+      "size": 522320,
+      "sha256": "f3fee319270d5ab965a847fcee878c5c47987f495540254212a7e836c66b9ce2"
+    },
+    {
+      "path": "voices/zf_094.safetensors",
+      "size": 522320,
+      "sha256": "97f7e752eca934144a10398e2138480704dc4012d9ecb88204324192391925d8"
+    },
+    {
+      "path": "voices/zf_099.safetensors",
+      "size": 522320,
+      "sha256": "9386544b03a357bf39ecfb1d27e89f9fe96358dfe88eba9e1b20d43afecbd8cf"
+    },
+    {
+      "path": "voices/zm_009.safetensors",
+      "size": 522320,
+      "sha256": "15d7f42b0301d71a89a45d539b6cc00001147adff9ecc9db57f1dc23022acdd1"
+    },
+    {
+      "path": "voices/zm_010.safetensors",
+      "size": 522320,
+      "sha256": "2a6f163f8e32cb8223437419195039056d7840b3a86d033b496e14ccc345610b"
+    },
+    {
+      "path": "voices/zm_011.safetensors",
+      "size": 522320,
+      "sha256": "e5db989f5084e37a4960e1024aa2a88f732641ef076e4a8d81ceeeb5ab23f143"
+    },
+    {
+      "path": "voices/zm_012.safetensors",
+      "size": 522320,
+      "sha256": "38adc1139f3ce7cb21924793e50ff423f9e9955137568b1ad12c2dd9a065f71c"
+    },
+    {
+      "path": "voices/zm_013.safetensors",
+      "size": 522320,
+      "sha256": "e6405fd856580078cfded622ff295c2e5284e7fe502323a36b556a08135bba86"
+    },
+    {
+      "path": "voices/zm_014.safetensors",
+      "size": 522320,
+      "sha256": "ed98314de64efbfb88fdfcf016a111a99dab9e3c3a00f07b94c7b13e6942cfc9"
+    },
+    {
+      "path": "voices/zm_015.safetensors",
+      "size": 522320,
+      "sha256": "5c0960efcde703f2e62c99e3ad4a06f4cafaa5578fd7ffe343963ebec1e43a9f"
+    },
+    {
+      "path": "voices/zm_016.safetensors",
+      "size": 522320,
+      "sha256": "b8d3b05fbd06df0a2bc2a054ded302b2cebc0fee26e3911634d24030849462df"
+    },
+    {
+      "path": "voices/zm_020.safetensors",
+      "size": 522320,
+      "sha256": "315cdfe6c42fe9b8beb8c895cfb33279e780d9ca59efbde1b4cc67a6151d333c"
+    },
+    {
+      "path": "voices/zm_025.safetensors",
+      "size": 522320,
+      "sha256": "325a6c80097b0f4a9c42bad3ad4831a6e788c14c753a7b02e1c65c87fb21fe62"
+    },
+    {
+      "path": "voices/zm_029.safetensors",
+      "size": 522320,
+      "sha256": "1df1fcf46711c5d1c55de9bee60efc98485247a97a60123d1289a0e20b3935ef"
+    },
+    {
+      "path": "voices/zm_030.safetensors",
+      "size": 522320,
+      "sha256": "e45b5eaf3be13696eb6f2c48d01ad4b999a29d8f3d118ad9853334c2ebdb35c8"
+    },
+    {
+      "path": "voices/zm_031.safetensors",
+      "size": 522320,
+      "sha256": "a49970ad103430cb101100fb295edc1e2244c14b43f87e0c059ea5e9e0b78fc0"
+    },
+    {
+      "path": "voices/zm_033.safetensors",
+      "size": 522320,
+      "sha256": "d8b1207fa1db39d93b648331f941bb5769ed766549f0772abd4a13fd1f4794d3"
+    },
+    {
+      "path": "voices/zm_034.safetensors",
+      "size": 522320,
+      "sha256": "a94e2f8183c7b578b9d1c6458bc88f4fd5f9805094a5adad7ca4a4d9e986ad6a"
+    },
+    {
+      "path": "voices/zm_035.safetensors",
+      "size": 522320,
+      "sha256": "b436ab3cb5f8e31e6fe5f8c6b4b00dc0304cc598eec1c9e5940b4531f8fdef48"
+    },
+    {
+      "path": "voices/zm_037.safetensors",
+      "size": 522320,
+      "sha256": "ad59d49b48341e96e0f7b4ec31d004815a5dec57be8edfad2c97c0806d3c6332"
+    },
+    {
+      "path": "voices/zm_041.safetensors",
+      "size": 522320,
+      "sha256": "72e8ac3b1c7aa3e50c961da7d3e8d5490cdd6c2dbbe22d655bcb2f865757e027"
+    },
+    {
+      "path": "voices/zm_045.safetensors",
+      "size": 522320,
+      "sha256": "57303812df3de15a4032adfd03106917955bb42fc5bf5cdbf972b249f068baf8"
+    },
+    {
+      "path": "voices/zm_050.safetensors",
+      "size": 522320,
+      "sha256": "7e2d4aedcc58c5525181e471cb0f99b0439edead4ac9756f96a386ecb00d8020"
+    },
+    {
+      "path": "voices/zm_052.safetensors",
+      "size": 522320,
+      "sha256": "58aac8bf778fdfc3fd1f422e5279e03572e69677385bd769fc896f29e9fd6ffd"
+    },
+    {
+      "path": "voices/zm_053.safetensors",
+      "size": 522320,
+      "sha256": "051eaede5ed65ab82225f1095efdfea6b9b615b47d362b5d0ee01fcef56d0d25"
+    },
+    {
+      "path": "voices/zm_054.safetensors",
+      "size": 522320,
+      "sha256": "2814656cd89a397c919e5a17393d212209a71d505b40a1303dc0876f86808b99"
+    },
+    {
+      "path": "voices/zm_055.safetensors",
+      "size": 522320,
+      "sha256": "e637ce7fe1ee019f6319b9dd19d69461094c17ca87f6178be347624c629e8b16"
+    },
+    {
+      "path": "voices/zm_056.safetensors",
+      "size": 522320,
+      "sha256": "ba6f3be7d638b67311bf4e862250683517390bc4ad3dc8e711a6afa2231c5e47"
+    },
+    {
+      "path": "voices/zm_057.safetensors",
+      "size": 522320,
+      "sha256": "f3bde1a3f4742ca88db34f8013efd7b36897ee290b2d3b7e5f7cdad0af7aabad"
+    },
+    {
+      "path": "voices/zm_058.safetensors",
+      "size": 522320,
+      "sha256": "03f3a2075c92df4f9b32affe14d7d577ea4cce8c49174e83be5d72adb6ceba7f"
+    },
+    {
+      "path": "voices/zm_061.safetensors",
+      "size": 522320,
+      "sha256": "ba0b9506eab0eabc32676e79e6a23297fc3c80d70d6ad38e33c0fdce73996998"
+    },
+    {
+      "path": "voices/zm_062.safetensors",
+      "size": 522320,
+      "sha256": "4df7f3d6337bfa37bd077a1c4ca6c5bda7fc9e08401c3906a8a6d4f9e4ef4386"
+    },
+    {
+      "path": "voices/zm_063.safetensors",
+      "size": 522320,
+      "sha256": "7616d8da5a5a47447aba638782fe2bb255de69d26c6dd93e3a7dd13d611aa205"
+    },
+    {
+      "path": "voices/zm_064.safetensors",
+      "size": 522320,
+      "sha256": "b906b914deca01c7ef5aec98899f54fc7ad3d98ba379ce9d2ba03ba30dd0b6ef"
+    },
+    {
+      "path": "voices/zm_065.safetensors",
+      "size": 522320,
+      "sha256": "5e46bbd1716f723e8ca1e57df28867591e8a87d85b9eed9e26cd93f8031e3deb"
+    },
+    {
+      "path": "voices/zm_066.safetensors",
+      "size": 522320,
+      "sha256": "4fdb7608a9c8bac8e83bd504d47df955806dd7606dce28b5fbe4a182f57dd760"
+    },
+    {
+      "path": "voices/zm_068.safetensors",
+      "size": 522320,
+      "sha256": "f399da324799a8fdc3dc4991dd22baf1a8586a1f8343b2dcfc5534bc6ec3adb0"
+    },
+    {
+      "path": "voices/zm_069.safetensors",
+      "size": 522320,
+      "sha256": "52def71f3cd63ca7b41ce2eb1f5d1d0e0097b47770d56ef3a85419a84447b3e6"
+    },
+    {
+      "path": "voices/zm_080.safetensors",
+      "size": 522320,
+      "sha256": "21b5fddd2506c3347fbb82399ac3f33807296146bbabc9cc8e92768f21e3dd04"
+    },
+    {
+      "path": "voices/zm_081.safetensors",
+      "size": 522320,
+      "sha256": "a7b3a13401ccb4ce6fe09c5ae10386ce2422530f97ab5242f310d4185ef64aa4"
+    },
+    {
+      "path": "voices/zm_082.safetensors",
+      "size": 522320,
+      "sha256": "dfc5fcd8e3cbee0394b8055cf6d4043edfab055e0b17ae14bc34dfae163ae4ca"
+    },
+    {
+      "path": "voices/zm_089.safetensors",
+      "size": 522320,
+      "sha256": "23e5217f5799962f83bf29fab64d4df75a05eabd797c54fd9e243df7ff433c12"
+    },
+    {
+      "path": "voices/zm_091.safetensors",
+      "size": 522320,
+      "sha256": "b8f2d3246d90cd199b234d845a37621662508648bc4c05c47e40cfeb9d3ed91e"
+    },
+    {
+      "path": "voices/zm_095.safetensors",
+      "size": 522320,
+      "sha256": "cf47651df90e412be005775b9c6fb2c679541334e7fbf5d12991add9cca2d1ce"
+    },
+    {
+      "path": "voices/zm_096.safetensors",
+      "size": 522320,
+      "sha256": "daeb49f0267ca229dc7bfd70cbe29383a22eee0e9cba9adb700ba3e3f89da97f"
+    },
+    {
+      "path": "voices/zm_097.safetensors",
+      "size": 522320,
+      "sha256": "95bffd0dd57818974afa06c1ba0cee62b6aaa4412afd19b2ecbd7510ccfe55ed"
+    },
+    {
+      "path": "voices/zm_098.safetensors",
+      "size": 522320,
+      "sha256": "90a3246441116557fc0488270d887cf563ab9e624f3b7a775447af17f9377c90"
+    },
+    {
+      "path": "voices/zm_100.safetensors",
+      "size": 522320,
+      "sha256": "be84f772d3a92e1019ed13d8cec5a8942111cf73824bc06201160cc89b99c88e"
+    },
+    {
+      "path": "frontend/frontend.json",
+      "size": 12431804,
+      "sha256": "11f90aa3b1ac73452750d6d30b46178e69f66160a637b4b3d9754075a41837b6"
+    },
+    {
+      "path": "frontend/jieba.dict",
+      "size": 5071852,
+      "sha256": "7197c3211ddd98962b036cdf40324d1ea2bfaa12bd028e68faa70111a88e12a8"
+    },
+    {
+      "path": "frontend/licenses/misaki-APACHE.txt",
+      "size": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "frontend/licenses/jieba-LICENSE",
+      "size": 1075,
+      "sha256": "18ba0984839f85853b29fadaf992f7dba8fd0ca0fbeae34de2b8735222dc7a37"
+    },
+    {
+      "path": "frontend/licenses/pypinyin-LICENSE.txt",
+      "size": 1105,
+      "sha256": "1e6c90014b4912815c296ee64bb6f6280af47e6d4c5d80e86232dfc5defe764c"
+    },
+    {
+      "path": "frontend/licenses/pypinyin-dict-LICENSE",
+      "size": 1076,
+      "sha256": "239199faa0e3098c6b7fc7c5d4c50d623c44b7c4c0d8990c1a030266aa558f2c"
+    },
+    {
+      "path": "frontend/licenses/cn2an-LICENSE",
+      "size": 1062,
+      "sha256": "b18d8d4ad8bc57e00ae80d08d9da80a32176f031062f87c739ea7557c1b5d759"
+    },
+    {
+      "path": "frontend/NOTICE.md",
+      "size": 1279,
+      "sha256": "1da92216140d3f67ca63dced91618614c6ce6120c02c9854e3df7ac94312e716"
+    },
+    {
+      "path": "frontend/manifest.json",
+      "size": 1959,
+      "sha256": "a6ad6f559c9bff7971eab1daebe9566ee39748934c41ab2990badb8e4dfb97a3"
+    },
+    {
+      "path": "config.json",
+      "size": 3228,
+      "sha256": "bc333efa5ce4ceff433c8c8e5d027a1eca0166001e4e4a62bea2d26ff7a46890"
+    },
+    {
+      "path": "KOKORO-LICENSE",
+      "size": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "official-export.json",
+      "size": 1034,
+      "sha256": "a9b44dc53d3f6b2f7d16732ec3f6966e71d53904a28ddd4e5631f0f8b6f42f11"
+    },
+    {
+      "path": "context/context.json",
+      "size": 144975,
+      "sha256": "5bedd0e4460625bc57a92d3edd9ff573f68167d8f62fa259ac90a123fc27b381"
+    },
+    {
+      "path": "context/G2PW-LICENSE",
+      "size": 11356,
+      "sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+    },
+    {
+      "path": "context/BERT-SOURCE.txt",
+      "size": 217,
+      "sha256": "49588f4294050f3b02fd5a4e83984a014101198cd6d0d05940fcea250734b6f1"
+    },
+    {
+      "path": "context/NOTICE.md",
+      "size": 855,
+      "sha256": "6f54b964a7d3753189a03a386b0295dd19a59ace01e226f5904289315b36d516"
+    },
+    {
+      "path": "context/manifest.json",
+      "size": 1423,
+      "sha256": "01c2f8d5a3fa892e56c4f245a33a760b8a58982ea39bbe720a2c558967860d80"
+    },
+    {
+      "path": "context/g2pw.onnx",
+      "size": 635212732,
+      "sha256": "bb40c8c7b5baa755b2acd317c6bc5a65e4af7b80c40a569247fbd76989299999"
+    },
+    {
+      "path": "context/vocab.txt",
+      "size": 109540,
+      "sha256": "45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c"
+    },
+    {
+      "path": "manifest.json",
+      "size": 33450,
+      "sha256": "a1679e2fd4e6aa49dd9f737e41768780c5915bb5d79d3fcfbc4546b4e4987738"
+    }
+  ]
+}

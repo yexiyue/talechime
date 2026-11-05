@@ -90,32 +90,45 @@ impl VoiceLibrary {
         if wav.len() > 64 * 1024 * 1024 {
             return Err(VoiceLibraryError::LimitExceeded("reference WAV".into()));
         }
-        let duration = asset::validate_wav(std::io::Cursor::new(wav))?;
-        let mut voice = VoiceAsset {
-            id: id.parse()?,
-            name: name.into(),
-            transcript: transcript.into(),
-            description: description.map(str::to_owned),
-            source,
-            created_at_unix: asset::now(),
-            imported_at_unix: asset::now(),
-            fingerprint: asset::fingerprint(transcript, description, wav),
-            asset_digest: String::new(),
-            wav_bytes: wav.len() as u64,
-            duration_seconds: duration,
-        };
-        voice.asset_digest = voice.compute_digest()?;
-        voice.validate()?;
+
+        let candidate =
+            super::VoiceCandidate::new(id, name, wav.to_vec(), transcript, description, source)?;
+        self.publish_candidate(&candidate)
+    }
+    /// Atomically publish one validated candidate. Retrying the identical candidate
+    /// returns its committed asset; a different candidate with the same id conflicts.
+    pub fn save_candidate(
+        &self,
+        candidate: &super::VoiceCandidate,
+    ) -> Result<VoiceAsset, VoiceLibraryError> {
+        let voice = candidate.asset();
+        match self.publish_candidate(candidate) {
+            Ok(asset) => Ok(asset),
+            Err(VoiceLibraryError::Conflict(_)) => {
+                let existing = self.get(voice.id())?;
+                if existing.asset_digest() == voice.asset_digest() {
+                    Ok(existing)
+                } else {
+                    Err(VoiceLibraryError::Conflict(voice.id().into()))
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
+    fn publish_candidate(
+        &self,
+        candidate: &super::VoiceCandidate,
+    ) -> Result<VoiceAsset, VoiceLibraryError> {
         let mut reference = store::temporary()?;
-        std::io::Write::write_all(&mut reference, wav)?;
+        std::io::Write::write_all(&mut reference, candidate.wav())?;
         store::publish(
             self,
-            voice.clone(),
+            candidate.asset().clone(),
             reference.path(),
             None,
             &super::TransferControl::default(),
-        )?;
-        Ok(voice)
+        )
+        .map(|(asset, _)| asset)
     }
     pub fn load(&self, id: &str) -> Result<(VoiceAsset, Vec<u8>), VoiceLibraryError> {
         let _lock = store::lock(self)?;

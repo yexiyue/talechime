@@ -39,7 +39,10 @@ pub use talechime_backends::downloads::{
     DownloadConfig, DownloadFailure, DownloadOptions, DownloadTransport, Downloads,
     FileProgressBridge, default_cache_dir,
 };
-pub use talechime_backends::{PrepareOptions, Registry, ResolvedModel, ResourceStatus};
+pub use talechime_backends::{
+    PreparationControl, PreparationError, PreparationPhase, PreparationPlan, PreparationProgress,
+    PrepareOptions, Registry, ResolvedModel, ResourcePreparation, ResourceStatus,
+};
 pub use talechime_core::design;
 pub use talechime_core::design::{
     DesignOutput, DesignRequest, EngineInfo, InputConstraints, VoiceDesigner,
@@ -51,7 +54,7 @@ pub use talechime_core::voices::{
     ExportReport, ExportTarget, ImportAction, ImportConflict, ImportDecision, ImportEntry,
     ImportItemResult, ImportPlan, ImportPreview, ImportReport, ImportSource, ImportStatus,
     LibraryInventory, TransferControl, TransferLimits, TransferProgress, TransferStage, VoiceAsset,
-    VoiceId, VoiceLibrary, VoiceLibraryError, VoiceSource,
+    VoiceCandidate, VoiceId, VoiceLibrary, VoiceLibraryError, VoiceSource,
 };
 pub use talechime_core::{
     CancellationHandle, ChapterCacheOptions, DEFAULT_MAX_BYTES, GenerationParams, PlanError,

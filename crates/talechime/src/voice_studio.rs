@@ -7,7 +7,7 @@
 //! share the same internal path. Errors are display-safe: automatic-tier
 //! messages never name concrete backend models.
 
-use crate::Event;
+use crate::{Event, VoiceCandidate};
 use std::path::{Path, PathBuf};
 use talechime_backends::Registry;
 use talechime_core::design::EngineInfo;
@@ -237,6 +237,51 @@ impl VoiceStudio {
         options: DesignOptions,
         progress: tokio::sync::mpsc::Sender<Event>,
     ) -> Result<VoiceAsset, VoiceStudioError> {
+        let candidate = self.generate(options, progress, true).await?;
+        self.library
+            .save_candidate(&candidate)
+            .map_err(VoiceStudioError::from)
+    }
+    /// Generate a validated candidate from already-prepared resources. Never downloads
+    /// and never writes the voice library. The caller explicitly commits it later.
+    pub async fn design_candidate(
+        &self,
+        options: DesignOptions,
+        progress: tokio::sync::mpsc::Sender<Event>,
+    ) -> Result<VoiceCandidate, VoiceStudioError> {
+        self.generate(options, progress, false).await
+    }
+    /// Explicitly prepare one design engine using this studio's download settings.
+    pub async fn prepare_design(
+        &self,
+        id: &str,
+        progress: tokio::sync::mpsc::Sender<Event>,
+    ) -> Result<(), VoiceStudioError> {
+        let engine = self.designer(id)?;
+        if engine.info(self.registry.root()).devices.is_empty() {
+            return Err(VoiceStudioError::new("design engine has no usable device"));
+        }
+        engine
+            .prepare(self.registry.root(), progress)
+            .await
+            .map_err(VoiceStudioError::from)
+    }
+    fn designer(
+        &self,
+        id: &str,
+    ) -> Result<talechime_backends::design::DesignerHandle, VoiceStudioError> {
+        let found = match &self.designers {
+            Some(engines) => engines.iter().find(|engine| engine.id() == id).cloned(),
+            None => talechime_backends::design::designer(id, self.registry.downloads()),
+        };
+        found.ok_or_else(|| VoiceStudioError::new("design engine is unavailable in this build"))
+    }
+    async fn generate(
+        &self,
+        options: DesignOptions,
+        progress: tokio::sync::mpsc::Sender<Event>,
+        prepare: bool,
+    ) -> Result<VoiceCandidate, VoiceStudioError> {
         let automatic = options.engine.is_none();
         let infos: Vec<_> = self
             .engines()
@@ -263,17 +308,7 @@ impl VoiceStudio {
                 )
             })?,
         };
-        let engine = match &self.designers {
-            Some(engines) => engines
-                .iter()
-                .find(|engine| engine.id() == chosen.id)
-                .cloned()
-                .ok_or_else(|| VoiceStudioError::new("design engine is unavailable"))?,
-            None => talechime_backends::design::designer(chosen.id, self.registry.downloads())
-                .ok_or_else(|| {
-                    VoiceStudioError::new("design engine is unavailable in this build")
-                })?,
-        };
+        let engine = self.designer(chosen.id)?;
         let text = options
             .text
             .clone()
@@ -317,10 +352,16 @@ impl VoiceStudio {
             }
         };
         let root = self.registry.root().to_path_buf();
-        engine
-            .prepare(&root, progress)
-            .await
-            .map_err(|error| design_error(automatic, error))?;
+        if prepare {
+            engine
+                .prepare(&root, progress)
+                .await
+                .map_err(|error| design_error(automatic, error))?;
+        } else if !chosen.ready {
+            return Err(VoiceStudioError::new(
+                "design resources are not ready; prepare them explicitly first",
+            ));
+        }
         let output = engine
             .design(
                 &root,
@@ -338,16 +379,35 @@ impl VoiceStudio {
             .name
             .clone()
             .unwrap_or_else(|| default_name(&options.description));
-        self.library
-            .create(
-                &id,
-                &name,
-                &output.wav,
-                &text,
-                Some(options.description.as_str()),
-                VoiceSource::Designed(engine.id().to_owned()),
+        VoiceCandidate::new(
+            &id,
+            &name,
+            output.wav,
+            &text,
+            Some(&options.description),
+            VoiceSource::Designed(engine.id().to_owned()),
+        )
+        .map_err(VoiceStudioError::from)
+    }
+    /// Materialize a validated, unsaved reference without creating a library record.
+    pub async fn install_candidate_for(
+        &self,
+        backend: &str,
+        model: Option<&str>,
+        candidate: &VoiceCandidate,
+    ) -> Result<String, VoiceStudioError> {
+        self.registry
+            .install_reference(
+                backend,
+                model,
+                talechime_backends::ReferenceVoice {
+                    asset: candidate.asset(),
+                    wav: candidate.wav(),
+                },
             )
-            .map_err(VoiceStudioError::from)
+            .await
+            .map_err(VoiceStudioError::from)?;
+        Ok(format!("custom:{}", candidate.asset().id()))
     }
     /// Explicitly materialize a library voice into a synthesis model.
     /// Async because one backend encodes references in the background.
@@ -492,7 +552,9 @@ mod tests {
     use talechime_core::design::InputConstraints;
 
     /// Test-only design engine: no weights, instant reference output.
-    struct FakeDesigner;
+    struct FakeDesigner {
+        ready: bool,
+    }
     impl talechime_core::design::VoiceDesigner for FakeDesigner {
         fn id(&self) -> &'static str {
             "fake-designer"
@@ -509,7 +571,7 @@ mod tests {
                     forbid_parentheses: false,
                 },
                 extra_download_bytes: 0,
-                ready: true,
+                ready: self.ready,
                 reuses_synthesis_model: false,
             }
         }
@@ -547,7 +609,7 @@ mod tests {
             "fake-designer"
         }
         fn info(&self, root: &Path) -> EngineInfo {
-            FakeDesigner.info(root)
+            FakeDesigner { ready: true }.info(root)
         }
         fn prepare<'a>(
             &'a self,
@@ -648,7 +710,7 @@ mod tests {
             let root = tempfile::tempdir().unwrap();
             let mut studio =
                 VoiceStudio::at(root.path().join("res"), root.path().join("lib")).unwrap();
-            studio.set_designers(vec![std::rc::Rc::new(FakeDesigner)]);
+            studio.set_designers(vec![std::rc::Rc::new(FakeDesigner { ready: true })]);
             let mut events = Vec::new();
             let asset = studio
                 .design_with(DesignOptions::auto("低沉温和的中年男声"), |event| {
@@ -686,12 +748,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn candidate_generation_is_model_free_until_explicit_commit() {
+        let root = tempfile::tempdir().unwrap();
+        let mut studio = VoiceStudio::at(root.path().join("res"), root.path().join("lib")).unwrap();
+        studio.set_designers(vec![std::rc::Rc::new(FakeDesigner { ready: true })]);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let candidate = studio
+            .design_candidate(DesignOptions::auto("温和旁白"), tx)
+            .await
+            .unwrap();
+        assert!(
+            rx.recv().await.is_none(),
+            "candidate generation must not prepare/download"
+        );
+        assert!(studio.list().unwrap().is_empty());
+        assert_eq!(candidate.wav(), test_wav());
+        let committed = studio.library().save_candidate(&candidate).unwrap();
+        assert_eq!(committed.id(), candidate.asset().id());
+        let replay = studio.library().save_candidate(&candidate).unwrap();
+        assert_eq!(committed.asset_digest(), replay.asset_digest());
+        assert_eq!(studio.list().unwrap().len(), 1);
+        let invalid = crate::VoiceCandidate::new(
+            "bad",
+            "bad",
+            vec![0; 10],
+            "文字",
+            None,
+            VoiceSource::Imported,
+        );
+        assert!(invalid.is_err());
+        assert_eq!(studio.list().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn missing_design_resources_require_explicit_preparation() {
+        let root = tempfile::tempdir().unwrap();
+        let mut studio = VoiceStudio::at(root.path().join("res"), root.path().join("lib")).unwrap();
+        studio.set_designers(vec![std::rc::Rc::new(FakeDesigner { ready: false })]);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let error = studio
+            .design_candidate(DesignOptions::auto("温和"), tx)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("prepare them explicitly"));
+        assert!(rx.recv().await.is_none());
+        assert!(studio.list().unwrap().is_empty());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        studio.prepare_design("fake-designer", tx).await.unwrap();
+        assert!(matches!(rx.recv().await, Some(Event::ResourceState { .. })));
+    }
+
+    #[tokio::test]
     async fn design_rejects_bad_input_before_preparing() {
         crate::run_local(async {
             let root = tempfile::tempdir().unwrap();
             let mut studio =
                 VoiceStudio::at(root.path().join("res"), root.path().join("lib")).unwrap();
-            studio.set_designers(vec![std::rc::Rc::new(FakeDesigner)]);
+            studio.set_designers(vec![std::rc::Rc::new(FakeDesigner { ready: true })]);
             // The constraints error can only be produced by the pre-prepare check.
             let error = studio
                 .design_with(

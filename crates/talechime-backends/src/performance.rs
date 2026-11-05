@@ -42,15 +42,22 @@ pub struct Receipt {
 /// Callers must supply the production manifest, not a locally invented oracle.
 pub fn manifest(root: &Path, directory: &Path, json: &str) -> anyhow::Result<Vec<VerifiedFile>> {
     let value: serde_json::Value = serde_json::from_str(json)?;
-    let resources: Vec<crate::resources::Resource> =
+    let resources: Vec<ManifestFile> =
         serde_json::from_value(value.get("resources").unwrap_or(&value).clone())?;
     verify_resources(root, directory, resources)
+}
+#[derive(serde::Deserialize)]
+struct ManifestFile {
+    path: String,
+    size: u64,
+    #[serde(default)]
+    sha256: Option<String>,
 }
 
 fn verify_resources(
     root: &Path,
     directory: &Path,
-    resources: Vec<crate::resources::Resource>,
+    resources: Vec<ManifestFile>,
 ) -> anyhow::Result<Vec<VerifiedFile>> {
     let canonical_root = root.canonicalize()?;
     let mut files = Vec::new();
@@ -69,6 +76,14 @@ fn verify_resources(
         // Downloaded manifests pin revisions without content hashes; the
         // receipt records the recomputed digest as run evidence.
         let sha256 = crate::resources::sha256_of(&path)?;
+        anyhow::ensure!(
+            resource
+                .sha256
+                .as_ref()
+                .is_none_or(|expected| *expected == sha256),
+            "model checksum mismatch: {}",
+            path.display()
+        );
         anyhow::ensure!(
             path.metadata()?.len() == resource.size,
             "unexpected size for {}",
@@ -135,17 +150,9 @@ pub fn verify(registry: &crate::Registry, backend: &str, model: &str) -> anyhow:
             include_str!("omnivoice/resources.json"),
         )?,
         #[cfg(feature = "cosyvoice3")]
-        "cosyvoice3" => manifest(
-            root,
-            &crate::cosyvoice3::directory(root),
-            include_str!("cosyvoice3/resources.json"),
-        )?,
+        "cosyvoice3" => native_manifest(root, crate::cosyvoice3::native_recipe())?,
         #[cfg(feature = "indextts")]
-        "indextts" => manifest(
-            root,
-            &crate::indextts::directory(root),
-            include_str!("indextts/conversion-manifest.json"),
-        )?,
+        "indextts" => native_manifest(root, crate::indextts::native_recipe())?,
         #[cfg(feature = "moss")]
         "moss" => match model {
             #[cfg(feature = "moss-nano-candle")]
@@ -178,13 +185,39 @@ pub fn verify(registry: &crate::Registry, backend: &str, model: &str) -> anyhow:
         backend: backend.into(),
         model: model.into(),
         resources_root: root.to_owned(),
-        verification: if backend == "indextts" || backend == "kokoro" {
-            "verified_conversion_manifest"
+        verification: if matches!(backend, "indextts" | "kokoro" | "cosyvoice3") {
+            "verified_native_recipe"
         } else {
             "production_manifest"
         },
         files,
     })
+}
+
+#[cfg(any(feature = "cosyvoice3", feature = "indextts"))]
+fn native_manifest(
+    root: &Path,
+    recipe: crate::native_preparation::Recipe,
+) -> anyhow::Result<Vec<VerifiedFile>> {
+    let directory = root.join(&recipe.target);
+    recipe.verify_files(&directory, &crate::PreparationControl::default())?;
+    let canonical_root = root.canonicalize()?;
+    recipe
+        .outputs
+        .iter()
+        .map(|pin| {
+            let path = directory.join(pin.path);
+            anyhow::ensure!(
+                path.canonicalize()?.starts_with(&canonical_root),
+                "model file escapes resources root"
+            );
+            Ok(VerifiedFile {
+                path: path.strip_prefix(root)?.to_owned(),
+                size: pin.size,
+                sha256: pin.sha256.into(),
+            })
+        })
+        .collect()
 }
 
 /// Load an already verified model using the production owner path, without prepare.
@@ -257,13 +290,11 @@ pub async fn load(
         )),
         #[cfg(feature = "cosyvoice3")]
         "cosyvoice3" => Some(std::rc::Rc::new(
-            crate::cosyvoice3::CosyBackend::load_on(crate::cosyvoice3::directory(root), device)
-                .await?,
+            crate::cosyvoice3::CosyBackend::load_on(root.to_owned(), device).await?,
         )),
         #[cfg(feature = "indextts")]
         "indextts" => Some(std::rc::Rc::new(
-            crate::indextts::IndexBackend::load_on(crate::indextts::directory(root), device)
-                .await?,
+            crate::indextts::IndexBackend::load_on(root.to_owned(), device).await?,
         )),
         #[cfg(feature = "moss")]
         "moss" => match model {
@@ -292,7 +323,7 @@ mod tests {
     use super::*;
     #[cfg(feature = "kokoro")]
     #[test]
-    fn kokoro_conversion_is_verified_offline_without_accepting_wrong_modes() -> anyhow::Result<()> {
+    fn kokoro_rejects_locally_invented_manifests_and_wrong_modes() -> anyhow::Result<()> {
         use sha2::{Digest, Sha256};
         let root = tempfile::tempdir()?;
         let directory = crate::kokoro::directory(root.path());
@@ -332,9 +363,11 @@ mod tests {
             serde_json::to_vec(&manifest)?,
         )?;
         let registry = crate::Registry::new(Some(root.path().to_owned()))?;
-        let receipt = verify(&registry, "kokoro", crate::kokoro::MODEL)?;
-        assert_eq!(receipt.verification, "verified_conversion_manifest");
-        assert_eq!(receipt.files.len(), 7);
+        assert!(verify(&registry, "kokoro", crate::kokoro::MODEL).is_err());
+        assert_eq!(
+            std::fs::read(directory.join("model.safetensors"))?,
+            b"fixture"
+        );
         assert!(
             crate::kokoro::resources::performance_resources(&directory, "1.1-zh-g2pw").is_err()
         );

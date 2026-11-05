@@ -46,11 +46,12 @@ pub(super) fn candle_device(device: Device) -> candle_core::Result<candle_core::
     }
 }
 pub(super) fn run(
-    directory: PathBuf,
+    root: PathBuf,
     device: Device,
     mut jobs: mpsc::Receiver<Request>,
     ready: oneshot::Sender<Result<(), BackendError>>,
 ) {
+    let directory = super::directory(&root);
     let loaded = (|| -> anyhow::Result<_> {
         let device = candle_device(device)?;
         let pipeline = CosyVoice3::load(&directory, &device, candle_core::DType::F32, 0)?;
@@ -73,7 +74,7 @@ pub(super) fn run(
             continue;
         }
         let result = (|| -> anyhow::Result<()> {
-            let store = super::voice_store(&directory)?;
+            let store = super::voice_store(&root)?;
             let voice = store.load(&request.voice)?;
             let samples =
                 crate::reference::load(&store.path(&request.voice)?.join("reference.wav"), 24000)?;

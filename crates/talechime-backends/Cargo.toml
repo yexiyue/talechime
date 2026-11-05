@@ -9,7 +9,7 @@ repository = "https://github.com/yexiyue/talechime"
 
 [features]
 kokoro = ["dep:talechime-kokoro", "dep:candle-core", "dep:tokio-util"]
-kokoro-g2pw = ["kokoro", "talechime-kokoro/g2pw"]
+kokoro-g2pw = ["kokoro", "talechime-kokoro/g2pw", "zip/deflate-flate2-zlib-rs"]
 kokoro-metal = ["kokoro", "talechime-kokoro/metal", "dep:candle-metal-kernels"]
 kokoro-cuda = ["kokoro", "talechime-kokoro/cuda"]
 performance-tools = ["dep:tracing", "dep:metrics"]
@@ -59,10 +59,13 @@ sentencepiece-rs = { version = "0.2.2", optional = true }
 hound = { workspace = true, optional = true }
 rubato = { version = "0.16", optional = true }
 anyhow.workspace = true
+thiserror.workspace = true
+fs2 = "0.4"
+zip.workspace = true
 hf-hub.workspace = true
 futures.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 tokio.workspace = true
 dirs.workspace = true
 sha2.workspace = true

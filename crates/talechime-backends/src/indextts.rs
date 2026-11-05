@@ -1,4 +1,6 @@
 //! IndexTTS 2.5 reference cloning with named emotions and reference/vector controls.
+mod native;
+pub(crate) use native::recipe as native_recipe;
 pub mod params;
 mod reference_cache;
 pub mod resources;
@@ -17,12 +19,12 @@ pub fn directory(root: &Path) -> PathBuf {
         .join(resources::REVISION)
 }
 
-pub fn voice_store(directory: &Path) -> anyhow::Result<talechime_core::voices::VoiceStore> {
-    talechime_core::voices::VoiceStore::new(directory, "indextts", MODEL, resources::REVISION)
+pub fn voice_store(root: &Path) -> anyhow::Result<talechime_core::voices::VoiceStore> {
+    talechime_core::voices::VoiceStore::new(root, "indextts", MODEL, resources::REVISION)
 }
 
-pub fn capabilities(directory: &Path) -> anyhow::Result<Capabilities> {
-    let voices = voice_store(directory)?.list()?;
+pub fn capabilities(root: &Path) -> anyhow::Result<Capabilities> {
+    let voices = voice_store(root)?.list()?;
     Ok(Capabilities {
         backend: "indextts".into(),
         model: Some(MODEL.into()),
@@ -72,28 +74,35 @@ pub fn available_devices() -> Vec<Device> {
 pub struct IndexBackend {
     requests: Option<mpsc::Sender<runtime::Request>>,
     thread: Option<std::thread::JoinHandle<()>>,
-    caps: Capabilities,
+    caps: std::cell::RefCell<Capabilities>,
+    root: PathBuf,
 }
 
 impl IndexBackend {
-    pub async fn load_on(directory: PathBuf, device: Device) -> Result<Self, BackendError> {
+    pub async fn load_on(root: PathBuf, device: Device) -> Result<Self, BackendError> {
         if !available_devices().contains(&device) {
             return Err(BackendError::Initialize(format!(
                 "IndexTTS device {device:?} is unavailable"
             )));
         }
-        let caps = capabilities(&directory)
+        native_recipe()
+            .verify_existing(directory(&root), crate::PreparationControl::default())
+            .await
             .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        let caps =
+            capabilities(&root).map_err(|error| BackendError::Initialize(error.to_string()))?;
+        let voice_root = root.clone();
         let (requests, jobs) = mpsc::channel(1);
         let (ready, loaded) = oneshot::channel();
         let thread = std::thread::Builder::new()
             .name("indextts-inference".into())
-            .spawn(move || runtime::run(directory, device, jobs, ready))
+            .spawn(move || runtime::run(root, device, jobs, ready))
             .map_err(|error| BackendError::Initialize(error.to_string()))?;
         let backend = Self {
             requests: Some(requests),
             thread: Some(thread),
-            caps,
+            caps: std::cell::RefCell::new(caps),
+            root: voice_root,
         };
         loaded
             .await
@@ -113,22 +122,29 @@ impl Drop for IndexBackend {
 
 impl Backend for IndexBackend {
     fn capabilities(&self) -> Capabilities {
-        self.caps.clone()
+        self.caps.borrow().clone()
     }
 
+    fn refresh_reference_voices(&self) -> Result<(), BackendError> {
+        let caps = capabilities(&self.root)
+            .map_err(|error| BackendError::Unsupported(error.to_string()))?;
+        self.caps.replace(caps);
+        Ok(())
+    }
     fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            request.reject_unsupported(self.caps.style)?;
+            let caps = self.capabilities();
+            request.reject_unsupported(caps.style)?;
             let resolved = params::resolve(request.params, request.style, request.seed)?;
             if request.text.trim().is_empty()
-                || !self.caps.voices.iter().any(|voice| voice == request.voice)
+                || !caps.voices.iter().any(|voice| voice == request.voice)
             {
                 return Err(BackendError::Unsupported(
                     "IndexTTS needs nonempty text and an imported reference voice".into(),
                 ));
             }
             if let Some(voice) = &resolved.emotion_voice
-                && !self.caps.voices.contains(voice)
+                && !caps.voices.contains(voice)
             {
                 return Err(BackendError::Unsupported(
                     "emo_voice must name an imported IndexTTS reference voice".into(),
@@ -155,6 +171,59 @@ impl Backend for IndexBackend {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn offline_voice_import_does_not_create_the_model_publication_target() {
+        let root = tempfile::tempdir().unwrap();
+        let wav = root.path().join("reference.wav");
+        let mut writer = hound::WavWriter::create(
+            &wav,
+            hound::WavSpec {
+                channels: 1,
+                sample_rate: 24000,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            },
+        )
+        .unwrap();
+        for i in 0..24000 {
+            writer
+                .write_sample(((i as f32 * 0.04).sin() * 4000.0) as i16)
+                .unwrap();
+        }
+        writer.finalize().unwrap();
+        let (tx, _) = tokio::sync::mpsc::channel(1);
+        let backend = super::IndexBackend {
+            requests: Some(tx),
+            thread: None,
+            caps: std::cell::RefCell::new(super::capabilities(root.path()).unwrap()),
+            root: root.path().into(),
+        };
+        assert!(backend.capabilities().voices.is_empty());
+        let store = super::voice_store(root.path()).unwrap();
+        store
+            .import(
+                "custom:offline",
+                "Offline reference",
+                &wav,
+                "测试参考音频。",
+                None,
+            )
+            .unwrap();
+        assert!(
+            store
+                .path("custom:offline")
+                .unwrap()
+                .starts_with(root.path().join("voices"))
+        );
+        backend.refresh_reference_voices().unwrap();
+        assert_eq!(backend.capabilities().voices, ["custom:offline"]);
+        assert!(!super::directory(root.path()).exists());
+        assert_eq!(
+            super::capabilities(root.path()).unwrap().voices,
+            ["custom:offline"]
+        );
+    }
+
     use super::*;
 
     #[tokio::test]
@@ -168,7 +237,8 @@ mod tests {
         let backend = IndexBackend {
             requests: Some(tx),
             thread: None,
-            caps,
+            caps: std::cell::RefCell::new(caps),
+            root: root.path().into(),
         };
         let params = params::IndexTtsParams::default()
             .emotion_voice("custom:emotion")

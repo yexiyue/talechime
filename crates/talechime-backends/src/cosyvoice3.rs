@@ -1,4 +1,6 @@
 //! CosyVoice3 reference cloning and style instructions with bounded native streaming.
+mod native;
+pub(crate) use native::recipe as native_recipe;
 pub mod resources;
 mod runtime;
 use std::path::{Path, PathBuf};
@@ -12,11 +14,11 @@ pub fn directory(root: &Path) -> PathBuf {
         .join(MODEL)
         .join(resources::REVISION)
 }
-pub fn voice_store(directory: &Path) -> anyhow::Result<talechime_core::voices::VoiceStore> {
-    talechime_core::voices::VoiceStore::new(directory, "cosyvoice3", MODEL, resources::REVISION)
+pub fn voice_store(root: &Path) -> anyhow::Result<talechime_core::voices::VoiceStore> {
+    talechime_core::voices::VoiceStore::new(root, "cosyvoice3", MODEL, resources::REVISION)
 }
-pub fn capabilities(directory: &Path) -> anyhow::Result<Capabilities> {
-    let voices = voice_store(directory)?.list()?;
+pub fn capabilities(root: &Path) -> anyhow::Result<Capabilities> {
+    let voices = voice_store(root)?.list()?;
     Ok(Capabilities {
         backend: "cosyvoice3".into(),
         model: Some(MODEL.into()),
@@ -61,26 +63,33 @@ pub fn available_devices() -> Vec<Device> {
 pub struct CosyBackend {
     requests: Option<mpsc::Sender<runtime::Request>>,
     thread: Option<std::thread::JoinHandle<()>>,
-    caps: Capabilities,
+    caps: std::cell::RefCell<Capabilities>,
+    root: PathBuf,
 }
 impl CosyBackend {
-    pub async fn load_on(directory: PathBuf, device: Device) -> Result<Self, BackendError> {
+    pub async fn load_on(root: PathBuf, device: Device) -> Result<Self, BackendError> {
         if !available_devices().contains(&device) {
             return Err(BackendError::Initialize(format!(
                 "CosyVoice3 device {device:?} is unavailable"
             )));
         }
-        let caps = capabilities(&directory).map_err(|e| BackendError::Initialize(e.to_string()))?;
+        native_recipe()
+            .verify_existing(directory(&root), crate::PreparationControl::default())
+            .await
+            .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        let caps = capabilities(&root).map_err(|e| BackendError::Initialize(e.to_string()))?;
+        let voice_root = root.clone();
         let (requests, jobs) = mpsc::channel(1);
         let (ready, loaded) = oneshot::channel();
         let thread = std::thread::Builder::new()
             .name("cosyvoice3-inference".into())
-            .spawn(move || runtime::run(directory, device, jobs, ready))
+            .spawn(move || runtime::run(root, device, jobs, ready))
             .map_err(|e| BackendError::Initialize(e.to_string()))?;
         let backend = Self {
             requests: Some(requests),
             thread: Some(thread),
-            caps,
+            caps: std::cell::RefCell::new(caps),
+            root: voice_root,
         };
         loaded
             .await
@@ -100,19 +109,24 @@ impl Backend for CosyBackend {
     // References may be replaced by the host; do not advertise persistent
     // deterministic audio caching without binding their contents to identity.
     fn capabilities(&self) -> Capabilities {
-        self.caps.clone()
+        self.caps.borrow().clone()
+    }
+    fn refresh_reference_voices(&self) -> Result<(), BackendError> {
+        let caps = capabilities(&self.root)
+            .map_err(|error| BackendError::Unsupported(error.to_string()))?;
+        self.caps.replace(caps);
+        Ok(())
     }
     fn stream<'a>(&'a self, request: talechime_core::backend::SegmentRequest<'a>) -> Streaming<'a> {
         Box::pin(async move {
-            request.reject_unsupported(self.caps.style)?;
+            let caps = self.capabilities();
+            request.reject_unsupported(caps.style)?;
             let instruction = runtime::instruction(request.style)?;
             request
                 .params
-                .validate(&self.caps.parameters)
+                .validate(&caps.parameters)
                 .map_err(|e| BackendError::Unsupported(e.to_string()))?;
-            if request.text.trim().is_empty()
-                || !self.caps.voices.iter().any(|v| v == request.voice)
-            {
+            if request.text.trim().is_empty() || !caps.voices.iter().any(|v| v == request.voice) {
                 return Err(BackendError::Unsupported("CosyVoice3 needs nonempty text and an imported reference voice (voices import --text ...)".into()));
             }
             let (audio, receiver) = mpsc::channel(1);
@@ -137,6 +151,59 @@ impl Backend for CosyBackend {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn offline_voice_import_does_not_create_the_model_publication_target() {
+        let root = tempfile::tempdir().unwrap();
+        let wav = root.path().join("reference.wav");
+        let mut writer = hound::WavWriter::create(
+            &wav,
+            hound::WavSpec {
+                channels: 1,
+                sample_rate: 24000,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            },
+        )
+        .unwrap();
+        for i in 0..24000 {
+            writer
+                .write_sample(((i as f32 * 0.04).sin() * 4000.0) as i16)
+                .unwrap();
+        }
+        writer.finalize().unwrap();
+        let (tx, _) = tokio::sync::mpsc::channel(1);
+        let backend = super::CosyBackend {
+            requests: Some(tx),
+            thread: None,
+            caps: std::cell::RefCell::new(super::capabilities(root.path()).unwrap()),
+            root: root.path().into(),
+        };
+        assert!(backend.capabilities().voices.is_empty());
+        let store = super::voice_store(root.path()).unwrap();
+        store
+            .import(
+                "custom:offline",
+                "Offline reference",
+                &wav,
+                "测试参考音频。",
+                None,
+            )
+            .unwrap();
+        assert!(
+            store
+                .path("custom:offline")
+                .unwrap()
+                .starts_with(root.path().join("voices"))
+        );
+        backend.refresh_reference_voices().unwrap();
+        assert_eq!(backend.capabilities().voices, ["custom:offline"]);
+        assert!(!super::directory(root.path()).exists());
+        assert_eq!(
+            super::capabilities(root.path()).unwrap().voices,
+            ["custom:offline"]
+        );
+    }
+
     use super::*;
     #[tokio::test]
     async fn style_is_forwarded_to_owner_without_changing_the_voice() -> anyhow::Result<()> {
@@ -148,7 +215,8 @@ mod tests {
         let backend = CosyBackend {
             requests: Some(tx),
             thread: None,
-            caps,
+            caps: std::cell::RefCell::new(caps),
+            root: root.path().into(),
         };
         let params = GenerationParams::new();
         let request = |style| SegmentRequest {
@@ -201,13 +269,11 @@ mod tests {
     async fn missing_conversion_fails_without_downloading_or_writing() {
         let root = tempfile::tempdir().unwrap();
         let (tx, _rx) = mpsc::channel(2);
-        assert!(
-            resources::prepare(root.path(), tx)
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("convert the pinned checkpoint")
-        );
+        let error = resources::prepare(root.path(), tx).await.unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<crate::PreparationError>(),
+            Some(crate::PreparationError::Integrity(_))
+        ));
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
 }

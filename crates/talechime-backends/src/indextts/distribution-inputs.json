@@ -1,0 +1,106 @@
+[
+  {
+    "path": "gpt.safetensors",
+    "size": 3259446504,
+    "sha256": "9e5e7d192907a24d80f19b587ab9e5fdf8032d679beb36239bd9af3e0c61378b",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "1ae47e4998c45f60c8c62bb4090136b6554e17d0",
+    "filename": "native/indextts-v3/gpt.safetensors"
+  },
+  {
+    "path": "codec.safetensors",
+    "size": 202358064,
+    "sha256": "30c5e9b989bfb63f77784a2c0753c11f2e2177b0e8be170f587c645c920cc408",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "1ae47e4998c45f60c8c62bb4090136b6554e17d0",
+    "filename": "native/indextts-v3/codec.safetensors"
+  },
+  {
+    "path": "s2mel.safetensors",
+    "size": 414778712,
+    "sha256": "edbe644be9538fe3a3e6d98f0ab54603ac3ebdbfa168dcf88d2c4ee62468e4bc",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "1ae47e4998c45f60c8c62bb4090136b6554e17d0",
+    "filename": "native/indextts-v3/s2mel.safetensors"
+  },
+  {
+    "path": "campplus.safetensors",
+    "size": 27831904,
+    "sha256": "2884cfd4a2953c9759a71137a354a61060733dc61a89f9cc0a15a2d151302b67",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "1ae47e4998c45f60c8c62bb4090136b6554e17d0",
+    "filename": "native/indextts-v3/campplus.safetensors"
+  },
+  {
+    "path": "bigvgan.safetensors",
+    "size": 449018644,
+    "sha256": "5cf00e7802f15a3c2aa24183691d437c7ad5a49fe6174d90f99fce38198368b3",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "1ae47e4998c45f60c8c62bb4090136b6554e17d0",
+    "filename": "native/indextts-v3/bigvgan.safetensors"
+  },
+  {
+    "path": "feats.safetensors",
+    "size": 438320,
+    "sha256": "b44309af6529e53412f35bf833ad499b39789b8b4496f1e5592b55774a3f4d77",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "1ae47e4998c45f60c8c62bb4090136b6554e17d0",
+    "filename": "native/indextts-v3/feats.safetensors"
+  },
+  {
+    "path": "bigvgan.config.json",
+    "repo": "nvidia/bigvgan_v2_22khz_80band_256x",
+    "revision": "633ff708ed5b74903e86ff1298cf4a98e921c513",
+    "filename": "config.json",
+    "size": 1405,
+    "sha256": "88a1f47acf747db0b21e97a389d838566147f7a5464583ff5c8d819d870f03ee"
+  },
+  {
+    "path": "multilingual_zh_ja_yue_char_del.tiktoken",
+    "repo": "IndexTeam/IndexTTS-2.5",
+    "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+    "filename": "multilingual_zh_ja_yue_char_del.tiktoken",
+    "size": 907395,
+    "sha256": "747979631e813193436aabcff7c1c235d37de8097b71c563ec8b63b7a515c718"
+  },
+  {
+    "path": "w2v-bert-2.0/model.safetensors",
+    "repo": "facebook/w2v-bert-2.0",
+    "revision": "da985ba0987f70aaeb84a80f2851cfac8c697a7b",
+    "filename": "model.safetensors",
+    "size": 2322063736,
+    "sha256": "eb890c9660ed6e3414b6812e27257b8ce5454365d5490d3ad581ea60b93be043"
+  },
+  {
+    "path": "w2v-bert-2.0/config.json",
+    "repo": "facebook/w2v-bert-2.0",
+    "revision": "da985ba0987f70aaeb84a80f2851cfac8c697a7b",
+    "filename": "config.json",
+    "size": 1874,
+    "sha256": "f5572bd5998b68182e9c328a43127ed21fed687f6910497136b91a4e3b0e3675"
+  },
+  {
+    "path": "LICENSE-INDEXTTS",
+    "repo": "IndexTeam/IndexTTS-2.5",
+    "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+    "filename": "LICENSE",
+    "size": 10553,
+    "sha256": "cc7da9ea0f8a97ef15ab3bf0389e636ce79ffca1aef5489520796ac87d87a87b"
+  },
+  {
+    "path": "config.json",
+    "size": 3269,
+    "sha256": "e3503c2f2e0af0c24fd456e6e02613d1e536b02e4c9bd3da185093db537cf487",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "1ae47e4998c45f60c8c62bb4090136b6554e17d0",
+    "filename": "native/indextts-v3/config.json"
+  },
+  {
+    "path": "SOURCES.json",
+    "size": 5226,
+    "sha256": "5d7177b2f43b6e7ecf3afad22c3e599f7192ef17178413356a41bfdbfd8af04c",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "1ae47e4998c45f60c8c62bb4090136b6554e17d0",
+    "filename": "native/indextts-v3/SOURCES.json"
+  }
+]

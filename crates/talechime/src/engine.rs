@@ -173,13 +173,21 @@ impl Engine {
         options: ModelOptions,
         progress: impl FnMut(Event),
     ) -> Result<Self, EngineError> {
-        if options.backend.trim().is_empty() || options.resources.as_os_str().is_empty() {
+        let registry =
+            Registry::new(Some(options.resources.clone())).map_err(EngineError::Prepare)?;
+        Self::prepare_in(&registry, options, progress).await
+    }
+    /// Prepare with caller-owned download configuration; never reads CLI settings.
+    pub async fn prepare_in(
+        registry: &Registry,
+        options: ModelOptions,
+        progress: impl FnMut(Event),
+    ) -> Result<Self, EngineError> {
+        if options.backend.trim().is_empty() || registry.root() != options.resources {
             return Err(EngineError::InvalidOptions(
-                "backend and resource path are required",
+                "backend and matching resource root are required",
             ));
         }
-        let registry = talechime_backends::Registry::new(Some(options.resources.clone()))
-            .map_err(EngineError::Prepare)?;
         let model = registry
             .resolve(&options.backend, options.model.as_deref())
             .map_err(EngineError::Prepare)?;
@@ -198,10 +206,59 @@ impl Engine {
             progress,
         )
         .await
-        .and_then(|backend| Self::with_studio(backend, options))
+        .and_then(|backend| Self::with_studio(backend, registry, options))
     }
-    fn with_studio(backend: Rc<dyn Backend>, options: ModelOptions) -> Result<Self, EngineError> {
-        let studio = crate::VoiceStudio::open(Some(options.resources.clone()), options.voices)
+    /// Load only previously prepared resources. Missing resources fail before prepare.
+    pub async fn load(
+        registry: &Registry,
+        options: ModelOptions,
+        progress: impl FnMut(Event),
+    ) -> Result<Self, EngineError> {
+        if registry
+            .resource_status(&options.backend, options.model.as_deref())
+            .map_err(EngineError::Prepare)?
+            != ResourceStatus::Ready
+        {
+            return Err(EngineError::InvalidOptions(
+                "model resources are not ready; prepare explicitly first",
+            ));
+        }
+        if registry.root() != options.resources {
+            return Err(EngineError::InvalidOptions("resource root mismatch"));
+        }
+        let model = registry
+            .resolve(&options.backend, options.model.as_deref())
+            .map_err(EngineError::Prepare)?;
+        crate::model_preparation::with_progress(
+            |tx| {
+                model.load_existing(
+                    PrepareOptions {
+                        device: options.device,
+                        calibrate: options.calibrate,
+                        recovery: options.recovery,
+                        voice: None,
+                    },
+                    tx,
+                )
+            },
+            progress,
+        )
+        .await
+        .and_then(|backend| Self::with_studio(backend, registry, options))
+    }
+    fn with_studio(
+        backend: Rc<dyn Backend>,
+        registry: &Registry,
+        options: ModelOptions,
+    ) -> Result<Self, EngineError> {
+        let voices = options
+            .voices
+            .map(Ok)
+            .unwrap_or_else(|| {
+                talechime_core::paths::AppPaths::user_default().map(|paths| paths.voices())
+            })
+            .map_err(|error| EngineError::Voice(format!("{error}")))?;
+        let studio = crate::VoiceStudio::at_registry(registry, voices)
             .map_err(|error| EngineError::Voice(error.to_string()))?;
         let mut engine = Self::from_backend(backend);
         engine.voice_studio = Some(studio);
@@ -219,6 +276,26 @@ impl Engine {
     /// Voice assets bound to this engine's resources; `None` for injected backends.
     pub fn voices(&self) -> Option<&crate::VoiceStudio> {
         self.voice_studio.as_ref()
+    }
+    /// Use a validated unsaved reference without adding it to the library.
+    pub async fn install_candidate(
+        &self,
+        candidate: &VoiceCandidate,
+    ) -> Result<String, EngineError> {
+        self.available()?;
+        let caps = self.capabilities()?;
+        let studio = self
+            .voice_studio
+            .as_ref()
+            .ok_or(EngineError::InvalidOptions("engine has no voice studio"))?;
+        let id = studio
+            .install_candidate_for(&caps.backend, caps.model.as_deref(), candidate)
+            .await
+            .map_err(|error| EngineError::Voice(error.to_string()))?;
+        self.backend()?
+            .refresh_reference_voices()
+            .map_err(|error| EngineError::Voice(error.to_string()))?;
+        Ok(id)
     }
     #[cfg(all(test, feature = "qwen"))]
     pub(crate) fn attach_voice_studio(&mut self, studio: crate::VoiceStudio) {
@@ -708,5 +785,48 @@ mod tests {
         })
         .await?;
         Ok(())
+    }
+    #[tokio::test]
+    async fn unsaved_candidates_use_isolated_model_caches_without_library_records()
+    -> anyhow::Result<()> {
+        crate::run_local(async {
+            let root = tempfile::tempdir()?;
+            let resources = root.path().join("models");
+            let library_root = root.path().join("voices");
+            let backend = Rc::new(RecordingBackend {
+                resources: resources.clone(),
+                installed: RefCell::new(vec![]),
+                voices: RefCell::new(vec![]),
+            });
+            let mut engine = Engine::from_backend(backend.clone());
+            engine.attach_voice_studio(VoiceStudio::at(&resources, &library_root)?);
+            for id in ["candidate-one", "candidate-two"] {
+                let candidate = VoiceCandidate::new(
+                    id,
+                    "试声",
+                    riff_wav(6000),
+                    "准确转写",
+                    None,
+                    VoiceSource::Imported,
+                )?;
+                let voice = engine.install_candidate(&candidate).await?;
+                engine
+                    .synthesize_pcm("你好。", &voice, None, 1 << 20)
+                    .await?;
+                assert_eq!(
+                    backend.voices.borrow().last(),
+                    Some(&format!("custom:{id}"))
+                );
+                let store = talechime_backends::qwen::voice_store(
+                    &talechime_backends::qwen::models::Model::Base17.directory(&resources),
+                    talechime_backends::qwen::models::Model::Base17,
+                )?;
+                assert_eq!(store.load(&voice)?.transcript, "准确转写");
+            }
+            assert!(engine.voices().unwrap().list()?.is_empty());
+            engine.close().await?;
+            Ok(())
+        })
+        .await
     }
 }

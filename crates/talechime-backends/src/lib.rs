@@ -45,7 +45,6 @@ pub mod reference;
     feature = "moss",
     feature = "qwen",
     feature = "voxcpm",
-    feature = "cosyvoice3",
     feature = "omnivoice",
     feature = "asr",
     feature = "performance-tools",
@@ -59,6 +58,11 @@ pub mod voxcpm;
 pub mod cosyvoice3;
 
 mod registry;
-pub use registry::{PrepareOptions, ReferenceVoice, Registry, ResolvedModel};
+pub use registry::{PrepareOptions, ReferenceVoice, Registry, ResolvedModel, ResourcePreparation};
 mod resource_state;
 pub use resource_state::ResourceStatus;
+
+mod native_preparation;
+pub use native_preparation::{
+    PreparationControl, PreparationError, PreparationPhase, PreparationPlan, PreparationProgress,
+};

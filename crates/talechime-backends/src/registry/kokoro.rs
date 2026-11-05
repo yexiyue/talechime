@@ -14,6 +14,12 @@ pub(super) const REGISTRATION: Registration = Registration {
 };
 struct Adapter(&'static str);
 impl ModelAdapter for Adapter {
+    fn native_recipe(&self) -> Option<crate::native_preparation::Recipe> {
+        model::native_recipe(self.0)
+    }
+    fn resource_preparation(&self) -> ResourcePreparation {
+        ResourcePreparation::Native
+    }
     fn id(&self) -> &'static str {
         self.0
     }
@@ -33,7 +39,10 @@ impl ModelAdapter for Adapter {
         false
     }
     fn resource_status(&self, root: &Path) -> crate::resource_state::ResourceStatus {
-        model::resources::conversion_status(&model::directory_for(root, self.0))
+        match model::native_recipe(self.0) {
+            Some(recipe) => recipe.status(root),
+            None => model::resources::conversion_status(&model::directory_for(root, self.0)),
+        }
     }
     fn prepare<'a>(
         &'a self,
