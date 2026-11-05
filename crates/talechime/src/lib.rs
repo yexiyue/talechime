@@ -36,8 +36,8 @@ mod voice_studio;
 pub use catalog::{ModelInfo, model_catalog};
 /// Host-facing download configuration and registry access for model resources.
 pub use talechime_backends::downloads::{
-    DownloadConfig, DownloadFailure, DownloadOptions, Downloads, FileProgressBridge,
-    default_cache_dir,
+    DownloadConfig, DownloadFailure, DownloadOptions, DownloadTransport, Downloads,
+    FileProgressBridge, default_cache_dir,
 };
 pub use talechime_backends::{PrepareOptions, Registry, ResolvedModel, ResourceStatus};
 pub use talechime_core::design;

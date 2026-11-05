@@ -1,15 +1,15 @@
 # hf-hub fork 与上游下载能力
 
-2026-11-05 核对。当前维护仓库为 [yexiyue/hf-hub](https://github.com/yexiyue/hf-hub)，HTTP 补丁分支 `codex/resumable-http-downloads`，消费者以工作区 `Cargo.toml` 中的完整 Git `rev` 固定版本。TaleChime 不再保留 hf-hub vendor 副本；共享缓存、锁、blob 与快照仍由 hf-hub 管理。
+2026-11-05 核对。当前维护仓库为 [yexiyue/hf-hub](https://github.com/yexiyue/hf-hub)，传输补丁分支 `codex/resumable-http-downloads`，消费者以工作区 `Cargo.toml` 中的完整 Git `rev` 固定版本。TaleChime 不再保留 hf-hub vendor 副本；共享缓存、锁、blob 与快照仍由 hf-hub 管理。
 
 ## 源码与边界
 
 HTTP 补丁基于官方 1.0.0 对应提交 `dcf865adacf7cbb750038d6521deb16c670ffd42`；本次迁移不升级上游基线。完整历史、Apache-2.0 许可证及补丁清单保存在 fork 的 `FORK.md` 与 crate 内 `SOURCE.md`。不依赖宿主的 workspace patch，不把下载实现复制回应用。
 
-- 单文件显式禁用 Xet，按标准 HTTP 读取并报告真实文件字节。
+- 单文件支持 Xet / HTTP：SDK 默认 Auto，优先使用元数据声明的 Xet，端点不支持或网络失败时回退 HTTP；可显式指定传输策略。
 - 元数据缺失的绝对 HEAD 跳转、凭据隔离、禁止 HTTPS 降级及跳转上限。
 - 保留官方缓存发布路径和文件锁；Range 续传、状态/范围/长度和可用 SHA-256 校验。
-- 每文件最多四路、全局四路数据请求，持久化分片断点，签名 URL 刷新时验证内容身份。
+- 每文件最多四个缺失范围、全局四个执行槽；Xet 使用官方乱序流与内部自适应并发。两种传输共用持久化断点，签名 URL 刷新时验证内容身份。
 - 应用任务、暂停状态、重启恢复和速率/ETA 由宿主负责；不向宿主协议暴露 HF/Xet 内部类型。
 
 Git 依赖解决维护与构建复现，不等于 SDK 可以发布到 crates.io。Cargo 发布会移除 Git 来源；发布前须采用提供这些 API 的上游正式版本，或独立命名的补丁 crate，并更新发布流程。当前未发布补丁 crate 或新版 SDK。
@@ -24,7 +24,7 @@ Git 依赖解决维护与构建复现，不等于 SDK 可以发布到 crates.io�
 | Xet future 取消后 poller 存活 | [PR #205](https://github.com/huggingface/hf-hub/pull/205) 为 open | 不重复提交同一生命周期修复 |
 | 下载时网络有流量、文件仍为零 | Rust main `473de9430b0fbc544fb1d91102180eb713f8dc87` 的 poller 只转发逻辑重建字段，上传已转发网络字段 | 单独提交下载网络统计 PR，与 HTTP 续传补丁分开 |
 
-PR #170 的维护者指出 Xet 文件可能乱序写入、有空洞，因此不能按文件长度追加续传。当前 HTTP 分片断点显式记录每片已保存位置，不推断 Xet 文件的完成范围。
+PR #170 的维护者指出 Xet 文件可能乱序写入、有空洞，因此不能按文件长度追加续传。当前 fork 使用 hf-xet 1.8 的乱序流获得真实偏移，单独计算覆盖范围，仅将各片连续有效前缀持久化；新客户端或 HTTP 回退都读取这些有效前缀。没有断点标记的旧临时文件不视为连续数据。
 
 ## Python 对照
 
@@ -42,4 +42,4 @@ PR #170 的维护者指出 Xet 文件可能乱序写入、有空洞，因此不�
 
 同一固定 MOSS Realtime 权重、独立临时缓存、90 秒 / 8 MiB 网络字节预算的真实探针，在 9.251 秒观察到 10,139,690 网络字节、重建字节仍为零；首次观察到网络进度约 7.501 秒。这验证新增事件可报告真实传输，不是完整文件验收。预算轮询会有少量超额。
 
-这解决进度不可见，不承诺解决 CDN/TLS 链路故障或提升实际吞吐。应用默认 HTTP 路径及其暂停续传仍保留；完整 Xet 权重下载、模型推理和 Windows 实机不由短时进度探针证明。
+上游 PR 解决网络进度不可见，独立于 fork 的 Auto/续传实现；PR 最终不包含 README 改动，额外评论已删除，说明与验证合并在描述中。当前 SDK 默认 Auto，两种传输都保留有效断点。实际速度、恢复与 MOSS 有界验证见[新记录](../records/downloads/xet-auto-fallback-2026-11-05.md)；完整生产模型、推理和 Windows 实机不由这些样本证明。

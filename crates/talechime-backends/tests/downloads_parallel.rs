@@ -134,7 +134,10 @@ impl Server {
                 endpoint: Some(self.endpoint.clone()),
                 token: None,
             },
-            DownloadOptions { connections },
+            DownloadOptions {
+                connections,
+                ..Default::default()
+            },
         )
         .unwrap()
     }

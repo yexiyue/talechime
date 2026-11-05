@@ -28,4 +28,4 @@ PR 已提交且可合并；首次核对上游 Rust workflow 为 `action_required
 
 固定 Git 来源后，TaleChime 27 个后端单元、5 个本地 Hub 集成、5 个分片集成测试通过；CastGlean 38 个宿主测试通过，原有真实下载手工测试保持 ignored。两仓相关 Clippy `-D warnings` 通过。
 
-TaleChime 和 CastGlean 继续显式采用 HTTP；Xet 进度修复不自动切换传输，也不提供 Xet 稀疏文件暂停续传。SDK 发布限制见[维护说明](../../knowledge/hf-hub-fork.md)。本次未发布 SDK，也未重新验收完整模型或 Windows 桌面行为。
+该次迁移时 TaleChime 和 CastGlean 继续采用 HTTP。后续已经加入 Auto 与基于真实偏移的 Xet 有效断点，见[后续验证](xet-auto-fallback-2026-11-05.md)，不按旧稀疏文件长度推断进度。SDK 发布限制见[维护说明](../../knowledge/hf-hub-fork.md)；未发布 SDK，未验收完整生产模型或 Windows 新行为。

@@ -1,7 +1,9 @@
 //! End-to-end download tests against an in-process HTTP mock standing in for
 //! the Hub. Never touches the network; pinned commit revisions avoid revision
 //! resolution requests.
-use talechime_backends::downloads::{DownloadConfig, Downloads, FileProgressBridge};
+use talechime_backends::downloads::{
+    DownloadConfig, DownloadOptions, DownloadTransport, Downloads, FileProgressBridge,
+};
 
 const REPO: &str = "example-team/example-model";
 const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -12,12 +14,56 @@ fn bridge(resource: &str, size: u64) -> FileProgressBridge {
 }
 
 fn downloads(endpoint: &str, cache_dir: std::path::PathBuf) -> Downloads {
-    Downloads::new(&DownloadConfig {
-        cache_dir,
-        endpoint: Some(endpoint.to_owned()),
+    Downloads::with_options(
+        &DownloadConfig {
+            cache_dir,
+            endpoint: Some(endpoint.to_owned()),
+            token: None,
+        },
+        DownloadOptions {
+            transport: DownloadTransport::Http,
+            ..Default::default()
+        },
+    )
+    .expect("local-hub downloads client")
+}
+
+#[tokio::test]
+async fn auto_falls_back_when_mirror_advertises_xet_without_a_token_endpoint() {
+    let payload = b"model-payload";
+    let hash = sha256_hex(payload);
+    let server = httpmock::MockServer::start();
+    server.mock(|when, then| {
+        when.method("HEAD").path_includes(FILENAME);
+        then.status(200)
+            .header("ETag", format!("\"{hash}\""))
+            .header("X-Repo-Commit", REVISION)
+            .header("X-Xet-Hash", "a".repeat(64))
+            .header("Content-Length", "13");
+    });
+    let token = server.mock(|when, then| {
+        when.method("GET").path_includes("/xet-read-token/");
+        then.status(404);
+    });
+    let body = server.mock(|when, then| {
+        when.method("GET").path_includes(FILENAME);
+        then.status(200).body(payload.as_slice());
+    });
+    let root = tempfile::tempdir().unwrap();
+    let client = Downloads::new(&DownloadConfig {
+        cache_dir: root.path().join("cache"),
+        endpoint: Some(server.base_url()),
         token: None,
     })
-    .expect("local-hub downloads client")
+    .unwrap();
+    let dest = root.path().join("engine/model.bin");
+    client
+        .ensure(&dest, REPO, REVISION, FILENAME, bridge(FILENAME, 13))
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(dest).unwrap(), payload);
+    token.assert_calls(1);
+    body.assert_calls(1);
 }
 
 #[tokio::test]
@@ -176,7 +222,7 @@ async fn http_resume_validates_ranges_status_and_length_before_publication() {
         let get = server.mock(|when, then| {
             when.method("GET")
                 .path_includes(FILENAME)
-                .header("range", "bytes=4-");
+                .header("range", "bytes=4-12");
             match case {
                 "resume" => {
                     then.status(206)
@@ -192,12 +238,20 @@ async fn http_resume_validates_ranges_status_and_length_before_publication() {
                         .body(&payload[4..]);
                 }
                 "short-body" => {
-                    then.status(200).body(&payload[..3]);
+                    then.status(206)
+                        .header("Content-Range", "bytes 4-12/13")
+                        .body(&payload[..3]);
                 }
                 _ => {
                     then.status(403).body("forbidden");
                 }
             }
+        });
+        let ignored = server.mock(|when, then| {
+            when.method("GET")
+                .path_includes(FILENAME)
+                .header_missing("range");
+            then.status(200).body(payload.as_slice());
         });
         let root = tempfile::tempdir().unwrap();
         let cache = root.path().join("hf-cache");
@@ -205,6 +259,14 @@ async fn http_resume_validates_ranges_status_and_length_before_publication() {
         std::fs::create_dir_all(&blobs).unwrap();
         let incomplete = blobs.join(format!("{hash}.incomplete"));
         std::fs::write(&incomplete, &payload[..4]).unwrap();
+        std::fs::write(
+            blobs.join(format!("{hash}.incomplete.ranges.json")),
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1, "total": 13, "chunk": 4 * 1024 * 1024, "etag": hash, "completed": [4]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         let dest = root.path().join("engine/model.bin");
         let result = downloads(&server.base_url(), cache)
             .ensure(&dest, REPO, REVISION, FILENAME, bridge(FILENAME, 13))
@@ -223,6 +285,7 @@ async fn http_resume_validates_ranges_status_and_length_before_publication() {
             assert!(incomplete.exists());
         }
         get.assert_calls(1);
+        ignored.assert_calls(usize::from(case == "ignored-range"));
     }
 }
 

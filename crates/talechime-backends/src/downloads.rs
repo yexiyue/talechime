@@ -6,10 +6,9 @@
 //! link keeps the inode alive even if the cache is later cleaned. The engine
 //! layout stays the consumption view adapters load from.
 //!
-//! `DownloadConfig` must carry an absolute cache directory: hf-hub's builder
-//! default is `.cache/huggingface/hub` relative to the current working
-//! directory and reads no environment variables, which is never right for a
-//! desktop host. `default_cache_dir` below is deliberately NOT in
+//! `DownloadConfig` must carry an absolute cache directory. Cache, endpoint and
+//! optional token are passed explicitly instead of inheriting hf-hub's implicit
+//! environment or token-file configuration. `default_cache_dir` below is NOT in
 //! `talechime-core` paths.rs: the shared cache belongs to the user's Hugging
 //! Face ecosystem, not to TaleChime's own `~/.talechime` layout.
 use std::{
@@ -28,7 +27,7 @@ pub struct DownloadConfig {
     pub cache_dir: PathBuf,
     /// Hub endpoint override such as a mirror; `None` uses the official host.
     pub endpoint: Option<String>,
-    /// Optional Hub access token.
+    /// Explicit Hub access token; `None` requests anonymous access.
     pub token: Option<String>,
 }
 
@@ -52,16 +51,32 @@ pub fn default_cache_dir() -> PathBuf {
         .join(".cache/huggingface/hub")
 }
 
-/// Transfer policy, independent of cache and credentials. All clients share a
-/// process-wide ceiling of four live HTTP body requests.
+/// Transfer policy, independent of cache and credentials. Clients share four
+/// active range slots; Xet handles chunk concurrency within each range.
 #[derive(Debug, Clone, Copy)]
 pub struct DownloadOptions {
-    /// Concurrent ranges per large file (1..=4); defaults to two.
+    /// Concurrent missing ranges per file (1..=4); defaults to two.
     pub connections: usize,
+    /// Prefer Xet when advertised by the endpoint, falling back to HTTP by default.
+    pub transport: DownloadTransport,
+}
+/// Transport selection independent of credentials, endpoints and cache ownership.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum DownloadTransport {
+    /// Prefer Xet; use HTTP when unavailable. Both paths retain range checkpoints.
+    #[default]
+    Auto,
+    /// Use HTTP only.
+    Http,
+    /// Prefer Xet and surface Xet failures; non-Xet files still use HTTP.
+    Xet,
 }
 impl Default for DownloadOptions {
     fn default() -> Self {
-        Self { connections: 2 }
+        Self {
+            connections: 2,
+            transport: DownloadTransport::Auto,
+        }
     }
 }
 
@@ -69,6 +84,7 @@ impl Default for DownloadOptions {
 #[derive(Clone)]
 pub struct Downloads {
     client: hf_hub::HFClient,
+    transport: DownloadTransport,
 }
 
 impl std::fmt::Debug for Downloads {
@@ -92,18 +108,20 @@ impl Downloads {
             "download cache directory must be absolute, got {}",
             config.cache_dir.display()
         );
-        let mut builder = hf_hub::HFClient::builder()
+        let builder = hf_hub::HFClient::builder()
             .cache_dir(config.cache_dir.clone())
-            .http_download_connections(options.connections)
+            .endpoint(
+                config
+                    .endpoint
+                    .as_deref()
+                    .unwrap_or("https://huggingface.co"),
+            )
+            .maybe_token(config.token.clone())
+            .download_connections(options.connections)
             .retry_max_attempts(1);
-        if let Some(endpoint) = &config.endpoint {
-            builder = builder.endpoint(endpoint);
-        }
-        if let Some(token) = &config.token {
-            builder = builder.token(token);
-        }
         Ok(Self {
             client: builder.build()?,
+            transport: options.transport,
         })
     }
 
@@ -156,7 +174,8 @@ impl Downloads {
                     .download_file()
                     .filename(filename)
                     .revision(revision)
-                    .use_xet(false)
+                    .use_xet(self.transport != DownloadTransport::Http)
+                    .http_fallback(self.transport == DownloadTransport::Auto)
                     .progress(progress);
                 let mut path =
                     download.clone().send().await.map_err(|error| {

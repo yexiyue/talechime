@@ -196,8 +196,10 @@ core 保留 `Playback`、配置、检查点和有界暂存。facade 的 `playbac
 
 ### 模型下载传输边界
 
-`Downloads` 在适配器共享层内消费 hf-hub，显式选择标准 HTTP 流式下载，网络客户端和缓存布局不进入宿主协议。回调、最新进度转发、分片与网络请求超时分别管理；UI 背压不影响网络活动判定。HTTP 通道支持 Range 中断续传、响应状态/范围/长度校验，以及锁后缓存重新检查；继续使用 Hub 共享缓存与原子发布。
+`Downloads` 在适配器共享层内消费固定 revision 的 hf-hub fork，默认 `DownloadTransport::Auto`：元数据声明 Xet 时优先使用，端点不支持或网络失败时回退 HTTP；调用方也可显式选择 Http 或 Xet。网络客户端和缓存布局不进入宿主协议。回调、最新进度转发、范围调度和请求超时分别管理；UI 背压不传播到网络读取。
 
-上游 hf-hub 1.0.0 自动选择 Xet、没有单文件关闭开关；当前使用独立 fork 的固定 Git revision，范围和发布限制见 [hf-hub 来源](knowledge/hf-hub-fork.md)。切换依据是同一真实 MOSS Realtime 权重的对照：Xet 120 秒文件重建进度为零并曾记录 CDN TLS 握手 EOF（进一步确认此时仍有网络接收，见[诊断记录](records/downloads/xet-mirror-diagnosis-2026-11-05.md)）；HTTP 120 秒收到约 6.9 MB，续传累计约 58.6 MB。此证据只说明当前链路上的故障边界，不证明完整模型下载或模型推理通过。宿主速度/ETA 归宿主聚合层，此库继续输出真实资源字节。
+上游 hf-hub 1.0.0 自动选择 Xet、没有单文件关闭开关；当前使用独立 fork 的固定 Git revision，范围和发布限制见 [hf-hub 来源](knowledge/hf-hub-fork.md)。最初选择 HTTP 的诊断依据是同一真实 MOSS Realtime 权重的对照：Xet 120 秒文件重建进度为零并曾记录 CDN TLS 握手 EOF（进一步确认此时仍有网络接收，见[诊断记录](records/downloads/xet-mirror-diagnosis-2026-11-05.md)）；HTTP 120 秒收到约 6.9 MB，续传累计约 58.6 MB。此证据只说明当前链路上的故障边界，不证明完整模型下载或模型推理通过。宿主速度/ETA 归宿主聚合层，此库继续输出真实资源字节。
 
-资源准备最多并行两个文件，HTTP 下载默认每文件两个 Range、全局最多四个活跃请求。`DownloadOptions` 与凭据/缓存配置分开；宿主通过 drop future 停止传输，确认 `Downloads::checkpoint_failed()` 为 false 才可确认断点保存。断点和传输地址解析封装于 hf-hub 私有子模块，不进入宿主协议。验证与样本限制见[并发下载验收](records/downloads/parallel-download-acceptance-2026-11-05.md)。
+资源准备最多并行两个文件，每文件默认两个缺失范围任务、进程共享四个执行槽；Xet 在范围内使用官方自适应块并发。HTTP 与 Xet 共用 4 MiB 断点，乱序块按实际偏移写入，仅记录每片已确认的连续前缀；未补齐的离散片段允许重新请求。旧临时文件没有断点标记时不按长度推断进度。
+
+`DownloadOptions` 与凭据/缓存配置分开；drop future 停止并补存断点，确认 `checkpoint_failed()` 为 false 才可确认暂停。取消、校验失败、磁盘错误不触发 HTTP 回退；Xet 初始化 15 秒、取得执行槽后首片段 30 秒、后续片段 90 秒，等待执行槽和最终哈希校验不纳入无进度判定。私有数据源、覆盖计算和断点类型不进入宿主协议。最新验证见[Xet 自动选择与回退](records/downloads/xet-auto-fallback-2026-11-05.md)。

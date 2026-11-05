@@ -1,5 +1,5 @@
 //! Bounded real-network diagnostic. No model loading; never prints credentials or signed URLs.
-//! cargo run -p talechime-backends --no-default-features --example download_progress_probe -- raw|bridge CACHE_DIR [ENDPOINT] [CONNECTIONS] [SECONDS] [BYTE_BUDGET]
+//! cargo run -p talechime-backends --no-default-features --example download_progress_probe -- raw|bridge|http|xet CACHE_DIR [ENDPOINT] [CONNECTIONS] [SECONDS] [BYTE_BUDGET]
 use hf_hub::progress::{DownloadEvent, ProgressEvent, ProgressHandler};
 use std::{
     sync::{
@@ -9,7 +9,7 @@ use std::{
     time::Instant,
 };
 use talechime_backends::downloads::{
-    DownloadConfig, DownloadOptions, Downloads, FileProgressBridge,
+    DownloadConfig, DownloadOptions, DownloadTransport, Downloads, FileProgressBridge,
 };
 use talechime_protocol::Event;
 const REPO: &str = "OpenMOSS-Team/MOSS-TTS-Realtime";
@@ -51,24 +51,28 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for DiagnosticWarnings
         struct Failure {
             tls_eof: bool,
             timeout: bool,
+            fallback: bool,
         }
         impl tracing::field::Visit for Failure {
             fn record_debug(&mut self, _: &tracing::field::Field, value: &dyn std::fmt::Debug) {
                 let text = format!("{value:?}").to_lowercase();
                 self.tls_eof |= text.contains("tls handshake eof");
                 self.timeout |= text.contains("timed out") || text.contains("timeout");
+                self.fallback |= text.contains("falling back to http");
             }
         }
         let mut failure = Failure {
             tls_eof: false,
             timeout: false,
+            fallback: false,
         };
         event.record(&mut failure);
         eprintln!(
-            "transport diagnostic: target={} tls_handshake_eof={} timeout={}",
+            "transport diagnostic: target={} tls_handshake_eof={} timeout={} http_fallback={}",
             event.metadata().target(),
             failure.tls_eof,
-            failure.timeout
+            failure.timeout,
+            failure.fallback
         );
     }
 }
@@ -81,9 +85,15 @@ async fn main() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().collect();
     anyhow::ensure!(
         args.len() >= 3,
-        "raw|bridge CACHE_DIR [ENDPOINT] [CONNECTIONS] [SECONDS] [BYTE_BUDGET]"
+        "raw|bridge|http|xet CACHE_DIR [ENDPOINT] [CONNECTIONS] [SECONDS] [BYTE_BUDGET]"
     );
     let cache_dir = std::path::PathBuf::from(&args[2]);
+    let transport = match args[1].as_str() {
+        "bridge" | "raw" => DownloadTransport::Auto,
+        "http" => DownloadTransport::Http,
+        "xet" => DownloadTransport::Xet,
+        _ => anyhow::bail!("expected raw, bridge, http or xet"),
+    };
     let endpoint = args.get(3).cloned();
     let start = Instant::now();
     let bytes = Arc::new(AtomicU64::new(0));
@@ -138,7 +148,10 @@ async fn main() -> anyhow::Result<()> {
                     endpoint,
                     token: None,
                 },
-                DownloadOptions { connections },
+                DownloadOptions {
+                    connections,
+                    transport,
+                },
             )?;
             let target = tempfile::tempdir()?;
             let (tx, mut rx) = tokio::sync::mpsc::channel(64);
