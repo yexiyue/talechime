@@ -20,6 +20,7 @@
 
 ## 开发知识
 
+- [项目知识库索引](knowledge/README.md)：现有专题指南、阶段规划、技术决策和踩坑经验的统一入口，说明与历史验收台账的分工。
 - [开发博客](blog/README.md)：从项目问题出发的原理讲解；首篇介绍 Cargo patch、版本与发包后的依赖。
 - [工具链与平台](knowledge/toolchain.md)：原生依赖、设备探测、构建、平台限制和实验记录。
 - [hf-hub fork 与上游下载能力](knowledge/hf-hub-fork.md)：固定 Git 来源、Python 对照、Xet 上游 PR 与 SDK 发布限制。

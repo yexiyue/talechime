@@ -1,5 +1,7 @@
 # 开发与验证
 
+任务开始前先查[知识库索引](knowledge/README.md)及相关规格；规划、决策、踩坑和规范提炼遵循 [AGENTS.md](../AGENTS.md#开发与知识积累工作流)。可复用结论在知识库持续维护，带日期、设备与版本的验收证据按 [records 规则](records/README.md)保存，当前开发约束仍由本文和所属领域指南负责。
+
 Rust 性能开发入口、Windows 资源准备命令、任务复用及 Mac 接续边界见
 [性能工具](performance-harness.md)。
 
