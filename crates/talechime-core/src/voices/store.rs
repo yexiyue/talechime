@@ -342,6 +342,9 @@ pub(super) fn publish(
         return Err(Error::Conflict(format!("voice {} already exists", a.id())));
     }
     control.check()?;
+    // Windows cannot rename a directory containing a locked file. Recovery holds
+    // the same library lock, so releasing the staging lease here cannot race it.
+    drop(lease);
     std::fs::rename(staging.path(), destination)?;
     Ok((a, true))
 }
@@ -379,6 +382,11 @@ pub(super) fn recover_staging(library: &VoiceLibrary) -> Result<(), Error> {
     if !library.root.exists() {
         return Ok(());
     }
+    let _library_lock = match lock(library) {
+        Ok(lock) => lock,
+        Err(Error::Busy) => return Ok(()),
+        Err(error) => return Err(error),
+    };
     for entry in std::fs::read_dir(&library.root)? {
         let entry = entry?;
         if !entry.file_name().to_string_lossy().starts_with(".staging-")
@@ -394,20 +402,44 @@ pub(super) fn recover_staging(library: &VoiceLibrary) -> Result<(), Error> {
         if let Ok(lease) = File::options().read(true).write(true).open(lease_path)
             && lease.try_lock().is_ok()
         {
+            drop(lease);
             let _ = std::fs::remove_dir_all(path);
         }
     }
     Ok(())
 }
 
-/// Current-format scratch files carry advisory leases. A crashed process releases
-/// the lease; a later open can reclaim old scratch without touching active jobs.
-pub(super) fn temporary() -> Result<tempfile::NamedTempFile, Error> {
-    let file = tempfile::Builder::new()
-        .prefix(".talechime-voice-v2-")
-        .tempfile()?;
-    file.as_file().try_lock().map_err(|_| Error::Busy)?;
-    Ok(file)
+/// Protect the containing directory, rather than locking the content file.
+/// Windows byte-range locks also reject reads through a separately opened handle.
+pub(super) struct Temporary {
+    file: tempfile::NamedTempFile,
+    _scratch: std::sync::Arc<Scratch>,
+}
+impl std::ops::Deref for Temporary {
+    type Target = tempfile::NamedTempFile;
+    fn deref(&self) -> &Self::Target {
+        &self.file
+    }
+}
+impl std::ops::DerefMut for Temporary {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.file
+    }
+}
+impl Write for Temporary {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.file.write(bytes)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
+    }
+}
+pub(super) fn temporary() -> Result<Temporary, Error> {
+    let scratch = Scratch::new()?;
+    Ok(Temporary {
+        file: scratch.file()?,
+        _scratch: scratch,
+    })
 }
 pub(super) fn recover_scratch() {
     let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
@@ -443,6 +475,9 @@ pub(super) fn recover_scratch() {
                 && let Ok(lease) = File::options().read(true).write(true).open(lease_path)
                 && lease.try_lock().is_ok()
             {
+                // Unique scratch directories are never reacquired by a new owner.
+                // Release our own Windows lock before removing the abandoned directory.
+                drop(lease);
                 let _ = std::fs::remove_dir_all(entry.path());
             }
             continue;
@@ -453,6 +488,7 @@ pub(super) fn recover_scratch() {
         if let Ok(file) = File::options().read(true).write(true).open(entry.path())
             && file.try_lock().is_ok()
         {
+            drop(file);
             let _ = std::fs::remove_file(entry.path());
         }
     }
@@ -588,6 +624,21 @@ mod tests {
         VoiceLibrary::open(root.path()).unwrap();
         assert!(!staging.exists());
     }
+    fn age_directory(path: &Path) {
+        let mut options = File::options();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // FILE_WRITE_ATTRIBUTES and FILE_FLAG_BACKUP_SEMANTICS for a directory handle.
+            options.access_mode(0x100).custom_flags(0x02000000);
+        }
+        options
+            .open(path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(600))
+            .unwrap();
+    }
     #[test]
     fn abandoned_batch_scratch_is_reclaimed_without_removing_active_batches() {
         let scratch = Scratch::new().unwrap();
@@ -596,10 +647,7 @@ mod tests {
             directory,
         } = std::sync::Arc::try_unwrap(scratch).ok().unwrap();
         let path = directory.keep();
-        File::open(&path)
-            .unwrap()
-            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(600))
-            .unwrap();
+        age_directory(&path);
         recover_scratch();
         assert!(path.exists());
         drop(lease);
@@ -609,13 +657,39 @@ mod tests {
     #[test]
     fn old_scratch_is_reclaimed_only_after_its_owner_releases_the_lease() {
         let scratch = temporary().unwrap();
-        let (file, path) = scratch.keep().unwrap();
-        file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(600))
+        let Temporary {
+            file,
+            _scratch: owner,
+        } = scratch;
+        let owner = match std::sync::Arc::try_unwrap(owner) {
+            Ok(owner) => owner,
+            Err(_) => panic!("unexpected scratch owner"),
+        };
+        let path = owner.directory.keep();
+        owner
+            ._lease
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(600))
             .unwrap();
+        age_directory(&path);
         recover_scratch();
         assert!(path.exists());
         drop(file);
+        drop(owner._lease);
         recover_scratch();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn leased_temporary_content_can_be_reopened_while_owner_is_alive() {
+        let mut scratch = temporary().unwrap();
+        scratch.write_all(b"frozen content").unwrap();
+        scratch.flush().unwrap();
+        assert_eq!(std::fs::read(scratch.path()).unwrap(), b"frozen content");
+        let mut copy = Vec::new();
+        scratch.reopen().unwrap().read_to_end(&mut copy).unwrap();
+        assert_eq!(copy, b"frozen content");
+        let path = scratch.path().to_owned();
+        drop(scratch);
         assert!(!path.exists());
     }
 }
