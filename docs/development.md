@@ -7,7 +7,7 @@ Rust 性能开发入口、Windows 资源准备命令、任务复用及 Mac 接�
 
 ## 工具链
 
-Rust 2024，声明最低 Rust 1.89；当前 stable 验证不等于最低版本实机验收。Linux 安装 `libasound2-dev libssl-dev pkg-config`。CUDA 可选构建需要匹配 Toolkit；显式设备不可用时不能静默替代。ORT 固定 rc.13，Candle core/nn/transformers 固定 0.11.0；保持 Windows 动态 CRT。
+Rust 2024，一般 crate 声明最低 Rust 1.89；启用 Kokoro 需要 Rust 1.92 或更新。当前 stable 验证不等于最低版本实机验收。Linux 安装 `libasound2-dev libssl-dev pkg-config`。CUDA 可选构建需要匹配 Toolkit；显式设备不可用时不能静默替代。ORT 固定 rc.13，Candle core/nn/transformers 固定 0.11.0；保持 Windows 动态 CRT。
 
 TTS 热路径修改先按 [性能优化方法](knowledge/tts-performance.md) 固定基线与输出门禁。
 优化保留不设默认的整链改善百分比；可保留有可信局部显著收益的改动，组合后再测整链，

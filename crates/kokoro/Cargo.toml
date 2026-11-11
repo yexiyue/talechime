@@ -2,7 +2,7 @@
 name = "talechime-kokoro"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.92"
 license = "Apache-2.0"
 description = "Native Kokoro inference from official weights for Talechime"
 repository = "https://github.com/yexiyue/talechime"
@@ -17,6 +17,7 @@ rand.workspace = true
 rayon.workspace = true
 regex.workspace = true
 jieba-rs.workspace = true
+loqui-g2p.workspace = true
 ort = { workspace = true, optional = true }
 tokenizers = { workspace = true, optional = true, features = ["fancy-regex"] }
 

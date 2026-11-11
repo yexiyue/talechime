@@ -12,6 +12,7 @@ use std::{
     io::BufReader,
     ops::Range,
     path::Path,
+    sync::OnceLock,
 };
 
 #[derive(Deserialize)]
@@ -78,7 +79,7 @@ mod tests {
     #[test]
     fn unsupported_input_and_invalid_budgets_are_explicit() -> Result<()> {
         let frontend = frontend();
-        assert!(frontend.phonemes("你好Kokoro").is_err());
+        assert!(!frontend.phonemes("你好Kokoro")?.is_empty());
         assert!(frontend.phonemes("你好🙂").is_err());
         assert!(frontend.segments("你好", 0).is_err());
         assert!(frontend.segments("你好", 511).is_err());
@@ -93,6 +94,52 @@ mod tests {
                 .contains("without breaking a numeric expression")
         );
         assert!(frontend.segments(" \n\r\n ", 20)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn mixed_english_preserves_words_and_unsupported_content() -> Result<()> {
+        let frontend = frontend();
+        let english = frontend.phonemes("hello")?;
+        let mixed = frontend.phonemes("你好hello你好")?;
+        assert!(mixed.contains(&english));
+        assert!(!frontend.phonemes("你好S")?.is_empty());
+        assert!(!frontend.phonemes("你好zorbulate")?.is_empty());
+        assert!(frontend.phonemes("你好hello🙂").is_err());
+        let text = "你好hello-world你好";
+        let segments = frontend.segments(text, 15)?;
+        assert_eq!(
+            segments
+                .iter()
+                .map(|s| &text[s.range.clone()])
+                .collect::<String>(),
+            text
+        );
+        for segment in &segments {
+            let part = &text[segment.range.clone()];
+            assert!(!part.ends_with("hello-") && !part.starts_with("-world"));
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "g2pw")]
+    #[test]
+    #[ignore = "requires prepared Kokoro frontend and g2pW resources"]
+    fn real_context_supports_mixed_english() -> Result<()> {
+        let root = std::env::var_os("KOKORO_RUNTIME_DIR")
+            .ok_or_else(|| candle_core::Error::Msg("set KOKORO_RUNTIME_DIR".into()))?;
+        let root = std::path::PathBuf::from(root);
+        let frontend = Frontend::load(&root.join("frontend"))?;
+        let mut context = crate::context::ContextModel::load(&root.join("context"))?;
+        let mixed =
+            frontend.phonemes_with_context("银行旁边停着S600。", &mut context, &|| false)?;
+        assert!(!mixed.is_empty());
+        assert!(mixed.contains(&frontend.phonemes("S")?));
+        assert!(
+            frontend
+                .phonemes_with_context("你好🙂", &mut context, &|| false)
+                .is_err()
+        );
         Ok(())
     }
 
@@ -175,6 +222,11 @@ impl Frontend {
                         decimal_digit(a).is_some()
                             && (decimal_digit(b).is_some() || ".%/".contains(b))
                             || decimal_digit(b).is_some() && ".-/".contains(a)
+                            || a.is_ascii_alphabetic() && b.is_ascii_alphabetic()
+                            || (a.is_ascii_alphabetic() && b == '\'')
+                            || (a == '\'' && b.is_ascii_alphabetic())
+                            || (a.is_ascii_alphabetic() && b == '-')
+                            || (a == '-' && b.is_ascii_alphabetic())
                     })
                 })
                 .collect();
@@ -287,15 +339,14 @@ impl Frontend {
         })
     }
 
-    /// Normalize and pronounce one complete Mandarin segment. Unsupported input
-    /// fails explicitly instead of being filtered out of the model vocabulary.
+    /// Normalize and pronounce Mandarin text with embedded English.
+    /// Unsupported content is rejected rather than silently omitted.
     pub fn phonemes(&self, text: &str) -> Result<String> {
         let normalized = normalize::normalize(text)?;
-        self.phonemes_normalized(&normalized, None)
+        self.mixed_phonemes(&normalized, |part| self.phonemes_normalized(part, None))
     }
 
-    /// Apply explicit g2pW polyphone predictions before the official sandhi and
-    /// v1.1 mapping. Baseline [`Self::phonemes`] never invokes the context model.
+    /// Apply contextual polyphone predictions to each Mandarin span.
     #[cfg(feature = "g2pw")]
     pub fn phonemes_with_context(
         &self,
@@ -304,17 +355,80 @@ impl Frontend {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<String> {
         let normalized = normalize::normalize(text)?;
-        if normalized.chars().any(|c| c.is_ascii_alphabetic()) {
-            candle_core::bail!("Kokoro Mandarin frontend does not yet support embedded English");
+        self.mixed_phonemes(&normalized, |part| {
+            let mut readings = vec![None; part.chars().count()];
+            for prediction in context.predict(part, cancelled)? {
+                let target = readings.get_mut(prediction.index).ok_or_else(|| {
+                    candle_core::Error::Msg(
+                        "context prediction lost source-character mapping".into(),
+                    )
+                })?;
+                *target = Some(prediction.reading);
+            }
+            self.phonemes_normalized(part, Some(&readings))
+        })
+    }
+
+    fn mixed_phonemes(
+        &self,
+        normalized: &str,
+        mut mandarin: impl FnMut(&str) -> Result<String>,
+    ) -> Result<String> {
+        static ENGLISH: OnceLock<std::result::Result<loqui_g2p::G2p, String>> = OnceLock::new();
+        static ENGLISH_SPAN: OnceLock<regex::Regex> = OnceLock::new();
+        let spans = ENGLISH_SPAN.get_or_init(|| {
+            regex::Regex::new(r"[A-Za-z]+(?:[ '-][A-Za-z]+)*")
+                .expect("constant English span pattern")
+        });
+        let mut pieces = Vec::new();
+        let mut cursor = 0;
+        for span in spans.find_iter(normalized) {
+            if span.start() > cursor {
+                pieces.push(mandarin(&normalized[cursor..span.start()])?);
+            }
+            let english = ENGLISH
+                .get_or_init(|| {
+                    loqui_g2p::G2p::new(
+                        loqui_g2p::Dialect::American,
+                        loqui_g2p::OovFallback::Neural,
+                    )
+                    .map_err(|error| error.to_string())
+                })
+                .as_ref()
+                .map_err(|error| {
+                    candle_core::Error::Msg(format!("English frontend unavailable: {error}"))
+                })?;
+            let tokens = english.tokens(span.as_str());
+            if tokens.iter().any(|token| {
+                token.text.chars().any(|c| c.is_ascii_alphabetic())
+                    && token.phonemes.trim().is_empty()
+            }) {
+                candle_core::bail!("unable to pronounce English word");
+            }
+            let phones: String = tokens
+                .into_iter()
+                .map(|token| {
+                    if token.whitespace {
+                        format!("{} ", token.phonemes)
+                    } else {
+                        token.phonemes
+                    }
+                })
+                .collect();
+            if phones.trim().is_empty() || phones.contains(loqui_g2p::UNKNOWN) {
+                candle_core::bail!("unable to pronounce English span");
+            }
+            pieces.push(phones);
+            cursor = span.end();
         }
-        let mut readings = vec![None; normalized.chars().count()];
-        for prediction in context.predict(&normalized, cancelled)? {
-            let target = readings.get_mut(prediction.index).ok_or_else(|| {
-                candle_core::Error::Msg("context prediction lost source-character mapping".into())
-            })?;
-            *target = Some(prediction.reading);
+        if cursor < normalized.len() {
+            pieces.push(mandarin(&normalized[cursor..])?);
         }
-        self.phonemes_normalized(&normalized, Some(&readings))
+        Ok(pieces
+            .into_iter()
+            .filter(|p| !p.is_empty())
+            .collect::<Vec<_>>()
+            .join(" "))
     }
 
     fn phonemes_normalized(

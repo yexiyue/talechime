@@ -8,6 +8,8 @@
 
 Talechime 是用 Rust 编写的本地语音合成与长文播放引擎。它提供命令行程序、可嵌入的 Rust 库，以及供阅读器调用的 JSON Lines worker。宿主负责获取正文、识别角色和绑定音色；Talechime 负责合成、播放、取消和按实际播放进度恢复。
 
+当前源码的 Kokoro 中文前端增加离线中英文混读；真实 CPU 公开样章生成通过，人工听感、官方英文前端对照及其他平台验证仍待完成。此改动尚未发行，详见 [Kokoro 指南](docs/kokoro.md)。
+
 [快速开始](#快速开始) · [TTS 后端](#tts-后端) · [与官方实现的性能对比](#与官方实现的性能对比) · [文档索引](docs/README.md) · [知识库](docs/knowledge/README.md) · [架构](docs/architecture.md) · [Rust 库](docs/library.md)
 
 ## 能做什么

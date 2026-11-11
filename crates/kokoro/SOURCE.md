@@ -49,3 +49,12 @@ Tokenizer vocabulary: https://huggingface.co/google-bert/bert-base-chinese/tree/
 Context exports retain the official g2pW license; the pinned BERT vocabulary is
 used without separate BERT weights. g2pW predictions precede existing Misaki
 sandhi; they do not silently alter the faithful `1.1-zh` baseline.
+
+English mixed-text frontend: `loqui-g2p` 0.4.0 (MIT),
+https://github.com/Awakened-Labs/loqui/tree/main/crates/loqui-g2p.
+It embeds Misaki 0.9.4 English lexicons (Apache-2.0), spaCy tokenizer
+rules (MIT), and PeterReid English G2P weights (Apache-2.0). The crate's
+`NOTICE` and `data/LICENSE-misaki-Apache-2.0` identify upstream sources and
+licenses. These resources are compiled into the dependency, not downloaded
+at runtime. Neural out-of-vocabulary predictions are not official Misaki
+output and are not guaranteed to be correct.
