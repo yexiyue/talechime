@@ -241,3 +241,8 @@ Kokoro 两变体、CosyVoice3 和 IndexTTS 均已登记固定配方。维护方�
 原生准备 API 的阶段、取消与发布边界见[接口说明](native-resource-preparation.md)。
 
 原生准备的受控工作区统一处理组件缓存与进度。后端只声明组件名称及其转换函数，不能注册任意远端脚本；每次转换回调收到固定输入视图、暂存目标和取消控制。组件摘要验证后可跨失败重试或 Kokoro 变体复用，整个模型仍以独立版本目录原子发布。准备租约覆盖 worker 退出和暂存清理，Registry 构造不会恢复执行。清理与提交后持久化错误语义见 [原生资源准备](native-resource-preparation.md)。
+
+
+### HeyGen 云语音边界
+
+`talechime-cloud-tts::heygen` 与 `fish` 并列，直接提供显式模型、音色查询和有界原始字节流，不接入 Registry、本地音色库、CLI/worker 或播放器。请求 PCM16/MP3 格式，校验服务端格式头；HTTP 正常结束只代表传输结束，不是内容或播放完成。调用方持有响应，取消/drop 释放本地资源，不保证撤销计费。字段与使用边界见 [cloud crate](../crates/talechime-cloud-tts/README.md#heygen-provider)。

@@ -21,3 +21,23 @@
 普通测试使用本地模拟 HTTP 服务，不访问 Fish。真实 API、人工试听、延迟与费用观察需单独记录。
 
 `clone_probe` 是会创建远端音色的显式实测示例。它在创建前独占创建输出目录中的 `remote-voice-id.txt`，避免覆盖已有 ID；失败时可能留下空文件，此时远端结果仍可能未知，应先核对账户，不能直接重跑创建。
+
+
+## HeyGen provider
+
+`heygen::Client` 直接调用 v3 HTTP API，不依赖 HeyGen CLI 或视频/数字人技能。支持公开/自有音色的游标分页、公开目录语言/性别/年龄/文本过滤，以及远端 ID 详情查询；原始状态和扩展元数据保留，已有克隆音色可通过远端 ID 引用，本轮不创建、设计或删除音色。
+
+设置 `HEYGEN_API_KEY` 与 `HEYGEN_VOICE_ID` 后使用：
+
+```sh
+cargo run --locked -p talechime-cloud-tts --example heygen_list_voices
+cargo run --locked -p talechime-cloud-tts --example heygen_synthesize -- output.mp3
+```
+
+示例由宿主进程环境读取凭据，再显式传给客户端；库和示例均不自动加载 `.env`。需要代理时由调用方配置 `HTTPS_PROXY`。示例显式选择 `Model::TurboFree`；另外支持 `Voice1` 与 `Turbo`，不采用服务端默认模型，不切换付费档、不自动重试。免费期限、容量和账号权限以 [HeyGen 当前文档](https://developers.heygen.com/docs/voices/heygen-voice-speech.md)为准。
+
+`SpeechRequest` 要求非空白文本（最多 5000 个 Unicode 标量值）、远端 voice_id、显式格式及正数 `max_audio_bytes`，可指定基础语言代码如 `zh`。`AudioFormat::Pcm16` 是单声道 24 kHz signed little-endian PCM16、没有 WAV 头；`Mp3` 是单声道 44.1 kHz/128 kbps。响应类型、采样率与声道经服务响应头校验，`format`/`sample_rate` 是请求值，`metadata` 是服务端确认值。网络块不保证采样对齐或音频帧边界。
+
+流有累计字节预算，超限块不交付；`cancel`/drop 释放本地响应。`Completed` 只表示非空 HTTP body 正常结束：原始流没有 SSE 的完成标记，无法检测所有正常 EOF 下的内容缺失，也不证明播放完成。无效/超大响应、传输错误与结果未知区分；服务错误保留 402/404/409 等状态码，不输出服务错误正文。没有默认 WAV/SSE、时间戳或 WebSocket 支持。
+
+音色列表每页 1–50 条，继续分页时传回 `next_token` 并保留相同过滤；自有范围不接受公开过滤。PENDING、FAILED 和未知状态不映射为可用，不保证每条音色兼容所选模型。本地音色删除不影响远端身份。文本会上传至 HeyGen，调用方负责授权、密钥和费用；当前真实服务/解码/试听/性能边界见 [实施验收记录](../../docs/records/tts-core/heygen-cloud-provider-2026-11-11.md)。

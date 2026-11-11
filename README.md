@@ -68,7 +68,7 @@ cargo run --release -- --backend moss --model nano-candle --tts-device cpu chapt
 
 ## TTS 后端
 
-云端能力另由可独立依赖的实验性 [`talechime-cloud-tts`](crates/talechime-cloud-tts/README.md) 提供 Fish Audio 合成、音色检索与参考克隆 API，不包含在当前 CLI 或播放后端中。真实服务验证及未验收边界见[记录](docs/records/tts-core/fish-cloud-smoke-2026-11-11.md)。
+云端能力另由可独立依赖的实验性 [`talechime-cloud-tts`](crates/talechime-cloud-tts/README.md) 提供 Fish Audio 合成、音色检索与参考克隆 API，以及 HeyGen v3 音色查询与 PCM16/MP3 HTTP 流式合成，不包含在当前 CLI 或播放后端中。真实服务验证及未验收边界见 [Fish 记录](docs/records/tts-core/fish-cloud-smoke-2026-11-11.md)与 [HeyGen 记录](docs/records/tts-core/heygen-cloud-provider-2026-11-11.md)。
 
 “可选”表示适配器已接入 Registry；具体设备需要相应编译 feature、模型资源和实机支持。音色和功能以模型能力目录为准。
 
