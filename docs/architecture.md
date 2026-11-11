@@ -29,6 +29,7 @@ flowchart TD
 
 - `crates/talechime`：CLI、worker、模型准备与设备校准装配、音色命令。
 - `crates/talechime-protocol`：协议 v7、配置、能力、来源身份与 UTF-8 范围，不链接音频和模型。
+- `crates/talechime-cloud-tts`：独立云 TTS 客户端，当前为实验性 Fish HTTP 合成和音色 API；不依赖本地模型、播放器或宿主业务类型，不自动接入现有播放会话。
 - `crates/talechime-core`：Backend / Playback 接口、会话、背压、音频预算、实际播放进度、配置和检查点。
 - `crates/talechime-backends`：Registry、资源清单、参考音频、设备与具体模型适配。
 - `crates/{qwen3-tts,moss-tts,voxcpm,omnivoice,cosyvoice3,indextts,kokoro}`：模型计算；发布包名统一加 `talechime-` 前缀，目录保留短名，Rust 导入名统一使用 `talechime_` 前缀。

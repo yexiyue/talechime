@@ -12,6 +12,7 @@
 | [OmniVoice 性能现状](omnivoice-performance.md) | 当前执行路径、官方对照口径、受限优化和撤回项，实测结论仍按设备和版本区分 |
 | [会话与宿主集成背景](booksource.md) | 历史所有权和计划入口演进，含 TRNovel 与旧协议背景；不能用于恢复已删除的书源模块或 wire 命令 |
 | [Windows 音色临时文件与独立租约](lessons/windows-voice-scratch-leases.md) | Windows 已验证：内容重开、目录发布与回收的 lease 边界；其他平台本轮未验证 |
+| [Fish Audio Windows 代理](lessons/fish-audio-windows-proxy.md) | 2026-11-11 单机云合成代理排查，真实试听与克隆仍未验收 |
 
 既有专题指南继续使用原路径，不为整理知识库而搬迁文件。新增规划、决策和踩坑记录时，在此表补充入口、状态及适用边界。
 
