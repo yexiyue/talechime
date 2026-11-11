@@ -191,7 +191,13 @@ impl Engine {
         let model = registry
             .resolve(&options.backend, options.model.as_deref())
             .map_err(EngineError::Prepare)?;
-        crate::model_preparation::with_progress(
+        let started = std::time::Instant::now();
+        let observed = (
+            options.backend.clone(),
+            options.model.clone(),
+            options.device,
+        );
+        let engine = crate::model_preparation::with_progress(
             |tx| {
                 model.prepare(
                     talechime_backends::PrepareOptions {
@@ -206,7 +212,19 @@ impl Engine {
             progress,
         )
         .await
-        .and_then(|backend| Self::with_studio(backend, registry, options))
+        .and_then(|backend| Self::with_studio(backend, registry, options));
+        if engine.is_ok() {
+            let (backend, model, device) = observed;
+            tracing::debug!(
+                target: "talechime_perf",
+                event = "engine_loaded",
+                %backend,
+                model = ?model,
+                device = ?device,
+                duration_ms = started.elapsed().as_millis() as u64,
+            );
+        }
+        engine
     }
     /// Load only previously prepared resources. Missing resources fail before prepare.
     pub async fn load(
@@ -229,7 +247,13 @@ impl Engine {
         let model = registry
             .resolve(&options.backend, options.model.as_deref())
             .map_err(EngineError::Prepare)?;
-        crate::model_preparation::with_progress(
+        let started = std::time::Instant::now();
+        let observed = (
+            options.backend.clone(),
+            options.model.clone(),
+            options.device,
+        );
+        let engine = crate::model_preparation::with_progress(
             |tx| {
                 model.load_existing(
                     PrepareOptions {
@@ -244,7 +268,19 @@ impl Engine {
             progress,
         )
         .await
-        .and_then(|backend| Self::with_studio(backend, registry, options))
+        .and_then(|backend| Self::with_studio(backend, registry, options));
+        if engine.is_ok() {
+            let (backend, model, device) = observed;
+            tracing::debug!(
+                target: "talechime_perf",
+                event = "engine_loaded",
+                %backend,
+                model = ?model,
+                device = ?device,
+                duration_ms = started.elapsed().as_millis() as u64,
+            );
+        }
+        engine
     }
     fn with_studio(
         backend: Rc<dyn Backend>,
@@ -383,6 +419,8 @@ impl Engine {
         self.available()?;
         let voice = self.resolve_voice(voice).await?;
         self.available()?;
+        let text: Arc<str> = text.into();
+        let chars = text.chars().count();
         let stream = SynthesisStream::start_with_options(
             self.backend()?,
             text,
@@ -399,6 +437,10 @@ impl Engine {
         Ok(PcmStream {
             stream,
             owner: Some(owner),
+            perf: StreamPerf {
+                started: std::time::Instant::now(),
+                chars,
+            },
         })
     }
     /// Collect only up to a caller-chosen nonzero PCM byte limit.
@@ -457,6 +499,23 @@ impl Engine {
 pub struct PcmStream {
     stream: SynthesisStream,
     owner: Option<Rc<()>>,
+    /// 记录流存活时间；流可能在合成结束前被丢弃。
+    perf: StreamPerf,
+}
+struct StreamPerf {
+    started: std::time::Instant,
+    chars: usize,
+}
+impl Drop for PcmStream {
+    fn drop(&mut self) {
+        tracing::debug!(
+            target: "talechime_perf",
+            event = "synthesis_stream_dropped",
+            state = ?self.stream.state(),
+            chars = self.perf.chars,
+            duration_ms = self.perf.started.elapsed().as_millis() as u64,
+        );
+    }
 }
 impl PcmStream {
     /// Most recent readback report, retained independently of PCM packet ownership.

@@ -158,6 +158,14 @@ impl VoiceLibrary {
     pub fn rename(&self, id: &str, name: &str) -> Result<VoiceAsset, VoiceLibraryError> {
         store::rename(self, id, name)
     }
+    /// Update the human-facing description; identity and fingerprint stay.
+    pub fn describe(
+        &self,
+        id: &str,
+        description: Option<&str>,
+    ) -> Result<VoiceAsset, VoiceLibraryError> {
+        store::describe(self, id, description)
+    }
     pub fn remove(&self, id: &str) -> Result<(), VoiceLibraryError> {
         store::remove(self, id)
     }

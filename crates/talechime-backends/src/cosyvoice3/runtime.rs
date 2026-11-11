@@ -131,7 +131,11 @@ async fn deliver(
             let seconds = waiting.elapsed().as_secs_f64();
             metrics::histogram!("talechime.channel_wait_seconds","stage"=>"owner_reserve")
                 .record(seconds);
-            tracing::info!(target:"talechime_perf",event="channel_wait",seconds);
+            tracing::debug!(
+                target:"talechime_perf",
+                event="channel_wait",
+                duration_ms = waiting.elapsed().as_millis() as u64,
+            );
         }
         let chunk = next()?
             .ok_or_else(|| anyhow::anyhow!("CosyVoice3 stream ended without a final block"))?;
@@ -146,10 +150,10 @@ async fn deliver(
         };
         pcm.duration_ms()?;
         #[cfg(feature = "performance-tools")]
-        tracing::info!(target:"talechime_perf",event="owner_pcm_ready");
+        tracing::debug!(target:"talechime_perf",event="owner_pcm_ready");
         permit.send(Ok(AudioChunk::Pcm(pcm)));
         #[cfg(feature = "performance-tools")]
-        tracing::info!(target:"talechime_perf",event="adapter_channel_enqueue");
+        tracing::debug!(target:"talechime_perf",event="adapter_channel_enqueue");
         if chunk.final_chunk {
             let _ = audio.send(Ok(AudioChunk::End)).await;
             return Ok(());

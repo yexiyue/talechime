@@ -26,7 +26,7 @@ impl SendObservation {
     pub(crate) fn new(chunk: &Result<AudioChunk, BackendError>) -> Self {
         let pcm = matches!(chunk, Ok(AudioChunk::Pcm(_)));
         if pcm {
-            tracing::info!(target:"talechime_perf",event="owner_pcm_ready");
+            tracing::debug!(target:"talechime_perf",event="owner_pcm_ready");
             metrics::counter!("talechime.chunks","stage"=>"owner").increment(1);
         }
         Self {
@@ -37,9 +37,14 @@ impl SendObservation {
     pub(crate) fn complete(self, sent: bool) {
         let seconds = self.started.elapsed().as_secs_f64();
         metrics::histogram!("talechime.channel_wait_seconds","stage"=>"owner").record(seconds);
-        tracing::info!(target:"talechime_perf",event="channel_wait",seconds,sent);
+        tracing::debug!(
+            target:"talechime_perf",
+            event="channel_wait",
+            duration_ms = self.started.elapsed().as_millis() as u64,
+            sent,
+        );
         if self.pcm && sent {
-            tracing::info!(target:"talechime_perf",event="adapter_channel_enqueue");
+            tracing::debug!(target:"talechime_perf",event="adapter_channel_enqueue");
         }
     }
 }

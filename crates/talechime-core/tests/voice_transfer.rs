@@ -126,6 +126,12 @@ fn metadata_changes_do_not_change_reference_fingerprint() {
     let renamed = lib.rename("one", "新名字").unwrap();
     assert_eq!(old.fingerprint(), renamed.fingerprint());
     assert_ne!(old.asset_digest(), renamed.asset_digest());
+    let described = lib.describe("one", Some("低沉男声，语速偏慢")).unwrap();
+    assert_eq!(described.fingerprint(), old.fingerprint());
+    assert_ne!(described.asset_digest(), renamed.asset_digest());
+    assert_eq!(described.description(), Some("低沉男声，语速偏慢"));
+    let cleared = lib.describe("one", None).unwrap();
+    assert_eq!(cleared.description(), None);
 }
 #[test]
 fn old_records_are_refused_and_left_untouched() {

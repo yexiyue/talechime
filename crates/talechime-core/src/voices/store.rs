@@ -346,9 +346,26 @@ pub(super) fn publish(
     Ok((a, true))
 }
 pub(super) fn rename(library: &VoiceLibrary, id: &str, name: &str) -> Result<VoiceAsset, Error> {
+    update_metadata(library, id, |asset| asset.name = name.into())
+}
+pub(super) fn describe(
+    library: &VoiceLibrary,
+    id: &str,
+    description: Option<&str>,
+) -> Result<VoiceAsset, Error> {
+    update_metadata(library, id, |asset| {
+        asset.description = description.map(str::to_owned);
+    })
+}
+
+fn update_metadata(
+    library: &VoiceLibrary,
+    id: &str,
+    update: impl FnOnce(&mut VoiceAsset),
+) -> Result<VoiceAsset, Error> {
     let _lock = lock(library)?;
     let (mut a, origin) = read_record(library, id)?;
-    a.name = name.into();
+    update(&mut a);
     a.asset_digest = a.compute_digest()?;
     a.validate()?;
     let record = Record {

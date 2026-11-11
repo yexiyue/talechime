@@ -47,6 +47,7 @@ omnivoice-cuda = ["omnivoice", "talechime-backends/omnivoice-cuda"]
 omnivoice-metal = ["omnivoice", "talechime-backends/omnivoice-metal"]
 
 [dependencies]
+tracing.workspace = true
 rodio = { workspace = true, optional = true }
 talechime-backends = { path = "../talechime-backends", version = "0.4.0", default-features = false }
 talechime-core = { path = "../talechime-core", version = "0.6.0" }

@@ -44,7 +44,7 @@ pub fn init() -> Option<ProfilingGuard> {
 
         tracing_subscriber::registry().with(chrome_layer).init();
 
-        tracing::info!("Profiling enabled — trace will be written to trace.json");
+        tracing::debug!("Profiling enabled — trace will be written to trace.json");
         Some(ProfilingGuard { _guard: guard })
     }
 
