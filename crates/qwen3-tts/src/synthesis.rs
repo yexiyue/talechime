@@ -20,6 +20,11 @@ mod streaming;
 pub use options::SynthesisOptions;
 pub use streaming::StreamingSession;
 
+#[cfg(test)]
+thread_local! {
+    static ICL_INPUT_CAPTURE: std::cell::RefCell<Option<Tensor>> = const { std::cell::RefCell::new(None) };
+}
+
 /// A sequence of codec frames, where each frame contains 16 codebook values
 /// (1 semantic + 15 acoustic, formatted as `[semantic, acoustic_0..14]`).
 pub type FrameCodes = Vec<Vec<u32>>;
@@ -1093,6 +1098,8 @@ impl Qwen3TTS {
                 self.talker
                     .build_icl_prompt(input_ids, ref_text_ids, &ref_codec_embeds, false)?;
 
+            #[cfg(test)]
+            ICL_INPUT_CAPTURE.with(|capture| *capture.borrow_mut() = Some(icl_embed.clone()));
             let icl_len = icl_embed.dim(1)?;
             if icl_len > 0 {
                 let mask = models::transformer::create_causal_mask(icl_len, offset, &self.device)?;
@@ -1564,6 +1571,69 @@ mod tests {
         }
         // A late repeat of the first frame is where this variant gave up.
         let _ = check(0)?;
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires fixed 1.7B Base weights and independent Python CPU oracle"]
+    fn full_voice_clone_prefill_matches_real_official_inputs() -> Result<()> {
+        use anyhow::Context;
+        let model_path = std::env::var("QWEN_PREFILL_MODEL").context("QWEN_PREFILL_MODEL")?;
+        let oracle_path = std::env::var("QWEN_PREFILL_ORACLE").context("QWEN_PREFILL_ORACLE")?;
+        let fixture: serde_json::Value = serde_json::from_slice(&std::fs::read(oracle_path)?)?;
+        anyhow::ensure!(
+            fixture["model_revision"] == "fd4b254389122332181a7c3db7f27e918eec64e3",
+            "unexpected oracle revision"
+        );
+        let model = Qwen3TTS::from_pretrained(&model_path, Device::Cpu)?;
+        for case in fixture["cases"].as_array().context("missing cases")? {
+            let n = case["ref_len"].as_u64().context("ref_len")? as usize;
+            let prompt = VoiceClonePrompt {
+                speaker_embedding: Tensor::from_vec(vec![0.75f32; 2048], 2048, &Device::Cpu)?,
+                ref_codes: Some(Tensor::ones((n, 16), DType::U32, &Device::Cpu)?),
+                ref_text_ids: Some(vec![31, 32]),
+            };
+            let language = case["language"].as_str().context("language")?.parse()?;
+            let (_, offset, _, _, trailing) =
+                model.voice_clone_prefill(&[100, 101, 102], &prompt, language, 32)?;
+            let prefix = crate::models::talker::PREFILL_CAPTURE
+                .with(|value| value.borrow().clone())
+                .context("missing prefix capture")?;
+            let icl = ICL_INPUT_CAPTURE
+                .with(|value| value.borrow().clone())
+                .context("missing ICL capture")?;
+            let input = Tensor::cat(&[&prefix, &icl], 1)?;
+            assert_eq!(
+                offset,
+                input.dim(1)?,
+                "offset must include the entire ICL prefill"
+            );
+            for (actual, field) in [
+                (&input, "inputs_embeds"),
+                (&trailing, "trailing_text_hidden"),
+            ] {
+                let actual = actual
+                    .to_dtype(DType::F32)?
+                    .flatten_all()?
+                    .to_vec1::<f32>()?;
+                let expected: Vec<f32> = serde_json::from_value(case[field].clone())?;
+                assert_eq!(
+                    actual.len(),
+                    expected.len(),
+                    "{field}, language={language:?}, frames={n}"
+                );
+                let max_error = actual
+                    .iter()
+                    .zip(&expected)
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0f32, f32::max);
+                assert!(
+                    max_error < 2e-4,
+                    "{field}, language={language:?}, frames={n}, max error={max_error}"
+                );
+                eprintln!("{field}, language={language:?}, frames={n}, max error={max_error}");
+            }
+        }
         Ok(())
     }
 

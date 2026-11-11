@@ -34,6 +34,9 @@ pub struct Options {
     /// Optional 8-dim emotion vector `[happy, angry, sad, afraid,
     /// disgusted, melancholic, surprised, calm]`.
     pub emo_vector: Option<[f32; 8]>,
+    /// QwenEmotion prompt; an empty string classifies the synthesis text.
+    /// `Some` takes priority over explicit vectors and emotion references.
+    pub emotion_text: Option<String>,
     /// With `emo_vector`: pick random anchor rows instead of the
     /// cosine-similar ones (`use_random`).
     pub emo_use_random: bool,
@@ -41,7 +44,7 @@ pub struct Options {
     pub max_text_tokens_per_segment: usize,
     /// Inserted silence between segments, milliseconds.
     pub interval_silence_ms: u32,
-    /// Run the (approximate) text normalization stage.
+    /// Run the fixed official text normalization stage.
     pub text_normalization: bool,
     /// CFM solver steps and guidance rate.
     pub diffusion_steps: usize,
@@ -68,6 +71,7 @@ impl Default for Options {
             duration_factor: 1.0,
             emo_alpha: 1.0,
             emo_vector: None,
+            emotion_text: None,
             emo_use_random: false,
             max_text_tokens_per_segment: 120,
             interval_silence_ms: 200,
@@ -151,6 +155,8 @@ pub struct Model {
     device: Device,
     tokenizer: Tokenizer,
     frontend: TextFrontend,
+    japanese_frontend: Option<front::japanese::JapaneseFrontend>,
+    text_emotion: Option<crate::emotion::QwenEmotion>,
     w2v_bert: Wav2Vec2Bert,
     codec: SemanticCodec,
     s2mel: S2Mel,
@@ -202,7 +208,9 @@ impl Model {
             config,
             device: device.clone(),
             tokenizer,
-            frontend: TextFrontend::new(),
+            frontend: TextFrontend::with_resources(&dir.join("tn/wetext")),
+            japanese_frontend: None,
+            text_emotion: None,
             w2v_bert,
             codec,
             s2mel,
@@ -367,7 +375,29 @@ impl Model {
         // 602-610) and forces the speaker clip to be the emotion reference
         // with alpha 1.0 (upstream lines 583-617).
         let mut rng = StdRng::seed_from_u64(opts.seed.unwrap_or_else(random_seed));
-        let emovec_override = match opts.emo_vector {
+        let emotion_vector = if let Some(emotion_text) = &opts.emotion_text {
+            if self.text_emotion.is_none() {
+                self.text_emotion = Some(crate::emotion::QwenEmotion::load(
+                    &self.source_dir,
+                    &device,
+                )?);
+            }
+            let classifier = self
+                .text_emotion
+                .as_mut()
+                .ok_or_else(|| candle_core::Error::Msg("QwenEmotion was not loaded".into()))?;
+            Some(classifier.infer(
+                if emotion_text.is_empty() {
+                    text
+                } else {
+                    emotion_text
+                },
+                cancelled,
+            )?)
+        } else {
+            opts.emo_vector
+        };
+        let emovec_override = match emotion_vector {
             Some(raw_vector) => {
                 let scale = opts.emo_alpha.clamp(0.0, 1.0);
                 let vector = if (scale - 1.0).abs() > f32::EPSILON {
@@ -390,20 +420,18 @@ impl Model {
         // Text pipeline (upstream lines 695-727).
         let lang_lower = lang.to_ascii_lowercase();
         let lang_prefix = format!("<|{lang_lower}|> ");
-        let text = self.frontend.clean_pattern(text);
-        let text = if opts.text_normalization && matches!(lang_lower.as_str(), "zh" | "zhen" | "en")
-        {
-            self.frontend
-                .normalize(&text, matches!(lang_lower.as_str(), "zh" | "zhen"))
-        } else {
-            text
-        };
-        let text = if matches!(lang_lower.as_str(), "ja" | "zh" | "zhen" | "en") {
-            text.to_lowercase()
-        } else {
-            text
-        };
-        let text = front::apply_pronunciation_annotations(&text);
+        if lang_lower == "ja" && self.japanese_frontend.is_none() {
+            self.japanese_frontend = Some(front::japanese::JapaneseFrontend::load(
+                &self.source_dir.join("japanese.dic"),
+            )?);
+        }
+        let text = self.frontend.prepare_with_cancel(
+            text,
+            &lang_lower,
+            opts.text_normalization,
+            self.japanese_frontend.as_ref(),
+            cancelled,
+        )?;
         let segments =
             self.split_text_by_tokens(&text, opts.max_text_tokens_per_segment, &lang_prefix)?;
 
@@ -428,7 +456,7 @@ impl Model {
             };
             match &emovec_override {
                 Some((mat, weight_sum)) => {
-                    let scale = Tensor::new(((1.0 - weight_sum) as f32) as f64, base.device())?
+                    let scale = Tensor::new((1.0 - weight_sum) as f32, base.device())?
                         .to_dtype(base.dtype())?;
                     (mat + &scale.broadcast_mul(&base)?)?
                 }
@@ -444,6 +472,12 @@ impl Model {
             }
             let mut ids = self.tokenizer.encode(&format!("{lang_prefix}{seg_text}"));
             ids.push(stop_text);
+            if std::env::var("TALECHIME_TEXT_DIAGNOSTICS").is_ok_and(|value| value == "1") {
+                eprintln!(
+                    "TALECHIME_TEXT_DIAGNOSTIC {}",
+                    serde_json::json!({"backend":"indextts","phase":"model_tokens","execution_text":format!("{lang_prefix}{seg_text}"),"language":lang_lower,"language_id":lang_id,"tokens":ids})
+                );
+            }
             let id_len = ids.len();
             let text_tokens = Tensor::from_vec(ids, (1, id_len), &device)?.to_dtype(DType::I64)?;
 

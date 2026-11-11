@@ -1,0 +1,145 @@
+{
+  "upstream_revision": "d9e41aac89fd00b3d71497fddb287b7f24613712",
+  "source_sha256": {
+    "front": "df62a817c3e1b540ed62645850278df0463f934c562c1f3f50b85c2c05fc543d",
+    "infer": "b69330053ed603530458bb181029b3abb4c83dc57c811e70837c04141293b56a",
+    "japanese": "ac58698c2b6a9163dde4ba841b7ef52c4c86dd02dd19b8d3c28a09a42e98c886"
+  },
+  "platform": "Darwin",
+  "spanish_fixture_sha256": "642144f53374a34dcef61e03064f38da6d405622f1fd7e3578ca3c2384c9524f",
+  "cases": [
+    {
+      "id": "mixed",
+      "text": "早上好，Alice 说 hello。今天是 2026 年。",
+      "language": "zh",
+      "source_sha256": "ffe1b38ff9a5d149b3324465c31b0abdbba7bdd4bff8422559a78da513eac3a2",
+      "output": "早上好,alice 说 hello.今天是 两千零二十六 年."
+    },
+    {
+      "id": "year-adjacent",
+      "text": "今天是2026年，明年是2027年。",
+      "language": "zh",
+      "source_sha256": "48389a7040ec7864432747426d4aa3ac7f9f84a660cfb387d4b8f9d24c9eeee1",
+      "output": "今天是二零二六年,明年是二零二七年."
+    },
+    {
+      "id": "year-spelled",
+      "text": "今天是二零二六年。",
+      "language": "zh",
+      "source_sha256": "9cfedc20ee787b94d6261e822a6a849e9ee34e182b2fb81bc488778be3c052ed",
+      "output": "今天是二零二六年."
+    },
+    {
+      "id": "numbers",
+      "text": "S600 售价 19.99 元，增长 5%，时速 500 公里。",
+      "language": "zh",
+      "source_sha256": "32188f34b75edce9e935e4b95c51fce13fafca16143b1fff4026a6e5338d4145",
+      "output": "s六零零 售价 十九点九九元,增长 百分之五,时速 五百公里."
+    },
+    {
+      "id": "english",
+      "text": "Hello, Alice. The total is nineteen dollars.",
+      "language": "en",
+      "source_sha256": "117dc1213e42ee068c93a13269d08bc81a375ca18280b4350e451ed56dc75a3d",
+      "output": "hello, alice. the total is nineteen dollars."
+    },
+    {
+      "id": "japanese",
+      "text": "今日はいい天気です。2026年に東京へ行きます。",
+      "language": "ja",
+      "source_sha256": "39a0d34c7bdc646118ed55f5ea6a710a1093940e1c892702b0970f67f9bab4fc",
+      "output": "今日 は いい 天気 です . 2026 年 に 東京 へ 行き ます ."
+    },
+    {
+      "id": "korean",
+      "text": "안녕하세요. 오늘 날씨가 좋습니다.",
+      "language": "ko",
+      "source_sha256": "1beb9c33810601f5ed483596485894426fe6f7ecc677c2dc49c4c01db52c0dd1",
+      "expected_rejection": "fixed 2.5 API language set is zh/en/ja/es/ar"
+    },
+    {
+      "id": "spanish",
+      "text": "Hola, el precio es de veinte euros.",
+      "language": "es",
+      "source_sha256": "11380df46981093354731eda24492db35e5d4be61108a979ff6860dda979a75d",
+      "output": "HOLA, EL PRECIO ES DE VEINTE EUROS."
+    },
+    {
+      "id": "arabic",
+      "text": "مرحبا، الطقس جميل اليوم.",
+      "language": "ar",
+      "source_sha256": "203ed78f664daacd444082cdca7fd8003f193194a9882a9a100ef4b03e274566",
+      "output": "مرحبا، الطقس جميل اليوم."
+    },
+    {
+      "id": "symbols",
+      "text": "[标记] Alice's hello，未知词 zorbulate，🙂。",
+      "language": "zh",
+      "source_sha256": "94b95c10528c45f01f10dcb644e2bfeefbccf0f9c3b566e3e079316ce77ab816",
+      "output": "'标记' alice's hello,未知词 zorbulate,🙂."
+    },
+    {
+      "id": "pronunciation",
+      "text": "他走进银<行|HANG2>，问这里能办业务吗？",
+      "language": "zh",
+      "source_sha256": "8b62bb23efabb01f099fe181f7557b91984b70789b8f790fc970252b2aa6e911",
+      "output": "他走进银<|SPECIAL_TOKEN_2|>HANG2<|SPECIAL_TOKEN_2|>,问这里能办业务吗?"
+    },
+    {
+      "id": "layout",
+      "text": "清晨的风\n吹过林间。\n\nAlice said hello.\nThe story continues.",
+      "language": "zh",
+      "source_sha256": "bea089e858577fa60a4136acaad3b2e87c678b9741b225d48c38ac0149cbb8bd",
+      "output": "清晨的风 吹过林间.  alice said hello. the story continues."
+    },
+    {
+      "id": "boundaries",
+      "text": "第一句话已经说完。第二句话也必须完整读出。Alice says hello. 最后一句话是结束标记，请完整读到这里。",
+      "language": "zh",
+      "source_sha256": "1fdbf438f2da685dfbd3e06d61ef076412e0fbdf80b0aa511b92083d2a0495b1",
+      "output": "第一句话已经说完.第二句话也必须完整读出.alice says hello. 最后一句话是结束标记,请完整读到这里."
+    },
+    {
+      "id": "fullwidth",
+      "text": "今天是２０２６年，售价１９．９９元，增长５％。",
+      "language": "zh",
+      "source_sha256": "f20a1248a0aa3c5fe790ac34791fc1c2d18648ee99ef1aa8c10d149e6e9c5d05",
+      "output": "今天是二零二六年,售价十九．九十九元,增长五％."
+    },
+    {
+      "id": "japanese-date",
+      "text": "2026年11月11日、東京都。",
+      "language": "ja",
+      "source_sha256": "c782d8b29bc605f1b253826d03677b07e3591a90f3e50d9dbcc7430fd4c373ba",
+      "output": "2026 年 11 月 11 日 , 東京 都 ."
+    },
+    {
+      "id": "spaces",
+      "text": "東京  大阪   hello\tAlice　物語。",
+      "language": "zh",
+      "source_sha256": "0cfc640952c86dbd4c43d0a34cd30baba9660484e49dc8baa1d29d9601137939",
+      "output": "東京  大阪   hello\talice　物語."
+    },
+    {
+      "id": "long-word",
+      "text": "Alice says supercalifragilisticexpialidocious and zorbulate. 最后一句。",
+      "language": "en",
+      "source_sha256": "fbd8b040dcfacc2b9d35dd0a45e755aa416699a826509fc82fa89acaceb695bf",
+      "output": "alice says supercalifragilisticexpialidocious and zorbulate. 最后一句."
+    },
+    {
+      "id": "long-paragraph",
+      "text": "清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。最后一句话必须完整读出。",
+      "language": "zh",
+      "source_sha256": "0c7b933bac1b99b3411b5e5bf352758999a5e9eb9a0eca7391f76b905e5cec90",
+      "output": "清晨,alice 打开书说 hello,然后继续讲述故事.风吹过树林,河水流向远方.清晨,alice 打开书说 hello,然后继续讲述故事.风吹过树林,河水流向远方.清晨,alice 打开书说 hello,然后继续讲述故事.风吹过树林,河水流向远方.清晨,alice 打开书说 hello,然后继续讲述故事.风吹过树林,河水流向远方.清晨,alice 打开书说 hello,然后继续讲述故事.风吹过树林,河水流向远方.清晨,alice 打开书说 hello,然后继续讲述故事.风吹过树林,河水流向远方.清晨,alice 打开书说 hello,然后继续讲述故事.风吹过树林,河水流向远方.清晨,alice 打开书说 hello,然后继续讲述故事.风吹过树林,河水流向远方.清晨,alice 打开书说 hello,然后继续讲述故事.风吹过树林,河水流向远方.清晨,alice 打开书说 hello,然后继续讲述故事.风吹过树林,河水流向远方.清晨,alice 打开书说 hello,然后继续讲述故事.风吹过树林,河水流向远方.清晨,alice 打开书说 hello,然后继续讲述故事.风吹过树林,河水流向远方.清晨,alice 打开书说 hello,然后继续讲述故事.风吹过树林,河水流向远方.清晨,alice 打开书说 hello,然后继续讲述故事.风吹过树林,河水流向远方.清晨,alice 打开书说 hello,然后继续讲述故事.风吹过树林,河水流向远方.清晨,alice 打开书说 hello,然后继续讲述故事.风吹过树林,河水流向远方.最后一句话必须完整读出."
+    },
+    {
+      "id": "japanese-pronunciation",
+      "text": "<東京|とうきょう>  と <日本|ニホン>。",
+      "language": "ja",
+      "source_sha256": "9a939288ddf57cdd0e83772f54385e4533c1df3cc7a28bb70332679345b2ca8b",
+      "output": " とうきょう   と  ニホン ."
+    }
+  ]
+}

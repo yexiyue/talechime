@@ -1,0 +1,172 @@
+{
+  "revision": "074ca6dc9e80a2f424f1f74b48bdd7d3fea531cc",
+  "source_sha256": {
+    "frontend": "8d3dcb5880d76346f053f19344eac48adcff2aca70687293aadf4e1f33fadac3",
+    "utils": "0d0ca94e0cf519e2d17f72cd1dcab6cb07aea0de48e7e792826362284ea18d30",
+    "tokenizer": "caa0dadcb8c40c79a3244aaf290492e298a49c5c25e0db16cad12f2f8ff639c5"
+  },
+  "packages": {
+    "wetext": "0.1.0",
+    "inflect": "7.5.0",
+    "regex": "2026.1.15",
+    "tokenizers": "0.22.2"
+  },
+  "cases": [
+    {
+      "text": "早上好，Alice 说 hello。今天是 2026 年。",
+      "output": [
+        "早上好，Alice说hello。今天是两千零二十六年。"
+      ]
+    },
+    {
+      "text": "今天是2026年，明年是2027年。",
+      "output": [
+        "今天是二零二六年，明年是二零二七年。"
+      ]
+    },
+    {
+      "text": "今天是二零二六年。",
+      "output": [
+        "今天是二零二六年。"
+      ]
+    },
+    {
+      "text": "S600 售价 19.99 元，增长 5%，时速 500 公里。",
+      "output": [
+        "S六零零售价十九点九九元，增长百分之五，时速五百公里。"
+      ]
+    },
+    {
+      "text": "Hello, Alice. The total is nineteen dollars.",
+      "output": [
+        "Hello, Alice. The total is nineteen dollars."
+      ]
+    },
+    {
+      "text": "今日はいい天気です。2026年に東京へ行きます。",
+      "output": [
+        "今日はいい天気です。二零二六年に東京へ行きます。"
+      ]
+    },
+    {
+      "text": "안녕하세요. 오늘 날씨가 좋습니다.",
+      "output": [
+        "안녕하세요. 오늘 날씨가 좋습니다."
+      ]
+    },
+    {
+      "text": "Hola, el precio es de veinte euros.",
+      "output": [
+        "Hola, el precio es de veinte euros."
+      ]
+    },
+    {
+      "text": "مرحبا، الطقس جميل اليوم.",
+      "output": [
+        "مرحبا، الطقس جميل اليوم."
+      ]
+    },
+    {
+      "text": "[标记] Alice's hello，未知词 zorbulate，🙂。",
+      "output": [
+        "[标记] Alice's hello，未知词zorbulate，🙂。"
+      ]
+    },
+    {
+      "text": "他走进银<行|HANG2>，问这里能办业务吗？",
+      "output": [
+        "他走进银<行|HANG二>，问这里能办业务吗？"
+      ]
+    },
+    {
+      "text": "清晨的风\n吹过林间。\n\nAlice said hello.\nThe story continues.",
+      "output": [
+        "清晨的风吹过林间。Alice said hello。The story continues。"
+      ]
+    },
+    {
+      "text": "第一句话已经说完。第二句话也必须完整读出。Alice says hello. 最后一句话是结束标记，请完整读到这里。",
+      "output": [
+        "第一句话已经说完。第二句话也必须完整读出。Alice says hello。最后一句话是结束标记，请完整读到这里。"
+      ]
+    },
+    {
+      "text": "今天是２０２６年，售价１９．９９元，增长５％。",
+      "output": [
+        "今天是二零二六年，售价十九．九十九元，增长五％。"
+      ]
+    },
+    {
+      "text": "2026年11月11日、東京都。",
+      "output": [
+        "二零二六年十一月十一日、東京都。"
+      ]
+    },
+    {
+      "text": "東京  大阪   hello\tAlice　物語。",
+      "output": [
+        "東京大阪hello\tAlice　物語。"
+      ]
+    },
+    {
+      "text": "Alice says supercalifragilisticexpialidocious and zorbulate. 最后一句。",
+      "output": [
+        "Alice says supercalifragilisticexpialidocious and zorbulate。最后一句。"
+      ]
+    },
+    {
+      "text": "清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。最后一句话必须完整读出。",
+      "output": [
+        "清晨，Alice打开书说hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice打开书说hello，然后继续讲述故事。风吹过树林，河水流向远方。",
+        "清晨，Alice打开书说hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice打开书说hello，然后继续讲述故事。风吹过树林，河水流向远方。",
+        "清晨，Alice打开书说hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice打开书说hello，然后继续讲述故事。风吹过树林，河水流向远方。",
+        "清晨，Alice打开书说hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice打开书说hello，然后继续讲述故事。风吹过树林，河水流向远方。",
+        "清晨，Alice打开书说hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice打开书说hello，然后继续讲述故事。风吹过树林，河水流向远方。",
+        "清晨，Alice打开书说hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice打开书说hello，然后继续讲述故事。风吹过树林，河水流向远方。",
+        "清晨，Alice打开书说hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice打开书说hello，然后继续讲述故事。风吹过树林，河水流向远方。",
+        "清晨，Alice打开书说hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice打开书说hello，然后继续讲述故事。风吹过树林，河水流向远方。最后一句话必须完整读出。"
+      ]
+    },
+    {
+      "text": "<東京|とうきょう>  と <日本|ニホン>。",
+      "output": [
+        "<東京|とうきょう>と<日本|ニホン>。"
+      ]
+    },
+    {
+      "text": "甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲。乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙。短句。",
+      "output": [
+        "甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲甲。",
+        "乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙乙。短句。"
+      ]
+    },
+    {
+      "text": "甲\n乙  ABC DEF 【测试】² - 丙，",
+      "output": [
+        "甲乙ABC DEF测试平方-丙。"
+      ]
+    },
+    {
+      "text": "<|laughter|>hello 2026",
+      "output": [
+        "<|laughter|>hello 2026"
+      ]
+    },
+    {
+      "text": "Hello 007 and １００１.",
+      "output": [
+        "Hello oh oh seven and one thousand and one ."
+      ]
+    },
+    {
+      "text": "🙂",
+      "output": []
+    },
+    {
+      "text": "",
+      "output": [
+        ""
+      ]
+    }
+  ]
+}

@@ -9,6 +9,26 @@ VoiceDesign remains an auxiliary reference generator, not a product synthesis ti
 This crate reads local weights; it does not manage downloads, playback or configuration.
 No Python is invoked by inference. Product adapters expose no style/instruction/language.
 
+The current single-turn Realtime system/reference prompt and twelve-token
+lookahead match six independent fixed official processor/prefill fixtures
+using the real tokenizer. Inputs are tokenized as the same complete system
+and reference string before audio placeholder replacement. Premature EOS
+cannot accept unconsumed text. Nano segmentation preserves Latin words and
+numeric expressions; an indivisible expression over budget fails explicitly.
+These gates do not fix or accept the recorded Nano mixed-English omission,
+year continuity or timbre failures, and do not replace real-model listening.
+
+## Explicit adapter lifecycle gates
+
+The ignored Realtime owner tests use `TALECHIME_MOSS17_LIFECYCLE_ROOT` and an
+explicit `TALECHIME_MOSS17_LIFECYCLE_DEVICE=metal|cuda`. Compile the matching
+`talechime-backends` feature and run `real_realtime_ -- --ignored --nocapture
+--test-threads=1`. They do not download models. On 2026-11-11 both tests passed
+on Metal: fixed-reference cache reuse, immediate/full-queue cancellation, actual
+frame-limit failure without End, and bit-identical PCM after owner reuse.
+The owner-state sample contained 51840 PCM samples. CUDA remains unexecuted in
+this round; these tests do not accept Nano listening failures.
+
 ## Provenance
 
 - TTS equations and scheduling: OpenMOSS/MOSS-TTS commit
@@ -71,6 +91,10 @@ New perceptual quality, CUDA execution and GPU performance require separate vali
 
 Set `MOSS_MODE` to `realtime-1.7b` or the auxiliary `voice-design-1.7b`.
 `MOSS_REFERENCE` accepts a mono 24kHz WAV; `MOSS_INSTRUCTION` supplies a VoiceDesign
-description. CUDA model weights use BF16, codec weights F16; `MOSS_DTYPE` overrides
-model precision for development comparisons. VoiceGenerator F16 overflowed on the
-real checkpoint and must not be the CUDA default.
+description. VoiceGenerator uses BF16 on Metal and CUDA; Realtime uses F16 on
+Metal and BF16 on CUDA. Codec weights use F16. `MOSS_DTYPE` overrides standalone
+example precision for development comparisons. VoiceGenerator F16 produced invalid
+logits on the real Metal checkpoint; F32 codec loading exceeded this 24 GiB Mac's practical memory budget. The BF16 Metal public matrix completed on 2026-11-12:
+17 generated clips and two declared reference-design length rejections.
+See the [validation record](../../docs/records/tts-core/official-backend-parity-2026-11-11.md).
+These results do not establish CUDA execution or perceptual quality.

@@ -57,6 +57,7 @@ pub mod codec_tokens {
 /// Language IDs for codec prefix
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
+    Auto,
     Chinese,
     English,
     Japanese,
@@ -74,6 +75,7 @@ impl FromStr for Language {
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
+            "auto" => Ok(Language::Auto),
             "english" | "en" => Ok(Language::English),
             "chinese" | "zh" => Ok(Language::Chinese),
             "japanese" | "ja" => Ok(Language::Japanese),
@@ -90,9 +92,10 @@ impl FromStr for Language {
 }
 
 impl Language {
-    /// Get the codec language token ID
+    /// Get the codec language token ID (auto uses the no-language control token).
     pub fn token_id(&self) -> u32 {
         match self {
+            Language::Auto => codec_tokens::CODEC_NOTHINK,
             Language::Chinese => 2055,
             Language::English => 2050,
             Language::Japanese => 2058,
@@ -104,6 +107,35 @@ impl Language {
             Language::Spanish => 2054,
             Language::Italian => 2070,
         }
+    }
+    /// Official language prefix; dialect speakers override auto or Chinese.
+    fn codec_prefix(self, speaker: Option<Speaker>) -> Vec<u32> {
+        use codec_tokens::*;
+        let dialect = if matches!(self, Self::Auto | Self::Chinese) {
+            match speaker {
+                Some(Speaker::Eric) => Some(2062),
+                Some(Speaker::Dylan) => Some(2074),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let prefix = match (self, dialect) {
+            (Self::Auto, None) => vec![CODEC_NOTHINK, CODEC_THINK_BOS, CODEC_THINK_EOS],
+            (language, dialect) => vec![
+                CODEC_THINK,
+                CODEC_THINK_BOS,
+                dialect.unwrap_or_else(|| language.token_id()),
+                CODEC_THINK_EOS,
+            ],
+        };
+        if std::env::var("TALECHIME_TEXT_DIAGNOSTICS").is_ok_and(|value| value == "1") {
+            eprintln!(
+                "TALECHIME_TEXT_DIAGNOSTIC {}",
+                serde_json::json!({"backend":"qwen","phase":"codec_prefix","language":format!("{self:?}"),"speaker":speaker.map(|speaker|format!("{speaker:?}")),"tokens":prefix})
+            );
+        }
+        prefix
     }
 }
 
@@ -471,30 +503,18 @@ impl TalkerModel {
 
         let role_prefix_hidden = self.build_role_prefix()?;
 
-        // Codec: [think, think_bos, lang, think_eos, speaker, pad, bos]
-        let codec_ids = Tensor::new(
-            &[
-                CODEC_THINK,
-                CODEC_THINK_BOS,
-                language.token_id(),
-                CODEC_THINK_EOS,
-                speaker.token_id(),
-                CODEC_PAD,
-                CODEC_BOS,
-            ],
-            &self.device,
-        )?;
+        let mut codec_ids = language.codec_prefix(Some(speaker));
+        codec_ids.extend([speaker.token_id(), CODEC_PAD, CODEC_BOS]);
+        let prefix_len = codec_ids.len() - 1;
+        let codec_ids = Tensor::new(codec_ids.as_slice(), &self.device)?;
         let codec_embed = self.codec_embedding.forward(&codec_ids)?.unsqueeze(0)?;
-
-        // 5 × tts_pad + 1 × tts_bos overlaid on first 6 codec tokens
-        let tts_text_embed = self.build_tts_pad_bos(5)?;
-        let codec_first6 = codec_embed.i((.., ..6, ..))?;
-        let codec_hidden = tts_text_embed.add(&codec_first6)?;
+        let tts_text_embed = self.build_tts_pad_bos(prefix_len - 1)?;
+        let codec_hidden = tts_text_embed.add(&codec_embed.i((.., ..prefix_len, ..))?)?;
 
         let mut hidden = Tensor::cat(&[&role_prefix_hidden, &codec_hidden], 1)?;
 
         // First text token + codec_bos
-        let codec_bos_embed = codec_embed.i((.., 6..7, ..))?;
+        let codec_bos_embed = codec_embed.i((.., prefix_len..prefix_len + 1, ..))?;
         if let Some(combined) = self.build_first_text_combined(text_tokens, &codec_bos_embed)? {
             hidden = Tensor::cat(&[&hidden, &combined], 1)?;
         }
@@ -536,41 +556,28 @@ impl TalkerModel {
 
         let role_prefix_hidden = self.build_role_prefix()?;
 
-        // Codec: [think, think_bos, lang, think_eos] + speaker_embed + [pad, bos]
-        let codec_prefix_ids = Tensor::new(
-            &[
-                CODEC_THINK,
-                CODEC_THINK_BOS,
-                language.token_id(),
-                CODEC_THINK_EOS,
-            ],
-            &self.device,
-        )?;
+        let prefix = language.codec_prefix(None);
+        let codec_prefix_ids = Tensor::new(prefix.as_slice(), &self.device)?;
         let codec_prefix_embed = self
             .codec_embedding
             .forward(&codec_prefix_ids)?
             .unsqueeze(0)?;
-
         let speaker = speaker_embed.reshape((1, 1, self.config.hidden_size))?;
-
         let codec_suffix_ids = Tensor::new(&[CODEC_PAD, CODEC_BOS], &self.device)?;
         let codec_suffix_embed = self
             .codec_embedding
             .forward(&codec_suffix_ids)?
             .unsqueeze(0)?;
-
         let codec_embed = Tensor::cat(&[&codec_prefix_embed, &speaker, &codec_suffix_embed], 1)?;
-
-        // 5 × tts_pad + 1 × tts_bos overlaid on first 6 codec tokens
-        let tts_text_embed = self.build_tts_pad_bos(5)?;
-        let codec_first6 = codec_embed.i((.., ..6, ..))?;
-        let codec_hidden = tts_text_embed.add(&codec_first6)?;
+        let prefix_len = prefix.len() + 2;
+        let tts_text_embed = self.build_tts_pad_bos(prefix_len - 1)?;
+        let codec_hidden = tts_text_embed.add(&codec_embed.i((.., ..prefix_len, ..))?)?;
 
         let mut hidden = Tensor::cat(&[&role_prefix_hidden, &codec_hidden], 1)?;
 
         // First text token + codec_bos (skipped in ICL mode)
         if !icl_mode {
-            let codec_bos_embed = codec_embed.i((.., 6..7, ..))?;
+            let codec_bos_embed = codec_embed.i((.., prefix_len..prefix_len + 1, ..))?;
             if let Some(combined) = self.build_first_text_combined(text_tokens, &codec_bos_embed)? {
                 hidden = Tensor::cat(&[&hidden, &combined], 1)?;
             }
@@ -612,29 +619,18 @@ impl TalkerModel {
 
         let role_prefix_hidden = self.build_role_prefix()?;
 
-        // Codec (no speaker): [think, think_bos, lang, think_eos, pad, bos]
-        let codec_ids = Tensor::new(
-            &[
-                CODEC_THINK,
-                CODEC_THINK_BOS,
-                language.token_id(),
-                CODEC_THINK_EOS,
-                CODEC_PAD,
-                CODEC_BOS,
-            ],
-            &self.device,
-        )?;
+        let mut codec_ids = language.codec_prefix(None);
+        codec_ids.extend([CODEC_PAD, CODEC_BOS]);
+        let prefix_len = codec_ids.len() - 1;
+        let codec_ids = Tensor::new(codec_ids.as_slice(), &self.device)?;
         let codec_embed = self.codec_embedding.forward(&codec_ids)?.unsqueeze(0)?;
-
-        // 4 × tts_pad + 1 × tts_bos overlaid on first 5 codec tokens
-        let tts_text_embed = self.build_tts_pad_bos(4)?;
-        let codec_first5 = codec_embed.i((.., ..5, ..))?;
-        let codec_hidden = tts_text_embed.add(&codec_first5)?;
+        let tts_text_embed = self.build_tts_pad_bos(prefix_len - 1)?;
+        let codec_hidden = tts_text_embed.add(&codec_embed.i((.., ..prefix_len, ..))?)?;
 
         let mut hidden = Tensor::cat(&[&instruct_embed, &role_prefix_hidden, &codec_hidden], 1)?;
 
         // First text token + codec_bos (index 5)
-        let codec_bos_embed = codec_embed.i((.., 5..6, ..))?;
+        let codec_bos_embed = codec_embed.i((.., prefix_len..prefix_len + 1, ..))?;
         if let Some(combined) = self.build_first_text_combined(text_tokens, &codec_bos_embed)? {
             hidden = Tensor::cat(&[&hidden, &combined], 1)?;
         }
@@ -841,6 +837,8 @@ impl TalkerModel {
         mut hidden: Tensor,
         kv_caches: &mut [AnyKVCache],
     ) -> Result<(Tensor, Tensor)> {
+        #[cfg(test)]
+        PREFILL_CAPTURE.with(|capture| *capture.borrow_mut() = Some(hidden.clone()));
         let seq_len = hidden.dim(1)?;
         let mask = self.create_causal_mask(seq_len, 0)?;
 
@@ -984,8 +982,171 @@ impl TalkerModel {
 }
 
 #[cfg(test)]
+thread_local! {
+    pub(crate) static PREFILL_CAPTURE: std::cell::RefCell<Option<Tensor>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn complete_prefill_matches_fixed_official_python() -> Result<()> {
+        let device = Device::Cpu;
+        let config = TalkerConfig {
+            text_vocab_size: 151936,
+            text_embed_dim: 1,
+            hidden_size: 1,
+            text_proj_intermediate: 1,
+            intermediate_size: 1,
+            num_hidden_layers: 0,
+            num_attention_heads: 1,
+            num_key_value_heads: 1,
+            head_dim: 2,
+            rms_norm_eps: 1e-6,
+            rope_theta: 10000.,
+            max_position_embeddings: 64,
+            codec_vocab_size: 3072,
+            mrope_section: None,
+        };
+        let mut weights = HashMap::new();
+        let mut put = |name: &str, data: Vec<f32>, dims: (usize, usize)| -> Result<()> {
+            weights.insert(
+                format!("talker.{name}"),
+                Tensor::from_vec(data, dims, &device)?,
+            );
+            Ok(())
+        };
+        put(
+            "model.text_embedding.weight",
+            (0..151936).map(|i| i as f32 / 100000.).collect(),
+            (151936, 1),
+        )?;
+        put(
+            "model.codec_embedding.weight",
+            (0..3072).map(|i| i as f32 / 1000.).collect(),
+            (3072, 1),
+        )?;
+        put("text_projection.linear_fc1.weight", vec![1.], (1, 1))?;
+        put("text_projection.linear_fc2.weight", vec![1.], (1, 1))?;
+        put("codec_head.weight", vec![0.; 3072], (3072, 1))?;
+        weights.insert(
+            "talker.text_projection.linear_fc1.bias".into(),
+            Tensor::new(&[0f32], &device)?,
+        );
+        weights.insert(
+            "talker.text_projection.linear_fc2.bias".into(),
+            Tensor::new(&[0f32], &device)?,
+        );
+        weights.insert(
+            "talker.model.norm.weight".into(),
+            Tensor::new(&[1f32], &device)?,
+        );
+        let model = TalkerModel::from_weights_with_config(&weights, config, &device)?;
+        let fixtures: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/official-prefill.json"))?;
+        let matrix = &fixtures["public_corpus"];
+        assert_eq!(matrix.as_array().unwrap().len(), 19);
+        let mut coverage = std::collections::HashMap::new();
+        for case in fixtures["cases"].as_array().unwrap() {
+            let language = case["language"].as_str().unwrap().parse::<Language>()?;
+            let kind = case["kind"].as_str().unwrap();
+            let target: Vec<u32> = if let Some(source) = case["source_text"].as_str() {
+                let id = case["source_id"].as_str().unwrap();
+                let row = matrix
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|row| row["id"] == id)
+                    .unwrap();
+                assert_eq!(row["text"], source);
+                assert_eq!(case["source_sha256"].as_str().unwrap().len(), 64);
+                let modes = coverage
+                    .entry(id)
+                    .or_insert_with(std::collections::HashSet::new);
+                assert!(modes.insert((
+                    kind,
+                    case["language"].as_str().unwrap(),
+                    case["speaker"].as_str(),
+                    case["ref_len"].as_u64().unwrap()
+                )));
+                source.bytes().map(|byte| u32::from(byte) + 100).collect()
+            } else {
+                vec![100, 101, 102]
+            };
+            let mut caches = model.new_kv_caches(64);
+            match kind {
+                "custom" => {
+                    model.prefill_custom_voice(
+                        &target,
+                        case["speaker"].as_str().unwrap().parse()?,
+                        language,
+                        &mut caches,
+                    )?;
+                }
+                "design" => {
+                    model.prefill_voice_design(&target, &[22, 23], language, &mut caches)?;
+                }
+                "base" => {
+                    model.prefill_voice_clone(
+                        &target,
+                        &Tensor::new(&[0.75f32], &device)?,
+                        language,
+                        true,
+                        &mut caches,
+                    )?;
+                }
+                _ => unreachable!(),
+            }
+            let mut prefix = PREFILL_CAPTURE.with(|v| v.borrow().clone()).unwrap();
+            let trailing = if kind == "base" {
+                let n = case["ref_len"].as_u64().unwrap() as usize;
+                let reference = Tensor::from_vec(vec![0.016f32; n], (1, n, 1), &device)?;
+                let (icl, trailing) =
+                    model.build_icl_prompt(&target, &[31, 32], &reference, false)?;
+                prefix = Tensor::cat(&[&prefix, &icl], 1)?;
+                trailing
+            } else {
+                let remaining = model.get_projected_text_embeddings(&target[1..])?;
+                Tensor::cat(&[&remaining, &model.get_tts_eos_embed()?], 1)?
+            };
+            for (actual, field) in [
+                (&prefix, "inputs_embeds"),
+                (&trailing, "trailing_text_hidden"),
+            ] {
+                let actual = actual.flatten_all()?.to_vec1::<f32>()?;
+                let expected: Vec<f32> = serde_json::from_value(case[field].clone())?;
+                assert_eq!(actual.len(), expected.len(), "{case}");
+                for (a, e) in actual.iter().zip(expected) {
+                    assert!((a - e).abs() < 1e-5, "{case}: {a} != {e}");
+                }
+            }
+        }
+        assert_eq!(coverage.len(), matrix.as_array().unwrap().len());
+        assert!(coverage.values().all(|modes| modes.len() == 11));
+        Ok(())
+    }
+
+    #[test]
+    fn official_auto_and_dialect_language_prefixes() {
+        use codec_tokens::*;
+        assert_eq!(
+            Language::Auto.codec_prefix(None),
+            [CODEC_NOTHINK, CODEC_THINK_BOS, CODEC_THINK_EOS]
+        );
+        assert_eq!(
+            Language::Auto.codec_prefix(Some(Speaker::Eric)),
+            [CODEC_THINK, CODEC_THINK_BOS, 2062, CODEC_THINK_EOS]
+        );
+        assert_eq!(
+            Language::Chinese.codec_prefix(Some(Speaker::Dylan)),
+            [CODEC_THINK, CODEC_THINK_BOS, 2074, CODEC_THINK_EOS]
+        );
+        assert_eq!(
+            Language::Japanese.codec_prefix(Some(Speaker::Eric)),
+            [CODEC_THINK, CODEC_THINK_BOS, 2058, CODEC_THINK_EOS]
+        );
+    }
 
     #[test]
     fn test_talker_config_default() {

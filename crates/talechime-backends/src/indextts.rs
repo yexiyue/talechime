@@ -42,7 +42,7 @@ pub fn capabilities(root: &Path) -> anyhow::Result<Capabilities> {
         cloning: true,
         style: true,
         compiled_devices: Vec::new(),
-        pronunciation: false,
+        pronunciation: true,
 
         parameters: params::catalog(),
     })
@@ -260,7 +260,16 @@ mod tests {
         );
         assert_eq!(job.resolved.options.emo_alpha, 0.7);
         assert_eq!(job.resolved.options.seed, Some(12));
-        assert!(backend.stream(request(Some("sad"))).await.is_err());
+        let _audio = backend.stream(request(Some("sad"))).await?;
+        let vector_job = jobs.try_recv()?;
+        assert!(vector_job.resolved.emotion_voice.is_none());
+        assert!(vector_job.resolved.options.emo_vector.is_some());
+        assert!(
+            backend
+                .stream(request(Some("invalid style")))
+                .await
+                .is_err()
+        );
         assert!(jobs.try_recv().is_err());
         let defaults = GenerationParams::new();
         let _audio = backend

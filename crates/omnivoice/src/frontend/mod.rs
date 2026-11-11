@@ -36,6 +36,24 @@ pub struct Frontend {
     duration_estimator: RuleDurationEstimator,
 }
 
+fn diagnose_prompt(
+    text: &str,
+    language: Option<&str>,
+    instruction: Option<&str>,
+    tokens: &[u32],
+    style_tokens: &[u32],
+) {
+    if std::env::var("TALECHIME_TEXT_DIAGNOSTICS").is_ok_and(|value| value == "1") {
+        eprintln!(
+            "TALECHIME_TEXT_DIAGNOSTIC {}",
+            serde_json::json!({
+                "backend":"omnivoice", "phase":"model_tokens", "execution_text":text,
+                "language":language, "instruction":instruction, "tokens":tokens, "style_tokens":style_tokens,
+            })
+        );
+    }
+}
+
 const MAX_TARGET_TOKENS: usize = 1_000_000;
 const MAX_GENERATION_STEPS: usize = 4096;
 
@@ -440,6 +458,13 @@ impl Frontend {
         let full_text = combine_text(text, ref_text.as_deref());
         let text_prompt = format!("<|text_start|>{full_text}<|text_end|>");
         let text_token_ids = tokenize_with_nonverbal_tags(&self.tokenizer, &text_prompt)?;
+        diagnose_prompt(
+            &text_prompt,
+            lang.as_deref(),
+            instruct.as_deref(),
+            &text_token_ids,
+            &style_token_ids,
+        );
 
         let style_len = style_token_ids.len();
         let text_len = text_token_ids.len();
@@ -550,6 +575,13 @@ impl Frontend {
         let full_text = combine_text(text, ref_text.as_deref());
         let text_prompt = format!("<|text_start|>{full_text}<|text_end|>");
         let text_token_ids = tokenize_with_nonverbal_tags(&self.tokenizer, &text_prompt)?;
+        diagnose_prompt(
+            &text_prompt,
+            lang.as_deref(),
+            instruct.as_deref(),
+            &text_token_ids,
+            &style_token_ids,
+        );
 
         let style_len = style_token_ids.len();
         let text_len = text_token_ids.len();
@@ -806,6 +838,104 @@ fn normalize_option_voice_prompts(
 mod tests {
     use super::{checked_duration_tokens, validate_generation_config, validate_generation_scalars};
     use crate::contracts::GenerationConfig;
+
+    #[test]
+    fn fixed_official_conditions_and_duration_controls() -> crate::error::Result<()> {
+        use super::*;
+        use crate::contracts::{GenerationTask, I64Tensor2};
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/official-conditions.json"
+        ))
+        .unwrap();
+        let frontend = Frontend {
+            tokenizer: Tokenizer::from_bytes(serde_json::to_vec(&fixture["tokenizer"]).unwrap())
+                .unwrap(),
+            num_audio_codebook: 8,
+            audio_mask_id: 1024,
+            frame_rate: 25,
+            duration_estimator: RuleDurationEstimator,
+        };
+        let matrix = &fixture["public_corpus"];
+        assert_eq!(matrix.as_array().unwrap().len(), 19);
+        let mut coverage = std::collections::HashMap::new();
+        for case in fixture["cases"].as_array().unwrap() {
+            if let Some(source) = case["source_text"].as_str() {
+                let id = case["source_id"].as_str().unwrap();
+                let row = matrix
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|row| row["id"] == id)
+                    .unwrap();
+                assert_eq!(row["text"], source);
+                assert_eq!(case["text"], source);
+                assert_eq!(case["source_sha256"].as_str().unwrap().len(), 64);
+                let modes = coverage
+                    .entry(id)
+                    .or_insert_with(std::collections::HashSet::new);
+                assert!(modes.insert((
+                    case["language"].as_str(),
+                    case["instruction"].as_str(),
+                    !case["reference"].is_null(),
+                    case["denoise"].as_bool().unwrap()
+                )));
+            }
+            let reference: Option<Vec<Vec<i64>>> =
+                serde_json::from_value(case["reference"].clone()).unwrap();
+            let reference = reference.map(|rows| {
+                I64Tensor2::new(
+                    (rows.len(), rows[0].len()),
+                    rows.into_iter().flatten().collect(),
+                )
+                .unwrap()
+            });
+            let task = GenerationTask {
+                texts: vec![case["text"].as_str().unwrap().into()],
+                target_lens: vec![case["target_length"].as_u64().unwrap() as usize],
+                langs: vec![serde_json::from_value(case["language"].clone()).unwrap()],
+                instructs: vec![serde_json::from_value(case["instruction"].clone()).unwrap()],
+                ref_texts: vec![serde_json::from_value(case["ref_text"].clone()).unwrap()],
+                ref_audio_tokens: vec![reference],
+                ref_rms: vec![None],
+                speed: vec![1.0],
+                generation_config: GenerationConfig {
+                    denoise: case["denoise"].as_bool().unwrap(),
+                    ..Default::default()
+                },
+            };
+            let actual = frontend.prepare_prompt(&task, 0)?;
+            let expected: Vec<Vec<Vec<i64>>> =
+                serde_json::from_value(case["input_ids"].clone()).unwrap();
+            assert_eq!(
+                actual.prompt.input_ids.data,
+                expected.into_iter().flatten().flatten().collect::<Vec<_>>()
+            );
+            let mask: Vec<Vec<bool>> = serde_json::from_value(case["audio_mask"].clone()).unwrap();
+            assert_eq!(
+                actual.prompt.audio_mask.data,
+                mask.into_iter().flatten().collect::<Vec<_>>()
+            );
+        }
+        assert_eq!(coverage.len(), matrix.as_array().unwrap().len());
+        assert!(coverage.values().all(|modes| modes.len() == 7));
+        for row in fixture["durations"].as_array().unwrap() {
+            let text = fixture["duration_texts"][row["text_index"].as_u64().unwrap() as usize]
+                .as_str()
+                .unwrap();
+            let actual = frontend.estimate_target_tokens(
+                text,
+                row["ref_text"].as_str(),
+                row["ref_tokens"].as_u64().map(|n| n as usize),
+                row["speed"].as_f64().unwrap() as f32,
+            );
+            assert_eq!(
+                actual,
+                row["expected"].as_u64().unwrap() as usize,
+                "duration case: {row}"
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn generation_scalars_reject_non_finite_and_unbounded_values() {

@@ -8,6 +8,14 @@ use talechime_core::{
 
 const TEXT: &str = "你好，欢迎使用叙铃。";
 
+fn lifecycle_device() -> anyhow::Result<Device> {
+    match std::env::var("TALECHIME_MOSS17_LIFECYCLE_DEVICE").as_deref() {
+        Ok("metal") => Ok(Device::Metal),
+        Ok("cuda") => Ok(Device::Cuda),
+        _ => anyhow::bail!("explicit MOSS Realtime lifecycle device must be metal or cuda"),
+    }
+}
+
 fn request(params: &GenerationParams) -> SegmentRequest<'_> {
     SegmentRequest {
         text: TEXT,
@@ -51,9 +59,9 @@ async fn collect_request(
 async fn check(mode: Mode) -> anyhow::Result<()> {
     tokio::task::LocalSet::new()
         .run_until(async {
-            let root = std::env::var_os("TALECHIME_MOSS17_CUDA_ROOT")
+            let root = std::env::var_os("TALECHIME_MOSS17_LIFECYCLE_ROOT")
                 .ok_or_else(|| anyhow::anyhow!("explicit local MOSS resource root required"))?;
-            let backend = CandleBackend::load_on(root.into(), mode, Device::Cuda).await?;
+            let backend = CandleBackend::load_on(root.into(), mode, lifecycle_device()?).await?;
             let params = GenerationParams::new();
             let expected = collect(&backend, &params).await?;
             drop(backend.stream(request(&params)).await?);
@@ -103,8 +111,8 @@ async fn check(mode: Mode) -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "explicit local MOSS Realtime 1.7B CUDA resources; no downloads"]
-async fn real_cuda_realtime_owner_cancel_failure_and_reuse() -> anyhow::Result<()> {
+#[ignore = "explicit local MOSS Realtime 1.7B resources and explicit device; no downloads"]
+async fn real_realtime_owner_cancel_failure_and_reuse() -> anyhow::Result<()> {
     check(Mode::Realtime).await
 }
 
@@ -125,12 +133,12 @@ async fn check_fixed_reference(mode: Mode) -> anyhow::Result<()> {
     tokio::task::LocalSet::new()
         .run_until(async {
             let root = PathBuf::from(
-                std::env::var_os("TALECHIME_MOSS17_CUDA_ROOT")
+                std::env::var_os("TALECHIME_MOSS17_LIFECYCLE_ROOT")
                     .ok_or_else(|| anyhow::anyhow!("explicit local MOSS resource root required"))?,
             );
             let params = GenerationParams::new();
             // Generate our own complete reference; never use private recordings.
-            let backend = CandleBackend::load_on(root.clone(), mode, Device::Cuda).await?;
+            let backend = CandleBackend::load_on(root.clone(), mode, lifecycle_device()?).await?;
             let narrator = collect(&backend, &params).await?;
             drop(backend);
             let samples: Vec<f32> = narrator.iter().copied().map(f32::from_bits).collect();
@@ -151,7 +159,7 @@ async fn check_fixed_reference(mode: Mode) -> anyhow::Result<()> {
             writer.finalize()?;
             let store = voice_store(&mode.directory(&root), mode)?;
             let id = format!(
-                "custom:cuda-gate-{}-{}",
+                "custom:lifecycle-gate-{}-{}",
                 std::process::id(),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)?
@@ -159,12 +167,12 @@ async fn check_fixed_reference(mode: Mode) -> anyhow::Result<()> {
             );
             let voice_path = store.path(&id)?;
             anyhow::ensure!(!voice_path.exists());
-            store.import(&id, "generated CUDA gate reference", &wav, TEXT, None)?;
+            store.import(&id, "generated lifecycle gate reference", &wav, TEXT, None)?;
             let mut voice = TemporaryVoice {
                 store: Some(store),
                 id,
             };
-            let backend = CandleBackend::load_on(root, mode, Device::Cuda).await?;
+            let backend = CandleBackend::load_on(root, mode, lifecycle_device()?).await?;
             let clone_request = || SegmentRequest {
                 voice: &voice.id,
                 ..request(&params)
@@ -195,7 +203,7 @@ async fn check_fixed_reference(mode: Mode) -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "explicit local MOSS Realtime 1.7B CUDA fixed reference gate; no downloads"]
-async fn real_cuda_realtime_fixed_reference_reuse() -> anyhow::Result<()> {
+#[ignore = "explicit local MOSS Realtime 1.7B fixed reference and device gate; no downloads"]
+async fn real_realtime_fixed_reference_reuse() -> anyhow::Result<()> {
     check_fixed_reference(Mode::Realtime).await
 }

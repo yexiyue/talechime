@@ -184,6 +184,11 @@ impl ResolvedModel {
     pub fn revision(&self) -> &'static str {
         self.adapter.revision()
     }
+    /// Text/conditioning algorithm identity, independent of immutable weight files.
+    /// Hosts must freeze this together with `revision()` when reusing saved audio.
+    pub fn text_semantics_revision(&self) -> &'static str {
+        crate::TEXT_SEMANTICS_REVISION
+    }
     pub fn compiled_devices(&self) -> Vec<Device> {
         self.adapter.compiled_devices()
     }

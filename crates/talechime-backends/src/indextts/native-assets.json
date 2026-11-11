@@ -111,6 +111,72 @@
       "filename": "LICENSE",
       "size": 10553,
       "sha256": "cc7da9ea0f8a97ef15ab3bf0389e636ce79ffca1aef5489520796ac87d87a87b"
+    },
+    {
+      "path": "unidic-lite-1.0.8.tar.gz",
+      "repo": "polm/unidic-lite",
+      "revision": "1.0.8",
+      "filename": "unidic-lite-1.0.8.tar.gz",
+      "size": 47356746,
+      "sha256": "db9d4572d9fdd4d00a97949d4b0741ec480ee05a7e7e2e32f547500dae27b245",
+      "url": "https://files.pythonhosted.org/packages/55/2b/8cf7514cb57d028abcef625afa847d60ff1ffbf0049c36b78faa7c35046f/unidic-lite-1.0.8.tar.gz"
+    },
+    {
+      "path": "wetext-0.1.0.whl",
+      "repo": "pypi/wetext",
+      "revision": "0.1.0",
+      "filename": "wetext-0.1.0-py3-none-any.whl",
+      "size": 1513305,
+      "sha256": "cfc595f85d9b0218df6746a9e6bee9240b6e09ee6d803a937ef90cbc03936b3e",
+      "url": "https://files.pythonhosted.org/packages/d4/a6/d5856069473e04968cd04fdd4726a23e78fd925ced0281294a28c5a27913/wetext-0.1.0-py3-none-any.whl"
+    },
+    {
+      "path": "qwen0.6bemo4-merge/chat_template.jinja",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "qwen0.6bemo4-merge/chat_template.jinja",
+      "size": 550,
+      "sha256": "a13337ea164ac47b2c1e644b6338d5e7e91cdcb58218511899c083112472730c"
+    },
+    {
+      "path": "qwen0.6bemo4-merge/config.json",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "qwen0.6bemo4-merge/config.json",
+      "size": 727,
+      "sha256": "2e04bc223dfb548dde52faebe2a819964523ff749cbe26467c49380aa371594f"
+    },
+    {
+      "path": "qwen0.6bemo4-merge/generation_config.json",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "qwen0.6bemo4-merge/generation_config.json",
+      "size": 117,
+      "sha256": "6453260cdb41552215d87400ab399a760f25509ec2860ceb07817b195651626d"
+    },
+    {
+      "path": "qwen0.6bemo4-merge/model.safetensors",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "qwen0.6bemo4-merge/model.safetensors",
+      "size": 1192135096,
+      "sha256": "11293257a8df593c154a8ecd5fc039f3076de35411e35f06d41b471e136f6641"
+    },
+    {
+      "path": "qwen0.6bemo4-merge/tokenizer.json",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "qwen0.6bemo4-merge/tokenizer.json",
+      "size": 11422654,
+      "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
+    },
+    {
+      "path": "qwen0.6bemo4-merge/tokenizer_config.json",
+      "repo": "IndexTeam/IndexTTS-2.5",
+      "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "filename": "qwen0.6bemo4-merge/tokenizer_config.json",
+      "size": 5433,
+      "sha256": "147bae7844ddfb8767c1f9cc0f505d4a26839bd6fbb0656d6d6bc17c82e9108a"
     }
   ],
   "outputs": [
@@ -176,8 +242,113 @@
     },
     {
       "path": "SOURCES.json",
-      "size": 5226,
-      "sha256": "5d7177b2f43b6e7ecf3afad22c3e599f7192ef17178413356a41bfdbfd8af04c"
+      "size": 8583,
+      "sha256": "ffb57b0fd0c27225d6b40b35279354cd75b381f730828c74c931ecee6e65938c"
+    },
+    {
+      "path": "japanese.dic",
+      "size": 253256167,
+      "sha256": "74f2526bcb8637f387bb688ecd15aced3001b349275e7ec921c68324ebec2ddd"
+    },
+    {
+      "path": "LICENSE-UNIDIC",
+      "size": 1515,
+      "sha256": "7917ecfaf95a5ba7b4f45aa9a845ac931d79c90f39b7e711442dbc21c612560f"
+    },
+    {
+      "path": "tn/wetext/zh/tn/tagger.fst",
+      "size": 811646,
+      "sha256": "63f3abeafe64fc3e9232099ab8ef6efd44c5198319193854af3ac2716d7c27a7"
+    },
+    {
+      "path": "tn/wetext/zh/tn/verbalizer.fst",
+      "size": 87702,
+      "sha256": "9fcadad76cafddb2e96b92d892d18249f0ba5fbe60e4d4fc51f466cb6bc7ade9"
+    },
+    {
+      "path": "tn/wetext/en/tn/tagger.fst",
+      "size": 5220942,
+      "sha256": "bb804f88030153999f154f01950c18dbfd64de2c4cfc5035e21371d4eb4ead8a"
+    },
+    {
+      "path": "tn/wetext/en/tn/verbalizer.fst",
+      "size": 1822714,
+      "sha256": "33ad65460a3e8f7fe313994ff0204a218c0fcb5dec9c09b24aeeaa30ef21d67b"
+    },
+    {
+      "path": "LICENSE-WETEXT",
+      "size": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "qwen0.6bemo4-merge/chat_template.jinja",
+      "size": 550,
+      "sha256": "a13337ea164ac47b2c1e644b6338d5e7e91cdcb58218511899c083112472730c"
+    },
+    {
+      "path": "qwen0.6bemo4-merge/config.json",
+      "size": 727,
+      "sha256": "2e04bc223dfb548dde52faebe2a819964523ff749cbe26467c49380aa371594f"
+    },
+    {
+      "path": "qwen0.6bemo4-merge/generation_config.json",
+      "size": 117,
+      "sha256": "6453260cdb41552215d87400ab399a760f25509ec2860ceb07817b195651626d"
+    },
+    {
+      "path": "qwen0.6bemo4-merge/model.safetensors",
+      "size": 1192135096,
+      "sha256": "11293257a8df593c154a8ecd5fc039f3076de35411e35f06d41b471e136f6641"
+    },
+    {
+      "path": "qwen0.6bemo4-merge/tokenizer.json",
+      "size": 11422654,
+      "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
+    },
+    {
+      "path": "qwen0.6bemo4-merge/tokenizer_config.json",
+      "size": 5433,
+      "sha256": "147bae7844ddfb8767c1f9cc0f505d4a26839bd6fbb0656d6d6bc17c82e9108a"
+    },
+    {
+      "path": "LICENSE-NEMO_TEXT_PROCESSING",
+      "size": 11356,
+      "sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+    },
+    {
+      "path": "LICENSE-WETEXTPROCESSING",
+      "size": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "tn/es/tagger.fst",
+      "size": 12387470,
+      "sha256": "fb8ecfe237d74bc19c5fbe0b6200042929118a00653c2adc755e42e260ff4f13"
+    },
+    {
+      "path": "tn/es/verbalizer.fst",
+      "size": 33650222,
+      "sha256": "d723c5fe90e18d7b76b19357f5c75ebb7b019ae49855a5d2b35f188b608e7932"
+    },
+    {
+      "path": "tn/linux/en/tagger.fst",
+      "size": 5610778,
+      "sha256": "d8fa27641bf5773d2cfd9486f9213697be82dbce56d8bf44f18d658a0bee33f3"
+    },
+    {
+      "path": "tn/linux/en/verbalizer.fst",
+      "size": 6573194,
+      "sha256": "d2290ffaaad4b611ccca4b480f7a70a9842785caeda6d28632f5259860ae5265"
+    },
+    {
+      "path": "tn/linux/zh/tagger.fst",
+      "size": 527178,
+      "sha256": "88aabfb4b0d3df506622f620538f031e3d2747083989e84aa242dec3413a9155"
+    },
+    {
+      "path": "tn/linux/zh/verbalizer.fst",
+      "size": 2135078,
+      "sha256": "6f1aa8af41f294390da58618dc8612b7e9ab198d6b8dca47764cf663bda683d5"
     }
   ]
 }

@@ -38,7 +38,7 @@ pub(super) fn catalog() -> Vec<ParameterSpec> {
             name: "language".into(),
             kind: ParamKind::Text { max_len: 32 },
             default: ParamValue::Text("auto".into()),
-            description: "auto 或 en/zh/ja/ko/de/fr/ru/pt/es/it；auto 按文本启发式".into(),
+            description: "auto 或 en/zh/ja/ko/de/fr/ru/pt/es/it；auto 使用模型自动语言".into(),
         },
         ParameterSpec {
             name: "max_duration".into(),
@@ -130,7 +130,7 @@ impl QwenParams {
 /// Resolved per-request settings; chunk_frames stays optional for device defaults.
 pub(super) struct Resolved {
     pub options: SynthesisOptions,
-    /// None keeps the CJK text heuristic on the inference thread.
+    /// None selects the model's automatic language prefix.
     pub language: Option<Language>,
     pub chunk_frames: Option<usize>,
 }

@@ -2,6 +2,8 @@
 mod control;
 mod plan;
 mod publication;
+#[cfg(any(feature = "cosyvoice3", feature = "indextts"))]
+pub(crate) mod wetext;
 mod workspace;
 pub(crate) use workspace::Workspace;
 #[cfg(any(test, feature = "cosyvoice3", feature = "kokoro", feature = "indextts"))]
@@ -261,7 +263,11 @@ impl Recipe {
                     input.size,
                 );
                 let transfer = async {
-                    if refresh {
+                    if let Some(url) = input.url {
+                        downloads
+                            .ensure_pinned_url(&dest, url, bridge, refresh)
+                            .await
+                    } else if refresh {
                         downloads
                             .refresh(&dest, input.repo, input.revision, input.filename, bridge)
                             .await
@@ -285,6 +291,7 @@ impl Recipe {
                 outcome?;
                 let path = dest.clone();
                 valid = control::worker(control.clone(), move |control| {
+                    materialize_input(&path, &control)?;
                     plan::verified(&path, input.size, input.sha256, &control)
                 })
                 .await?;
@@ -322,6 +329,18 @@ impl Recipe {
         })
         .await
     }
+}
+
+/// Downloads can use a symlink when the cache is on another volume. This
+/// private input view needs regular files; the shared cache remains untouched.
+fn materialize_input(path: &Path, control: &PreparationControl) -> anyhow::Result<()> {
+    if std::fs::symlink_metadata(path)?.file_type().is_symlink() {
+        let cached = path.canonicalize()?;
+        control.check()?;
+        std::fs::remove_file(path)?;
+        link_or_copy(&cached, path, control)?;
+    }
+    Ok(())
 }
 
 pub(crate) async fn plan_recipe(

@@ -157,8 +157,10 @@ fn prompt(pipeline: &Pipeline, directory: &Path, voice: &str) -> anyhow::Result<
 fn generate(pipeline: &Pipeline, directory: &Path, request: &Request) -> Result<(), BackendError> {
     let started = std::time::Instant::now();
     let mut input = GenerationRequest::new_text_only(&request.text)
-        .with_language(request.resolved.language.clone())
         .with_generation_config(request.resolved.config.clone());
+    if let Some(language) = &request.resolved.language {
+        input = input.with_language(language.clone());
+    }
     if let Some(speed) = request.resolved.speed {
         input.speeds = vec![Some(speed)];
     }

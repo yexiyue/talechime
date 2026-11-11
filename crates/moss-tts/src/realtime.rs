@@ -1,4 +1,5 @@
 //! MOSS Realtime: initial text lookahead followed by one text token per frame.
+mod prompt;
 use crate::{
     Generation,
     config::TransformerConfig,
@@ -86,13 +87,20 @@ impl RealtimeModel {
         })
     }
     fn text(&self, text: &str) -> anyhow::Result<Vec<u32>> {
-        Ok(self
+        let encoding = self
             .tokenizer
             .encode(text, false)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?
-            .get_ids()
-            .to_vec())
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let ids = encoding.get_ids().to_vec();
+        if std::env::var("TALECHIME_TEXT_DIAGNOSTICS").is_ok_and(|value| value == "1") {
+            eprintln!(
+                "TALECHIME_TEXT_DIAGNOSTIC {}",
+                serde_json::json!({"backend":"moss-realtime","phase":"text_tokens","execution_text":text,"tokens":ids})
+            );
+        }
+        Ok(ids)
     }
+
     fn embed(&self, rows: &[Vec<u32>]) -> anyhow::Result<Tensor> {
         let mut x = None;
         for (i, embedding) in self.embeddings.iter().enumerate() {
@@ -121,32 +129,9 @@ impl RealtimeModel {
         );
         self.backbone.reset();
         self.depth.reset();
-        let system = "<|im_start|>system\nYou are a highly expressive text-to-speech (TTS) engine developed by Mosi Intelligence. \nYou possess natural language understanding, emotional modeling, and multi-style speech generation capabilities, allowing you to generate the corresponding speech based on the text given in the assistant.<|im_end|>\n";
-        let row = |id| {
-            let mut row = vec![self.cfg.audio_pad_token; self.cfg.rvq + 1];
-            row[0] = id;
-            row
-        };
-        let mut rows: Vec<_> = self.text(system)?.into_iter().map(row).collect();
-        if let Some(reference) = request.reference {
-            rows.extend(self.text("<|im_start|>context\nThe assistant section should be synthesized using the following voice timbre:")?.into_iter().map(row));
-            for codes in reference {
-                anyhow::ensure!(
-                    codes.len() >= 16 && codes[..16].iter().all(|id| *id < 1024),
-                    "invalid Realtime reference"
-                );
-                let mut item = vec![151654];
-                item.extend_from_slice(&codes[..16]);
-                rows.push(item);
-            }
-            rows.extend(self.text("<|im_end|>\n")?.into_iter().map(row));
-        }
-        rows.extend(self.text("<|im_start|>assistant\n")?.into_iter().map(row));
         let text = self.text(request.text)?;
-        anyhow::ensure!(!text.is_empty(), "empty Realtime tokenization");
-        let index = text.len().min(12);
-        rows.extend(text[..index].iter().copied().map(row));
-        rows.last_mut().expect("nonempty text")[1] = 1025;
+        let (rows, index) =
+            prompt::initial_rows(|value| self.text(value), &text, request.reference)?;
         let mut hidden = self.backbone.forward(&self.embed(&rows)?, cancelled)?;
         let mut history = vec![Vec::<u32>::new(); self.cfg.rvq];
         let mut rng = StdRng::seed_from_u64(request.seed);
@@ -171,10 +156,7 @@ impl RealtimeModel {
                     &mut rng,
                 )?;
                 if i == 0 && id == 1026 {
-                    anyhow::ensure!(
-                        index >= text.len(),
-                        "Realtime EOS before all text was consumed"
-                    );
+                    validate_eos(index, text.len())?;
                     return Ok(());
                 }
                 tokens.push(id);
@@ -198,5 +180,24 @@ impl RealtimeModel {
             hidden = self.backbone.forward(&self.embed(&[next])?, cancelled)?;
         }
         anyhow::bail!("MOSS Realtime frame limit reached before EOS")
+    }
+}
+
+fn validate_eos(consumed: usize, total: usize) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        consumed >= total,
+        "Realtime EOS before all text was consumed"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn early_eos_cannot_accept_unconsumed_text() {
+        assert!(super::validate_eos(12, 16).is_err());
+        assert!(super::validate_eos(15, 16).is_err());
+        assert!(super::validate_eos(16, 16).is_ok());
+        assert!(super::validate_eos(3, 3).is_ok());
     }
 }

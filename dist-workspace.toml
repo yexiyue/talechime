@@ -21,7 +21,7 @@ install-path = "CARGO_HOME"
 install-updater = false
 msvc-crt-static = false
 features = ["cli", "asr", "qwen", "voxcpm", "omnivoice", "cosyvoice3", "moss-candle", "moss-nano-candle", "kokoro-g2pw"]
-include = ["LICENSE", "SOURCE.md", "docs", "assets", "target/third-party-licenses"]
+include = ["LICENSE", "SOURCE.md", "docs", "assets", "target/third-party-licenses", "target/talechime-helpers"]
 github-build-setup = "../build-setup.yml"
 pr-run-mode = "plan"
 

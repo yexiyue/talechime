@@ -25,6 +25,7 @@
 - [工具链与平台](knowledge/toolchain.md)：原生依赖、设备探测、构建、平台限制和实验记录。
 - [hf-hub fork 与上游下载能力](knowledge/hf-hub-fork.md)：固定 Git 来源、Python 对照、Xet 上游 PR 与 SDK 发布限制。
 - [TTS 性能优化方法](knowledge/tts-performance.md)：跨后端的测量、准确性门禁、模块边界与优化取舍。
+- [OmniVoice 推理与验证](omnivoice.md)：自动/显式语言、设计标签、参考音色、原生语速及本轮验证边界。
 - [OmniVoice CPU / Metal 优化现状](knowledge/omnivoice-performance.md)：当前执行路径、官方对照口径、受限快路径、撤回项与输出边界。
 - [会话与宿主集成](knowledge/booksource.md)：从 TRNovel 提取的听书知识；原阅读器专属条目为历史背景。
 - [CosyVoice3 后端](cosyvoice3.md)：实验性零样本克隆、原生流式、固定本地转换文件与音色导入。

@@ -17,3 +17,23 @@ Rust 移植，全部代码在本仓库内按 Candle 0.11.0 重写并修复审计
 权重转换脚本（tools/tts/cosyvoice3_convert_weights.py）派生自 SpenserCai/cosyvoice3.rs 的
 scripts/convert_weights.py（Apache-2.0）。模型本体（llm.pt/flow.pt/hift.pt/*.onnx）不进入
 Git，来源 FunAudioLLM/Fun-CosyVoice3-0.5B-2512，许可以模型发布页为准。
+
+## Public text frontend (2026-11-11, unreleased)
+
+The fixed official public WeText path is implemented natively: wetext 0.1.0
+(Apache-2.0), inflect 7.5.0 default cardinal semantics (MIT), Chinese
+cleanup and the official 80/60/20 token grouping policy. The optional
+proprietary ttsfrd path is not substituted or claimed. Model control tags
+bypass normalization as upstream does. The adapter follows the CosyVoice3
+example's assistant/end-of-prompt prefix for reference transcripts; these
+tagged transcripts pass through unchanged. Cross-lingual mode puts that
+prefix in the target input because its LLM transcript is removed, matching
+the fixed example.py call. This also invokes the official control-tag TN
+bypass. Instruct removes only the LLM audio prefix, retaining Flow reference.
+
+`tools/tts/cosyvoice_frontend_oracle.py` records source, package and actual
+model tokenizer identities; all 25 independent fixtures pass on macOS CPU.
+FST execution and serialization belong to `talechime-text`; grouping and
+mode semantics stay here. Fixed resource hashes belong to the adapter's
+front-v4 recipe. Retained licenses live under `licenses/`. Frontend parity
+and generated audio do not close the historical waveform numeric gate.

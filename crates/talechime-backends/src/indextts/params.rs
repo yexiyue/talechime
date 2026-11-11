@@ -20,7 +20,32 @@ pub(super) fn catalog() -> Vec<ParameterSpec> {
             name: "language".into(),
             kind: ParamKind::Text { max_len: 5 },
             default: ParamValue::Text("zh".into()),
-            description: "文本语言：zh 或 en".into(),
+            description:
+                "文本语言：zh、en、ja、es 或 ar；日语使用固定 UniDic，西语使用 NeMo TN，阿拉伯语保留原文数字".into(),
+        },
+        ParameterSpec {
+            name: "duration_factor".into(),
+            kind: ParamKind::Float { min: 0.5, max: 2.0 },
+            default: ParamValue::Float(1.0),
+            description: "官方语音时长倍率；数值越大语速越慢".into(),
+        },
+        ParameterSpec {
+            name: "text_normalization".into(),
+            kind: ParamKind::Bool,
+            default: ParamValue::Bool(true),
+            description: "是否进行官方文本规范化；中英文使用固定 WeText，日语不展开数字".into(),
+        },
+        ParameterSpec {
+            name: "use_emo_text".into(),
+            kind: ParamKind::Bool,
+            default: ParamValue::Bool(false),
+            description: "使用固定 QwenEmotion 从文本分析情绪；优先于向量及情绪参考".into(),
+        },
+        ParameterSpec {
+            name: "emo_text".into(),
+            kind: ParamKind::Text { max_len: 16384 },
+            default: ParamValue::Text(String::new()),
+            description: "情绪分析文本；空字符串使用当前朗读文本，需 use_emo_text=true".into(),
         },
         ParameterSpec {
             name: "emo_alpha".into(),
@@ -57,8 +82,11 @@ pub(super) fn catalog() -> Vec<ParameterSpec> {
 #[derive(Debug, Clone, Default)]
 pub struct IndexTtsParams {
     pub language: Option<String>,
+    pub duration_factor: Option<f64>,
+    pub text_normalization: Option<bool>,
     /// happy, angry, sad, afraid, disgusted, melancholic, surprised, calm.
     pub emotion_vector: Option<[f32; 8]>,
+    pub emotion_text: Option<String>,
     pub emotion_strength: Option<f64>,
     pub emotion_voice: Option<String>,
     pub emotion_random: Option<bool>,
@@ -67,6 +95,14 @@ pub struct IndexTtsParams {
 impl IndexTtsParams {
     pub fn language(mut self, language: impl Into<String>) -> Self {
         self.language = Some(language.into());
+        self
+    }
+    pub fn duration_factor(mut self, factor: f64) -> Self {
+        self.duration_factor = Some(factor);
+        self
+    }
+    pub fn text_normalization(mut self, enabled: bool) -> Self {
+        self.text_normalization = Some(enabled);
         self
     }
     pub fn emotion_vector(mut self, vector: [f32; 8]) -> Self {
@@ -81,6 +117,10 @@ impl IndexTtsParams {
         self.emotion_voice = Some(voice.into());
         self
     }
+    pub fn emotion_text(mut self, text: impl Into<String>) -> Self {
+        self.emotion_text = Some(text.into());
+        self
+    }
     pub fn emotion_random(mut self, random: bool) -> Self {
         self.emotion_random = Some(random);
         self
@@ -90,10 +130,20 @@ impl IndexTtsParams {
         if let Some(language) = &self.language {
             params.insert("language", ParamValue::Text(language.clone()));
         }
+        if let Some(factor) = self.duration_factor {
+            params.insert("duration_factor", ParamValue::Float(factor));
+        }
+        if let Some(enabled) = self.text_normalization {
+            params.insert("text_normalization", ParamValue::Bool(enabled));
+        }
         if let Some(vector) = self.emotion_vector {
             for ((name, _, _), value) in EMOTIONS.iter().zip(vector) {
                 params.insert(*name, ParamValue::from(value));
             }
+        }
+        if let Some(text) = &self.emotion_text {
+            params.insert("use_emo_text", ParamValue::Bool(true));
+            params.insert("emo_text", ParamValue::Text(text.clone()));
         }
         if let Some(strength) = self.emotion_strength {
             params.insert("emo_alpha", ParamValue::Float(strength));
@@ -114,7 +164,14 @@ pub(super) struct Resolved {
     pub emotion_voice: Option<String>,
 }
 
-/// Reject ambiguous controls rather than silently replacing another source.
+fn text_value(value: &ParamValue) -> Option<&str> {
+    match value {
+        ParamValue::Text(text) => Some(text),
+        _ => None,
+    }
+}
+
+/// Named styles are a vector shorthand; text/vector override a reference as upstream does.
 pub(super) fn resolve(
     params: &GenerationParams,
     style: Option<&str>,
@@ -124,11 +181,15 @@ pub(super) fn resolve(
         .validate(&catalog())
         .map_err(BackendError::Unsupported)?;
     let language = match params.get("language") {
-        Some(ParamValue::Text(value)) if value == "zh" || value == "en" => value.as_str(),
+        Some(ParamValue::Text(value))
+            if matches!(value.as_str(), "zh" | "en" | "ja" | "es" | "ar") =>
+        {
+            value.as_str()
+        }
         None => "zh",
         _ => {
             return Err(BackendError::Unsupported(
-                "IndexTTS language must be zh or en".into(),
+                "IndexTTS language must be zh, en, ja, es or ar".into(),
             ));
         }
     };
@@ -136,20 +197,38 @@ pub(super) fn resolve(
     let explicit_vector = EMOTIONS
         .iter()
         .any(|(name, _, _)| params.get(name).is_some());
-    let emotion_voice = match params.get("emo_voice") {
+    let mut emotion_voice = match params.get("emo_voice") {
         Some(ParamValue::Text(value)) if !value.trim().is_empty() => Some(value.clone()),
         _ => None,
     };
-    if usize::from(style.is_some())
-        + usize::from(explicit_vector)
-        + usize::from(emotion_voice.is_some())
-        > 1
-    {
+    let use_text = matches!(params.get("use_emo_text"), Some(ParamValue::Bool(true)));
+    let emotion_text = if use_text {
+        Some(
+            params
+                .get("emo_text")
+                .and_then(text_value)
+                .unwrap_or("")
+                .to_owned(),
+        )
+    } else {
+        if params
+            .get("emo_text")
+            .is_some_and(|value| text_value(value).is_some_and(|text| !text.is_empty()))
+        {
+            return Err(BackendError::Unsupported(
+                "emo_text requires use_emo_text=true".into(),
+            ));
+        }
+        None
+    };
+    if !use_text && style.is_some() && explicit_vector {
         return Err(BackendError::Unsupported(
-            "IndexTTS style, emo_* vector and emo_voice are mutually exclusive".into(),
+            "IndexTTS named style and explicit emotion vector are mutually exclusive".into(),
         ));
     }
-    let vector = if let Some(style) = style {
+    let vector = if use_text {
+        None
+    } else if let Some(style) = style {
         let i = EMOTIONS.iter().position(|(_, en, zh)| style.eq_ignore_ascii_case(en) || style == *zh)
             .ok_or_else(|| BackendError::Unsupported("IndexTTS style expects happy/angry/sad/afraid/disgusted/melancholic/surprised/calm or 高兴/愤怒/悲伤/恐惧/厌恶/低落/惊讶/平静".into()))?;
         Some(std::array::from_fn(|j| if i == j { 1.0 } else { 0.0 }))
@@ -163,13 +242,17 @@ pub(super) fn resolve(
     } else {
         None
     };
-    if params.get("emo_alpha").is_some() && vector.is_none() && emotion_voice.is_none() {
+    if use_text || vector.is_some() {
+        emotion_voice = None;
+    }
+    if params.get("emo_alpha").is_some() && vector.is_none() && emotion_voice.is_none() && !use_text
+    {
         return Err(BackendError::Unsupported(
             "emo_alpha requires style, an emotion vector or emo_voice".into(),
         ));
     }
     let random = matches!(params.get("emo_use_random"), Some(ParamValue::Bool(true)));
-    if random && vector.is_none() {
+    if random && vector.is_none() && !use_text {
         return Err(BackendError::Unsupported(
             "emo_use_random requires style or an emotion vector".into(),
         ));
@@ -179,7 +262,16 @@ pub(super) fn resolve(
         emotion_voice,
         options: Options {
             seed: Some(seed),
+            duration_factor: params
+                .get("duration_factor")
+                .and_then(ParamValue::as_f64)
+                .unwrap_or(1.0) as f32,
+            text_normalization: !matches!(
+                params.get("text_normalization"),
+                Some(ParamValue::Bool(false))
+            ),
             emo_vector: vector.map(|v| talechime_indextts::normalize_emo_vec(v, false)),
+            emotion_text,
             emo_alpha: params
                 .get("emo_alpha")
                 .and_then(ParamValue::as_f64)
@@ -195,14 +287,95 @@ mod tests {
     use super::*;
 
     #[test]
+    fn japanese_language_reaches_the_official_embedding_route() -> Result<(), BackendError> {
+        let params = IndexTtsParams::default()
+            .language("ja")
+            .to_generation_params();
+        let resolved = resolve(&params, None, 7)?;
+        assert_eq!(resolved.language, "ja");
+        assert_eq!(
+            talechime_indextts::tokenizer::lang_to_token(&resolved.language),
+            7
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn spanish_language_and_text_emotion_preserve_official_priority() -> Result<(), BackendError> {
+        let params = IndexTtsParams::default()
+            .language("es")
+            .emotion_vector([0.5; 8])
+            .emotion_voice("custom:ignored")
+            .emotion_text("Me siento feliz")
+            .emotion_random(true)
+            .emotion_strength(0.7)
+            .to_generation_params();
+        let resolved = resolve(&params, Some("sad"), 42)?;
+        assert_eq!(resolved.language, "es");
+        assert_eq!(
+            talechime_indextts::tokenizer::lang_to_token(&resolved.language),
+            3
+        );
+        assert_eq!(
+            resolved.options.emotion_text.as_deref(),
+            Some("Me siento feliz")
+        );
+        assert!(resolved.options.emo_vector.is_none() && resolved.emotion_voice.is_none());
+        assert!(resolved.options.emo_use_random);
+        Ok(())
+    }
+
+    #[test]
+    fn arabic_language_reaches_the_official_embedding_route() -> Result<(), BackendError> {
+        let params = IndexTtsParams::default()
+            .language("ar")
+            .to_generation_params();
+        let resolved = resolve(&params, None, 7)?;
+        assert_eq!(resolved.language, "ar");
+        assert_eq!(
+            talechime_indextts::tokenizer::lang_to_token(&resolved.language),
+            13
+        );
+        Ok(())
+    }
+
+    #[test]
     fn defaults_keep_original_model_options() -> Result<(), BackendError> {
         let resolved = resolve(&GenerationParams::new(), None, 7)?;
         let original = Options::default();
         assert_eq!(resolved.language, "zh");
         assert!(resolved.options.emo_vector.is_none() && resolved.emotion_voice.is_none());
         assert_eq!(resolved.options.emo_alpha, original.emo_alpha);
+        assert_eq!(resolved.options.duration_factor, original.duration_factor);
         assert_eq!(resolved.options.emo_use_random, original.emo_use_random);
         assert_eq!(resolved.options.seed, Some(7));
+        Ok(())
+    }
+
+    #[test]
+    fn duration_factor_reaches_model_and_checks_limits() -> Result<(), BackendError> {
+        let params = IndexTtsParams::default()
+            .duration_factor(1.5)
+            .to_generation_params();
+        assert_eq!(resolve(&params, None, 7)?.options.duration_factor, 1.5);
+        let invalid = IndexTtsParams::default()
+            .duration_factor(2.5)
+            .to_generation_params();
+        assert!(resolve(&invalid, None, 7).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn normalization_can_be_disabled_for_prepared_text() -> Result<(), BackendError> {
+        let params = IndexTtsParams::default()
+            .text_normalization(false)
+            .to_generation_params();
+        assert!(!resolve(&params, None, 7)?.options.text_normalization);
+        assert!(
+            resolve(&GenerationParams::new(), None, 7)?
+                .options
+                .text_normalization
+        );
         Ok(())
     }
 
@@ -240,7 +413,12 @@ mod tests {
         let reference = IndexTtsParams::default()
             .emotion_voice("custom:sad")
             .to_generation_params();
-        assert!(resolve(&reference, Some("sad"), 0).is_err());
+        assert!(
+            resolve(&reference, Some("sad"), 0)
+                .unwrap()
+                .emotion_voice
+                .is_none()
+        );
         assert!(resolve(&GenerationParams::new(), Some("anything invented"), 0).is_err());
         for value in [-0.1, 1.1, f64::NAN, f64::INFINITY] {
             let params = IndexTtsParams::default()

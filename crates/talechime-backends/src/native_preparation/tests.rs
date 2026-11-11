@@ -7,7 +7,23 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 const HASH: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+#[cfg(unix)]
+#[test]
+fn downloaded_cross_volume_symlink_becomes_a_regular_verified_input() {
+    let directory = tempfile::tempdir().unwrap();
+    let cached = directory.path().join("cache");
+    let input = directory.path().join("input");
+    std::fs::write(&cached, b"abc").unwrap();
+    std::os::unix::fs::symlink(&cached, &input).unwrap();
+    let control = PreparationControl::default();
+    materialize_input(&input, &control).unwrap();
+    assert!(std::fs::symlink_metadata(&input).unwrap().is_file());
+    assert!(verified(&input, 3, HASH, &control).unwrap());
+    assert_eq!(std::fs::read(cached).unwrap(), b"abc");
+}
 static INPUTS: &[Input] = &[Input {
+    url: None,
     path: "source.bin",
     repo: "fixture/model",
     revision: "1111111111111111111111111111111111111111",
@@ -822,7 +838,7 @@ async fn unavailable_pinned_source_reports_failure_without_publishing_or_touchin
 
 #[cfg(all(feature = "kokoro-g2pw", feature = "cosyvoice3", feature = "indextts"))]
 #[test]
-fn runtime_distribution_covers_exact_native_outputs_without_precision_or_source_fallback() {
+fn runtime_distribution_covers_exact_outputs_or_pinned_native_transforms() {
     let recipes = [
         crate::kokoro::native_recipe(crate::kokoro::MODEL).unwrap(),
         crate::kokoro::native_recipe(crate::kokoro::CONTEXT_MODEL).unwrap(),
@@ -830,10 +846,30 @@ fn runtime_distribution_covers_exact_native_outputs_without_precision_or_source_
         crate::indextts::native_recipe(),
     ];
     for recipe in recipes {
-        assert!(recipe.transform_outputs.is_empty());
-        assert_eq!(recipe.workspace_bytes, 0);
-        assert_eq!(recipe.inputs.len(), recipe.outputs.len());
+        if recipe.transform_outputs.is_empty() {
+            assert_eq!(recipe.workspace_bytes, 0);
+            assert_eq!(recipe.inputs.len(), recipe.outputs.len());
+        }
         for output in recipe.outputs {
+            if recipe.transform_outputs.contains(&output.path) {
+                continue;
+            }
+            if recipe.id.starts_with("indextts-")
+                && matches!(output.path, "SOURCES.json" | "LICENSE-UNIDIC")
+            {
+                let compiled: &[u8] = if output.path == "SOURCES.json" {
+                    include_bytes!("../indextts/native-sources.json")
+                } else {
+                    include_bytes!("../indextts/native/UNIDIC-BSD")
+                };
+                use sha2::Digest;
+                assert_eq!(compiled.len() as u64, output.size);
+                assert_eq!(
+                    format!("{:x}", sha2::Sha256::digest(compiled)),
+                    output.sha256
+                );
+                continue;
+            }
             let input = recipe
                 .inputs
                 .iter()

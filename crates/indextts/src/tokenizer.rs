@@ -111,6 +111,13 @@ impl Tokenizer {
     }
 
     pub fn from_ranks(ranks: HashMap<Vec<u8>, u32>) -> Result<Self> {
+        // Byte-level BPE must represent every byte. Otherwise encoding can
+        // silently omit part of a UTF-8 character when a vocabulary is damaged.
+        for byte in u8::MIN..=u8::MAX {
+            if !ranks.contains_key(&[byte][..]) {
+                bail!("tiktoken vocabulary is missing byte 0x{byte:02x}");
+            }
+        }
         let mut specials = Vec::new();
         specials.push("<|endoftext|>".to_string());
         specials.push("<|startoftranscript|>".to_string());
@@ -394,7 +401,7 @@ mod tests {
         // single bytes 0..4 plus merged multi-byte tokens.
         let mut ranks = HashMap::new();
         let mut next = 0u32;
-        for &b in b"abc x!" {
+        for b in u8::MIN..=u8::MAX {
             ranks.insert(vec![b], next);
             next += 1;
         }
@@ -403,6 +410,21 @@ mod tests {
             next += 1;
         }
         Tokenizer::from_ranks(ranks).expect("tokenizer")
+    }
+
+    #[test]
+    fn incomplete_byte_vocabulary_is_rejected() {
+        let mut ranks: HashMap<Vec<u8>, u32> = (0..=u8::MAX)
+            .map(|byte| (vec![byte], u32::from(byte)))
+            .collect();
+        ranks.remove(&vec![0x80]);
+        assert!(
+            Tokenizer::from_ranks(ranks)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("0x80")
+        );
     }
 
     #[test]
@@ -480,8 +502,7 @@ mod tests {
         assert_eq!(t.encode_ordinary("ab"), vec![id(b"ab")]);
         // Pieces are merged independently: "ab" then "abc".
         assert_eq!(t.encode_ordinary("ababc"), vec![id(b"ab"), id(b"abc")]);
-        // Unknown bytes produce no ids for that piece (full vocab covers all
-        // bytes in practice; the shipped file is validated at load).
+        // Unmerged bytes still produce individual ids.
         assert!(t.encode_ordinary("x!").len() == 2);
     }
 
@@ -542,5 +563,20 @@ mod tests {
         assert!(ids.iter().all(|&i| (i as usize) < t.n_vocab()));
         // Multi-byte CJK merges must exist; encode round trips text length.
         assert!(ids.len() > 3);
+        let bytes_by_rank: HashMap<_, _> =
+            t.ranks.iter().map(|(bytes, rank)| (*rank, bytes)).collect();
+        for text in [
+            "早上好，Alice 说 hello。",
+            "今日はいい天気です。안녕하세요!",
+            "S600，2026-11-11，¥19.99，5%。",
+            "[标记] <字|zi4> 🙂",
+        ] {
+            let decoded: Vec<u8> = t
+                .encode_ordinary(text)
+                .iter()
+                .flat_map(|id| bytes_by_rank[id].iter().copied())
+                .collect();
+            assert_eq!(decoded, text.as_bytes(), "{text}");
+        }
     }
 }

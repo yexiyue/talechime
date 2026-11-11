@@ -29,6 +29,9 @@ candle-metal-kernels = { workspace = true, optional = true }
 objc2-metal = { workspace = true, optional = true }
 
 [dependencies]
+talechime-text.workspace = true
+regex.workspace = true
+sha2.workspace = true
 candle-nn.workspace = true
 candle-core.workspace = true
 candle-transformers.workspace = true

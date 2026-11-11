@@ -39,11 +39,66 @@ layout. The crate performs no downloads.
 
 - Speaker ConditioningEncoder / speaker PerceiverResampler / `speed_emb`
   (absent from the 2.5 checkpoint in `spk_cond_mode="campplus"`).
-- QwenEmotion text-to-emotion LLM (optional upstream feature; callers can
-  supply `emo_vector` directly).
-- wetext / TensorFlow text-normalization stack — an approximate Rust
-  subset lives in `src/front.rs` and is documented as not byte-compatible.
-- NeMo text normalization (ja/es), JapaneseG2P: zh/en only.
+- Arabic TN follows the fixed inference passthrough route.
 - DeepSpeed / flash-attn / vLLM / TensorRT acceleration paths
   (`backends/trt`, `indextts/accel`): plain eager math only.
 - Training code, `archive/`, streaming `quick_streaming_tokens` mode.
+
+## Resource-backed frontend (2026-11-11, unreleased)
+
+- macOS/Windows CN/EN baseline: `wetext==0.1.0` (Apache-2.0),
+  fixed PyPI wheel SHA-256
+  `cfc595f85d9b0218df6746a9e6bee9240b6e09ee6d803a937ef90cbc03936b3e`.
+  `talechime-text` checks each FST digest and uses native rustfst
+  composition, strict F32 path selection and fixed token field ordering. The 20
+  independent official `TextNormalizer` fixtures pass on macOS CPU.
+  The distinct Linux WeTextProcessing baseline is described below.
+- Japanese default ratio=0: fixed `ja_g2p.py`, fugashi 1.4.0 and
+  unidic-lite 1.0.8 / UniDic 2.1.2 (BSD-3-Clause;
+  `licenses/UNIDIC-BSD`). Vibrato 0.5.3 uses the same lexical/cost
+  tables, `ignore_space(true)` and `max_grouping_len(24)`.
+  Converted dictionary SHA-256:
+  `74f2526bcb8637f387bb688ecd15aced3001b349275e7ec921c68324ebec2ddd`.
+  All 14 fixed official segmentation and full-frontend fixtures pass.
+  Japanese TN is passthrough; digits and kanji remain unchanged.
+- Resource preparation, archive identities, output sizes/digests and
+  frontend cache revision are maintained by the backend adapter in
+  `crates/talechime-backends/src/indextts/native*`. No runtime Python.
+  Missing or mismatched resources fail; no approximate numeric fallback.
+
+Official frontend fixtures, successful synthesis and human listening are
+separate gates. Four Japanese adapter WAVs have been generated with front-v5;
+listening is pending and the complete front-v6 matrix is in progress.
+
+### Linux and Spanish normalization
+
+The adapter bundles a 5 MB compressed finite-state grammar pack (not neural
+weights), exported by `tools/tts/indextts_fst_export.py` from
+WeTextProcessing 1.3.0, nemo_text_processing 1.2.0 and pynini 2.1.6.post1.
+Both source trees, the archive, all output FSTs and Apache-2.0 licenses have
+fixed hashes in the adapter manifest. The native executor preserves strict
+F32 cost distinctions: rustfst 1.3.1's TropicalWeight equality tolerance
+(1/1024) is too broad for these graphs' 1e-5..1e-4 preferences.
+CN/EN fixtures: 20 per platform baseline; Spanish fixtures: 16. All pass
+on macOS CPU against independent official Python outputs.
+The Linux baseline was generated in a Linux x86_64 development container.
+This does not validate the full application on other operating systems.
+
+## QwenEmotion (2026-11-11, unreleased)
+
+Six classifier resources under `qwen0.6bemo4-merge/` are pinned to the main
+model revision above, with size and SHA-256 checks at preparation and direct
+classifier loading. Their upstream model license still applies. The actual
+template is System/Human/Assistant, not generic Qwen ChatML. Native Candle
+Qwen3 inference uses greedy decoding, EOS 151643 and the fixed eight-score
+conversion. Text classification takes priority over a vector, which takes
+priority over a separate emotion reference. The classifier result goes
+directly to inference without the optional `normalize_emo_vec` scaling.
+
+Twelve independent conversion fixtures and four actual model cases match
+the pinned official implementation on macOS CPU: prompt token IDs and
+ordered vectors agree. This does not assert identical logits, generated
+token IDs, downstream speech or Metal/CUDA numeric equivalence. The oracle
+receipt records reference device/dtype. Reproduce with
+`tools/tts/indextts_emotion_model_oracle.py` and the explicitly ignored
+`fixed_classifier_matches_official_model_outputs` test. No runtime Python.

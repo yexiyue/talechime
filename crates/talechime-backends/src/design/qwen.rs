@@ -55,7 +55,10 @@ impl VoiceDesigner for Engine {
                 request.text,
                 request.description,
                 output.path().to_path_buf(),
-                request.seed,
+                qwen::design::Options {
+                    seed: request.seed,
+                    ..Default::default()
+                },
             )
             .await?;
             Ok(DesignOutput {

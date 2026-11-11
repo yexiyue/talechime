@@ -1,0 +1,640 @@
+[
+  {
+    "id": "moss-nano",
+    "backend": "moss-nano",
+    "source": "crates/moss-tts/SOURCE.md",
+    "source_revision": "44502f80dbf9743528fa921cc544d662c685ebec",
+    "manifest": "crates/talechime-backends/src/moss/nano/resources.json",
+    "resource_revisions": [
+      "44502f80dbf9743528fa921cc544d662c685ebec",
+      "6aa02b01e445cc585582cf0ba480bc3ea6c8dd68"
+    ],
+    "devices": [
+      "cpu",
+      "metal",
+      "cuda"
+    ],
+    "purpose": "speech",
+    "capabilities": [
+      "preset",
+      "clone",
+      "eos",
+      "cancellation"
+    ],
+    "gaps": [
+      "mixed-English omission",
+      "year continuity and timbre"
+    ],
+    "official": "prompt-fixtures-and-cpu-lifecycle-passed",
+    "generation": "full-metal-matrix-generated",
+    "listening": "pending",
+    "known_failures": {
+      "mixed": "User confirmed hello omission; standalone hello is audible.",
+      "year-spelled": "Nano split-year experiment had discontinuous 2026 and abnormal 二六 timbre; no automatic fix accepted."
+    },
+    "model_id": "nano-candle",
+    "source_kind": "fixed-upstream-reference",
+    "official_source_revision": "44502f80dbf9743528fa921cc544d662c685ebec"
+  },
+  {
+    "id": "moss-realtime",
+    "backend": "moss",
+    "source": "crates/moss-tts/SOURCE.md",
+    "source_revision": "934d6826b084c46a0d033402174d5f8ac4ed2519",
+    "manifest": "crates/moss-tts/assets/realtime-1.7b.json",
+    "resource_revisions": [
+      "75682787d8e2fcc73faca37ba2931453ca9c4022"
+    ],
+    "devices": [
+      "metal",
+      "cuda"
+    ],
+    "purpose": "speech",
+    "capabilities": [
+      "clone",
+      "streaming",
+      "eos",
+      "cancellation"
+    ],
+    "gaps": [],
+    "official": "single-turn-prompt-fixtures-and-metal-lifecycle-passed",
+    "generation": "full-metal-matrix-generated",
+    "listening": "pending",
+    "known_failures": {},
+    "model_id": "realtime-1.7b",
+    "source_kind": "fixed-upstream-reference",
+    "official_source_revision": "934d6826b084c46a0d033402174d5f8ac4ed2519"
+  },
+  {
+    "id": "moss-design",
+    "backend": "moss-design",
+    "source": "crates/moss-tts/SOURCE.md",
+    "source_revision": "934d6826b084c46a0d033402174d5f8ac4ed2519",
+    "manifest": "crates/moss-tts/assets/voice-design-1.7b.json",
+    "resource_revisions": [
+      "97521ec2b6f3ec5026ac1f5751f8fc302d82c2d4"
+    ],
+    "devices": [
+      "metal",
+      "cuda"
+    ],
+    "purpose": "voice-design",
+    "capabilities": [
+      "voice-design"
+    ],
+    "gaps": [
+      "human listening"
+    ],
+    "official": "actual-tokenizer-prompt-and-normalization-fixtures-passed",
+    "generation": "metal-bf16-17-generated-2-declared-length-rejections",
+    "listening": "pending",
+    "known_failures": {},
+    "model_id": "voice-design-1.7b",
+    "expected_rejections": {
+      "long-word": {
+        "reason": "Existing public reference-design API limit is 60 characters; this is not the narration API.",
+        "error_contains": "design reference must contain 1..60 characters"
+      },
+      "long-paragraph": {
+        "reason": "Existing public reference-design API limit is 60 characters; this is not the narration API.",
+        "error_contains": "design reference must contain 1..60 characters"
+      }
+    },
+    "source_kind": "fixed-upstream-reference",
+    "official_source_revision": "934d6826b084c46a0d033402174d5f8ac4ed2519"
+  },
+  {
+    "id": "qwen-custom06",
+    "backend": "qwen",
+    "source": "crates/qwen3-tts/SOURCE.md",
+    "source_revision": "711ceee07cad92673f86de8997bdf54c30caa49f",
+    "manifest": "crates/talechime-backends/src/qwen/resources.json",
+    "resource_revisions": [
+      "85e237c12c027371202489a0ec509ded67b5e4b5"
+    ],
+    "devices": [
+      "cpu",
+      "metal",
+      "cuda"
+    ],
+    "purpose": "speech",
+    "capabilities": [
+      "preset",
+      "auto-language",
+      "explicit-language"
+    ],
+    "gaps": [],
+    "official": "fixed-official-prefill-structure-passed",
+    "generation": "full-metal-matrix-generated",
+    "listening": "pending",
+    "known_failures": {},
+    "model_id": "0.6b-customvoice",
+    "official_source_revision": "022e286b98fbec7e1e916cb940cdf532cd9f488e",
+    "source_kind": "community-rust-port",
+    "official_source": "https://github.com/QwenLM/Qwen3-TTS",
+    "numeric": "checkpoint-specific-not-executed"
+  },
+  {
+    "id": "qwen-custom17",
+    "backend": "qwen",
+    "source": "crates/qwen3-tts/SOURCE.md",
+    "source_revision": "711ceee07cad92673f86de8997bdf54c30caa49f",
+    "manifest": "crates/talechime-backends/src/qwen/models/1.7b-customvoice.json",
+    "resource_revisions": [
+      "0c0e3051f131929182e2c023b9537f8b1c68adfe"
+    ],
+    "devices": [
+      "cpu",
+      "metal",
+      "cuda"
+    ],
+    "purpose": "speech",
+    "capabilities": [
+      "preset",
+      "style",
+      "dialect",
+      "auto-language",
+      "explicit-language"
+    ],
+    "gaps": [],
+    "official": "fixed-official-prefill-structure-passed",
+    "generation": "full-metal-matrix-generated",
+    "listening": "pending",
+    "known_failures": {},
+    "model_id": "1.7b-customvoice",
+    "official_source_revision": "022e286b98fbec7e1e916cb940cdf532cd9f488e",
+    "source_kind": "community-rust-port",
+    "official_source": "https://github.com/QwenLM/Qwen3-TTS",
+    "numeric": "checkpoint-specific-not-executed"
+  },
+  {
+    "id": "qwen-base06",
+    "backend": "qwen",
+    "source": "crates/qwen3-tts/SOURCE.md",
+    "source_revision": "711ceee07cad92673f86de8997bdf54c30caa49f",
+    "manifest": "crates/talechime-backends/src/qwen/models/0.6b-base.json",
+    "resource_revisions": [
+      "5d83992436eae1d760afd27aff78a71d676296fc"
+    ],
+    "devices": [
+      "cpu",
+      "metal",
+      "cuda"
+    ],
+    "purpose": "speech",
+    "capabilities": [
+      "clone",
+      "auto-language",
+      "explicit-language"
+    ],
+    "gaps": [
+      "Auto fullwidth frame-limit failure",
+      "Chinese-reference Japanese and fullwidth frame-limit failures",
+      "human listening"
+    ],
+    "official": "fixed-official-prefill-structure-passed",
+    "generation": "metal-19-generated-with-explicit-zh-fullwidth-followup",
+    "listening": "pending",
+    "known_failures": {
+      "mixed": "User heard 2026 pronounced in English."
+    },
+    "model_id": "0.6b-base",
+    "official_source_revision": "022e286b98fbec7e1e916cb940cdf532cd9f488e",
+    "source_kind": "community-rust-port",
+    "official_source": "https://github.com/QwenLM/Qwen3-TTS",
+    "numeric": "checkpoint-specific-not-executed"
+  },
+  {
+    "id": "qwen-base17",
+    "backend": "qwen",
+    "source": "crates/qwen3-tts/SOURCE.md",
+    "source_revision": "711ceee07cad92673f86de8997bdf54c30caa49f",
+    "manifest": "crates/talechime-backends/src/qwen/models/1.7b-base.json",
+    "resource_revisions": [
+      "fd4b254389122332181a7c3db7f27e918eec64e3"
+    ],
+    "devices": [
+      "cpu",
+      "metal",
+      "cuda"
+    ],
+    "purpose": "speech",
+    "capabilities": [
+      "clone",
+      "auto-language",
+      "explicit-language"
+    ],
+    "gaps": [],
+    "official": "fixed-official-prefill-structure-passed",
+    "generation": "full-metal-matrix-generated",
+    "listening": "pending",
+    "known_failures": {},
+    "model_id": "1.7b-base",
+    "official_source_revision": "022e286b98fbec7e1e916cb940cdf532cd9f488e",
+    "source_kind": "community-rust-port",
+    "official_source": "https://github.com/QwenLM/Qwen3-TTS",
+    "numeric": "base17-prefill-inputs-cpu-passed"
+  },
+  {
+    "id": "qwen-design17",
+    "backend": "qwen-design",
+    "source": "crates/qwen3-tts/SOURCE.md",
+    "source_revision": "711ceee07cad92673f86de8997bdf54c30caa49f",
+    "manifest": "crates/talechime-backends/src/qwen/models/1.7b-voicedesign.json",
+    "resource_revisions": [
+      "5ecdb67327fd37bb2e042aab12ff7391903235d3"
+    ],
+    "devices": [
+      "cpu",
+      "metal",
+      "cuda"
+    ],
+    "purpose": "voice-design",
+    "capabilities": [
+      "voice-design",
+      "auto-language",
+      "explicit-language"
+    ],
+    "gaps": [
+      "Auto Korean frame-limit failure",
+      "human listening"
+    ],
+    "official": "structure-fixtures-passed",
+    "generation": "metal-18-generated-with-explicit-ko-followup-1-declared-length-rejection",
+    "listening": "pending",
+    "known_failures": {},
+    "model_id": "1.7b-voicedesign",
+    "official_source_revision": "022e286b98fbec7e1e916cb940cdf532cd9f488e",
+    "expected_rejections": {
+      "long-paragraph": {
+        "reason": "Existing public reference-design API limit is 100 characters; this is not the narration API.",
+        "error_contains": "design reference text must contain 1..100 characters"
+      }
+    },
+    "source_kind": "community-rust-port",
+    "official_source": "https://github.com/QwenLM/Qwen3-TTS",
+    "numeric": "checkpoint-specific-not-executed"
+  },
+  {
+    "id": "omnivoice",
+    "backend": "omnivoice",
+    "source": "crates/omnivoice/SOURCE.md",
+    "source_revision": "4c7b088294fd6f3a5fb9e3b1dfd3a77bc12f105b",
+    "manifest": "crates/talechime-backends/src/omnivoice/resources.json",
+    "resource_revisions": [
+      "c5fdb5ccb189668d56333f77ba2629f4cd7535f4"
+    ],
+    "devices": [
+      "cpu",
+      "metal",
+      "cuda"
+    ],
+    "purpose": "speech",
+    "capabilities": [
+      "clone",
+      "voice-design",
+      "style",
+      "speed",
+      "auto-language",
+      "explicit-language"
+    ],
+    "gaps": [
+      "human listening"
+    ],
+    "official": "condition-and-duration-fixtures-passed",
+    "generation": "metal-19-generated-21-controls-generated",
+    "listening": "pending",
+    "known_failures": {},
+    "model_id": "0.6b",
+    "official_source_revision": "08be0b4ccbac3e13e374e86fbfead4b4cac343e2",
+    "source_kind": "community-rust-port",
+    "official_source": "https://github.com/k2-fsa/OmniVoice"
+  },
+  {
+    "id": "cosyvoice3",
+    "backend": "cosyvoice3",
+    "source": "crates/cosyvoice3/SOURCE.md",
+    "source_revision": "074ca6dc9e80a2f424f1f74b48bdd7d3fea531cc",
+    "manifest": "crates/talechime-backends/src/cosyvoice3/distribution-inputs.json",
+    "resource_revisions": [
+      "1ae47e4998c45f60c8c62bb4090136b6554e17d0",
+      "ccdf65f11d4352c13692e700560076bd61a531e3"
+    ],
+    "devices": [
+      "cpu",
+      "metal",
+      "cuda"
+    ],
+    "purpose": "speech",
+    "capabilities": [
+      "zero-shot",
+      "cross-lingual",
+      "instruct",
+      "streaming"
+    ],
+    "gaps": [
+      "historical waveform numeric gate",
+      "human listening"
+    ],
+    "official": "frontend-fixtures-passed-numeric-gate-open",
+    "generation": "three-mode-generated",
+    "listening": "pending",
+    "known_failures": {},
+    "model_id": "0.5b",
+    "runtime_revision": "2512-runtime-f64-front-v4",
+    "source_kind": "fixed-upstream-reference",
+    "official_source_revision": "074ca6dc9e80a2f424f1f74b48bdd7d3fea531cc",
+    "supported_languages": [
+      "zh",
+      "en",
+      "ja",
+      "ko",
+      "de",
+      "es",
+      "fr",
+      "it",
+      "ru"
+    ]
+  },
+  {
+    "id": "indextts25",
+    "backend": "indextts",
+    "source": "crates/indextts/SOURCE.md",
+    "source_revision": "d9e41aac89fd00b3d71497fddb287b7f24613712",
+    "manifest": "crates/talechime-backends/src/indextts/native-assets.json",
+    "resource_revisions": [
+      "633ff708ed5b74903e86ff1298cf4a98e921c513",
+      "c39ce5ba981572cb187443877ff559dfb246ce63",
+      "da985ba0987f70aaeb84a80f2851cfac8c697a7b",
+      "e4b6ede7ce16997aff4ae69fbca1f0175e2afede"
+    ],
+    "devices": [
+      "cpu",
+      "metal",
+      "cuda"
+    ],
+    "purpose": "speech",
+    "capabilities": [
+      "clone",
+      "zh",
+      "en",
+      "ja",
+      "es",
+      "ar",
+      "duration",
+      "pronunciation",
+      "emotion-vector",
+      "emotion-reference",
+      "text-emotion"
+    ],
+    "gaps": [
+      "human listening"
+    ],
+    "official": "frontend-and-classifier-fixtures-passed",
+    "generation": "matrix-and-controls-generated",
+    "listening": "pending",
+    "known_failures": {},
+    "model_id": "2.5",
+    "expected_rejections": {
+      "korean": {
+        "reason": "Fixed IndexTTS 2.5 supports zh/en/ja/es/ar; language=ko is outside scope.",
+        "error_contains": "IndexTTS language must be zh, en, ja, es or ar"
+      }
+    },
+    "runtime_revision": "c39ce5ba-runtime-f32-front-v6",
+    "source_kind": "fixed-upstream-reference",
+    "official_source_revision": "d9e41aac89fd00b3d71497fddb287b7f24613712",
+    "supported_languages": [
+      "zh",
+      "en",
+      "ja",
+      "es",
+      "ar"
+    ]
+  },
+  {
+    "id": "voxcpm-q8",
+    "backend": "voxcpm",
+    "source": "crates/voxcpm/SOURCE.md",
+    "source_revision": "f0c787f0937dc1c9a8f4f64d9a332d9c5da2e629",
+    "manifest": "crates/talechime-backends/src/voxcpm/resources.json",
+    "resource_revisions": [
+      "169f64d8b98bbaab1761e4ca3a83e6af653456cc"
+    ],
+    "devices": [
+      "cpu",
+      "metal",
+      "cuda"
+    ],
+    "purpose": "speech",
+    "capabilities": [
+      "clone",
+      "voice-design",
+      "style",
+      "cross-lingual",
+      "streaming",
+      "eos"
+    ],
+    "gaps": [
+      "quantization-specific numeric comparison",
+      "human listening"
+    ],
+    "official": "generation-bound-fixtures-passed-numeric-gates-separate",
+    "generation": "full-metal-matrix-generated",
+    "listening": "pending",
+    "known_failures": {
+      "mixed": "User heard 二零二十六年."
+    },
+    "model_id": "2b-q8_0",
+    "source_kind": "fixed-upstream-reference",
+    "official_source_revision": "f0c787f0937dc1c9a8f4f64d9a332d9c5da2e629",
+    "excluded_paths": [
+      "Combined isolated reference plus continuation is outside the fixed single-reference product contract; docs/reference-synthesis.md."
+    ]
+  },
+  {
+    "id": "voxcpm-bf16",
+    "backend": "voxcpm",
+    "source": "crates/voxcpm/SOURCE.md",
+    "source_revision": "f0c787f0937dc1c9a8f4f64d9a332d9c5da2e629",
+    "manifest": "crates/talechime-backends/src/voxcpm/original-resources.json",
+    "resource_revisions": [
+      "32279effe8c19989596f05d353d1447f51d9e915"
+    ],
+    "devices": [
+      "cuda"
+    ],
+    "purpose": "speech",
+    "capabilities": [
+      "clone",
+      "voice-design",
+      "style",
+      "cross-lingual",
+      "streaming",
+      "eos"
+    ],
+    "gaps": [
+      "quantization-specific official comparison",
+      "real matrix"
+    ],
+    "official": "generation-bound-fixtures-passed-numeric-gates-separate",
+    "generation": "blocked-cuda-device-unavailable",
+    "listening": "pending",
+    "known_failures": {},
+    "model_id": "2b-bf16",
+    "source_kind": "fixed-upstream-reference",
+    "official_source_revision": "f0c787f0937dc1c9a8f4f64d9a332d9c5da2e629",
+    "excluded_paths": [
+      "Combined isolated reference plus continuation is outside the fixed single-reference product contract; docs/reference-synthesis.md."
+    ]
+  },
+  {
+    "id": "kokoro",
+    "backend": "kokoro",
+    "source": "crates/kokoro/SOURCE.md",
+    "source_revision": "fba1236595f2d2bf21d414ba6e57d25256afada3",
+    "manifest": "crates/talechime-backends/src/kokoro/native-assets.json",
+    "resource_revisions": [
+      "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "8eb001f5498e099e6ac929454e7fb28e457bf035"
+    ],
+    "devices": [
+      "cpu",
+      "metal",
+      "cuda"
+    ],
+    "purpose": "speech",
+    "capabilities": [
+      "preset",
+      "mixed-zh-en",
+      "speed"
+    ],
+    "gaps": [
+      "human listening",
+      "declared execution and year policy differences"
+    ],
+    "official": "all19-9-phonemes-matched-7-policy-rejections-3-execution-policy-differences-per-variant",
+    "generation": "metal-12-generated-7-declared-symbol-rejections",
+    "listening": "pending",
+    "expected_rejections": {
+      "japanese": {
+        "reason": "Chinese v1.1-zh frontend scope; crates/kokoro/SOURCE.md and docs/kokoro.md",
+        "error_contains": "unsupported Kokoro Mandarin symbol"
+      },
+      "japanese-date": {
+        "reason": "Chinese v1.1-zh frontend scope; crates/kokoro/SOURCE.md and docs/kokoro.md",
+        "error_contains": "unsupported Kokoro Mandarin symbol"
+      },
+      "japanese-pronunciation": {
+        "reason": "Chinese v1.1-zh frontend scope; crates/kokoro/SOURCE.md and docs/kokoro.md",
+        "error_contains": "unsupported Kokoro Mandarin symbol"
+      },
+      "korean": {
+        "reason": "Chinese v1.1-zh frontend scope; crates/kokoro/SOURCE.md and docs/kokoro.md",
+        "error_contains": "unsupported Kokoro Mandarin symbol"
+      },
+      "spanish": {
+        "reason": "Chinese v1.1-zh frontend scope; crates/kokoro/SOURCE.md and docs/kokoro.md",
+        "error_contains": "unsupported Kokoro Mandarin symbol"
+      },
+      "arabic": {
+        "reason": "Chinese v1.1-zh frontend scope; crates/kokoro/SOURCE.md and docs/kokoro.md",
+        "error_contains": "unsupported Kokoro Mandarin symbol"
+      },
+      "symbols": {
+        "reason": "Chinese v1.1-zh rejects this unsupported symbol explicitly; original v11 failure retained. Official unknown-symbol output is not treated as a usable native phoneme.",
+        "error_contains": "unsupported Kokoro Mandarin symbol \"🙂\""
+      },
+      "pronunciation": {
+        "reason": "Chinese v1.1-zh rejects this unsupported symbol explicitly; original v11 failure retained. Official unknown-symbol output is not treated as a usable native phoneme.",
+        "error_contains": "unsupported Kokoro Mandarin symbol \"<\""
+      },
+      "fullwidth": {
+        "reason": "Chinese v1.1-zh rejects this unsupported symbol explicitly; original v11 failure retained. Official unknown-symbol output is not treated as a usable native phoneme.",
+        "error_contains": "unsupported Kokoro Mandarin symbol \"％\""
+      }
+    },
+    "known_failures": {},
+    "model_id": "1.1-zh",
+    "source_kind": "fixed-upstream-reference",
+    "official_source_revision": "fba1236595f2d2bf21d414ba6e57d25256afada3",
+    "runtime_revision": "01e7505-runtime-f32-v3-text-v3-espeak-1.52.0-4870adfa25b1a32b4361592f1be8a40337c58d6c"
+  },
+  {
+    "id": "kokoro-g2pw",
+    "backend": "kokoro",
+    "source": "crates/kokoro/SOURCE.md",
+    "source_revision": "fba1236595f2d2bf21d414ba6e57d25256afada3",
+    "manifest": "crates/talechime-backends/src/kokoro/native-context-assets.json",
+    "resource_revisions": [
+      "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
+      "8eb001f5498e099e6ac929454e7fb28e457bf035",
+      "8f23c25b06e129b6c986331a13d8d025a92cf0ea",
+      "ead7e24684eaea42af3dc0fec0bc5c7d9c51bfdf",
+      "fb4784f7dce8466a53dd4f3552f5a4c5b657b90c"
+    ],
+    "devices": [
+      "cpu",
+      "metal",
+      "cuda"
+    ],
+    "purpose": "speech",
+    "capabilities": [
+      "preset",
+      "mixed-zh-en",
+      "speed"
+    ],
+    "gaps": [
+      "human listening",
+      "declared execution and year policy differences"
+    ],
+    "official": "all19-9-phonemes-matched-7-policy-rejections-3-execution-policy-differences-per-variant",
+    "generation": "metal-12-generated-7-declared-symbol-rejections",
+    "listening": "pending",
+    "expected_rejections": {
+      "japanese": {
+        "reason": "Chinese v1.1-zh frontend scope; crates/kokoro/SOURCE.md and docs/kokoro.md",
+        "error_contains": "unsupported Kokoro Mandarin symbol"
+      },
+      "japanese-date": {
+        "reason": "Chinese v1.1-zh frontend scope; crates/kokoro/SOURCE.md and docs/kokoro.md",
+        "error_contains": "unsupported Kokoro Mandarin symbol"
+      },
+      "japanese-pronunciation": {
+        "reason": "Chinese v1.1-zh frontend scope; crates/kokoro/SOURCE.md and docs/kokoro.md",
+        "error_contains": "unsupported Kokoro Mandarin symbol"
+      },
+      "korean": {
+        "reason": "Chinese v1.1-zh frontend scope; crates/kokoro/SOURCE.md and docs/kokoro.md",
+        "error_contains": "unsupported Kokoro Mandarin symbol"
+      },
+      "spanish": {
+        "reason": "Chinese v1.1-zh frontend scope; crates/kokoro/SOURCE.md and docs/kokoro.md",
+        "error_contains": "unsupported Kokoro Mandarin symbol"
+      },
+      "arabic": {
+        "reason": "Chinese v1.1-zh frontend scope; crates/kokoro/SOURCE.md and docs/kokoro.md",
+        "error_contains": "unsupported Kokoro Mandarin symbol"
+      },
+      "symbols": {
+        "reason": "Chinese v1.1-zh rejects this unsupported symbol explicitly; original v11 failure retained. Official unknown-symbol output is not treated as a usable native phoneme.",
+        "error_contains": "unsupported Kokoro Mandarin symbol \"🙂\""
+      },
+      "pronunciation": {
+        "reason": "Chinese v1.1-zh rejects this unsupported symbol explicitly; original v11 failure retained. Official unknown-symbol output is not treated as a usable native phoneme.",
+        "error_contains": "unsupported Kokoro Mandarin symbol \"<\""
+      },
+      "fullwidth": {
+        "reason": "Chinese v1.1-zh rejects this unsupported symbol explicitly; original v11 failure retained. Official unknown-symbol output is not treated as a usable native phoneme.",
+        "error_contains": "unsupported Kokoro Mandarin symbol \"％\""
+      }
+    },
+    "known_failures": {
+      "mixed": "User heard 二千零二十六年 instead of 二零二六年; later generated clips still require listening confirmation."
+    },
+    "model_id": "1.1-zh-g2pw",
+    "source_kind": "fixed-upstream-reference",
+    "official_source_revision": "fba1236595f2d2bf21d414ba6e57d25256afada3",
+    "runtime_revision": "01e7505-runtime-f32-v3-text-v3-espeak-1.52.0-4870adfa25b1a32b4361592f1be8a40337c58d6c"
+  }
+]

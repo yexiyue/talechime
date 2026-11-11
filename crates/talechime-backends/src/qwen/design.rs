@@ -4,13 +4,29 @@ use std::path::PathBuf;
 use talechime_protocol::Device;
 use talechime_qwen3_tts::{AudioBuffer, Language, SynthesisOptions};
 
+/// Model-specific VoiceDesign conditions; the shared designer defaults to Auto.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Options {
+    pub language: Language,
+    pub seed: Option<u64>,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            language: Language::Auto,
+            seed: None,
+        }
+    }
+}
+
 pub async fn reference(
     directory: PathBuf,
     device: Device,
     text: String,
     description: String,
     output: PathBuf,
-    seed: Option<u64>,
+    options: Options,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         !description.trim().is_empty() && description.len() <= 4096,
@@ -33,11 +49,11 @@ pub async fn reference(
                 let mut stream = model.synthesize_voice_design_streaming(
                     &text,
                     &description,
-                    Language::Chinese,
+                    options.language,
                     SynthesisOptions {
                         max_length: MAX_FRAMES,
                         chunk_frames: 20,
-                        seed: Some(seed.unwrap_or(42)),
+                        seed: Some(options.seed.unwrap_or(42)),
                         ..Default::default()
                     },
                 )?;
@@ -59,4 +75,28 @@ pub async fn reference(
     (&mut owner.receiver)
         .await
         .map_err(|_| anyhow::anyhow!("voice design thread exited"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn design_defaults_to_auto_and_accepts_explicit_language_and_seed() {
+        assert_eq!(
+            Options::default(),
+            Options {
+                language: Language::Auto,
+                seed: None
+            }
+        );
+        let options = Options {
+            language: Language::Japanese,
+            seed: Some(7),
+        };
+        assert_eq!(
+            (options.language, options.seed),
+            (Language::Japanese, Some(7))
+        );
+    }
 }

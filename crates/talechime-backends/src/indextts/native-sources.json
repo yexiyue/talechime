@@ -1,6 +1,6 @@
 {
-  "format": "talechime-indextts-native-v2",
-  "revision": "c39ce5ba-native-f32-v2",
+  "format": "talechime-indextts-native-v5",
+  "revision": "c39ce5ba-runtime-f32-front-v6",
   "precision": "float32",
   "source_semantics": "https://github.com/index-tts/index-tts/tree/d9e41aac89fd00b3d71497fddb287b7f24613712",
   "inputs": [
@@ -132,5 +132,80 @@
     "facebook/w2v-bert-2.0": "MIT"
   },
   "changes": "Fixed official checkpoints are converted into F32 safetensors without name/layout changes; S2Mel mappings are flattened under models.; feature variance becomes standard deviation. No FP16 recovery is attempted. BigVGAN normalization remains in the existing loader.",
-  "derivative_statement": "These modifications are not endorsed, warranted, or guaranteed by the original right-holder; the original right-holder disclaims all liability related to this Derivative Work."
+  "derivative_statement": "These modifications are not endorsed, warranted, or guaranteed by the original right-holder; the original right-holder disclaims all liability related to this Derivative Work.",
+  "japanese_frontend": {
+    "semantics": "indextts-ja-ratio0-unidic-lite-1.0.8-vibrato-0.5.3-v1",
+    "upstream_revision": "d9e41aac89fd00b3d71497fddb287b7f24613712",
+    "package": "unidic-lite==1.0.8",
+    "package_sha256": "db9d4572d9fdd4d00a97949d4b0741ec480ee05a7e7e2e32f547500dae27b245",
+    "dictionary_sha256": "74f2526bcb8637f387bb688ecd15aced3001b349275e7ec921c68324ebec2ddd",
+    "license": "BSD-3-Clause, UniDic Consortium; see LICENSE-UNIDIC",
+    "tokenizer": "vibrato 0.5.3, MIT OR Apache-2.0, no training feature"
+  },
+  "cn_en_frontend": {
+    "package": "wetext==0.1.0",
+    "package_sha256": "cfc595f85d9b0218df6746a9e6bee9240b6e09ee6d803a937ef90cbc03936b3e",
+    "runtime": "native UTF-8 FST pipeline with rustfst 1.3.1; WeText 0.1.0 TN token-order port",
+    "options": "explicit zh/en; remove_erhua=false; all other optional transformations disabled",
+    "official_platform_baseline": "macOS/Windows WeText 0.1.0; Linux WeTextProcessing 1.3.0",
+    "license": "Apache-2.0; see LICENSE-WETEXT"
+  },
+  "qwen_emotion": {
+    "source_revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+    "semantics_revision": "d9e41aac89fd00b3d71497fddb287b7f24613712",
+    "template_sha256": "a13337ea164ac47b2c1e644b6338d5e7e91cdcb58218511899c083112472730c",
+    "prompt": "文本情感分类",
+    "decode": "greedy, max_new_tokens=32768, eos=151643; CPU F32, accelerator F16",
+    "license": "bilibili Model Use License Agreement; see LICENSE-INDEXTTS"
+  },
+  "grammar_pack": {
+    "archive_sha256": "767dff05ab85ba3c9606c2e4a560030c52e26609160d166009465a3c7888e12e",
+    "WeTextProcessing": "1.3.0",
+    "files": {
+      "LICENSE-NEMO_TEXT_PROCESSING": {
+        "bytes": 11356,
+        "sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+      },
+      "LICENSE-WETEXTPROCESSING": {
+        "bytes": 11357,
+        "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      },
+      "es/tagger.fst": {
+        "bytes": 12387470,
+        "sha256": "fb8ecfe237d74bc19c5fbe0b6200042929118a00653c2adc755e42e260ff4f13"
+      },
+      "es/verbalizer.fst": {
+        "bytes": 33650222,
+        "sha256": "d723c5fe90e18d7b76b19357f5c75ebb7b019ae49855a5d2b35f188b608e7932"
+      },
+      "linux/en/tagger.fst": {
+        "bytes": 5610778,
+        "sha256": "d8fa27641bf5773d2cfd9486f9213697be82dbce56d8bf44f18d658a0bee33f3"
+      },
+      "linux/en/verbalizer.fst": {
+        "bytes": 6573194,
+        "sha256": "d2290ffaaad4b611ccca4b480f7a70a9842785caeda6d28632f5259860ae5265"
+      },
+      "linux/zh/tagger.fst": {
+        "bytes": 527178,
+        "sha256": "88aabfb4b0d3df506622f620538f031e3d2747083989e84aa242dec3413a9155"
+      },
+      "linux/zh/verbalizer.fst": {
+        "bytes": 2135078,
+        "sha256": "6f1aa8af41f294390da58618dc8612b7e9ab198d6b8dca47764cf663bda683d5"
+      },
+      "spanish-oracle.json": {
+        "bytes": 2055,
+        "sha256": "642144f53374a34dcef61e03064f38da6d405622f1fd7e3578ca3c2384c9524f"
+      }
+    },
+    "format": "indextts-front-fst-v1",
+    "license": "Apache-2.0",
+    "nemo_text_processing": "1.2.0",
+    "pynini": "2.1.6.post1",
+    "source_tree_sha256": {
+      "NeMo": "09caeaf3950df750fc71cf334d51e3d805f87048ddb05304ca79029d88061859",
+      "WeTextProcessing": "6b277688d669e9ef18748ee93f336ee63027caeb75c9877e182fccc694bbf65c"
+    }
+  }
 }

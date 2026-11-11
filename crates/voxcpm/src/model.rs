@@ -397,18 +397,23 @@ impl Model {
             Some(t) => format!("{t}{text}"),
             None => text.to_owned(),
         };
+        let target_tokens = self.tokenizer.encode_with_cancel(text, cancel)?.len();
+        let max_frames = generation_frame_limit(target_tokens, o.max_frames);
         let mut ids = self.tokenizer.encode_with_cancel(&joined, cancel)?;
         ids.push(101);
+        if std::env::var("TALECHIME_TEXT_DIAGNOSTICS").is_ok_and(|value| value == "1") {
+            eprintln!(
+                "TALECHIME_TEXT_DIAGNOSTIC {}",
+                serde_json::json!({"backend":"voxcpm","phase":"model_tokens","execution_text":joined,"tokens":ids})
+            );
+        }
         let text_embedding = self
             .embedding
             .index_select(&Tensor::from_vec(ids.clone(), ids.len(), &self.device)?, 0)?
             .unsqueeze(0)?;
         let zeros = Tensor::zeros((1, ids.len(), 2048), self.dtype, &self.device)?;
-        let mut audio_embedding = zeros.clone();
-        let mut input = text_embedding;
         let mut prefix = Tensor::zeros((1, 64, 4), self.dtype, &self.device)?;
-        let mut audio_range = None;
-        if let Some(r) = reference {
+        let (input, audio_embedding, audio_range) = if let Some(r) = reference {
             let (n, patch, width) = r.features.dims3()?;
             if n == 0
                 || patch != 4
@@ -420,43 +425,30 @@ impl Model {
             }
             let n = r.features.dim(0)?;
             let encoded = self.acoustic.encode(&r.features, cancel)?.unsqueeze(0)?;
-            if r.transcript.is_some() {
-                input = Tensor::cat(&[input, encoded.to_dtype(self.backbone_dtype)?], 1)?;
-                audio_embedding = Tensor::cat(&[zeros, encoded], 1)?;
-                audio_range = Some((ids.len(), n));
+            let continuation = r.transcript.is_some();
+            if continuation {
                 prefix = r.features.narrow(0, n - 1, 1)?.transpose(1, 2)?;
-            } else {
-                let marks = self
-                    .embedding
-                    .index_select(&Tensor::new(&[103u32, 104], &self.device)?, 0)?
-                    .unsqueeze(0)?;
-                input = Tensor::cat(
-                    &[
-                        marks.narrow(1, 0, 1)?,
-                        encoded.to_dtype(self.backbone_dtype)?,
-                        marks.narrow(1, 1, 1)?,
-                        input,
-                    ],
-                    1,
-                )?;
-                audio_embedding = Tensor::cat(
-                    &[
-                        Tensor::zeros((1, 1, 2048), self.dtype, &self.device)?,
-                        encoded,
-                        Tensor::zeros((1, ids.len() + 1, 2048), self.dtype, &self.device)?,
-                    ],
-                    1,
-                )?;
-                audio_range = Some((1, n));
             }
-        }
+            let marks = if continuation {
+                None
+            } else {
+                Some(
+                    self.embedding
+                        .index_select(&Tensor::new(&[103u32, 104], &self.device)?, 0)?
+                        .unsqueeze(0)?,
+                )
+            };
+            assemble_conditioning(&text_embedding, &zeros, Some((&encoded, marks.as_ref())))?
+        } else {
+            assemble_conditioning(&text_embedding, &zeros, None)?
+        };
         let audio_ranges: Vec<_> = audio_range.into_iter().collect();
         let context = input.dim(1)?;
-        if context + o.max_frames > 4096 {
+        if context + max_frames > 4096 {
             candle_core::bail!("reference/text exceeds bounded context");
         }
-        let mut base_cache = self.base.cache(context + o.max_frames);
-        let mut res_cache = self.residual.cache(context + o.max_frames);
+        let mut base_cache = self.base.cache(context + max_frames);
+        let mut res_cache = self.residual.cache(context + max_frames);
         let full = self
             .base
             .forward(&input, Some(&mut base_cache), cancel)?
@@ -480,7 +472,7 @@ impl Model {
             graph.reset();
         }
         let mut noise = Noise(o.seed);
-        for i in 0..o.max_frames {
+        for i in 0..max_frames {
             if cancel() {
                 return Ok(Outcome::Cancelled);
             }
@@ -554,7 +546,7 @@ impl Model {
             if cancel() {
                 return Ok(Outcome::Cancelled);
             }
-            if i > 2 && self.acoustic.stop(&lm)? {
+            if stop_allowed(i) && self.acoustic.stop(&lm)? {
                 return Ok(Outcome::Eos);
             }
             let (current, elapsed) = measure(o.measure_modules, &self.device, || {
@@ -593,8 +585,56 @@ impl Model {
     }
 }
 
+/// Fixed upstream `_generate`: target tokens exclude prompt and audio markers.
+/// The caller's playback duration cap can impose a stricter upper bound.
+fn generation_frame_limit(target_tokens: usize, maximum: usize) -> usize {
+    target_tokens
+        .saturating_mul(6)
+        .saturating_add(10)
+        .min(maximum)
+}
+
+fn stop_allowed(index: usize) -> bool {
+    index > 2
+}
+
 #[cfg(all(test, feature = "codec-experiment", target_os = "macos"))]
 mod accelerate_experiment;
+/// Assemble the fixed single-reference conditioning actually passed to the model.
+/// `marks` distinguishes isolated reference from continuation with transcript.
+type ConditioningInputs = (Tensor, Tensor, Option<(usize, usize)>);
+
+fn assemble_conditioning(
+    text: &Tensor,
+    text_zeros: &Tensor,
+    reference: Option<(&Tensor, Option<&Tensor>)>,
+) -> Result<ConditioningInputs> {
+    let Some((audio, marks)) = reference else {
+        return Ok((text.clone(), text_zeros.clone(), None));
+    };
+    let n = audio.dim(1)?;
+    if let Some(marks) = marks {
+        let input = Tensor::cat(
+            &[
+                marks.narrow(1, 0, 1)?,
+                audio.to_dtype(text.dtype())?,
+                marks.narrow(1, 1, 1)?,
+                text.clone(),
+            ],
+            1,
+        )?;
+        let marker_zero = text_zeros.narrow(1, 0, 1)?;
+        let audio_embedding = Tensor::cat(&[&marker_zero, audio, &marker_zero, text_zeros], 1)?;
+        Ok((input, audio_embedding, Some((1, n))))
+    } else {
+        Ok((
+            Tensor::cat(&[text, &audio.to_dtype(text.dtype())?], 1)?,
+            Tensor::cat(&[text_zeros, audio], 1)?,
+            Some((text.dim(1)?, n)),
+        ))
+    }
+}
+
 fn quantize_audio_ranges(
     full: &Tensor,
     ranges: &[(usize, usize)],
@@ -629,6 +669,89 @@ fn quantize_audio_ranges(
 #[cfg(test)]
 mod conditioning_tests {
     use super::*;
+
+    #[test]
+    fn supported_single_reference_inputs_match_official_model() -> Result<()> {
+        let fixtures: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/conditioning.json"))
+                .expect("official conditioning fixtures");
+        let matrix = &fixtures["public_corpus"];
+        assert_eq!(matrix.as_array().unwrap().len(), 19);
+        let mut coverage = std::collections::HashMap::new();
+        for case in fixtures["cases"].as_array().expect("cases") {
+            let target = case["target"].as_str().expect("target");
+            if let Some(source) = case["source_text"].as_str() {
+                let id = case["source_id"].as_str().unwrap();
+                let row = matrix
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|row| row["id"] == id)
+                    .unwrap();
+                assert_eq!(row["text"], source);
+                let prefix = match case["name"].as_str().unwrap() {
+                    "style" | "clone_style" => "(soft)",
+                    "design" => "(warm)",
+                    _ => "",
+                };
+                assert_eq!(target, format!("{prefix}{source}"));
+                assert_eq!(case["source_sha256"].as_str().unwrap().len(), 64);
+                let modes = coverage
+                    .entry(id)
+                    .or_insert_with(std::collections::HashSet::new);
+                assert!(modes.insert(case["name"].as_str().unwrap()));
+            }
+            let transcript = case["transcript"].as_str().unwrap_or("");
+            let text_ids: Vec<f32> = format!("{transcript}{target}")
+                .chars()
+                .map(|ch| u32::from(ch) as f32)
+                .chain(std::iter::once(101.0))
+                .collect();
+            let text = Tensor::from_vec(text_ids.clone(), (1, text_ids.len(), 1), &Device::Cpu)?;
+            let zeros = Tensor::zeros((1, text_ids.len(), 1), DType::F32, &Device::Cpu)?;
+            let n = case["frames"].as_u64().expect("frames") as usize;
+            let audio = Tensor::from_vec(
+                (1..=n).map(|value| value as f32).collect::<Vec<_>>(),
+                (1, n, 1),
+                &Device::Cpu,
+            )?;
+            let marks = Tensor::from_vec(vec![103f32, 104.0], (1, 2, 1), &Device::Cpu)?;
+            let reference = match case["mode"].as_str() {
+                None => None,
+                Some("continuation") => Some((&audio, None)),
+                Some("reference") => Some((&audio, Some(&marks))),
+                other => panic!("unsupported official fixture mode {other:?}"),
+            };
+            let (input, audio_embedding, range) = assemble_conditioning(&text, &zeros, reference)?;
+            let tokens: Vec<f32> = serde_json::from_value(case["tokens"].clone()).unwrap();
+            let text_mask: Vec<f32> = serde_json::from_value(case["text_mask"].clone()).unwrap();
+            let features: Vec<f32> = serde_json::from_value(case["audio"].clone()).unwrap();
+            let audio_mask: Vec<f32> = serde_json::from_value(case["audio_mask"].clone()).unwrap();
+            let expected: Vec<f32> = tokens
+                .iter()
+                .zip(&text_mask)
+                .zip(features.iter().zip(&audio_mask))
+                .map(|((token, text_mask), (feature, audio_mask))| {
+                    token * text_mask + feature * audio_mask
+                })
+                .collect();
+            assert_eq!(input.flatten_all()?.to_vec1::<f32>()?, expected, "{case}");
+            assert_eq!(
+                audio_embedding.flatten_all()?.to_vec1::<f32>()?,
+                features,
+                "{case}"
+            );
+            let mut native_mask = vec![0f32; expected.len()];
+            if let Some((start, count)) = range {
+                native_mask[start..start + count].fill(1.0);
+            }
+            assert_eq!(native_mask, audio_mask, "{case}");
+        }
+        assert_eq!(coverage.len(), matrix.as_array().unwrap().len());
+        assert!(coverage.values().all(|modes| modes.len() == 6));
+        Ok(())
+    }
+
     #[test]
     fn disjoint_audio_ranges_preserve_text_and_markers() -> Result<()> {
         let full = Tensor::from_vec((0..8).map(|i| i as f32).collect(), (1, 8, 1), &Device::Cpu)?;
@@ -749,6 +872,26 @@ impl Noise {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bounds_match_fixed_official_expressions() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/generation-bounds.json")).unwrap();
+        for row in fixture["limits"].as_array().unwrap() {
+            assert_eq!(
+                generation_frame_limit(
+                    row["target_tokens"].as_u64().unwrap() as usize,
+                    row["maximum"].as_u64().unwrap() as usize
+                ),
+                row["expected"].as_u64().unwrap() as usize
+            );
+        }
+        for row in fixture["stops"].as_array().unwrap() {
+            assert_eq!(
+                stop_allowed(row["index"].as_u64().unwrap() as usize) && row["flag"] == 1,
+                row["expected"].as_bool().unwrap()
+            );
+        }
+    }
     #[test]
     fn original_precision_and_initialization_cancel_fail_before_io() {
         let absent = Path::new("missing-original-model-fixture");

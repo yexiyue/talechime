@@ -12,3 +12,6 @@ crates/talechime-protocol/tests/fixtures/narration.txt text eol=lf
 # Pinned third-party asset hashes must survive Windows checkouts.
 docs/legal/echarts/echarts-6.0.0.min.js text eol=lf
 docs/legal/echarts/LICENSE text eol=lf
+crates/talechime-backends/src/indextts/native-sources.json text eol=lf
+crates/talechime-backends/src/indextts/native/UNIDIC-BSD text eol=lf
+crates/talechime-backends/src/indextts/native/tn-grammars-v1.zip binary

@@ -1,0 +1,129 @@
+{
+  "upstream_revision": "d9e41aac89fd00b3d71497fddb287b7f24613712",
+  "upstream_sha256": "df62a817c3e1b540ed62645850278df0463f934c562c1f3f50b85c2c05fc543d",
+  "platform": "Darwin",
+  "cases": [
+    {
+      "text": "价格是12.5元，2026年11月11日。",
+      "cleaned": "价格是12.5元,2026年11月11日.",
+      "chinese": true,
+      "output": "价格是十二点五元,二零二六年十一月十一日."
+    },
+    {
+      "text": "奔驰S600的速度为每小时500公里。",
+      "cleaned": "奔驰S600的速度为每小时500公里.",
+      "chinese": true,
+      "output": "奔驰S六零零的速度为每小时五百公里."
+    },
+    {
+      "text": "It's $12.50 on 11/11/2026.",
+      "cleaned": "It's $12.50 on 11/11/2026.",
+      "chinese": false,
+      "output": "It is twelve point five dollars on the eleventh of november twenty twenty six ."
+    },
+    {
+      "text": "今天是 2026 年，明年是2027年。",
+      "cleaned": "今天是 2026 年,明年是2027年.",
+      "chinese": true,
+      "output": "今天是 两千零二十六 年,明年是二零二七年."
+    },
+    {
+      "text": "增长5%，下降-2.5%，温度-3℃。",
+      "cleaned": "增长5%,下降-2.5%,温度-3℃.",
+      "chinese": true,
+      "output": "增长百分之五,下降百分之负二点五,温度负三摄氏度."
+    },
+    {
+      "text": "上午08:30，下午14:05。",
+      "cleaned": "上午08,30,下午14,05.",
+      "chinese": true,
+      "output": "上午零八,三十,下午十四,零五."
+    },
+    {
+      "text": "2003年1月2日，2026-11-11。",
+      "cleaned": "2003年1月2日,2026-11-11.",
+      "chinese": true,
+      "output": "二零零三年一月两日,二零二六年十一月十一日."
+    },
+    {
+      "text": "GPT-5-nano和Wi-Fi 6，3.5mm接口。",
+      "cleaned": "GPT-5-nano和Wi-Fi 6,3.5mm接口.",
+      "chinese": true,
+      "output": "GPT-五-nano和Wi-Fi 六,三点五毫米接口."
+    },
+    {
+      "text": "他走进银<行|HANG2>，读作ju4、que4、xun4。",
+      "cleaned": "他走进银<行|HANG2>,读作ju4,que4,xun4.",
+      "chinese": true,
+      "output": "他走进银<行|HANG2>,读作JV4,QVE4,XVN4."
+    },
+    {
+      "text": "约瑟夫·高登-莱维特与约瑟夫·高登2人。",
+      "cleaned": "约瑟夫-高登-莱维特与约瑟夫-高登2人.",
+      "chinese": true,
+      "output": "约瑟夫-高登-莱维特与约瑟夫减高登两人."
+    },
+    {
+      "text": "请发邮件到alice@example.com。",
+      "cleaned": "请发邮件到alice@example.com.",
+      "chinese": true,
+      "output": "请发邮件到alice@example.com."
+    },
+    {
+      "text": "Hello, Alice. 2026 is a number.",
+      "cleaned": "Hello, Alice. 2026 is a number.",
+      "chinese": false,
+      "output": "Hello ,  Alice .  twenty twenty six is a number ."
+    },
+    {
+      "text": "The price is $1,234.56, up 5%.",
+      "cleaned": "The price is $1,234.56, up 5%.",
+      "chinese": false,
+      "output": "The price is one thousand two hundred and thirty four point five six dollars ,  up five percent ."
+    },
+    {
+      "text": "3rd place, 21st century, 11/11/2026.",
+      "cleaned": "3rd place, 21st century, 11/11/2026.",
+      "chinese": false,
+      "output": "third place ,  twenty first century ,  the eleventh of november twenty twenty six ."
+    },
+    {
+      "text": "Phone: +86 13800138000.",
+      "cleaned": "Phone, +86 13800138000.",
+      "chinese": false,
+      "output": "Phone ,  plus eighty six thirteen billion eight hundred million one hundred thirty eight thousand ."
+    },
+    {
+      "text": "00123 1000000000000000000000000000000",
+      "cleaned": "00123 1000000000000000000000000000000",
+      "chinese": true,
+      "output": "零零幺二三 幺零零零零零零零零零零零零零零零零零零零零零零零零零零零零零零"
+    },
+    {
+      "text": "全角２０２６年、１９．９９元。",
+      "cleaned": "全角２０２６年,１９．９９元.",
+      "chinese": true,
+      "output": "全角二零二六年,十九．九十九元."
+    },
+    {
+      "text": "  hello  world  ",
+      "cleaned": "  hello  world  ",
+      "chinese": false,
+      "output": "hello  world"
+    },
+    {
+      "text": "他\n说hello，今天2026年。",
+      "cleaned": "他 说hello,今天2026年.",
+      "chinese": true,
+      "output": "他 说hello,今天二零二六年."
+    },
+    {
+      "text": "<going|G OW1 . IH0 NG> home.",
+      "cleaned": "<going|G OW1 . IH0 NG> home.",
+      "chinese": false,
+      "output": "<going|G OW1 . IH0 NG> home."
+    }
+  ],
+  "wetext": "0.1.0",
+  "kaldifst": "1.9.0"
+}

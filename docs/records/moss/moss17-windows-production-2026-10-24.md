@@ -1,5 +1,11 @@
 # MOSS Local / Realtime Windows 生产基线（进行中）
 
+> 2026-11-11 后续：owner 生命周期测试已移到 `moss/candle/lifecycle_tests.rs`，
+> 入口改为 `real_realtime_`，使用显式 `TALECHIME_MOSS17_LIFECYCLE_ROOT` 与
+> `TALECHIME_MOSS17_LIFECYCLE_DEVICE=metal|cuda`。本轮 Metal 两项通过，CUDA 未重跑；
+> 本文原始 Windows 结果及当时命令保留，当前入口见 [MOSS 指南](../../../crates/moss-tts/README.md#explicit-adapter-lifecycle-gates)
+> 和[后续能力验收](../tts-core/official-backend-parity-2026-11-11.md)。
+
 范围为当前生产 ID local-1.7b、realtime-1.7b，分别建立基线，不沿用 Nano 数字。
 设备 Ryzen 7 9700X / RTX 5070 12 GB / Windows / 16 GB RAM，driver616.56；
 main42a7887 加本轮 Windows 工作树，Candle0.11 fork2266099d，CUDA13.0。

@@ -1,0 +1,78 @@
+[
+  {
+    "id": "mixed",
+    "text": "早上好，Alice 说 hello。今天是 2026 年。"
+  },
+  {
+    "id": "year-adjacent",
+    "text": "今天是2026年，明年是2027年。"
+  },
+  {
+    "id": "year-spelled",
+    "text": "今天是二零二六年。"
+  },
+  {
+    "id": "numbers",
+    "text": "S600 售价 19.99 元，增长 5%，时速 500 公里。"
+  },
+  {
+    "id": "english",
+    "text": "Hello, Alice. The total is nineteen dollars."
+  },
+  {
+    "id": "japanese",
+    "text": "今日はいい天気です。2026年に東京へ行きます。"
+  },
+  {
+    "id": "korean",
+    "text": "안녕하세요. 오늘 날씨가 좋습니다."
+  },
+  {
+    "id": "spanish",
+    "text": "Hola, el precio es de veinte euros."
+  },
+  {
+    "id": "arabic",
+    "text": "مرحبا، الطقس جميل اليوم."
+  },
+  {
+    "id": "symbols",
+    "text": "[标记] Alice's hello，未知词 zorbulate，🙂。"
+  },
+  {
+    "id": "pronunciation",
+    "text": "他走进银<行|HANG2>，问这里能办业务吗？"
+  },
+  {
+    "id": "layout",
+    "text": "清晨的风\n吹过林间。\n\nAlice said hello.\nThe story continues."
+  },
+  {
+    "id": "boundaries",
+    "text": "第一句话已经说完。第二句话也必须完整读出。Alice says hello. 最后一句话是结束标记，请完整读到这里。"
+  },
+  {
+    "id": "fullwidth",
+    "text": "今天是２０２６年，售价１９．９９元，增长５％。"
+  },
+  {
+    "id": "japanese-date",
+    "text": "2026年11月11日、東京都。"
+  },
+  {
+    "id": "spaces",
+    "text": "東京  大阪   hello\tAlice　物語。"
+  },
+  {
+    "id": "long-word",
+    "text": "Alice says supercalifragilisticexpialidocious and zorbulate. 最后一句。"
+  },
+  {
+    "id": "long-paragraph",
+    "text": "清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。最后一句话必须完整读出。"
+  },
+  {
+    "id": "japanese-pronunciation",
+    "text": "<東京|とうきょう>  と <日本|ニホン>。"
+  }
+]

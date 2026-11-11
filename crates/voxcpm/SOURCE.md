@@ -57,3 +57,43 @@ Git blob identities, recording SHA-256 for every downloaded file. It is a
 development tool; no Python download or inference runs in the product.
 Original BF16 and F16 comparison runs reuse these same assets. F16 is a
 compute precision choice, not a separate upstream model or dequantized Q8.
+# Generation-bound comparison (2026-11-11, unreleased)
+
+The fixed official `_generate` caps each request at
+`min(int(target_token_count * 6 + 10), max_len)`. Target token count excludes
+reference transcripts and audio markers. Native generation now applies this
+limit within the caller's explicit playback-duration ceiling. The default
+product ceiling remains 30 seconds; it is distinct from upstream's default
+2000 frames. Stop is allowed only after index 2 and the final decoded patch
+is delivered before EOS. Twelve bound and twelve stop cases come from the
+fixed source expressions, with source SHA-256 and a reproducible exporter in
+`tools/tts/voxcpm_bounds_oracle.py`.
+
+The product intentionally exposes fixed single-reference or unconditioned
+generation, as documented in `docs/reference-synthesis.md`; upstream's
+combined isolated-reference plus continuation input is outside that public
+contract. This comparison does not claim that mode or close Q8/BF16 numeric,
+real-model cancellation or listening gates.
+
+## Single-reference conditioning comparison (2026-11-11, unreleased)
+
+`tools/tts/voxcpm_conditioning_oracle.py` extracts the fixed official
+`_generate_with_prompt_cache` and `_make_ref_prefix` methods after checking the
+source SHA-256 `31ad554bc15a4da18cf820c6fda97a5b2c56ac8e9a5e66031a264d363661575c`.
+The offline `conditioning.json` fixtures compare the native model's actual
+conditioning assembly and audio quantization ranges for natural, styled,
+design, transcript-clone, styled transcript-clone and isolated single-reference
+inputs. A transcript clone places the reference transcript before the target
+(including any `(description)` style prefix), then the audio-start marker and
+reference audio patches. An isolated reference has reference start/end markers
+and audio before the target. No combined isolated-reference plus continuation
+mode was added.
+
+The fixture preserves its original six cases and adds each of the 19 public
+corpus texts in all six conditions (120 cases total), with source text and
+SHA-256 on each added case. Ordinary tests run offline without model weights.
+
+These structural fixtures use synthetic token IDs and audio features; they do
+not validate a tokenizer against official text, model outputs, generated audio,
+Q8/BF16 numerical parity, or listening quality. Real-weight and adapter-level
+acceptance are separate gates.

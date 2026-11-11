@@ -1,0 +1,14 @@
+[package]
+name = "talechime-text"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "Apache-2.0"
+description = "Native byte FST execution and fixed WeText token serialization"
+repository = "https://github.com/yexiyue/talechime"
+
+[dependencies]
+rustfst.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+regex.workspace = true

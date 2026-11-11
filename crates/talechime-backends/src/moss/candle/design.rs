@@ -37,11 +37,19 @@ pub async fn reference(
                 let check = || signal.load(Ordering::Relaxed) || reply.is_closed();
                 anyhow::ensure!(!check(), "voice design cancelled");
                 let device = runtime::device(selected)?;
+                // The fixed checkpoint requires BF16 range: F16 overflows.
+                // Keeping BF16 on Metal also avoids doubling model memory.
+                let dtype = candle_core::DType::BF16;
+                if std::env::var("TALECHIME_TEXT_DIAGNOSTICS").is_ok_and(|v| v == "1") {
+                    eprintln!("TALECHIME_TEXT_DIAGNOSTIC {}", serde_json::json!({
+                        "backend":"moss-design", "phase":"model_dtype", "dtype":format!("{dtype:?}")
+                    }));
+                }
                 let mut model = talechime_moss_tts::Model::load(
                     "voice-design-1.7b",
                     &resources::design_directory(&root),
                     &device,
-                    runtime::model_dtype(&device),
+                    dtype,
                 )?;
                 if device.is_metal() {
                     device.synchronize()?;

@@ -94,12 +94,15 @@ pub async fn prepare_models(
         anyhow::bail!("readback models require the asr build feature");
     }
     let directory = resources.root().to_path_buf();
+    #[cfg(feature = "asr")]
+    let downloads = resources.downloads().clone();
     let backend = prepare(resources, config, progress.clone()).await?;
     #[cfg(feature = "asr")]
     let verifier = if readback {
         Some(
             talechime_backends::asr::prepare(
                 &talechime_backends::asr::ReadbackModelOptions::new(directory),
+                &downloads,
                 progress,
             )
             .await?,

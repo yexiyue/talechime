@@ -275,6 +275,76 @@ mod tests {
     use runtime::validate_completion;
     use talechime_core::backend::AudioChunk;
     use talechime_qwen3_tts::Speaker;
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore = "requires explicit local Qwen Base weights and public reference WAV"]
+    async fn real_base_auto_language_generates_with_isolated_reference() -> anyhow::Result<()> {
+        use std::os::unix::fs::symlink;
+        use talechime_core::{backend::SegmentRequest, params::GenerationParams};
+        let source = PathBuf::from(std::env::var("TALECHIME_QWEN_AUTO_MODEL")?);
+        let wav = PathBuf::from(std::env::var("TALECHIME_QWEN_AUTO_WAV")?);
+        let root = tempfile::tempdir()?;
+        for entry in std::fs::read_dir(&source)? {
+            let entry = entry?;
+            symlink(entry.path(), root.path().join(entry.file_name()))?;
+        }
+        let store = voice_store(root.path(), models::Model::Base06)?;
+        store.import(
+            "custom:auto",
+            "Public test",
+            &wav,
+            "Hello, welcome to our story today.",
+            None,
+        )?;
+        let backend = QwenBackend::load_on(root.path().to_path_buf(), Device::Cpu).await?;
+        let params = GenerationParams::new();
+        let text =
+            std::env::var("TALECHIME_QWEN_AUTO_TEXT").unwrap_or_else(|_| "Hello, welcome.".into());
+        let mut stream = backend
+            .stream(SegmentRequest {
+                text: &text,
+                voice: "custom:auto",
+                style: None,
+                seed: 42,
+                params: &params,
+            })
+            .await?;
+        let mut samples = Vec::new();
+        let mut format = None;
+        let mut ended = false;
+        while let Some(chunk) = stream.recv().await {
+            match chunk? {
+                AudioChunk::Pcm(pcm) => {
+                    let current = (pcm.sample_rate, pcm.channels);
+                    anyhow::ensure!(format.is_none_or(|previous| previous == current));
+                    format = Some(current);
+                    samples.extend(pcm.samples);
+                }
+                AudioChunk::End => ended = true,
+            }
+        }
+        assert!(ended && !samples.is_empty());
+        assert!(samples.iter().all(|sample| sample.is_finite()));
+        assert!(samples.iter().any(|sample| sample.abs() > 0.001));
+        if let Some(output) = std::env::var_os("TALECHIME_QWEN_AUTO_OUTPUT") {
+            let (sample_rate, channels) = format.ok_or_else(|| anyhow::anyhow!("no PCM format"))?;
+            let mut writer = hound::WavWriter::new(
+                std::fs::File::create_new(output)?,
+                hound::WavSpec {
+                    channels,
+                    sample_rate,
+                    bits_per_sample: 32,
+                    sample_format: hound::SampleFormat::Float,
+                },
+            )?;
+            for sample in samples {
+                writer.write_sample(sample)?;
+            }
+            writer.finalize()?;
+        }
+        Ok(())
+    }
     #[test]
     fn base_cloning_uses_imported_fixed_references() {
         for model in [

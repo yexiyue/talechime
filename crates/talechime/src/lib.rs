@@ -97,10 +97,11 @@ pub use talechime_backends::asr::ReadbackModelOptions;
 #[cfg(feature = "asr")]
 pub async fn prepare_readback(
     options: ReadbackModelOptions,
+    downloads: &Downloads,
     progress: impl FnMut(Event),
 ) -> Result<std::rc::Rc<Verifier>, EngineError> {
     model_preparation::with_progress(
-        |tx| talechime_backends::asr::prepare(&options, tx),
+        |tx| talechime_backends::asr::prepare(&options, downloads, tx),
         progress,
     )
     .await

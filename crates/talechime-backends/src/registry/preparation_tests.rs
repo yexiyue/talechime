@@ -294,6 +294,7 @@ async fn native_plan_and_confirmed_execution_use_the_same_resolved_recipe() {
                 id: "fixture-native-v1",
                 target: "fixture/models/one/native-v1".into(),
                 inputs: &[Input {
+                    url: None,
                     path: "source.bin",
                     repo: "fixture/model",
                     revision: "1111111111111111111111111111111111111111",

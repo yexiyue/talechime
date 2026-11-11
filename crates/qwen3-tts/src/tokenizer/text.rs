@@ -181,6 +181,12 @@ impl TextTokenizer {
             .encode(text, false)
             .map_err(|e| anyhow!("Failed to encode text: {}", e))?;
 
+        if std::env::var("TALECHIME_TEXT_DIAGNOSTICS").is_ok_and(|value| value == "1") {
+            eprintln!(
+                "TALECHIME_TEXT_DIAGNOSTIC {}",
+                serde_json::json!({"backend":"qwen","phase":"text_tokens","execution_text":text,"tokens":encoding.get_ids()})
+            );
+        }
         Ok(encoding.get_ids().to_vec())
     }
 

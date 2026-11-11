@@ -209,3 +209,9 @@ hf-hub 从独立 fork 的固定 Git revision 构建，不保留 vendor 副本。
 Xet 的文件进度为零不代表网络没收到数据；真实对照、小批量实验命令与镜像重定向问题见 [Xet 与镜像诊断](records/downloads/xet-mirror-diagnosis-2026-11-05.md)。
 
 `DownloadOptions { connections: 2, ..Default::default() }` 默认 Auto；通过 `transport: DownloadTransport::Http` 可强制 HTTP。并发（1–4）表示每文件缺失范围任务数；Xet 自行并发获取压缩块。诊断末尾可传连接数、秒数和字节预算。回归命令：`cargo test -p talechime-backends --no-default-features --lib --test downloads_hf_local --test downloads_parallel`。最新行为与真实下载见[Auto 验证](records/downloads/xet-auto-fallback-2026-11-05.md)。
+
+
+文本前端、语言条件或分段改变已保存语音的语义而权重不变时，更新 backends 的
+`TEXT_SEMANTICS_REVISION`；宿主应冻结 `ResolvedModel::revision()` 和
+`text_semantics_revision()`。资源升级仍更新所属模型/配方 revision，不能只改共享
+算法常量代替资源完整性身份，也不为了算法修正复制相同权重。

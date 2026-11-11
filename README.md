@@ -8,7 +8,9 @@
 
 Talechime 是用 Rust 编写的本地语音合成与长文播放引擎。它提供命令行程序、可嵌入的 Rust 库，以及供阅读器调用的 JSON Lines worker。宿主负责获取正文、识别角色和绑定音色；Talechime 负责合成、播放、取消和按实际播放进度恢复。
 
-当前源码的 Kokoro 中文前端增加离线中英文混读；真实 CPU 公开样章生成通过，人工听感、官方英文前端对照及其他平台验证仍待完成。此改动尚未发行，详见 [Kokoro 指南](docs/kokoro.md)。
+当前工作区已完成本轮本机官方能力补齐及完整文本矩阵，尚未发行：15 个变体 × 19 条公开输入，共 285 项；248 段有效音频、18 条声明拒绝、19 条原始 BF16 CUDA 实机项按用户要求延期。官方输入对照逐项覆盖，部分仅为合成条件结构；Kokoro 产品执行策略差异、CosyVoice3 历史声学数值差异及用户听验失败保持独立，不能称为全模型数值或音质等价。IndexTTS 五语前端与 QwenEmotion、各后端条件/模式和本机控制音频已验证，详见[验收记录](docs/records/tts-core/official-backend-parity-2026-11-11.md#2026-11-12-本机交付)。Nano 漏读、年份连贯及音色问题后置，其他声音待人工听验。
+
+当前源码的 Kokoro 中文前端增加中英文混读，独立 eSpeak NG 负责英文未知词；普通版和 g2pW 的适用混读音素及 20 条功能词/OOV 对照通过，带空格年份与未知符号的产品差异单列。独立程序、数据、许可和对应源码随包构建，Rust 不链接其 GPL 库；人工听感及其他平台验证仍待完成。此改动尚未发行，详见 [Kokoro 指南](docs/kokoro.md)。
 
 [快速开始](#快速开始) · [TTS 后端](#tts-后端) · [与官方实现的性能对比](#与官方实现的性能对比) · [文档索引](docs/README.md) · [知识库](docs/knowledge/README.md) · [架构](docs/architecture.md) · [Rust 库](docs/library.md)
 
@@ -80,7 +82,7 @@ cargo run --release -- --backend moss --model nano-candle --tts-device cpu chapt
 | VoxCPM2 / `voxcpm` | 2B Q8 GGUF；另有实验 BF16 路径 | 固定参考音色、音色设计与原生流式 PCM | Candle CPU；Metal / CUDA 需 `voxcpm-metal` / `voxcpm-cuda` |
 | OmniVoice / `omnivoice` | 0.6B | 参考音色、音色设计、风格和生成期语速；按语义段输出 | Candle CPU；Metal / CUDA 需 `omnivoice-metal` / `omnivoice-cuda`；当前不是模型原生实时流式 |
 | CosyVoice3 / `cosyvoice3` | 0.5B，实验性 | 导入参考音色克隆，支持风格指令，24 kHz 原生流式输出 | Candle + ORT CPU 前端；可启用 Metal / CUDA；工作区可显式[准备固定成品](docs/cosyvoice3.md)；CPU/Metal 真实短句通过，旧数值门禁差异仍记录 |
-| IndexTTS 2.5 / `indextts` | 2.5，实验性 | 中文或英文参考克隆，支持命名情绪/向量/情绪参考，22.05 kHz 整段输出 | Candle CPU；Metal / CUDA 需显式 feature 和[固定成品资源](docs/indextts.md)；标准包暂未编入 |
+| IndexTTS 2.5 / `indextts` | 2.5，实验性 | 固定参考克隆，zh/en/ja/es/ar 五语、读音标注、时长倍率与文本/向量/参考情绪，22.05 kHz 整段输出 | Candle CPU；Metal / CUDA 需显式 feature 和[固定成品资源](docs/indextts.md)；标准包暂未编入 |
 
 例如在 Apple Silicon 上编译 Qwen Metal，在 NVIDIA 设备上编译 Qwen CUDA：
 

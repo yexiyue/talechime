@@ -3,7 +3,7 @@ use std::path::Path;
 use talechime_protocol::Event;
 use tokio::sync::mpsc;
 
-pub const REVISION: &str = "c39ce5ba-runtime-f32-v3";
+pub const REVISION: &str = "c39ce5ba-runtime-f32-front-v6";
 
 /// Verify an already published version without downloading or converting.
 pub async fn prepare(directory: &Path, progress: mpsc::Sender<Event>) -> anyhow::Result<()> {

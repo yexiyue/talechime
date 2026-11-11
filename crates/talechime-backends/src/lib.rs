@@ -1,4 +1,7 @@
 //! Concrete model adapters. The core and reader never import inference types.
+/// Shared text/conditioning semantics. Bump when a change can alter saved speech
+/// without changing the selected model's immutable resource revision.
+pub const TEXT_SEMANTICS_REVISION: &str = "official-backend-text-v2";
 #[cfg(feature = "asr")]
 pub mod asr;
 #[cfg(any(

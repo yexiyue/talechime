@@ -161,6 +161,7 @@ fn split_limit(
         let mut fitting = start;
         let mut sentence_boundary = start;
         let mut clause_boundary = start;
+        let mut lexical_boundary = start;
         let mut cjk_chars = 0;
         let mut after_sentence = false;
         let mut target_reached = false;
@@ -185,19 +186,23 @@ fn split_limit(
                 break;
             }
             fitting = end;
+            let safe_boundary = !inside_word_or_number(text, end);
+            if safe_boundary {
+                lexical_boundary = end;
+            }
             let sentence_end = "。！？!?；;".contains(c)
                 || (c == '.'
                     && !text[end..]
                         .chars()
                         .next()
                         .is_some_and(|next| next.is_ascii_digit()));
-            if sentence_end || (after_sentence && is_closer(c)) {
+            if safe_boundary && (sentence_end || (after_sentence && is_closer(c))) {
                 sentence_boundary = end;
                 after_sentence = true;
                 target_reached = estimate.seconds(&text[start..end]) >= 8.0;
             } else {
                 after_sentence = c.is_whitespace() && after_sentence;
-                if "，,:：".contains(c) {
+                if safe_boundary && "，,:：".contains(c) {
                     clause_boundary = end;
                 }
             }
@@ -214,8 +219,13 @@ fn split_limit(
         } else if clause_boundary > start {
             clause_boundary
         } else {
-            fitting
+            lexical_boundary
         };
+        if end == start {
+            return Err(BackendError::Unsupported(
+                "one word or numeric expression exceeds the MOSS segment budget".into(),
+            ));
+        }
         if !text[start..end].trim().is_empty() {
             result.push(TextSegment {
                 text: text[start..end].into(),
@@ -231,9 +241,60 @@ fn split_limit(
     Ok(result)
 }
 
+/// Keep Latin words, model names and decimal/grouped numbers in one request.
+fn inside_word_or_number(text: &str, boundary: usize) -> bool {
+    fn word(c: char) -> bool {
+        c.is_ascii_alphanumeric() || c.is_numeric() || ('\u{00c0}'..='\u{024f}').contains(&c)
+    }
+    fn joiner(c: char) -> bool {
+        matches!(
+            c,
+            '.' | ',' | '\'' | '’' | '-' | '_' | '/' | ':' | '．' | '，'
+        )
+    }
+    let mut before = text[..boundary].chars().rev();
+    let mut after = text[boundary..].chars();
+    let (Some(left), Some(right)) = (before.next(), after.next()) else {
+        return false;
+    };
+    (word(left) && word(right))
+        || (word(left) && joiner(right) && after.next().is_some_and(word))
+        || (joiner(left) && word(right) && before.next().is_some_and(word))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn emergency_splits_preserve_words_and_numeric_expressions() {
+        let text = format!(
+            "{} Alice's S600 costs 19,999.99 dollars today.",
+            "中".repeat(43)
+        );
+        let pieces = split(&text, |s| Ok(s.chars().count())).unwrap();
+        assert_eq!(
+            pieces.iter().map(|p| p.text.as_str()).collect::<String>(),
+            text
+        );
+        for piece in pieces {
+            assert!(!inside_word_or_number(&text, piece.end));
+            assert!(piece.text.chars().count() <= 50);
+        }
+        assert!(split(&"a".repeat(51), |s| Ok(s.len())).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires the fixed Nano tokenizer model"]
+    fn mixed_english_reaches_nano_tokenizer() -> anyhow::Result<()> {
+        let tokenizer = SentencePieceProcessor::open(std::env::var("TALECHIME_NANO_TOKENIZER")?)?;
+        let text = normalize("早上好，Alice 说 hello。今天是 2026 年。");
+        let ids = tokenizer.encode_to_ids(&text)?;
+        let decoded = tokenizer.decode_ids(&ids)?;
+        println!("normalized={text:?}, decoded={decoded:?}");
+        assert!(decoded.contains("Alice") && decoded.contains("hello"));
+        Ok(())
+    }
     #[test]
     fn noisy_layout_preserves_hard_boundaries_and_source_ranges() {
         let source = "前句。\n====\u{200B}====\n后句。\n\u{200B}\n\u{FEFF}第一章 开始\n正文。";

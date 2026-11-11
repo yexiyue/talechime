@@ -59,6 +59,50 @@ pub(super) fn rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires pinned Nano sentencepiece tokenizer"]
+    fn public_raw_corpus_matches_official_voice_clone_rows() -> anyhow::Result<()> {
+        use sha2::{Digest, Sha256};
+        let path = std::env::var("TALECHIME_NANO_TOKENIZER")?;
+        let bytes = std::fs::read(&path)?;
+        let fixture: Value = serde_json::from_str(include_str!("assets/nano-corpus-prompt.json"))?;
+        assert_eq!(
+            format!("{:x}", Sha256::digest(&bytes)),
+            fixture["sources_sha256"]["tokenizer"]
+        );
+        let tokenizer = sentencepiece_rs::SentencePieceProcessor::open(path)?;
+        let manifest: Value = serde_json::from_str(include_str!("assets/nano-prompt.json"))?;
+        let cases = fixture["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 19);
+        for case in cases {
+            let text = case["source_text"].as_str().unwrap();
+            assert_eq!(
+                format!("{:x}", Sha256::digest(text.as_bytes())),
+                case["source_sha256"]
+            );
+            let tokens: Vec<i32> = tokenizer
+                .encode_to_ids(text)?
+                .into_iter()
+                .map(|id| id as i32)
+                .collect();
+            assert_eq!(
+                serde_json::to_value(&tokens)?,
+                case["text_ids"],
+                "{}",
+                case["id"]
+            );
+            let codes: Vec<Vec<i32>> = serde_json::from_value(case["reference_codes"].clone())?;
+            let expected: Vec<Vec<i32>> = serde_json::from_value(case["rows"].clone())?;
+            assert_eq!(
+                rows(&manifest, &tokens, &codes)?,
+                expected.into_iter().flatten().collect::<Vec<_>>(),
+                "{}",
+                case["id"]
+            );
+        }
+        Ok(())
+    }
     #[test]
     fn fixed_voice_clone_matches_pinned_official_builder() {
         let manifest: Value =

@@ -191,7 +191,7 @@ impl NanoBackend {
                 "empty text or unknown Nano voice".into(),
             ));
         }
-        let tokens = self
+        let tokens: Vec<i32> = self
             .tokenizer
             .as_ref()
             .expect("loaded tokenizer")
@@ -200,6 +200,12 @@ impl NanoBackend {
             .into_iter()
             .map(|id| id as i32)
             .collect();
+        if std::env::var("TALECHIME_TEXT_DIAGNOSTICS").is_ok_and(|value| value == "1") {
+            eprintln!(
+                "TALECHIME_TEXT_DIAGNOSTIC {}",
+                serde_json::json!({"backend":"moss-nano","phase":"model_tokens","execution_text":text,"tokens":tokens})
+            );
+        }
         let (audio, stream) = mpsc::channel(1);
         self.requests
             .as_ref()
@@ -431,17 +437,22 @@ mod tests {
     }
 
     use super::*;
-    #[cfg(feature = "moss-nano-candle-cuda")]
     #[tokio::test(flavor = "current_thread")]
-    #[ignore = "explicit local Nano CUDA resources; no downloads"]
-    async fn real_cuda_cancel_full_queue_and_reuse_preserves_pcm() -> anyhow::Result<()> {
+    #[ignore = "explicit complete local Nano resources and selected compiled device"]
+    async fn real_cancel_full_queue_and_reuse_preserves_pcm() -> anyhow::Result<()> {
         tokio::task::LocalSet::new()
             .run_until(async {
                 let root = PathBuf::from(
-                    std::env::var_os("TALECHIME_NANO_CUDA_ROOT")
-                        .ok_or_else(|| anyhow::anyhow!("TALECHIME_NANO_CUDA_ROOT required"))?,
+                    std::env::var_os("TALECHIME_NANO_LIFECYCLE_ROOT")
+                        .ok_or_else(|| anyhow::anyhow!("TALECHIME_NANO_LIFECYCLE_ROOT required"))?,
                 );
-                let backend = NanoBackend::load_on(root, Device::Cuda).await?;
+                let device = match std::env::var("TALECHIME_NANO_LIFECYCLE_DEVICE").as_deref() {
+                    Ok("metal") => Device::Metal,
+                    Ok("cuda") => Device::Cuda,
+                    Ok("cpu") | Err(_) => Device::Cpu,
+                    _ => anyhow::bail!("invalid Nano lifecycle device"),
+                };
+                let backend = NanoBackend::load_on(root, device).await?;
                 let text = "你好，欢迎使用叙铃。";
                 async fn collect(backend: &NanoBackend, text: &str) -> anyhow::Result<Vec<u32>> {
                     let mut stream = backend.stream_seeded(text, "Weiguo", 42).await?;
@@ -463,7 +474,8 @@ mod tests {
                     anyhow::ensure!(ended && !bits.is_empty(), "incomplete Nano request");
                     Ok(bits)
                 }
-                tokio::time::timeout(std::time::Duration::from_secs(60), async {
+                let seconds = if device == Device::Cpu { 300 } else { 60 };
+                tokio::time::timeout(std::time::Duration::from_secs(seconds), async {
                     let expected = collect(&backend, text).await?;
                     // Drop before consuming any PCM, then verify the same owner recovers.
                     drop(backend.stream_seeded(text, "Weiguo", 42).await?);
@@ -482,7 +494,7 @@ mod tests {
                     assert_eq!(collect(&backend, text).await?, expected);
                     assert!(backend.stream_seeded(text, "missing-voice", 42).await.is_err());
                     assert_eq!(collect(&backend, text).await?, expected);
-                    eprintln!("Nano CUDA owner reused after unconsumed/full-queue cancellation and rejected voice; {} PCM samples identical", expected.len());
+                    eprintln!("Nano {device:?} owner reused after unconsumed/full-queue cancellation and rejected voice; {} PCM samples identical", expected.len());
                     Ok::<_, anyhow::Error>(())
                 })
                 .await??;

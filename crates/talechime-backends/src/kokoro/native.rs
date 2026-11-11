@@ -434,9 +434,11 @@ mod validation_tests {
         let loaded = started.elapsed();
         assert_eq!(backend.capabilities().voices.len(), 100);
         let params = GenerationParams::new();
+        let text = std::env::var("TALECHIME_NATIVE_AUDIO_TEXT")
+            .unwrap_or_else(|_| "春天来了，院子里的花开了。".into());
         let pcm = backend
             .synthesize(SegmentRequest {
-                text: "春天来了，院子里的花开了。",
+                text: &text,
                 voice: "zf_001",
                 style: None,
                 seed: 7,

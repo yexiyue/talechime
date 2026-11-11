@@ -41,7 +41,6 @@ pub async fn reference(
                 ));
                 let request =
                     talechime_omnivoice::contracts::GenerationRequest::new_text_only(text)
-                        .with_language("zh")
                         .with_instruct(description);
                 let mut generated = pipeline.generate(&request)?;
                 anyhow::ensure!(

@@ -1,12 +1,12 @@
 # CosyVoice3 后端
 
-当前工作区默认使用 `2512-runtime-f64-v3` 成品配方，用户直接下载并校验，无需重复转换。
+当前工作区使用 `2512-runtime-f64-front-v4` 固定资源配方；本轮文本前端改动尚未发行。
 下文涉及 `2512-native-f64-v2` 的原生构建与耗时为源配方验证记录。
 固定分发、许可与两类配方边界见[公开成品记录](records/resources/runtime-distribution-2026-11-05.md)。
 
 `cosyvoice3` / 模型 `0.5b` 已接入 Talechime Registry、Rust Engine、CLI 与 JSON Lines v7。
 当前为实验能力：零样本克隆、24 kHz 单声道原生流式输出；必须先导入参考 WAV 和准确转写。
-没有内置音色；支持逐段 style 指令，不开放执行级 continuation、文本正规化或生成参数。
+没有内置音色；支持逐段 style 指令及显式 `cross_lingual` 模式，二者互斥；不开放执行级 continuation。`text_frontend` 默认 true，使用官方公开 WeText 路径；跨语言模式的新版前端真实模型与听感验收仍在进行。
 播放速度使用现有播放层，不声明流式模型原生 speed。
 
 LLM、Flow/DiT、HiFT 使用 Candle，参考语音 tokenizer 与 campplus 使用 ORT CPU。
@@ -21,7 +21,8 @@ SDK 使用原生固定配方准备资源，不启动 Python。先调用
 `load_existing` 只校验并加载已发布的完整版本，不隐式下载。
 详见[原生准备 API](native-resource-preparation.md)。
 
-当前版本目录为 `ROOT/cosyvoice3/models/0.5b/2512-runtime-f64-v3/`。
+当前版本目录为 `ROOT/cosyvoice3/models/0.5b/2512-runtime-f64-front-v4/`。
+新版增加固定 WeText FST 与许可，缺件、摘要错误或混用版本均不能就绪。
 LLM、Flow、campplus 和语音 tokenizer 四个文件使用已逐字节核验的固定社区版本；
 HiFT 由维护方从固定官方 checkpoint 原生导入后分发，保持 F0 的 F64 路径；完整 tokenizer 补齐官方
 281 个特殊 token（含 EOF），配置采用固定版本。输入、输出摘要与许可见
@@ -88,3 +89,24 @@ talechime --backend cosyvoice3 --voice custom:reader --style '请用悲伤的语
 后端将指令包装为官方 assistant 前缀：LLM 使用指令并去掉参考语音 token 前缀，
 Flow / HiFT 仍使用原音色参考，保持原生流式与取消边界。未提供 style 时继续使用原零样本路径。
 指令是否达到预期语气需模型试听确认；普通接线测试不代表情绪质量验收。
+
+## 文本前端（2026-11-11，未发行）
+
+固定官方公开 WeText 0.1.0 路径、英文 inflect 7.5.0 数字规则、中文清理及
+80/60/20 token 分组已移植到原生 Rust；25 条独立官方前端 fixtures 在 macOS CPU
+通过。参考转写按官方 CosyVoice3 示例添加 assistant/end-of-prompt 前缀，
+带此控制标记的转写按官方透传。CrossLingual 删除 LLM 转写和音频提示，
+将官方默认前缀放入目标正文，因此该模式也走控制标记透传；Flow 仍保留音色参考。
+含官方控制 token 的正文按上游跳过规范化；`text_frontend=false` 可显式关闭。
+不声称复刻可选专有 ttsfrd 路径。来源和许可见计算库 [SOURCE.md](../crates/cosyvoice3/SOURCE.md)。
+
+一个宿主语义段可包含多个模型内部组；仅最后一组正常结束后发送 End，错误仍传播。
+生成有效 PCM 不证明每个词均已读出，也不关闭前述历史波形数值差异。
+官方 WeText 的数字读法与产品中文年份策略分别核验，不做跨后端统一替换。
+
+本轮真实三模式测试发现并修复跨语言缺少目标前缀，以及 Metal 无 LLM 音频提示时
+零字节 token 缓冲区无法创建的问题；空条件现在使用有效存储的零长度视图。
+显式 Metal 空条件测试通过，真实重跑结果与旧失败分开记录。
+front-v4 在固定旧官方数值 fixture 上的 CPU 复核仍有两项差异：estimator 最大差
+0.003486（门限 0.003），tokens→PCM 最大差 0.16024（门限 0.01）；其他阶段通过。
+没有放宽门限或用新文本前端对照替代声学数值验收。

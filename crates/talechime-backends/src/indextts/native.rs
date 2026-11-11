@@ -1,4 +1,6 @@
 //! Fixed official F32 checkpoint adaptation; no MLX or external script runtime.
+mod japanese;
+mod normalization;
 use crate::native_preparation::{Archive, PreparationControl, TensorSpec, write_tensors};
 use candle_core::{DType, Device, Tensor};
 use std::{collections::BTreeMap, path::Path};
@@ -132,27 +134,72 @@ fn convert_features(
         .collect();
     write_tensors(output, &specs, control, |name| Ok(values[name].clone()))
 }
-pub(crate) fn recipe() -> crate::native_preparation::Recipe {
+fn runtime_inputs() -> &'static [crate::native_preparation::Input] {
     static INPUTS: std::sync::OnceLock<Vec<crate::native_preparation::Input>> =
         std::sync::OnceLock::new();
-    let inputs = INPUTS.get_or_init(|| {
-        serde_json::from_str(include_str!("distribution-inputs.json"))
-            .expect("compiled distribution pins")
-    });
-    source_recipe().distributed(
-        "indextts-2.5-runtime-f32-v3",
-        inputs,
+    INPUTS.get_or_init(|| {
+        let mut inputs: Vec<crate::native_preparation::Input> =
+            serde_json::from_str(include_str!("distribution-inputs.json"))
+                .expect("compiled distribution pins");
+        inputs.retain(|input| input.path != "SOURCES.json");
+        inputs.push(japanese::INPUT);
+        inputs.push(normalization::INPUT);
+        inputs.extend(
+            assets()
+                .inputs
+                .iter()
+                .filter(|input| input.path.starts_with("qwen0.6bemo4-merge/"))
+                .cloned(),
+        );
+        inputs
+    })
+}
+
+pub(crate) fn recipe() -> crate::native_preparation::Recipe {
+    let mut recipe = source_recipe().distributed(
+        "indextts-2.5-runtime-f32-front-v6",
+        runtime_inputs(),
         super::directory(Path::new("")),
-    )
+    );
+    recipe.transform_outputs = &[
+        "japanese.dic",
+        "tn/wetext/zh/tn/tagger.fst",
+        "tn/wetext/zh/tn/verbalizer.fst",
+        "tn/wetext/en/tn/tagger.fst",
+        "tn/wetext/en/tn/verbalizer.fst",
+        "LICENSE-WETEXT",
+        "tn/linux/zh/tagger.fst",
+        "tn/linux/zh/verbalizer.fst",
+        "tn/linux/en/tagger.fst",
+        "tn/linux/en/verbalizer.fst",
+        "tn/es/tagger.fst",
+        "tn/es/verbalizer.fst",
+        "LICENSE-NEMO_TEXT_PROCESSING",
+        "LICENSE-WETEXTPROCESSING",
+    ];
+    recipe.workspace_bytes = 2 * 1024 * 1024 * 1024;
+    recipe.transform = |work| {
+        for input in runtime_inputs() {
+            if input.path != japanese::INPUT.path && input.path != normalization::INPUT.path {
+                work.copy(input.path)?;
+            }
+        }
+        work.component("japanese.dic", japanese::convert)?;
+        normalization::prepare(work)?;
+        work.write("LICENSE-UNIDIC", include_bytes!("native/UNIDIC-BSD"))?;
+        work.write("SOURCES.json", include_bytes!("native-sources.json"))?;
+        Ok(())
+    };
+    recipe
 }
 
 fn source_recipe() -> crate::native_preparation::Recipe {
-    let assets = assets();
+    let recipe_assets = assets();
     crate::native_preparation::Recipe {
-        id: "indextts-2.5-native-f32-v2",
-        target: "indextts/models/2.5/c39ce5ba-native-f32-v2".into(),
-        inputs: &assets.inputs,
-        outputs: &assets.outputs,
+        id: "indextts-2.5-native-f32-front-v6",
+        target: super::directory(Path::new("")),
+        inputs: &recipe_assets.inputs,
+        outputs: &recipe_assets.outputs,
         transform_outputs: &[
             "gpt.safetensors",
             "codec.safetensors",
@@ -160,8 +207,22 @@ fn source_recipe() -> crate::native_preparation::Recipe {
             "campplus.safetensors",
             "bigvgan.safetensors",
             "feats.safetensors",
+            "japanese.dic",
+            "tn/wetext/zh/tn/tagger.fst",
+            "tn/wetext/zh/tn/verbalizer.fst",
+            "tn/wetext/en/tn/tagger.fst",
+            "tn/wetext/en/tn/verbalizer.fst",
+            "LICENSE-WETEXT",
+            "tn/linux/zh/tagger.fst",
+            "tn/linux/zh/verbalizer.fst",
+            "tn/linux/en/tagger.fst",
+            "tn/linux/en/verbalizer.fst",
+            "tn/es/tagger.fst",
+            "tn/es/verbalizer.fst",
+            "LICENSE-NEMO_TEXT_PROCESSING",
+            "LICENSE-WETEXTPROCESSING",
         ],
-        workspace_bytes: 512 * 1024 * 1024,
+        workspace_bytes: 2 * 1024 * 1024 * 1024,
         transform: |work| {
             for (name, file) in [
                 ("gpt", "gpt.safetensors"),
@@ -175,6 +236,15 @@ fn source_recipe() -> crate::native_preparation::Recipe {
                 })?;
             }
             work.component("feats.safetensors", convert_features)?;
+            work.component("japanese.dic", japanese::convert)?;
+            normalization::prepare(work)?;
+            for input in assets()
+                .inputs
+                .iter()
+                .filter(|input| input.path.starts_with("qwen0.6bemo4-merge/"))
+            {
+                work.copy(input.path)?;
+            }
             for name in [
                 "bigvgan.config.json",
                 "multilingual_zh_ja_yue_char_del.tiktoken",
@@ -186,6 +256,7 @@ fn source_recipe() -> crate::native_preparation::Recipe {
             }
             work.write("config.json", include_bytes!("native-config.json"))?;
             work.write("SOURCES.json", include_bytes!("native-sources.json"))?;
+            work.write("LICENSE-UNIDIC", include_bytes!("native/UNIDIC-BSD"))?;
             Ok(())
         },
     }
@@ -231,10 +302,10 @@ mod recipe_tests {
                 .unwrap();
         config.validate().unwrap();
         assert_eq!(config.gpt.number_text_tokens, 60509);
-        assert_eq!(assets().inputs.len(), 14);
-        assert_eq!(assets().outputs.len(), 13);
-        assert_eq!(source_recipe().transform_outputs.len(), 6);
-        assert!(recipe().transform_outputs.is_empty());
+        assert_eq!(assets().inputs.len(), 22);
+        assert_eq!(assets().outputs.len(), 34);
+        assert_eq!(source_recipe().transform_outputs.len(), 20);
+        assert_eq!(recipe().transform_outputs.len(), 14);
     }
     #[tokio::test]
     #[ignore = "explicit verified IndexTTS inputs in isolated engine root; no new downloads expected"]

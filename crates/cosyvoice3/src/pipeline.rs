@@ -206,11 +206,7 @@ impl CosyVoice3 {
         let prompt_text_tokens = self.encode(prompt_text)?;
 
         let text_t = u32_tensor(&text_tokens, &self.device)?;
-        let prompt_text_t = if prompt_text_tokens.is_empty() {
-            Tensor::zeros((1, 0), DType::U32, &self.device)?
-        } else {
-            u32_tensor(&prompt_text_tokens, &self.device)?
-        };
+        let prompt_text_t = u32_tensor(&prompt_text_tokens, &self.device)?;
         let llm_prompt_tokens = u32_tensor(conditioning.speech_tokens, &self.device)?;
 
         let speech_tokens =
@@ -261,11 +257,24 @@ impl CosyVoice3 {
         Ok(flat)
     }
 
+    /// Count actual model tokens for the official frontend's grouping policy.
+    pub fn text_token_count(&self, text: &str) -> Result<usize> {
+        self.tokenizer
+            .encode(text, false)
+            .map(|encoding| encoding.len())
+            .map_err(|error| candle_core::Error::Msg(format!("tokenize: {error}")))
+    }
     fn encode(&self, text: &str) -> Result<Vec<u32>> {
         let enc = self
             .tokenizer
             .encode(text, false)
             .map_err(|e| candle_core::Error::Msg(format!("tokenize: {e}")))?;
+        if std::env::var("TALECHIME_TEXT_DIAGNOSTICS").is_ok_and(|value| value == "1") {
+            eprintln!(
+                "TALECHIME_TEXT_DIAGNOSTIC {}",
+                serde_json::json!({"backend":"cosyvoice3","phase":"text_tokens","execution_text":text,"tokens":enc.get_ids()})
+            );
+        }
         Ok(enc.get_ids().to_vec())
     }
 }
@@ -305,7 +314,13 @@ pub fn extract_prompt_features(
 }
 
 fn u32_tensor(v: &[u32], device: &candle_core::Device) -> Result<Tensor> {
-    Tensor::from_slice(v, (1, v.len()), device)
+    if v.is_empty() {
+        // Metal rejects a zero-byte allocation. An empty view over valid
+        // storage preserves the absent-condition shape without such a buffer.
+        Tensor::from_slice(&[0u32], (1, 1), device)?.narrow(1, 0, 0)
+    } else {
+        Tensor::from_slice(v, (1, v.len()), device)
+    }
 }
 
 fn io_msg(e: candle_core::Error) -> std::io::Error {
@@ -373,6 +388,24 @@ pub fn mel_at_speed(mel: &Tensor, speed: f32) -> Result<Tensor> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(feature = "metal")]
+    #[ignore = "requires an actual Metal device; no model downloads"]
+    fn empty_optional_conditions_use_valid_metal_storage() -> Result<()> {
+        let device = candle_core::Device::new_metal(0)?;
+        let empty = u32_tensor(&[], &device)?;
+        assert_eq!(empty.dims(), &[1, 0]);
+        assert_eq!(empty.to_device(&device)?.dims(), &[1, 0]);
+        assert!(
+            empty
+                .to_device(&candle_core::Device::Cpu)?
+                .flatten_all()?
+                .to_vec1::<u32>()?
+                .is_empty()
+        );
+        Ok(())
+    }
 
     #[test]
     fn modes_separate_llm_and_acoustic_prompt_conditioning() -> Result<()> {

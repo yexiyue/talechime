@@ -1,7 +1,7 @@
 //! Realtime 1.7B Candle synthesis with model-scoped reference voices.
-#[cfg(all(test, feature = "moss-candle-cuda", target_os = "windows"))]
-mod cuda_tests;
 pub mod design;
+#[cfg(test)]
+mod lifecycle_tests;
 pub mod params;
 pub mod resources;
 mod runtime;

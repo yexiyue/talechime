@@ -1,0 +1,131 @@
+{
+  "source": "OpenBMB/VoxCPM",
+  "revision": "f0c787f0937dc1c9a8f4f64d9a332d9c5da2e629",
+  "sha256": "31ad554bc15a4da18cf820c6fda97a5b2c56ac8e9a5e66031a264d363661575c",
+  "limit_expression": "min(int(target_text_length * retry_badcase_ratio_threshold + 10), max_len)",
+  "stop_expression": "i > min_len and stop_flag == 1",
+  "limits": [
+    {
+      "target_tokens": 1,
+      "maximum": 187,
+      "expected": 16
+    },
+    {
+      "target_tokens": 1,
+      "maximum": 2000,
+      "expected": 16
+    },
+    {
+      "target_tokens": 5,
+      "maximum": 187,
+      "expected": 40
+    },
+    {
+      "target_tokens": 5,
+      "maximum": 2000,
+      "expected": 40
+    },
+    {
+      "target_tokens": 12,
+      "maximum": 187,
+      "expected": 82
+    },
+    {
+      "target_tokens": 12,
+      "maximum": 2000,
+      "expected": 82
+    },
+    {
+      "target_tokens": 30,
+      "maximum": 187,
+      "expected": 187
+    },
+    {
+      "target_tokens": 30,
+      "maximum": 2000,
+      "expected": 190
+    },
+    {
+      "target_tokens": 100,
+      "maximum": 187,
+      "expected": 187
+    },
+    {
+      "target_tokens": 100,
+      "maximum": 2000,
+      "expected": 610
+    },
+    {
+      "target_tokens": 500,
+      "maximum": 187,
+      "expected": 187
+    },
+    {
+      "target_tokens": 500,
+      "maximum": 2000,
+      "expected": 2000
+    }
+  ],
+  "stops": [
+    {
+      "index": 0,
+      "flag": 0,
+      "expected": false
+    },
+    {
+      "index": 0,
+      "flag": 1,
+      "expected": false
+    },
+    {
+      "index": 1,
+      "flag": 0,
+      "expected": false
+    },
+    {
+      "index": 1,
+      "flag": 1,
+      "expected": false
+    },
+    {
+      "index": 2,
+      "flag": 0,
+      "expected": false
+    },
+    {
+      "index": 2,
+      "flag": 1,
+      "expected": false
+    },
+    {
+      "index": 3,
+      "flag": 0,
+      "expected": false
+    },
+    {
+      "index": 3,
+      "flag": 1,
+      "expected": true
+    },
+    {
+      "index": 4,
+      "flag": 0,
+      "expected": false
+    },
+    {
+      "index": 4,
+      "flag": 1,
+      "expected": true
+    },
+    {
+      "index": 5,
+      "flag": 0,
+      "expected": false
+    },
+    {
+      "index": 5,
+      "flag": 1,
+      "expected": true
+    }
+  ]
+}

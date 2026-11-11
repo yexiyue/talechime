@@ -65,11 +65,17 @@ async fn run(args: &[String]) -> anyhow::Result<()> {
         _ => anyhow::bail!("invalid device"),
     };
     let started = Instant::now();
-    let mut engine = Engine::prepare(model, |_| {}).await?;
+    let registry = Registry::new(Some(args[4].clone().into()))?;
+    let mut engine = Engine::prepare_in(&registry, model, |_| {}).await?;
     let tts_load_s = started.elapsed().as_secs_f64();
     let asr_load_s = if modes.iter().any(|mode| *mode != "off") {
         let started = Instant::now();
-        let verifier = prepare_readback(ReadbackModelOptions::new(&args[4]), |_| {}).await?;
+        let verifier = prepare_readback(
+            ReadbackModelOptions::new(&args[4]),
+            registry.downloads(),
+            |_| {},
+        )
+        .await?;
         engine.set_verifier(verifier)?;
         started.elapsed().as_secs_f64()
     } else {

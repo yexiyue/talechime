@@ -183,21 +183,71 @@ mod tests {
     }
 }
 
-pub(crate) fn recipe() -> crate::native_preparation::Recipe {
+fn runtime_inputs() -> &'static [crate::native_preparation::Input] {
     static INPUTS: std::sync::OnceLock<Vec<crate::native_preparation::Input>> =
         std::sync::OnceLock::new();
-    let inputs = INPUTS.get_or_init(|| {
-        serde_json::from_str(include_str!("distribution-inputs.json"))
-            .expect("compiled distribution pins")
-    });
-    source_recipe().distributed(
-        "cosyvoice3-2512-runtime-f64-v3",
-        inputs,
+    INPUTS.get_or_init(|| {
+        let mut inputs: Vec<_> = serde_json::from_str(include_str!("distribution-inputs.json"))
+            .expect("compiled distribution pins");
+        inputs.push(crate::native_preparation::wetext::INPUT);
+        inputs
+    })
+}
+pub(crate) fn recipe() -> crate::native_preparation::Recipe {
+    let mut recipe = source_recipe().distributed(
+        "cosyvoice3-2512-runtime-f64-front-v4",
+        runtime_inputs(),
         super::directory(Path::new("")),
-    )
+    );
+    recipe.transform_outputs = TEXT_OUTPUTS;
+    recipe.workspace_bytes = 16 * 1024 * 1024;
+    recipe.transform = |work| {
+        for input in runtime_inputs() {
+            if input.path != crate::native_preparation::wetext::INPUT.path {
+                work.copy(input.path)?;
+            }
+        }
+        crate::native_preparation::wetext::prepare(work)
+    };
+    recipe
+}
+const TEXT_OUTPUTS: &[&str] = &[
+    "tn/wetext/zh/tn/tagger.fst",
+    "tn/wetext/zh/tn/verbalizer.fst",
+    "tn/wetext/en/tn/tagger.fst",
+    "tn/wetext/en/tn/verbalizer.fst",
+    "LICENSE-WETEXT",
+];
+fn source_recipe() -> crate::native_preparation::Recipe {
+    static INPUTS: std::sync::OnceLock<Vec<crate::native_preparation::Input>> =
+        std::sync::OnceLock::new();
+    static OUTPUTS: std::sync::OnceLock<Vec<crate::native_preparation::Output>> =
+        std::sync::OnceLock::new();
+    let mut recipe = base_source_recipe();
+    recipe.id = "cosyvoice3-2512-native-f64-front-v4";
+    recipe.inputs = INPUTS.get_or_init(|| {
+        let mut inputs = base_source_recipe().inputs.to_vec();
+        inputs.push(crate::native_preparation::wetext::INPUT);
+        inputs
+    });
+    recipe.outputs = OUTPUTS.get_or_init(|| {
+        let mut outputs = base_source_recipe().outputs.to_vec();
+        outputs.extend_from_slice(crate::native_preparation::wetext::OUTPUTS);
+        outputs
+    });
+    recipe.transform_outputs = &[
+        "hift.safetensors",
+        "tokenizer/tokenizer.json",
+        "tn/wetext/zh/tn/tagger.fst",
+        "tn/wetext/zh/tn/verbalizer.fst",
+        "tn/wetext/en/tn/tagger.fst",
+        "tn/wetext/en/tn/verbalizer.fst",
+        "LICENSE-WETEXT",
+    ];
+    recipe
 }
 
-fn source_recipe() -> crate::native_preparation::Recipe {
+fn base_source_recipe() -> crate::native_preparation::Recipe {
     use crate::native_preparation::{Input, Output, Recipe};
     const COMMUNITY: &str = "spensercai/CosyVoice3-0.5B-Candle";
     const REVISION: &str = "ccdf65f11d4352c13692e700560076bd61a531e3";
@@ -206,6 +256,7 @@ fn source_recipe() -> crate::native_preparation::Recipe {
         target: "cosyvoice3/models/0.5b/2512-native-f64-v2".into(),
         inputs: &[
             Input {
+                url: None,
                 path: "llm.safetensors",
                 repo: COMMUNITY,
                 revision: REVISION,
@@ -214,6 +265,7 @@ fn source_recipe() -> crate::native_preparation::Recipe {
                 sha256: "06661f03d1ae2adf67abd03efb758cdd59df5495617b0066ead5ae8d17f80983",
             },
             Input {
+                url: None,
                 path: "flow.safetensors",
                 repo: COMMUNITY,
                 revision: REVISION,
@@ -222,6 +274,7 @@ fn source_recipe() -> crate::native_preparation::Recipe {
                 sha256: "fa408e2c1476a298271f7610578228819a97d30ade959d228a9459a0a135d95b",
             },
             Input {
+                url: None,
                 path: "campplus.onnx",
                 repo: COMMUNITY,
                 revision: REVISION,
@@ -230,6 +283,7 @@ fn source_recipe() -> crate::native_preparation::Recipe {
                 sha256: "a6ac6a63997761ae2997373e2ee1c47040854b4b759ea41ec48e4e42df0f4d73",
             },
             Input {
+                url: None,
                 path: "speech_tokenizer_v3.onnx",
                 repo: COMMUNITY,
                 revision: REVISION,
@@ -238,6 +292,7 @@ fn source_recipe() -> crate::native_preparation::Recipe {
                 sha256: "23236a74175dbdda47afc66dbadd5bcb41303c467a57c261cb8539ad9db9208d",
             },
             Input {
+                url: None,
                 path: "tokenizer-base.json",
                 repo: COMMUNITY,
                 revision: REVISION,
@@ -246,6 +301,7 @@ fn source_recipe() -> crate::native_preparation::Recipe {
                 sha256: "485c75a9c2af8848f63829abf170cae7365cee7a2d16a4a9b0217a5a21f197c4",
             },
             Input {
+                url: None,
                 path: "hift.pt",
                 repo: "FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
                 revision: "29e01c4e8d000f4bcd70751be16fa94bf3d85a18",
@@ -309,7 +365,7 @@ fn source_recipe() -> crate::native_preparation::Recipe {
                 complete_tokenizer(&input.join("tokenizer-base.json"), output)
             })?;
             work.write("config.json", include_bytes!("native-config.json"))?;
-            Ok(())
+            crate::native_preparation::wetext::prepare(work)
         },
     }
 }

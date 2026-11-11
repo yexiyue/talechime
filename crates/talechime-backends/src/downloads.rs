@@ -21,6 +21,8 @@ use hf_hub::progress::{DownloadEvent, FileStatus, ProgressEvent, ProgressHandler
 use talechime_protocol::Event;
 use tokio::sync::{mpsc, watch};
 
+mod pinned_url;
+
 /// Host-provided download configuration.
 #[derive(Clone)]
 pub struct DownloadConfig {

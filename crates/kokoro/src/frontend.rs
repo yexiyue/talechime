@@ -1,7 +1,9 @@
 //! Mandarin 1.1 frontend using exported official dictionaries and rules.
+mod espeak;
 mod normalize;
 mod sandhi;
 mod segment;
+pub use espeak::{EspeakConfig, EspeakOptions};
 pub use normalize::decimal_digit;
 
 use candle_core::Result;
@@ -14,6 +16,45 @@ use std::{
     path::Path,
     sync::OnceLock,
 };
+
+/// 合成前的执行文本规范化：只改送入引擎的文本，不改原文与单元范围。
+/// Kokoro 前端把单元内部的换行当作音素、把单引号等符号当作未知词而直接失败；
+/// 真实章节的分析片段常跨段落并使用单引号（2026-11-11 真实失败案例）。
+fn execution_text(slice: &str) -> String {
+    let mut spoken = String::with_capacity(slice.len());
+    let mut previous = None;
+    let mut chars = slice.chars().peekable();
+    while let Some(c) = chars.next() {
+        let inside_english = previous.is_some_and(|p: char| p.is_ascii_alphabetic())
+            && chars.peek().is_some_and(char::is_ascii_alphabetic);
+        previous = Some(c);
+        let mapped = match c {
+            '\r' => continue,
+            // 句中换行与全角/不间断空格压成普通空格（引擎接受句中空格）。
+            '\n' | '\u{3000}' | '\u{00a0}' => ' ',
+            // 单引号家族：引擎仅支持双引号（ASCII 与全角）。
+            '\'' | '’' if inside_english => '\'',
+            '\'' | '‘' | '’' | '＇' | '＂' => '"',
+            '『' | '﹃' => '“',
+            '』' | '﹄' => '”',
+            '〈' => '《',
+            '〉' => '》',
+            '[' => '【',
+            ']' => '】',
+            '–' => '—',
+            '~' | '～' => '…',
+            // 名字中的间隔号作为分隔。
+            '·' => ' ',
+            '\u{feff}' | '\u{200b}' => continue,
+            other => other,
+        };
+        // 段落缩进与残留空白不应变成多拍停顿。
+        if mapped != ' ' || !spoken.ends_with(' ') {
+            spoken.push(mapped);
+        }
+    }
+    spoken
+}
 
 #[derive(Deserialize)]
 struct Data {
@@ -54,7 +95,57 @@ mod tests {
             jieba,
             tags,
             max_word_chars: 1,
+            espeak: None,
+            bundle: None,
+            verified_espeak: OnceLock::new(),
         }
+    }
+
+    // 真实失败形态：规范化不修改来源。
+    const FAILING_SLICE: &str = "\u{3000}\u{3000}两个测试员站在门口。‘第一位测试员’拿着笔记本。 \r\n\u{3000}\u{3000}他想了想…… \r\n\u{3000}\u{3000}另一位说：‘你好’。";
+
+    #[test]
+    fn execution_text_normalizes_line_breaks_and_unsupported_symbols() {
+        let spoken = execution_text(FAILING_SLICE);
+        assert!(
+            !spoken.contains('\n') && !spoken.contains('\r') && !spoken.contains('\u{3000}'),
+            "interior line breaks become plain spaces: {spoken:?}"
+        );
+        assert!(
+            !spoken.contains(['‘', '’', '\'']),
+            "single quotes map to supported double quotes: {spoken:?}"
+        );
+        assert!(spoken.contains("\"你好\""), "mapped to ASCII double quotes");
+        assert!(spoken.contains('…'), "ellipsis stays");
+        // 原文不动：规范化只作用于送入引擎的文本。
+        assert!(FAILING_SLICE.contains('\r') && FAILING_SLICE.contains('‘'));
+        assert_eq!(
+            execution_text("阿明·小林"),
+            "阿明 小林",
+            "interpunct separates names"
+        );
+        assert_eq!(
+            execution_text("50% off"),
+            "50% off",
+            "digits and percent pass"
+        );
+        assert_eq!(
+            execution_text("你好🙂"),
+            "你好🙂",
+            "unknown content reaches backend"
+        );
+        assert_eq!(execution_text("他说don’t走"), "他说don't走");
+        assert_eq!(execution_text("～~–"), "……—", "tilde and en dash map");
+        assert_eq!(
+            execution_text("『x』〈y〉[z]\u{feff}\u{200b}"),
+            "“x”《y》【z】",
+            "brackets map and zero-width noise is dropped"
+        );
+        assert_eq!(
+            execution_text("　\n\r "),
+            " ",
+            "whitespace collapses per character"
+        );
     }
 
     #[test]
@@ -79,7 +170,7 @@ mod tests {
     #[test]
     fn unsupported_input_and_invalid_budgets_are_explicit() -> Result<()> {
         let frontend = frontend();
-        assert!(!frontend.phonemes("你好Kokoro")?.is_empty());
+        assert!(frontend.phonemes("你好Kokoro").is_err());
         assert!(frontend.phonemes("你好🙂").is_err());
         assert!(frontend.segments("你好", 0).is_err());
         assert!(frontend.segments("你好", 511).is_err());
@@ -104,7 +195,7 @@ mod tests {
         let mixed = frontend.phonemes("你好hello你好")?;
         assert!(mixed.contains(&english));
         assert!(!frontend.phonemes("你好S")?.is_empty());
-        assert!(!frontend.phonemes("你好zorbulate")?.is_empty());
+        assert!(frontend.phonemes("你好zorbulate").is_err());
         assert!(frontend.phonemes("你好hello🙂").is_err());
         let text = "你好hello-world你好";
         let segments = frontend.segments(text, 15)?;
@@ -187,12 +278,55 @@ pub struct Frontend {
     jieba: Jieba,
     max_word_chars: usize,
     tags: HashMap<String, (u64, String)>,
+    espeak: Option<EspeakOptions>,
+    bundle: Option<std::path::PathBuf>,
+    verified_espeak: OnceLock<EspeakOptions>,
+}
+
+fn default_espeak_bundle() -> Option<std::path::PathBuf> {
+    if let Some(root) = std::env::var_os("TALECHIME_ESPEAK_DIR") {
+        return Some(root.into());
+    }
+    let executable = std::env::current_exe().ok()?;
+    let parent = executable.parent()?;
+    let relative = "talechime-helpers/espeak-ng-1.52.0";
+    let release = parent.join(relative);
+    if release.is_dir() {
+        return Some(release);
+    }
+    // Cargo puts binaries in target/{debug,release} and test binaries in deps.
+    let profile = if parent.file_name().is_some_and(|name| name == "deps") {
+        parent.parent().unwrap_or(parent)
+    } else {
+        parent
+    };
+    if profile
+        .file_name()
+        .is_some_and(|name| name == "debug" || name == "release")
+        && let Some(target) = profile.parent()
+    {
+        let development = target.join(relative);
+        if development.is_dir() {
+            return Some(development);
+        }
+    }
+    Some(release)
 }
 
 impl Frontend {
     /// Split complete original text by phoneme budget, preserving original byte
     /// ranges. No normalized or phoneme offset is substituted for a source byte.
     pub fn segments(&self, text: &str, max_phonemes: usize) -> Result<Vec<Segment>> {
+        self.segments_cancellable(text, max_phonemes, &|| false)
+    }
+
+    /// Segment text while observing cancellation during pronunciation.
+    pub fn segments_cancellable(
+        &self,
+        text: &str,
+        max_phonemes: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<Segment>> {
         if !(1..=510).contains(&max_phonemes) {
             candle_core::bail!("Kokoro phoneme budget must be 1..=510");
         }
@@ -203,6 +337,9 @@ impl Frontend {
         let mut cursor = 0;
         let mut pending_start = 0;
         while cursor < text.len() {
+            if cancelled() {
+                candle_core::bail!("Kokoro frontend cancelled");
+            }
             let mut candidates: Vec<_> = text[cursor..]
                 .char_indices()
                 .skip(1)
@@ -241,7 +378,7 @@ impl Frontend {
             while lower < upper {
                 let middle = (lower + upper) / 2;
                 let end = boundaries[middle];
-                let phonemes = self.phonemes(&text[cursor..end])?;
+                let phonemes = self.phonemes_cancellable(&text[cursor..end], cancelled)?;
                 if phonemes.chars().count() <= max_phonemes {
                     best = Some((end, phonemes));
                     lower = middle + 1;
@@ -260,7 +397,7 @@ impl Frontend {
                     .find(|(_, c)| "。！？；!?;\n".contains(*c))
             {
                 let preferred = cursor + position + c.len_utf8();
-                let candidate = self.phonemes(&text[cursor..preferred])?;
+                let candidate = self.phonemes_cancellable(&text[cursor..preferred], cancelled)?;
                 if !candidate.is_empty() && candidate.chars().count() <= max_phonemes {
                     end = preferred;
                     phonemes = candidate;
@@ -336,14 +473,41 @@ impl Frontend {
             jieba,
             max_word_chars,
             tags,
+            espeak: None,
+            bundle: default_espeak_bundle(),
+            verified_espeak: OnceLock::new(),
         })
+    }
+
+    /// Configure host-verified eSpeak CLI and data for genuinely unknown English words.
+    pub fn load_with_espeak(root: &Path, options: EspeakOptions) -> Result<Self> {
+        let mut frontend = Self::load(root)?;
+        frontend.espeak = Some(options);
+        frontend.bundle = None;
+        Ok(frontend)
     }
 
     /// Normalize and pronounce Mandarin text with embedded English.
     /// Unsupported content is rejected rather than silently omitted.
     pub fn phonemes(&self, text: &str) -> Result<String> {
-        let normalized = normalize::normalize(text)?;
-        self.mixed_phonemes(&normalized, |part| self.phonemes_normalized(part, None))
+        self.phonemes_cancellable(text, &|| false)
+    }
+
+    /// Pronounce text while allowing an in-flight English fallback to be cancelled.
+    pub fn phonemes_cancellable(&self, text: &str, cancelled: &dyn Fn() -> bool) -> Result<String> {
+        if cancelled() {
+            candle_core::bail!("Kokoro frontend cancelled");
+        }
+        let normalized = normalize::normalize(&execution_text(text))?;
+        if std::env::var("TALECHIME_TEXT_DIAGNOSTICS").is_ok_and(|value| value == "1") {
+            eprintln!(
+                "TALECHIME_TEXT_DIAGNOSTIC {}",
+                serde_json::json!({"backend":"kokoro","phase":"normalized_text","execution_text":normalized})
+            );
+        }
+        self.mixed_phonemes(&normalized, cancelled, |part| {
+            self.phonemes_normalized(part, None)
+        })
     }
 
     /// Apply contextual polyphone predictions to each Mandarin span.
@@ -354,8 +518,14 @@ impl Frontend {
         context: &mut crate::context::ContextModel,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<String> {
-        let normalized = normalize::normalize(text)?;
-        self.mixed_phonemes(&normalized, |part| {
+        let normalized = normalize::normalize(&execution_text(text))?;
+        if std::env::var("TALECHIME_TEXT_DIAGNOSTICS").is_ok_and(|value| value == "1") {
+            eprintln!(
+                "TALECHIME_TEXT_DIAGNOSTIC {}",
+                serde_json::json!({"backend":"kokoro","phase":"normalized_text","execution_text":normalized})
+            );
+        }
+        self.mixed_phonemes(&normalized, cancelled, |part| {
             let mut readings = vec![None; part.chars().count()];
             for prediction in context.predict(part, cancelled)? {
                 let target = readings.get_mut(prediction.index).ok_or_else(|| {
@@ -372,6 +542,7 @@ impl Frontend {
     fn mixed_phonemes(
         &self,
         normalized: &str,
+        cancelled: &dyn Fn() -> bool,
         mut mandarin: impl FnMut(&str) -> Result<String>,
     ) -> Result<String> {
         static ENGLISH: OnceLock<std::result::Result<loqui_g2p::G2p, String>> = OnceLock::new();
@@ -383,14 +554,17 @@ impl Frontend {
         let mut pieces = Vec::new();
         let mut cursor = 0;
         for span in spans.find_iter(normalized) {
+            if cancelled() {
+                candle_core::bail!("Kokoro frontend cancelled");
+            }
             if span.start() > cursor {
-                pieces.push(mandarin(&normalized[cursor..span.start()])?);
+                pieces.push(mandarin(normalized[cursor..span.start()].trim())?);
             }
             let english = ENGLISH
                 .get_or_init(|| {
                     loqui_g2p::G2p::new(
                         loqui_g2p::Dialect::American,
-                        loqui_g2p::OovFallback::Neural,
+                        loqui_g2p::OovFallback::SpellOut,
                     )
                     .map_err(|error| error.to_string())
                 })
@@ -398,7 +572,25 @@ impl Frontend {
                 .map_err(|error| {
                     candle_core::Error::Msg(format!("English frontend unavailable: {error}"))
                 })?;
-            let tokens = english.tokens(span.as_str());
+            let tokens = english.tokens_with_fallback(span.as_str(), &|word| {
+                let options = if let Some(options) = self.espeak.as_ref() {
+                    options
+                } else if let Some(options) = self.verified_espeak.get() {
+                    options
+                } else {
+                    let root = self.bundle.as_ref().ok_or_else(|| {
+                        candle_core::Error::Msg(
+                            "Kokoro English fallback resources are not configured".into(),
+                        )
+                    })?;
+                    let verified = EspeakOptions::from_bundle_cancellable(root, cancelled)?;
+                    let _ = self.verified_espeak.set(verified);
+                    self.verified_espeak.get().ok_or_else(|| {
+                        candle_core::Error::Msg("eSpeak bundle verification failed".into())
+                    })?
+                };
+                options.pronounce(word, cancelled).map(Some)
+            })?;
             if tokens.iter().any(|token| {
                 token.text.chars().any(|c| c.is_ascii_alphabetic())
                     && token.phonemes.trim().is_empty()
@@ -422,7 +614,7 @@ impl Frontend {
             cursor = span.end();
         }
         if cursor < normalized.len() {
-            pieces.push(mandarin(&normalized[cursor..])?);
+            pieces.push(mandarin(normalized[cursor..].trim())?);
         }
         Ok(pieces
             .into_iter()

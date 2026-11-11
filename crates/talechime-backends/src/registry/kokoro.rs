@@ -1,6 +1,10 @@
 use super::*;
 use crate::kokoro as model;
 
+// Inference identity is independent of the v3 verified resource directory.
+const INFERENCE_REVISION: &str =
+    "01e7505-runtime-f32-v3-text-v3-espeak-1.52.0-4870adfa25b1a32b4361592f1be8a40337c58d6c";
+
 pub(super) const REGISTRATION: Registration = Registration {
     id: "kokoro",
     default_model: model::MODEL,
@@ -33,7 +37,7 @@ impl ModelAdapter for Adapter {
         model::available_devices()
     }
     fn revision(&self) -> &'static str {
-        model::resources::REVISION
+        INFERENCE_REVISION
     }
     fn calibrates(&self) -> bool {
         false

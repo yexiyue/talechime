@@ -384,6 +384,7 @@ async fn real_cuda_voice_design_production_repeat() -> anyhow::Result<()> {
                 TEXT.to_owned(),
                 "年轻女性，声音清晰自然，用平静温柔的语气讲述。".to_owned(),
                 path.clone(),
+                design::Options::default(),
             ),
         )
         .await??;

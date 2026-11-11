@@ -1,22 +1,22 @@
-//! Chinese/English text frontend (`indextts/utils/front.py` subset).
-//!
-//! Ported exactly: `char_rep_map`/`zh_char_rep_map` first-match folding,
-//! `<字|读音>` pronunciation annotations, pinyin-tone save/restore with
-//! `correct_pinyin` (jqx + u/ü → v), tech-term hyphen protection, name
-//! protection, the English-contraction rewrite and `use_chinese`
-//! language routing.
-//!
-//! Documented approximation: upstream `normalize()` delegates number/date
-//! normalization to the wetext / TensorFlow-TN stack, which is not ported.
-//! This module implements a pragmatic subset (Chinese and English
-//! cardinal numbers, decimals, percentages, dates, clock times). Model
-//! modules downstream of `normalize` are exact; this stage is not, and
-//! Python-oracle comparisons must exclude it.
+//! Fixed IndexTTS text protections, annotations and resource-backed normalization.
+//! Japanese segmentation lives in `japanese`; CN/EN normalization uses the pinned
+//! WeText FSTs. Missing resources fail explicitly; no approximate number fallback.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use candle_core::Result;
 use regex::Regex;
+use std::{
+    cell::RefCell,
+    path::{Path, PathBuf},
+};
+mod fst;
+mod nemo;
+mod normalization;
+mod reorder;
+
+pub(crate) mod japanese;
 
 /// (pattern, replacement) pairs in upstream insertion order. Replacement
 /// scans position by position and takes the first matching key, exactly
@@ -75,6 +75,9 @@ pub struct TextFrontend {
     alpha_re: Regex,
     pinyin_re: Regex,
     pron_re: Regex,
+    normalization_root: Option<PathBuf>,
+    normalization: RefCell<Option<normalization::Normalization>>,
+    spanish: RefCell<Option<normalization::Spanish>>,
 }
 
 impl TextFrontend {
@@ -89,6 +92,9 @@ impl TextFrontend {
         base_map.extend_from_slice(&CHAR_REP_MAP_TAIL);
         Self {
             glossary: Vec::new(),
+            normalization_root: None,
+            normalization: RefCell::new(None),
+            spanish: RefCell::new(None),
             zh_map,
             base_map,
             // (?i)(what|where|...)'s -> \1 is
@@ -174,10 +180,106 @@ impl TextFrontend {
             .is_some_and(|c| c.is_ascii_alphabetic())
     }
 
-    /// `TextNormalizer.normalize`. The zh/en branch is chosen with
-    /// `use_chinese` unless `lang_zh` forces it.
-    pub fn normalize(&self, text: &str, lang_zh: bool) -> String {
-        let zh = lang_zh || self.use_chinese(text);
+    /// The fixed inference frontend order, before token-budget segmentation.
+    #[cfg(test)]
+    pub(crate) fn prepare(
+        &self,
+        text: &str,
+        language: &str,
+        normalize: bool,
+        japanese: Option<&japanese::JapaneseFrontend>,
+    ) -> Result<String> {
+        self.prepare_with_cancel(text, language, normalize, japanese, &|| false)
+    }
+
+    pub(crate) fn prepare_with_cancel(
+        &self,
+        text: &str,
+        language: &str,
+        normalize: bool,
+        japanese: Option<&japanese::JapaneseFrontend>,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<String> {
+        if cancelled() {
+            candle_core::bail!("IndexTTS text processing cancelled");
+        }
+        let mut text = self.clean_pattern(text);
+        if normalize && matches!(language, "zh" | "zhen" | "en") {
+            text = self.normalize_with_cancel(&text, cancelled)?;
+        }
+        if normalize && language == "es" {
+            let mut spanish = self.spanish.borrow_mut();
+            if spanish.is_none() {
+                let root = self.normalization_root.as_ref().ok_or_else(|| {
+                    candle_core::Error::Msg("IndexTTS TN resources were not configured".into())
+                })?;
+                *spanish = Some(normalization::Spanish::load(&root.with_file_name("es"))?);
+            }
+            text = spanish
+                .as_ref()
+                .ok_or_else(|| candle_core::Error::Msg("Spanish TN was not loaded".into()))?
+                .normalize_with_cancel(&text, cancelled)?;
+        }
+        if matches!(language, "ja" | "zh" | "zhen" | "en") {
+            text = text.to_lowercase();
+        }
+        if language == "es" {
+            text = text.to_uppercase();
+        }
+        text = apply_pronunciation_annotations(&text);
+        if language == "ja" {
+            let japanese = japanese.ok_or_else(|| {
+                candle_core::Error::Msg("IndexTTS Japanese dictionary is not prepared".into())
+            })?;
+            text = japanese.process_with_cancel(&text, cancelled)?;
+        }
+        Ok(restore_special_token_case(&text))
+    }
+
+    /// Configure the fixed FST directory. Resources load lazily when CN/EN TN
+    /// is requested; Japanese does not run these normalizers.
+    pub fn with_resources(directory: &Path) -> Self {
+        Self {
+            normalization_root: Some(directory.to_owned()),
+            ..Self::new()
+        }
+    }
+
+    /// Normalize using the official automatic CN/EN text route, independently
+    /// of the acoustic language embedding. Resource failures are explicit.
+    pub fn normalize(&self, text: &str) -> Result<String> {
+        self.normalize_with_cancel(text, &|| false)
+    }
+
+    /// Normalize with the owning request's cancellation signal.
+    pub fn normalize_with_cancel(
+        &self,
+        text: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<String> {
+        if cancelled() {
+            candle_core::bail!("IndexTTS text processing cancelled");
+        }
+        let mut normalization = self.normalization.borrow_mut();
+        if normalization.is_none() {
+            let root = self.normalization_root.as_ref().ok_or_else(|| {
+                candle_core::Error::Msg("IndexTTS TN resources were not configured".into())
+            })?;
+            *normalization = Some(normalization::Normalization::load(root)?);
+        }
+        let normalization = normalization.as_mut().ok_or_else(|| {
+            candle_core::Error::Msg("IndexTTS TN resources were not loaded".into())
+        })?;
+        self.normalize_with(text, |text, chinese| {
+            normalization.normalize_with_cancel(text, chinese, cancelled)
+        })
+    }
+
+    fn normalize_with(
+        &self,
+        text: &str,
+        mut normalize: impl FnMut(&str, bool) -> Result<String>,
+    ) -> Result<String> {
         // Protect <字|读音> annotations from all rewriting.
         let mut placeholders: Vec<(String, String)> = Vec::new();
         let mut protected = self
@@ -190,6 +292,7 @@ impl TextFrontend {
             })
             .to_string();
 
+        let zh = self.use_chinese(&protected);
         protected = self
             .contraction_re
             .replace_all(&protected, "${1} is")
@@ -200,10 +303,10 @@ impl TextFrontend {
         }
 
         let result = if zh {
-            let (step1, tech) = self.save_tech_terms(&protected);
+            let (step1, tech) = self.save_tech_terms(protected.trim_end());
             let (step2, pinyin) = self.save_pinyin_tones(&step1);
             let (step3, names) = self.save_names(&step2);
-            let mut normalized = zh_number_normalize(&step3);
+            let mut normalized = normalize(&step3, true)?;
             if let Some(names) = names {
                 normalized = restore_placeholders_generic(&normalized, &names, "<n_");
             }
@@ -214,7 +317,7 @@ impl TextFrontend {
             self.fold(&normalized, &self.zh_map)
         } else {
             let (step1, tech) = self.save_tech_terms(&protected);
-            let normalized = en_number_normalize(&step1);
+            let normalized = normalize(&step1, false)?;
             let normalized = self.restore_tech_terms(normalized, &tech);
             self.fold(&normalized, &self.base_map)
         };
@@ -223,7 +326,7 @@ impl TextFrontend {
         for (key, original) in placeholders {
             out = out.replace(&key, &original);
         }
-        out
+        Ok(out)
     }
 
     fn save_tech_terms(&self, text: &str) -> (String, Vec<String>) {
@@ -393,257 +496,15 @@ pub fn apply_pronunciation_annotations(text: &str) -> String {
         .to_string()
 }
 
-// ---------------------------------------------------------------------------
-// Number normalization subset (the documented approximation).
-// ---------------------------------------------------------------------------
-
-const CN_DIGITS: [&str; 10] = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
-const CN_UNITS: [(&str, u32); 4] = [("十", 10), ("百", 100), ("千", 1_000), ("万", 10_000)];
-
-/// Integer ≤ 99_999_999 to Chinese cardinal reading.
-fn chinese_cardinal(mut n: u64) -> String {
-    if n == 0 {
-        return "零".to_string();
-    }
-    if n >= 100_000_000 {
-        // 亿-scale; recurse once.
-        let yi = n / 100_000_000;
-        n %= 100_000_000;
-        let rest = if n > 0 {
-            chinese_cardinal(n)
-        } else {
-            String::new()
-        };
-        let head = if rest.is_empty() {
-            format!("{}亿", chinese_cardinal(yi))
-        } else if n < 10_000_000 {
-            format!("{}亿零{}", chinese_cardinal(yi), rest)
-        } else {
-            format!("{}亿{}", chinese_cardinal(yi), rest)
-        };
-        return head;
-    }
-    let mut parts: Vec<String> = Vec::new();
-    let wan = n / 10_000;
-    let low = n % 10_000;
-    if wan > 0 {
-        parts.push(format!("{}万", four_digits(wan as u32)));
-    }
-    if low > 0 {
-        let s = if wan > 0 && low < 1000 {
-            format!("零{}", four_digits(low as u32))
-        } else {
-            four_digits(low as u32)
-        };
-        parts.push(s);
-    }
-    parts.concat()
-}
-
-/// 1..=9999 with 十/百/千 units and interior 零.
-fn four_digits(mut n: u32) -> String {
-    let mut out = String::new();
-    let mut zero_pending = false;
-    for &(unit, scale) in CN_UNITS.iter().rev() {
-        let d = n / scale;
-        n %= scale;
-        if d == 0 {
-            if !out.is_empty() && n > 0 {
-                zero_pending = true;
-            }
-            continue;
-        }
-        if zero_pending {
-            out.push('零');
-            zero_pending = false;
-        }
-        if !(d == 1 && unit == "十" && out.is_empty()) {
-            out.push_str(CN_DIGITS[d as usize]);
-        }
-        out.push_str(unit);
-    }
-    if n > 0 {
-        if zero_pending {
-            out.push('零');
-        }
-        out.push_str(CN_DIGITS[n as usize]);
-    }
-    out
-}
-
-fn zh_number_normalize(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let chars: Vec<char> = text.chars().collect();
-    let n = chars.len();
-    let mut i = 0usize;
-    let digit = |c: char| c.is_ascii_digit();
-    while i < n {
-        let c = chars[i];
-        if !digit(c) {
-            out.push(c);
-            i += 1;
-            continue;
-        }
-        // Consume [0-9]+(\.[0-9]+)?
-        let start = i;
-        let mut j = i;
-        while j < n && digit(chars[j]) {
-            j += 1;
-        }
-        let mut decimal_digits: Vec<u32> = Vec::new();
-        if j + 1 < n && chars[j] == '.' && digit(chars[j + 1]) {
-            let mut k = j + 1;
-            while k < n && digit(chars[k]) {
-                decimal_digits.push(chars[k].to_digit(10).expect("ascii digit"));
-                k += 1;
-            }
-            j = k;
-        }
-        let int_digits: Vec<u32> = {
-            let mut v = Vec::new();
-            let mut k = start;
-            while k < n && digit(chars[k]) {
-                v.push(chars[k].to_digit(10).expect("ascii digit"));
-                k += 1;
-            }
-            v
-        };
-        let int_value: u64 = int_digits.iter().fold(0u64, |acc, d| acc * 10 + *d as u64);
-
-        // Year pattern: 4 digits followed by 年 → digit-wise reading.
-        if int_digits.len() == 4 && j < n && chars[j] == '年' {
-            for d in &int_digits {
-                out.push_str(CN_DIGITS[*d as usize]);
-            }
-            out.push('年');
-            i = j + 1;
-            continue;
-        }
-        // Date units: read as cardinal.
-        let unit = if j < n { Some(chars[j]) } else { None };
-        let reading = if unit == Some('月') || unit == Some('日') || unit == Some('号') {
-            // Month/day: cardinals, but 10..19 read 十X (four_digits does).
-            four_digits(int_value.min(99) as u32)
-        } else {
-            let mut s = chinese_cardinal(int_value);
-            if !decimal_digits.is_empty() {
-                s.push('点');
-                for d in &decimal_digits {
-                    s.push_str(CN_DIGITS[*d as usize]);
-                }
-            }
-            s
-        };
-        if unit == Some('%') {
-            out.push_str("百分之");
-            out.push_str(&reading);
-            i = j + 1;
-            continue;
-        }
-        out.push_str(&reading);
-        i = j;
-    }
-    out
-}
-
-const EN_ONES: [&str; 20] = [
-    "zero",
-    "one",
-    "two",
-    "three",
-    "four",
-    "five",
-    "six",
-    "seven",
-    "eight",
-    "nine",
-    "ten",
-    "eleven",
-    "twelve",
-    "thirteen",
-    "fourteen",
-    "fifteen",
-    "sixteen",
-    "seventeen",
-    "eighteen",
-    "nineteen",
-];
-const EN_TENS: [&str; 10] = [
-    "", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
-];
-
-fn en_below_1000(n: u64) -> String {
-    let mut out = String::new();
-    let hundreds = n / 100;
-    let mut rest = n % 100;
-    if hundreds > 0 {
-        out.push_str(EN_ONES[hundreds as usize]);
-        out.push_str(" hundred");
-    }
-    if rest > 0 {
-        if !out.is_empty() {
-            out.push(' ');
-        }
-        if rest < 20 {
-            out.push_str(EN_ONES[rest as usize]);
-        } else {
-            out.push_str(EN_TENS[(rest / 10) as usize]);
-            rest %= 10;
-            if rest > 0 {
-                out.push('-');
-                out.push_str(EN_ONES[rest as usize]);
-            }
-        }
-    }
-    out
-}
-
-fn english_cardinal(n: u64) -> String {
-    if n < 1000 {
-        return en_below_1000(n);
-    }
-    let mut parts: Vec<String> = Vec::new();
-    let scales: [(u64, &str); 3] = [
-        (1_000_000_000, "billion"),
-        (1_000_000, "million"),
-        (1_000, "thousand"),
-    ];
-    let mut rest = n;
-    for (scale, name) in scales {
-        let v = rest / scale;
-        rest %= scale;
-        if v > 0 {
-            parts.push(format!("{} {}", en_below_1000(v), name));
-        }
-    }
-    if rest > 0 {
-        parts.push(en_below_1000(rest));
-    }
-    parts.join(" ")
-}
-
-fn en_number_normalize(text: &str) -> String {
-    static NUM_RE: OnceLock<Regex> = OnceLock::new();
-    let re = NUM_RE.get_or_init(|| Regex::new(r"[0-9]+(\.[0-9]+)?").expect("static regex"));
+/// Restore special-token case after language-specific preprocessing, matching
+/// the final substitution in the fixed `infer_v2_5.py` text path.
+pub(crate) fn restore_special_token_case(text: &str) -> String {
+    static SPECIAL_RE: OnceLock<Regex> = OnceLock::new();
+    let re = SPECIAL_RE.get_or_init(|| Regex::new(r"<\|([^|]+)\|>").expect("static regex"));
     re.replace_all(text, |caps: &regex::Captures| {
-        let whole = caps.get(0).expect("whole match").as_str();
-        let (int_part, frac_part) = match whole.split_once('.') {
-            Some((i, f)) => (i, Some(f)),
-            None => (whole, None),
-        };
-        let int_value: u64 = int_part.parse().unwrap_or(0);
-        let mut s = english_cardinal(int_value);
-        if let Some(frac) = frac_part {
-            s.push_str(" point");
-            for c in frac.chars() {
-                let d = c.to_digit(10).expect("ascii digit") as usize;
-                s.push(' ');
-                s.push_str(EN_ONES[d]);
-            }
-        }
-        s
+        format!("<|{}|>", caps[1].to_uppercase())
     })
-    .to_string()
+    .into_owned()
 }
 
 #[cfg(test)]
@@ -677,49 +538,116 @@ mod tests {
     }
 
     #[test]
-    fn chinese_cardinals() {
-        assert_eq!(chinese_cardinal(0), "零");
-        assert_eq!(chinese_cardinal(10), "十");
-        assert_eq!(chinese_cardinal(15), "十五");
-        assert_eq!(chinese_cardinal(20), "二十");
-        assert_eq!(chinese_cardinal(105), "一百零五");
-        assert_eq!(chinese_cardinal(1005), "一千零五");
-        assert_eq!(chinese_cardinal(123), "一百二十三");
-        assert_eq!(chinese_cardinal(2003), "二千零三");
-        assert_eq!(chinese_cardinal(10000), "一万");
-        assert_eq!(chinese_cardinal(100000), "十万");
-        assert_eq!(chinese_cardinal(100030000), "一亿零三万");
+    fn normalization_requires_explicit_resources() {
+        assert!(TextFrontend::new().normalize("2026年").is_err());
     }
 
     #[test]
-    fn zh_normalize_subset() {
-        let f = TextFrontend::new();
-        assert_eq!(f.normalize("共465篇", true), "共四百六十五篇");
-        assert_eq!(f.normalize("效果666", true), "效果六百六十六");
-        assert_eq!(f.normalize("2.5平方", true), "二点五平方");
-        assert_eq!(f.normalize("2003年", true), "二零零三年");
-        assert_eq!(f.normalize("折扣5%", true), "折扣百分之五");
+    #[cfg(not(target_os = "linux"))]
+    #[ignore = "requires pinned Darwin WeText/Spanish FSTs and UniDic dictionary"]
+    fn complete_public_matrix_matches_official_frontend() {
+        let root = std::env::var_os("TALECHIME_INDEXTTS_WETEXT").expect("fixed TN directory");
+        let dictionary = std::env::var_os("TALECHIME_INDEXTTS_JAPANESE_DICTIONARY")
+            .expect("fixed UniDic dictionary");
+        let frontend = TextFrontend::with_resources(Path::new(&root));
+        let japanese = japanese::JapaneseFrontend::load(Path::new(&dictionary)).unwrap();
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/public-matrix-oracle.json"))
+                .unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            if case.get("expected_rejection").is_some() {
+                continue; // The adapter's five-language API rejects this before the frontend.
+            }
+            assert_eq!(
+                frontend
+                    .prepare(
+                        case["text"].as_str().unwrap(),
+                        case["language"].as_str().unwrap(),
+                        true,
+                        Some(&japanese)
+                    )
+                    .unwrap(),
+                case["output"].as_str().unwrap(),
+                "{}",
+                case["id"]
+            );
+        }
     }
 
     #[test]
-    fn english_cardinals_and_contractions() {
-        assert_eq!(english_cardinal(2), "two");
-        assert_eq!(english_cardinal(15), "fifteen");
-        assert_eq!(english_cardinal(42), "forty-two");
-        assert_eq!(english_cardinal(300), "three hundred");
-        assert_eq!(
-            english_cardinal(1234),
-            "one thousand two hundred thirty-four"
-        );
-        assert_eq!(
-            en_number_normalize("5G and 4G, 2.5%"),
-            "fiveG and fourG, two point five%"
-        );
-        let f = TextFrontend::new();
-        assert_eq!(
-            f.normalize("where's the money?", false),
-            "where is the money?"
-        );
+    #[ignore = "requires explicit pinned WeText FST directory"]
+    fn official_tn_oracle() {
+        let root = std::env::var_os("TALECHIME_INDEXTTS_WETEXT").expect("fixed FST directory");
+        let frontend = TextFrontend::with_resources(Path::new(&root));
+        let fixture: serde_json::Value = serde_json::from_str(if cfg!(target_os = "linux") {
+            include_str!("../tests/fixtures/tn-linux-oracle.json")
+        } else {
+            include_str!("../tests/fixtures/tn-macos-oracle.json")
+        })
+        .unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let text = case["text"].as_str().unwrap();
+            let cleaned = frontend.clean_pattern(text);
+            assert_eq!(
+                frontend.normalize(&cleaned).unwrap(),
+                case["output"].as_str().unwrap(),
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires explicit fixed CN/EN and Spanish FST directories"]
+    fn both_platforms_and_spanish_match_independent_official_oracles() {
+        let root =
+            std::env::var_os("TALECHIME_INDEXTTS_WETEXT").expect("fixed tn/wetext directory");
+        let root = Path::new(&root);
+        for (linux, fixture) in [
+            (
+                false,
+                include_str!("../tests/fixtures/tn-macos-oracle.json"),
+            ),
+            (true, include_str!("../tests/fixtures/tn-linux-oracle.json")),
+        ] {
+            let frontend = TextFrontend::new();
+            let mut tn = normalization::Normalization::load_platform(root, linux).unwrap();
+            let fixture: serde_json::Value = serde_json::from_str(fixture).unwrap();
+            for case in fixture["cases"].as_array().unwrap() {
+                let text = case["text"].as_str().unwrap();
+                let cleaned = frontend.clean_pattern(text);
+                let actual = frontend
+                    .normalize_with(&cleaned, |text, chinese| tn.normalize(text, chinese))
+                    .unwrap();
+                assert_eq!(
+                    actual,
+                    case["output"].as_str().unwrap(),
+                    "linux={linux} {text:?}"
+                );
+            }
+        }
+        compare_spanish_oracle(root);
+    }
+
+    fn compare_spanish_oracle(root: &Path) {
+        let spanish = normalization::Spanish::load(&root.with_file_name("es")).unwrap();
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/spanish-oracle.json")).unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let text = case["text"].as_str().unwrap();
+            assert_eq!(
+                spanish.normalize(text).unwrap(),
+                case["output"].as_str().unwrap(),
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires explicit fixed Spanish NeMo FST directory"]
+    fn spanish_matches_independent_official_oracle() {
+        let root =
+            std::env::var_os("TALECHIME_INDEXTTS_WETEXT").expect("fixed tn/wetext directory");
+        compare_spanish_oracle(Path::new(&root));
     }
 
     #[test]
@@ -739,7 +667,11 @@ mod tests {
     fn tech_terms_protect_hyphens() {
         let f = TextFrontend::new();
         // GPT-5 keeps its hyphen and the digit is still normalized.
-        assert_eq!(f.normalize("GPT-5 发布", true), "GPT-五 发布");
+        assert_eq!(
+            f.normalize_with("GPT-5 发布", |text, _| Ok(text.replace("5", "五")))
+                .unwrap(),
+            "GPT-五 发布"
+        );
     }
 
     #[test]
@@ -747,12 +679,17 @@ mod tests {
         let f = TextFrontend::new();
         // Shorter "an1" must not corrupt "gan1" or "juan1" during placeholder substitution.
         assert_eq!(
-            f.normalize("读作gan1和an1以及juan1", true),
+            f.normalize_with("读作gan1和an1以及juan1", |text, _| Ok(text.to_owned()))
+                .unwrap(),
             "读作gan1和an1以及JVAN1"
         );
         // Shorter "约瑟夫·高登" must not split "约瑟夫·高登-莱维特" before normalizer runs.
         assert_eq!(
-            f.normalize("约瑟夫·高登-莱维特与约瑟夫·高登2人", true),
+            f.normalize_with(
+                "约瑟夫·高登-莱维特与约瑟夫·高登2人",
+                |text, _| Ok(text.replace("2", "二"))
+            )
+            .unwrap(),
             "约瑟夫-高登-莱维特与约瑟夫-高登二人"
         );
     }

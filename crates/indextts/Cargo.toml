@@ -27,16 +27,22 @@ metal = [
 [dependencies]
 candle-nn.workspace = true
 candle-core.workspace = true
+candle-transformers.workspace = true
+tokenizers = { workspace = true, features = ["fancy-regex"] }
 serde.workspace = true
 serde_json.workspace = true
 regex.workspace = true
 rand.workspace = true
 rustfft.workspace = true
 hound.workspace = true
+vibrato.workspace = true
+sha2.workspace = true
+talechime-text.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true
 clap.workspace = true
+tempfile.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 candle-core = { workspace = true, features = ["accelerate"] }

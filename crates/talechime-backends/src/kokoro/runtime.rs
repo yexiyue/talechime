@@ -140,6 +140,12 @@ pub(super) fn run(
                     #[cfg(not(feature = "kokoro-g2pw"))]
                     let phonemes = frontend.phonemes(&text)?;
                     let ids = model.token_ids(&phonemes)?;
+                    if std::env::var("TALECHIME_TEXT_DIAGNOSTICS").is_ok_and(|value| value == "1") {
+                        eprintln!(
+                            "TALECHIME_TEXT_DIAGNOSTIC {}",
+                            serde_json::json!({"backend":"kokoro","phase":"model_tokens","backend_input":text,"phonemes":phonemes,"tokens":ids})
+                        );
+                    }
                     let voice = voices
                         .get(&voice)
                         .ok_or_else(|| anyhow::anyhow!("Kokoro built-in voice was not prepared"))?;

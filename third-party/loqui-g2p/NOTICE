@@ -1,0 +1,96 @@
+loqui
+Copyright (c) 2026 Awakened Labs Inc. Licensed under the MIT License (see LICENSE).
+
+loqui is a Rust rewrite of the core of open-speech: the
+OpenAI-compatible speech and transcription endpoints, backed by Kokoro and
+Whisper. The design, wire contract and several behaviours (voice blending,
+silence trimming, model-switch rollback) are ported from:
+
+  open-speech — https://github.com/jeremy-windsor/open-speech
+  Copyright (c) 2026 Jeremy Windsor. MIT License.
+
+Third-party material embedded in, or downloaded by, this software:
+
+  Kokoro-82M model weights and voice packs — https://huggingface.co/hexgrad/Kokoro-82M
+  ONNX export: https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX
+  Apache License 2.0. Downloaded at runtime; not redistributed in this repository.
+
+  misaki G2P lexicons, version 0.9.4 (us/gb gold and silver) — https://github.com/hexgrad/misaki
+  Apache License 2.0; copy at crates/loqui-g2p/data/LICENSE-misaki-Apache-2.0.
+  Embedded unmodified in crates/loqui-g2p/data/misaki-*.json.
+
+  misaki English G2P logic (misaki/en.py, version 0.9.4) — https://github.com/hexgrad/misaki
+  Apache License 2.0. Ported to Rust in crates/loqui-g2p/src/en.rs.
+
+  spaCy English tokenizer rules (spaCy 3.8.16) — https://github.com/explosion/spaCy
+  Copyright (c) 2016-2026 ExplosionAI GmbH, 2016 spaCy GmbH, 2015 Matthew Honnibal.
+  MIT License. Exported as data to crates/loqui-g2p/data/spacy-en-tokenizer.json;
+  the tokenizer algorithm is reimplemented in crates/loqui-g2p/src/tokenize.rs.
+
+  POS tagger weights (crates/loqui-g2p/data/tagger-en.bin) are original to
+  loqui: an averaged perceptron trained on public-domain Project Gutenberg
+  text and generated sentences, labelled by spaCy's MIT-licensed
+  en_core_web_sm 3.8.0. See tools/parity/README.md to reproduce them.
+
+  English grapheme-to-phoneme models, embedded unmodified:
+    crates/loqui-g2p/data/g2p-en-us.safetensors
+      https://huggingface.co/PeterReid/graphemes_to_phonemes_en_us
+      (revision a5631b285d18d59483c32c0c3379cb9fac924f4b)
+    crates/loqui-g2p/data/g2p-en-gb.safetensors
+      https://huggingface.co/PeterReid/graphemes_to_phonemes_en_gb
+      (revision d8357d5067fa26a5c34134d6bbcf4bbf000c0ac8)
+  Apache License 2.0. BART models trained on the misaki lexicons.
+
+  Whisper model weights (GGML) — https://huggingface.co/ggerganov/whisper.cpp
+  MIT License (OpenAI Whisper). Downloaded at runtime, pinned to a commit
+  revision and SHA-256; not redistributed.
+
+  WeSpeaker ResNet34-LM speaker-embedding weights, trained on VoxCeleb —
+  https://github.com/wenet-e2e/wespeaker (pretrained models,
+  docs/pretrained.md). ONNX export by sherpa-onnx:
+  https://huggingface.co/csukuangfj/speaker-embedding-models
+  (wespeaker_en_voxceleb_resnet34_LM.onnx, revision
+  0743f301363dec56491a490f6d6cbc9d67f9a3bf).
+  Creative Commons Attribution 4.0 International (CC-BY-4.0), the licence of
+  the VoxCeleb dataset. Downloaded at runtime, pinned to a commit revision and
+  SHA-256; not redistributed.
+
+  The Kaldi log mel filterbank (crates/loqui-speaker/src/fbank.rs) is
+  reimplemented from the algorithm Kaldi documents and kaldi-native-fbank
+  implements (Apache License 2.0); no source is copied.
+
+Linked libraries with attribution requirements (compiled into binaries):
+
+  ONNX Runtime — https://github.com/microsoft/onnxruntime
+  Copyright (c) Microsoft Corporation. MIT License. Statically linked by the
+  `ort` crate's prebuilt binaries (loqui-kokoro, loqui-speaker).
+
+  whisper.cpp / ggml — https://github.com/ggml-org/whisper.cpp
+  Copyright (c) 2023-2026 The ggml authors. MIT License. Built from source
+  by the `whisper-rs` crate (loqui-whisper, optional).
+
+  opus-rs — https://github.com/restsend/opus-rs
+  Copyright 2026 restsend.com; Copyright 2001-2023 Xiph.Org, Skype Limited,
+  Octasic, Jean-Marc Valin, Timothy B. Terriberry, CSIRO, Gregory Maxwell,
+  Mark Borgerding, Erik de Castro Lopo, Mozilla, Amazon. BSD-3-Clause.
+  A Rust port of libopus, used to decode and encode Opus (loqui-audio).
+
+Linked libraries under weak copyleft:
+
+  symphonia — https://github.com/pdeljanov/Symphonia
+  Mozilla Public License 2.0 (file-level copyleft). Used unmodified to demux
+  and decode uploaded audio (loqui-audio). Its source is available from the
+  link above and from crates.io.
+
+Optional, off-by-default LGPL component:
+
+  LAME 3.100 — https://lame.sourceforge.io
+  LGPL-2.0-or-later, through the mp3lame-encoder and mp3lame-sys crates
+  (LGPL-3.0). Compiled from source and linked statically only when the `mp3`
+  feature is enabled. A default build contains no LAME code. A binary built
+  with `mp3` must let its users relink it against a modified LAME; running
+  `loqui serve` as a separate process keeps that obligation away from its
+  clients.
+
+No GPL code is linked. Where upstream misaki calls eSpeak NG (GPL-3.0) for
+unknown words, loqui-g2p uses its own embedded neural model instead.

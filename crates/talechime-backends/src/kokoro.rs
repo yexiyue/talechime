@@ -246,6 +246,25 @@ mod tests {
         );
         Ok(())
     }
+    #[test]
+    fn resolved_revision_tracks_oov_semantics_without_changing_resources() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let registry = crate::Registry::new(Some(root.path().to_owned()))?;
+        let expected =
+            "01e7505-runtime-f32-v3-text-v3-espeak-1.52.0-4870adfa25b1a32b4361592f1be8a40337c58d6c";
+        assert_eq!(
+            registry.resolve("kokoro", Some(MODEL))?.revision(),
+            expected
+        );
+        #[cfg(feature = "kokoro-g2pw")]
+        assert_eq!(
+            registry.resolve("kokoro", Some(CONTEXT_MODEL))?.revision(),
+            expected
+        );
+        assert_eq!(resources::REVISION, "01e7505-runtime-f32-v3");
+        assert!(directory_for(root.path(), MODEL).ends_with(resources::REVISION));
+        Ok(())
+    }
     #[tokio::test]
     async fn request_validation_and_forwarding_do_not_require_a_model() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;

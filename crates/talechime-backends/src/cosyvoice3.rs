@@ -5,7 +5,7 @@ pub mod resources;
 mod runtime;
 use std::path::{Path, PathBuf};
 use talechime_core::backend::{Backend, BackendError, Streaming};
-use talechime_protocol::{Capabilities, Device};
+use talechime_protocol::{Capabilities, Device, ParamKind, ParamValue, ParameterSpec};
 use tokio::sync::{mpsc, oneshot};
 
 pub const MODEL: &str = "0.5b";
@@ -35,7 +35,20 @@ pub fn capabilities(root: &Path) -> anyhow::Result<Capabilities> {
         compiled_devices: Vec::new(),
         pronunciation: false,
 
-        parameters: Vec::new(),
+        parameters: vec![
+            ParameterSpec {
+                name: "cross_lingual".into(),
+                kind: ParamKind::Bool,
+                default: ParamValue::Bool(false),
+                description: "使用官方跨语言参考音色模式".into(),
+            },
+            ParameterSpec {
+                name: "text_frontend".into(),
+                kind: ParamKind::Bool,
+                default: ParamValue::Bool(true),
+                description: "官方 WeText 文本前端；含模型控制标记时按官方跳过".into(),
+            },
+        ],
     })
 }
 pub fn compiled_devices() -> Vec<Device> {
@@ -126,6 +139,19 @@ impl Backend for CosyBackend {
                 .params
                 .validate(&caps.parameters)
                 .map_err(|e| BackendError::Unsupported(e.to_string()))?;
+            let cross_lingual = matches!(
+                request.params.get("cross_lingual"),
+                Some(ParamValue::Bool(true))
+            );
+            let text_frontend = !matches!(
+                request.params.get("text_frontend"),
+                Some(ParamValue::Bool(false))
+            );
+            if cross_lingual && instruction.is_some() {
+                return Err(BackendError::Unsupported(
+                    "CosyVoice3 cross-lingual and instructed modes cannot be combined".into(),
+                ));
+            }
             if request.text.trim().is_empty() || !caps.voices.iter().any(|v| v == request.voice) {
                 return Err(BackendError::Unsupported("CosyVoice3 needs nonempty text and an imported reference voice (voices import --text ...)".into()));
             }
@@ -140,6 +166,8 @@ impl Backend for CosyBackend {
                     voice: request.voice.into(),
                     seed: request.seed,
                     instruction,
+                    cross_lingual,
+                    text_frontend,
                     audio,
                 })
                 .await
@@ -205,6 +233,34 @@ mod tests {
     }
 
     use super::*;
+    #[tokio::test]
+    async fn cross_lingual_mode_is_forwarded_and_rejects_style() -> anyhow::Result<()> {
+        use talechime_core::{backend::SegmentRequest, params::GenerationParams};
+        let root = tempfile::tempdir()?;
+        let mut caps = capabilities(root.path())?;
+        caps.voices = vec!["custom:reader".into()];
+        let (tx, mut jobs) = mpsc::channel(1);
+        let backend = CosyBackend {
+            requests: Some(tx),
+            thread: None,
+            caps: std::cell::RefCell::new(caps),
+            root: root.path().into(),
+        };
+        let mut params = GenerationParams::new();
+        params.insert("cross_lingual", ParamValue::Bool(true));
+        let request = |style| SegmentRequest {
+            text: "Hello",
+            voice: "custom:reader",
+            style,
+            seed: 7,
+            params: &params,
+        };
+        let _audio = backend.stream(request(None)).await?;
+        assert!(jobs.try_recv()?.cross_lingual);
+        assert!(backend.stream(request(Some("sad"))).await.is_err());
+        Ok(())
+    }
+
     #[tokio::test]
     async fn style_is_forwarded_to_owner_without_changing_the_voice() -> anyhow::Result<()> {
         use talechime_core::{backend::SegmentRequest, params::GenerationParams};

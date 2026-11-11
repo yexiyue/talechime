@@ -1,0 +1,31 @@
+{
+  "misaki_revision": "fba1236595f2d2bf21d414ba6e57d25256afada3",
+  "kokoro_revision": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+  "versions": {
+    "misaki": "0.9.4",
+    "spacy": "3.7.5",
+    "en-core-web-sm": "3.7.1",
+    "espeakng-loader": "0.2.4",
+    "phonemizer-fork": "3.3.2",
+    "jieba": "0.42.1",
+    "pypinyin": "0.55.0",
+    "pypinyin-dict": "0.9.0",
+    "cn2an": "0.5.24",
+    "num2words": "0.5.14"
+  },
+  "spacy_model_wheel_sha256": "86cc141f63942d4b2c5fcee06630fd6f904788d2f0ab005cce45aadb8fb73889",
+  "english": "US en.G2P(trf=False, fallback=EspeakFallback, unk=\"\")",
+  "source_sha256": {
+    "zh.py": "97d16aec581832845d2566cb24da2ba045d4552fb65a5017a6eac8feef654c81",
+    "zh_frontend.py": "002023955e31c692cea2dcd0dea1836df84a9ff8dab966f5ae43ce276bdd1c0c",
+    "en.py": "a9c36c90a3fa6c6084e9042fd8e19f6049add4f1435d8fe5ca1b77f3529a98f4",
+    "espeak.py": "ebc39e807eeae7b99322109d8477aa16b605427f9cc852a4b1f6f72c45806a09"
+  },
+  "cases": [
+    {
+      "id": "fullwidth_percent",
+      "text": "你好％",
+      "phonemes": "ㄋㄧ2ㄏㄠ3❓"
+    }
+  ]
+}

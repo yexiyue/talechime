@@ -15,6 +15,7 @@ pub(crate) fn identity(
         "implementation": implementation,
         "version": env!("CARGO_PKG_VERSION"),
         "revision": revision,
+        "text_semantics_revision": crate::TEXT_SEMANTICS_REVISION,
         "device": device,
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,

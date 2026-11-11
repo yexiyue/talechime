@@ -15,6 +15,9 @@ pub(crate) struct Input {
     pub filename: &'static str,
     pub size: u64,
     pub sha256: &'static str,
+    /// A fixed public artifact outside the Hub; never inherits Hub credentials.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<&'static str>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Output {
@@ -132,7 +135,8 @@ pub(super) fn cached_input(
     if verified(&component, input.size, input.sha256, control)? {
         return Ok(Some(component));
     }
-    if let Some(path) = downloads.cached_path(input.repo, input.revision, input.filename)
+    if input.url.is_none()
+        && let Some(path) = downloads.cached_path(input.repo, input.revision, input.filename)
         && verified(&path, input.size, input.sha256, control)?
     {
         return Ok(Some(path));
@@ -158,15 +162,35 @@ pub(super) fn build(
     let mut input_growth = 0u64;
     let mut seen = std::collections::BTreeSet::new();
     for input in recipe.inputs {
+        if let Some(url) = input.url {
+            let url = reqwest::Url::parse(url)?;
+            anyhow::ensure!(
+                url.scheme() == "https"
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                    && url.query().is_none()
+                    && url.fragment().is_none(),
+                "resource URL must be fixed public HTTPS without credentials or query"
+            );
+        }
         anyhow::ensure!(
             safe_relative(Path::new(input.path))
                 && safe_relative(Path::new(input.filename))
                 && seen.insert(input.path),
             "invalid or duplicate preparation input"
         );
+        let revision_pinned = if input.url.is_some() {
+            !input.revision.is_empty()
+                && input.revision.len() <= 128
+                && input
+                    .revision
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+        } else {
+            input.revision.len() == 40 && input.revision.bytes().all(|b| b.is_ascii_hexdigit())
+        };
         anyhow::ensure!(
-            input.revision.len() == 40
-                && input.revision.bytes().all(|b| b.is_ascii_hexdigit())
+            revision_pinned
                 && input.sha256.len() == 64
                 && input.sha256.bytes().all(|b| b.is_ascii_hexdigit()),
             "unpinned preparation input"

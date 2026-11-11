@@ -18,6 +18,7 @@ pub mod config;
 pub mod conformer;
 pub mod dit;
 pub mod dsp;
+pub mod emotion;
 pub mod front;
 pub mod generation;
 pub mod gpt;

@@ -116,8 +116,9 @@ pub(super) fn normalize(text: &str) -> Result<String> {
             Ok(format!("{}到{}{}", number(a)?, number(b)?, &value[end..]))
         },
     )?;
-    text = replace(&text, r"[0-9]{2,4}年", |value| {
+    text = replace(&text, r"[0-9]{2,4}[ \t\u{3000}]*年", |value| {
         Ok(value[..value.len() - '年'.len_utf8()]
+            .trim_end_matches([' ', '\t', '\u{3000}'])
             .bytes()
             .map(|b| DIGITS[(b - b'0') as usize])
             .collect::<String>()
@@ -185,6 +186,8 @@ mod tests {
         assert!(normalize("0.12345678901234567").is_err());
         assert_eq!(normalize("价格是１２３元。")?, "价格是一百二十三元.");
         assert_eq!(normalize("2０2６年１０月２７日")?, "二零二六年十月二十七日");
+        assert_eq!(normalize("今天是 2026 年。")?, "今天是 二零二六年.");
+        assert_eq!(normalize("２０２６　年")?, "二零二六年");
         assert_eq!(
             normalize("００２６年，１２.５%，１２/３４，１２-１３个")?,
             "零零二六年, 百分之十二点五, 三十四分之十二, 十二到十三个"

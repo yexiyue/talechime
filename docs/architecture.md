@@ -240,3 +240,13 @@ Kokoro 两变体、CosyVoice3 和 IndexTTS 均已登记固定配方。维护方�
 原生准备 API 的阶段、取消与发布边界见[接口说明](native-resource-preparation.md)。
 
 原生准备的受控工作区统一处理组件缓存与进度。后端只声明组件名称及其转换函数，不能注册任意远端脚本；每次转换回调收到固定输入视图、暂存目标和取消控制。组件摘要验证后可跨失败重试或 Kokoro 变体复用，整个模型仍以独立版本目录原子发布。准备租约覆盖 worker 退出和暂存清理，Registry 构造不会恢复执行。清理与提交后持久化错误语义见 [原生资源准备](native-resource-preparation.md)。
+
+
+### 文本与条件算法身份
+
+`ResolvedModel::revision()` 标识所选模型的固定资源/推理版本，
+`text_semantics_revision()` 另行标识本批文本及语言条件算法（当前
+`official-backend-text-v2`）。宿主复用已保存音频时须同时冻结和比较这两个值；
+仅模型名或权重提交不能识别 Qwen Auto、Omni 自动语言及 Kokoro OOV 等代码行为变化。
+引擎的执行缓存身份也包含算法字段。共享算法版本保守使旧算法身份失效，
+权重目录仍按实际资源身份复用；此 API 不自动迁移宿主任务或改写旧声音。

@@ -1,0 +1,72 @@
+{
+  "nemo_text_processing": "1.2.0",
+  "pynini": "2.1.6.post1",
+  "input_case": "cased",
+  "lang": "es",
+  "cases": [
+    {
+      "text": "Hola, el precio es de veinte euros.",
+      "output": "Hola, el precio es de veinte euros."
+    },
+    {
+      "text": "El precio es 19,99 € y sube un 5%.",
+      "output": "El precio es diecinueve euros noventa y nueve céntimos y sube un cinco por ciento ."
+    },
+    {
+      "text": "En 2026 viajaré a Madrid.",
+      "output": "En dos mil veintiséis viajaré a Madrid."
+    },
+    {
+      "text": "Hoy es 11 de noviembre de 2026.",
+      "output": "Hoy es once de noviembre de dos mil veintiséis ."
+    },
+    {
+      "text": "La fecha es 11/11/2026.",
+      "output": "La fecha es once de noviembre de dos mil veintiséis ."
+    },
+    {
+      "text": "El coche S600 alcanza 500 km/h.",
+      "output": "El coche S600 alcanza quinientos kilómetros por hora ."
+    },
+    {
+      "text": "Tengo 2 libros y 3,5 litros.",
+      "output": "Tengo dos libros y tres coma cinco litros."
+    },
+    {
+      "text": "Son las 08:30 de la mañana.",
+      "output": "Son las ocho y media de la mañana."
+    },
+    {
+      "text": "Teléfono: +34 612 345678.",
+      "output": "Teléfono: más treinta y cuatro seis uno dos tres cuatro cinco seis siete ocho ."
+    },
+    {
+      "text": "La temperatura es de -3 °C.",
+      "output": "La temperatura es de menos tres °C."
+    },
+    {
+      "text": "El 21.º participante llegó.",
+      "output": "El vigesimoprimero participante llegó."
+    },
+    {
+      "text": "Un 25% de descuento.",
+      "output": "Un veinticinco por ciento de descuento."
+    },
+    {
+      "text": "Alice dice hello y continúa la historia.",
+      "output": "Alice dice hello y continúa la historia."
+    },
+    {
+      "text": "<hola|OW1> 2026",
+      "output": "<hola|OW1> dos mil veintiséis"
+    },
+    {
+      "text": "  Hola   mundo.  ",
+      "output": "Hola mundo."
+    },
+    {
+      "text": "🙂 2026, fin.",
+      "output": "🙂 dos mil veintiséis , fin."
+    }
+  ]
+}

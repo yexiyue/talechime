@@ -14,7 +14,7 @@ pub(super) struct Request {
     pub(super) voice: String,
     pub(super) style: Option<String>,
     pub(super) options: SynthesisOptions,
-    /// None keeps the CJK text heuristic.
+    /// None selects the official automatic language prefix.
     pub(super) language: Option<Language>,
     /// None uses the device default (CUDA 20, otherwise 10).
     pub(super) chunk_frames: Option<usize>,
@@ -101,17 +101,7 @@ fn generate(
     prompts: &mut std::collections::HashMap<String, talechime_qwen3_tts::VoiceClonePrompt>,
     request: &Request,
 ) -> Result<(), BackendError> {
-    let language = request.language.unwrap_or_else(|| {
-        if request
-            .text
-            .chars()
-            .any(|c| matches!(c, '\u{3400}'..='\u{9fff}'))
-        {
-            Language::Chinese
-        } else {
-            Language::English
-        }
-    });
+    let language = request.language.unwrap_or(Language::Auto);
     let initialization = std::time::Instant::now();
     let mut options = request.options.clone();
     options.chunk_frames =

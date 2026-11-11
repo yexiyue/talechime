@@ -15,6 +15,8 @@ pub(super) struct Request {
     pub voice: String,
     pub seed: u64,
     pub instruction: Option<String>,
+    pub cross_lingual: bool,
+    pub text_frontend: bool,
     pub audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
 }
 /// Wrap a plain style in the official Instruct prompt format.
@@ -56,10 +58,12 @@ pub(super) fn run(
         let device = candle_device(device)?;
         let pipeline = CosyVoice3::load(&directory, &device, candle_core::DType::F32, 0)?;
         let frontend = FrontendOnnx::load(&directory, 1)?;
+        let text_frontend =
+            talechime_cosyvoice3::frontend::text::TextFrontend::load(&directory.join("tn/wetext"))?;
         let runtime = tokio::runtime::Builder::new_current_thread().build()?;
-        Ok((pipeline, frontend, runtime))
+        Ok((pipeline, frontend, text_frontend, runtime))
     })();
-    let (mut pipeline, mut frontend, runtime) = match loaded {
+    let (mut pipeline, mut frontend, text_frontend, runtime) = match loaded {
         Ok(parts) => parts,
         Err(error) => {
             let _ = ready.send(Err(BackendError::Initialize(error.to_string())));
@@ -87,22 +91,45 @@ pub(super) fn run(
                 seed: Some(request.seed),
                 ..Default::default()
             };
-            let mode = if request.instruction.is_some() {
+            let mode = if request.cross_lingual {
+                Mode::CrossLingual
+            } else if request.instruction.is_some() {
                 Mode::Instruct
             } else {
                 Mode::ZeroShot
             };
-            let mut session = pipeline.start_stream_with_mode(
-                &request.text,
-                &prompt,
-                mode,
-                request.instruction.as_deref(),
-                &sampling,
+            let model_text = mode_text(&request.text, mode);
+            let texts = text_frontend.prepare(
+                &model_text,
+                request.text_frontend,
+                |text| pipeline.text_token_count(text),
+                &|| request.audio.is_closed(),
             )?;
-            let delivery = deliver(&request.audio, || Ok(session.next_pcm()?));
-            #[cfg(feature = "performance-tools")]
-            let delivery = tracing::Instrument::instrument(delivery, request.perf.span());
-            runtime.block_on(delivery)
+            anyhow::ensure!(
+                !texts.is_empty(),
+                "CosyVoice3 text contains only punctuation"
+            );
+            for (index, text) in texts.iter().enumerate() {
+                if request.audio.is_closed() {
+                    return Ok(());
+                }
+                let mut session = pipeline.start_stream_with_mode(
+                    text,
+                    &prompt,
+                    mode,
+                    request.instruction.as_deref(),
+                    &sampling,
+                )?;
+                let delivery = deliver_segment(
+                    &request.audio,
+                    || Ok(session.next_pcm()?),
+                    index + 1 == texts.len(),
+                );
+                #[cfg(feature = "performance-tools")]
+                let delivery = tracing::Instrument::instrument(delivery, request.perf.span());
+                runtime.block_on(delivery)?;
+            }
+            Ok(())
         })();
         if let Err(error) = result {
             let _ = crate::observation::send_audio(
@@ -113,11 +140,22 @@ pub(super) fn run(
     }
 }
 
+/// Fixed CosyVoice3 example.py supplies this marker in the target input for
+/// cross-lingual mode, whose LLM prompt transcript has been removed.
+fn mode_text(text: &str, mode: Mode) -> String {
+    if mode == Mode::CrossLingual && !text.contains("<|endofprompt|>") {
+        format!("{DEFAULT_PROMPT_PREFIX}{text}")
+    } else {
+        text.to_owned()
+    }
+}
+
 /// Reserve a slot before inference. A dropped consumer cancels between blocks;
 /// exhaustion or a token budget limit never publishes successful End.
-async fn deliver(
+async fn deliver_segment(
     audio: &mpsc::Sender<Result<AudioChunk, BackendError>>,
     mut next: impl FnMut() -> anyhow::Result<Option<talechime_cosyvoice3::StreamChunk>>,
+    final_segment: bool,
 ) -> anyhow::Result<()> {
     loop {
         #[cfg(feature = "performance-tools")]
@@ -155,16 +193,37 @@ async fn deliver(
         #[cfg(feature = "performance-tools")]
         tracing::debug!(target:"talechime_perf",event="adapter_channel_enqueue");
         if chunk.final_chunk {
-            let _ = audio.send(Ok(AudioChunk::End)).await;
+            if final_segment {
+                let _ = audio.send(Ok(AudioChunk::End)).await;
+            }
             return Ok(());
         }
     }
 }
 
 #[cfg(test)]
+async fn deliver(
+    audio: &mpsc::Sender<Result<AudioChunk, BackendError>>,
+    next: impl FnMut() -> anyhow::Result<Option<talechime_cosyvoice3::StreamChunk>>,
+) -> anyhow::Result<()> {
+    deliver_segment(audio, next, true).await
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use talechime_cosyvoice3::StreamChunk;
+    #[test]
+    fn cross_lingual_supplies_the_official_target_marker() {
+        assert_eq!(
+            mode_text("hello", Mode::CrossLingual),
+            format!("{DEFAULT_PROMPT_PREFIX}hello")
+        );
+        let tagged = format!("{DEFAULT_PROMPT_PREFIX}hello");
+        assert_eq!(mode_text(&tagged, Mode::CrossLingual), tagged);
+        assert_eq!(mode_text("hello", Mode::ZeroShot), "hello");
+        assert_eq!(mode_text("hello", Mode::Instruct), "hello");
+    }
     fn chunk(final_chunk: bool) -> StreamChunk {
         StreamChunk {
             samples: vec![0.1; 240],

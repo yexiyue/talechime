@@ -152,7 +152,7 @@ async fn main() -> anyhow::Result<()> {
     }) = &args.command
     {
         let resources = Registry::new(args.model_dir.clone())?;
-        return talechime::run_local(verify::run(text, audio, report, resources.root())).await;
+        return talechime::run_local(verify::run(text, audio, report, &resources)).await;
     }
     let config = match args.config {
         Some(path) => talechime_core::config::ConfigStore::new(path),

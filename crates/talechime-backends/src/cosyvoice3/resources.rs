@@ -4,7 +4,7 @@ use talechime_protocol::Event;
 use tokio::sync::mpsc;
 
 /// Model revision plus the conversion format (including f64 F0 weights).
-pub const REVISION: &str = "2512-runtime-f64-v3";
+pub const REVISION: &str = "2512-runtime-f64-front-v4";
 
 /// Check local converted files without downloading or invoking Python.
 pub async fn prepare(directory: &Path, progress: mpsc::Sender<Event>) -> anyhow::Result<()> {

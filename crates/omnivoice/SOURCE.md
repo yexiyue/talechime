@@ -31,3 +31,26 @@ inference loads that PTX through Candle; it does not compile using NVRTC.
 CPU and Metal builds do not invoke the CUDA build step. Unvalidated geometry,
 precision, layouts and devices below compute capability 8 retain Candle's path.
 The original upstream import used Candle 0.9.2; Talechime uses workspace 0.11.0.
+
+## Official input-condition comparison (2026-11-11, unreleased)
+
+The community Rust import revision above is not the official Python revision.
+Independent condition fixtures use k2-fsa/OmniVoice Python revision
+`08be0b4ccbac3e13e374e86fbfead4b4cac343e2` (the existing October 23 reference),
+with fixed source SHA-256 identities. The fixture preserves the original seven
+cases and adds every one of the 19 public corpus texts in each of those seven
+conditions (140 total). The added cases record source text and SHA-256. Cases execute its actual
+`_prepare_inference_inputs` with a synthetic byte tokenizer: automatic and
+explicit languages, design instruction, clone reference, denoise on/off,
+nonverbal tag tokenization, input IDs and full reference/target audio masks.
+The tokenizer is deliberately synthetic; this is a structure gate, not
+checkpoint vocabulary/logit equivalence. Another 114 cases compare actual
+official duration estimation for the public 19-text corpus, reference/no
+reference and speeds 0.5/1/2. All pass on CPU without model weights.
+
+Reproduce with `tools/tts/omnivoice_condition_oracle.py` and
+`fixed_official_conditions_and_duration_controls`. The optional upstream
+`normalize_text` mode (default false) is outside the adapter's current
+language/voice/design/speed control contract and is not claimed by these
+fixtures. Full real-model generation, speed control and listening gates
+remain separate.

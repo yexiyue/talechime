@@ -6,6 +6,18 @@ import subprocess
 import tomllib
 
 
+def installer_hook(workflow):
+    build = '          dist build ${{ needs.plan.outputs.tag-flag }} --output-format=json "--artifacts=global" > dist-manifest.json\n'
+    hook = '          python3 .github/scripts/espeak-installers.py dist-manifest.json\n'
+    if workflow.count(build) != 1 or workflow.count(hook) > 1:
+        raise ValueError('Pinned cargo-dist global build template changed; review installer hook')
+    if hook in workflow:
+        if build + hook not in workflow:
+            raise ValueError('Installer hook is not immediately after global build')
+        return workflow
+    return workflow.replace(build, build + hook, 1)
+
+
 def strict_host_gate(workflow, required_jobs):
     jobs = re.findall(r'^  ([\w-]+):$', workflow, re.MULTILINE)
     if len(required_jobs) != len(set(required_jobs)) or 'plan' not in required_jobs:
@@ -48,7 +60,7 @@ def generate(root, dist, check):
         config_path.write_bytes(config_bytes.replace(marker, b''))
         subprocess.run([dist, 'generate', '--mode', 'ci'], cwd=root, check=True)
         generated = strict_host_gate(
-            workflow_path.read_text(encoding='utf-8'),
+            installer_hook(workflow_path.read_text(encoding='utf-8')),
             config['talechime-release']['required-host-jobs'],
         ).encode('utf-8')
     finally:

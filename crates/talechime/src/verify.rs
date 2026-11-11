@@ -1,7 +1,12 @@
 //! Report-only command with explicit input/output files, no player or TTS preparation.
 use std::path::Path;
 use talechime::*;
-pub async fn run(text: &Path, audio: &Path, report: &Path, resources: &Path) -> anyhow::Result<()> {
+pub async fn run(
+    text: &Path,
+    audio: &Path,
+    report: &Path,
+    resources: &Registry,
+) -> anyhow::Result<()> {
     use tokio::io::AsyncReadExt;
     let mut bytes = Vec::new();
     tokio::fs::File::open(text)
@@ -36,11 +41,15 @@ pub async fn run(text: &Path, audio: &Path, report: &Path, resources: &Path) -> 
         .into_samples::<i16>()
         .map(|x| x.map(|x| x as f32 / 32768.0))
         .collect::<Result<Vec<_>, _>>()?;
-    let verifier = prepare_readback(ReadbackModelOptions::new(resources), |event| {
-        if let Event::ResourceState { stage, resource } = event {
-            eprintln!("{stage} {resource}");
-        }
-    })
+    let verifier = prepare_readback(
+        ReadbackModelOptions::new(resources.root()),
+        resources.downloads(),
+        |event| {
+            if let Event::ResourceState { stage, resource } = event {
+                eprintln!("{stage} {resource}");
+            }
+        },
+    )
     .await?;
     let source = SourceSnapshot::new(
         SourceId {

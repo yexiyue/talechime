@@ -1,0 +1,315 @@
+{
+  "method": "direct Frontend phonemes, actual production eSpeak 1.52.0 bundle, CPU g2pW; comparison against corpus official fixtures; no audio/model synthesis",
+  "cases": [
+    {
+      "id": "mixed",
+      "variant": "baseline",
+      "source_text": "早上好，Alice 说 hello。今天是 2026 年。",
+      "source_sha256": "ffe1b38ff9a5d149b3324465c31b0abdbba7bdd4bff8422559a78da513eac3a2",
+      "classification": "difference",
+      "actual_phonemes": "ㄗㄠ3ㄕㄤ4ㄏㄠ3, ˈælɪs ㄕ我1 həlˈO . ㄐ阴1ㄊ言1/ㄕ十4 ㄦ4ㄌ应2ㄦ4/ㄌ又4ㄋ言2."
+    },
+    {
+      "id": "mixed",
+      "variant": "g2pw",
+      "source_text": "早上好，Alice 说 hello。今天是 2026 年。",
+      "source_sha256": "ffe1b38ff9a5d149b3324465c31b0abdbba7bdd4bff8422559a78da513eac3a2",
+      "classification": "difference",
+      "actual_phonemes": "ㄗㄠ3ㄕㄤ4ㄏㄠ3, ˈælɪs ㄕ我1 həlˈO . ㄐ阴1ㄊ言1/ㄕ十4 ㄦ4ㄌ应2ㄦ4/ㄌ又4ㄋ言2."
+    },
+    {
+      "id": "year-adjacent",
+      "variant": "baseline",
+      "source_text": "今天是2026年，明年是2027年。",
+      "source_sha256": "48389a7040ec7864432747426d4aa3ac7f9f84a660cfb387d4b8f9d24c9eeee1",
+      "classification": "matched",
+      "actual_phonemes": "ㄐ阴1ㄊ言1/ㄕ十4/ㄦ4ㄌ应2ㄦ4/ㄌ又4ㄋ言2, ㄇ应2ㄋ言2/ㄕ十4/ㄦ4ㄌ应2/ㄦ4ㄑㄧ1/ㄋ言2."
+    },
+    {
+      "id": "year-adjacent",
+      "variant": "g2pw",
+      "source_text": "今天是2026年，明年是2027年。",
+      "source_sha256": "48389a7040ec7864432747426d4aa3ac7f9f84a660cfb387d4b8f9d24c9eeee1",
+      "classification": "matched",
+      "actual_phonemes": "ㄐ阴1ㄊ言1/ㄕ十4/ㄦ4ㄌ应2ㄦ4/ㄌ又4ㄋ言2, ㄇ应2ㄋ言2/ㄕ十4/ㄦ4ㄌ应2/ㄦ4ㄑㄧ1/ㄋ言2."
+    },
+    {
+      "id": "year-spelled",
+      "variant": "baseline",
+      "source_text": "今天是二零二六年。",
+      "source_sha256": "9cfedc20ee787b94d6261e822a6a849e9ee34e182b2fb81bc488778be3c052ed",
+      "classification": "matched",
+      "actual_phonemes": "ㄐ阴1ㄊ言1/ㄕ十4/ㄦ4ㄌ应2ㄦ4/ㄌ又4ㄋ言2."
+    },
+    {
+      "id": "year-spelled",
+      "variant": "g2pw",
+      "source_text": "今天是二零二六年。",
+      "source_sha256": "9cfedc20ee787b94d6261e822a6a849e9ee34e182b2fb81bc488778be3c052ed",
+      "classification": "matched",
+      "actual_phonemes": "ㄐ阴1ㄊ言1/ㄕ十4/ㄦ4ㄌ应2ㄦ4/ㄌ又4ㄋ言2."
+    },
+    {
+      "id": "numbers",
+      "variant": "baseline",
+      "source_text": "S600 售价 19.99 元，增长 5%，时速 500 公里。",
+      "source_sha256": "32188f34b75edce9e935e4b95c51fce13fafca16143b1fff4026a6e5338d4145",
+      "classification": "matched",
+      "actual_phonemes": "ˈɛs ㄌ又4ㄅㄞ3 ㄕㄡ4ㄐ压4 ㄕ十2ㄐ又3ㄉ言2ㄐ又3/ㄐ又3 元2, ㄗㄥ1ㄓㄤ3 ㄅㄞ3ㄈㄣ1ㄓ十1ㄨ3, ㄕ十2ㄙㄨ4 ㄨ2ㄅㄞ3 ㄍ中1ㄌㄧ3."
+    },
+    {
+      "id": "numbers",
+      "variant": "g2pw",
+      "source_text": "S600 售价 19.99 元，增长 5%，时速 500 公里。",
+      "source_sha256": "32188f34b75edce9e935e4b95c51fce13fafca16143b1fff4026a6e5338d4145",
+      "classification": "matched",
+      "actual_phonemes": "ˈɛs ㄌ又4ㄅㄞ3 ㄕㄡ4ㄐ压4 ㄕ十2ㄐ又3ㄉ言2ㄐ又3/ㄐ又3 元2, ㄗㄥ1ㄓㄤ3 ㄅㄞ3ㄈㄣ1ㄓ十1ㄨ3, ㄕ十2ㄙㄨ4 ㄨ2ㄅㄞ3 ㄍ中1ㄌㄧ3."
+    },
+    {
+      "id": "english",
+      "variant": "baseline",
+      "source_text": "Hello, Alice. The total is nineteen dollars.",
+      "source_sha256": "117dc1213e42ee068c93a13269d08bc81a375ca18280b4350e451ed56dc75a3d",
+      "classification": "matched",
+      "actual_phonemes": "həlˈO , ˈælɪs . ðə tˈOTᵊl ɪz nˌIntˈin dˈɑləɹz ."
+    },
+    {
+      "id": "english",
+      "variant": "g2pw",
+      "source_text": "Hello, Alice. The total is nineteen dollars.",
+      "source_sha256": "117dc1213e42ee068c93a13269d08bc81a375ca18280b4350e451ed56dc75a3d",
+      "classification": "matched",
+      "actual_phonemes": "həlˈO , ˈælɪs . ðə tˈOTᵊl ɪz nˌIntˈin dˈɑləɹz ."
+    },
+    {
+      "id": "japanese",
+      "variant": "baseline",
+      "source_text": "今日はいい天気です。2026年に東京へ行きます。",
+      "source_sha256": "39a0d34c7bdc646118ed55f5ea6a710a1093940e1c892702b0970f67f9bab4fc",
+      "classification": "unsupported_rejection",
+      "error": "unsupported Kokoro Mandarin symbol \"は\""
+    },
+    {
+      "id": "japanese",
+      "variant": "g2pw",
+      "source_text": "今日はいい天気です。2026年に東京へ行きます。",
+      "source_sha256": "39a0d34c7bdc646118ed55f5ea6a710a1093940e1c892702b0970f67f9bab4fc",
+      "classification": "unsupported_rejection",
+      "error": "unsupported Kokoro Mandarin symbol \"は\""
+    },
+    {
+      "id": "korean",
+      "variant": "baseline",
+      "source_text": "안녕하세요. 오늘 날씨가 좋습니다.",
+      "source_sha256": "1beb9c33810601f5ed483596485894426fe6f7ecc677c2dc49c4c01db52c0dd1",
+      "classification": "unsupported_rejection",
+      "error": "unsupported Kokoro Mandarin symbol \"안\""
+    },
+    {
+      "id": "korean",
+      "variant": "g2pw",
+      "source_text": "안녕하세요. 오늘 날씨가 좋습니다.",
+      "source_sha256": "1beb9c33810601f5ed483596485894426fe6f7ecc677c2dc49c4c01db52c0dd1",
+      "classification": "unsupported_rejection",
+      "error": "unsupported Kokoro Mandarin symbol \"안\""
+    },
+    {
+      "id": "spanish",
+      "variant": "baseline",
+      "source_text": "Hola, el precio es de veinte euros.",
+      "source_sha256": "11380df46981093354731eda24492db35e5d4be61108a979ff6860dda979a75d",
+      "classification": "difference",
+      "actual_phonemes": "ˈOlˌɑ , ˌɛl pɹˈɛsɪˌO ˈiz dˈə vˈAnt jˈʊɹOz ."
+    },
+    {
+      "id": "spanish",
+      "variant": "g2pw",
+      "source_text": "Hola, el precio es de veinte euros.",
+      "source_sha256": "11380df46981093354731eda24492db35e5d4be61108a979ff6860dda979a75d",
+      "classification": "difference",
+      "actual_phonemes": "ˈOlˌɑ , ˌɛl pɹˈɛsɪˌO ˈiz dˈə vˈAnt jˈʊɹOz ."
+    },
+    {
+      "id": "arabic",
+      "variant": "baseline",
+      "source_text": "مرحبا، الطقس جميل اليوم.",
+      "source_sha256": "203ed78f664daacd444082cdca7fd8003f193194a9882a9a100ef4b03e274566",
+      "classification": "unsupported_rejection",
+      "error": "unsupported Kokoro Mandarin symbol \"م\""
+    },
+    {
+      "id": "arabic",
+      "variant": "g2pw",
+      "source_text": "مرحبا، الطقس جميل اليوم.",
+      "source_sha256": "203ed78f664daacd444082cdca7fd8003f193194a9882a9a100ef4b03e274566",
+      "classification": "unsupported_rejection",
+      "error": "unsupported Kokoro Mandarin symbol \"م\""
+    },
+    {
+      "id": "symbols",
+      "variant": "baseline",
+      "source_text": "[标记] Alice's hello，未知词 zorbulate，🙂。",
+      "source_sha256": "94b95c10528c45f01f10dcb644e2bfeefbccf0f9c3b566e3e079316ce77ab816",
+      "classification": "unsupported_rejection",
+      "error": "unsupported Kokoro Mandarin symbol \"🙂\""
+    },
+    {
+      "id": "symbols",
+      "variant": "g2pw",
+      "source_text": "[标记] Alice's hello，未知词 zorbulate，🙂。",
+      "source_sha256": "94b95c10528c45f01f10dcb644e2bfeefbccf0f9c3b566e3e079316ce77ab816",
+      "classification": "unsupported_rejection",
+      "error": "unsupported Kokoro Mandarin symbol \"🙂\""
+    },
+    {
+      "id": "pronunciation",
+      "variant": "baseline",
+      "source_text": "他走进银<行|HANG2>，问这里能办业务吗？",
+      "source_sha256": "8b62bb23efabb01f099fe181f7557b91984b70789b8f790fc970252b2aa6e911",
+      "classification": "unsupported_rejection",
+      "error": "unsupported Kokoro Mandarin symbol \"<\""
+    },
+    {
+      "id": "pronunciation",
+      "variant": "g2pw",
+      "source_text": "他走进银<行|HANG2>，问这里能办业务吗？",
+      "source_sha256": "8b62bb23efabb01f099fe181f7557b91984b70789b8f790fc970252b2aa6e911",
+      "classification": "unsupported_rejection",
+      "error": "unsupported Kokoro Mandarin symbol \"<\""
+    },
+    {
+      "id": "layout",
+      "variant": "baseline",
+      "source_text": "清晨的风\n吹过林间。\n\nAlice said hello.\nThe story continues.",
+      "source_sha256": "bea089e858577fa60a4136acaad3b2e87c678b9741b225d48c38ac0149cbb8bd",
+      "classification": "difference",
+      "actual_phonemes": "ㄑ应1ㄔㄣ2/ㄉㄜ5/ㄈㄥ1 ㄔ为1/ㄍ我5/ㄌ阴2ㄐ言1. ˈælɪs sˈɛd həlˈO . ðə stˈɔɹi kəntˈɪnjuz ."
+    },
+    {
+      "id": "layout",
+      "variant": "g2pw",
+      "source_text": "清晨的风\n吹过林间。\n\nAlice said hello.\nThe story continues.",
+      "source_sha256": "bea089e858577fa60a4136acaad3b2e87c678b9741b225d48c38ac0149cbb8bd",
+      "classification": "difference",
+      "actual_phonemes": "ㄑ应1ㄔㄣ2/ㄉㄜ5/ㄈㄥ1 ㄔ为1/ㄍ我5/ㄌ阴2ㄐ言1. ˈælɪs sˈɛd həlˈO . ðə stˈɔɹi kəntˈɪnjuz ."
+    },
+    {
+      "id": "boundaries",
+      "variant": "baseline",
+      "source_text": "第一句话已经说完。第二句话也必须完整读出。Alice says hello. 最后一句话是结束标记，请完整读到这里。",
+      "source_sha256": "1fdbf438f2da685dfbd3e06d61ef076412e0fbdf80b0aa511b92083d2a0495b1",
+      "classification": "matched",
+      "actual_phonemes": "ㄉㄧ4ㄧ1ㄐㄩ4/ㄏ穵4/ㄧ3ㄐ应1/ㄕ我1万2. ㄉㄧ4ㄦ4ㄐㄩ4/ㄏ穵4/ㄝ3/ㄅㄧ4ㄒㄩ1/万2ㄓㄥ3/ㄉㄨ2ㄔㄨ1. ˈælɪs sˈɛz həlˈO . ㄗ为4ㄏㄡ4/ㄧ2ㄐㄩ4/ㄏ穵4/ㄕ十4/ㄐㄝ2ㄕㄨ4/ㄅ要1ㄐㄧ4, ㄑ应3/万2ㄓㄥ3/ㄉㄨ2/ㄉㄠ4/ㄓㄜ4ㄌㄧ3."
+    },
+    {
+      "id": "boundaries",
+      "variant": "g2pw",
+      "source_text": "第一句话已经说完。第二句话也必须完整读出。Alice says hello. 最后一句话是结束标记，请完整读到这里。",
+      "source_sha256": "1fdbf438f2da685dfbd3e06d61ef076412e0fbdf80b0aa511b92083d2a0495b1",
+      "classification": "matched",
+      "actual_phonemes": "ㄉㄧ4ㄧ1ㄐㄩ4/ㄏ穵4/ㄧ3ㄐ应1/ㄕ我1万2. ㄉㄧ4ㄦ4ㄐㄩ4/ㄏ穵4/ㄝ3/ㄅㄧ4ㄒㄩ1/万2ㄓㄥ3/ㄉㄨ2ㄔㄨ1. ˈælɪs sˈɛz həlˈO . ㄗ为4ㄏㄡ4/ㄧ2ㄐㄩ4/ㄏ穵4/ㄕ十4/ㄐㄝ2ㄕㄨ4/ㄅ要1ㄐㄧ4, ㄑ应3/万2ㄓㄥ3/ㄉㄨ2/ㄉㄠ4/ㄓㄜ4ㄌㄧ3."
+    },
+    {
+      "id": "fullwidth",
+      "variant": "baseline",
+      "source_text": "今天是２０２６年，售价１９．９９元，增长５％。",
+      "source_sha256": "f20a1248a0aa3c5fe790ac34791fc1c2d18648ee99ef1aa8c10d149e6e9c5d05",
+      "classification": "unsupported_rejection",
+      "error": "unsupported Kokoro Mandarin symbol \"％\""
+    },
+    {
+      "id": "fullwidth",
+      "variant": "g2pw",
+      "source_text": "今天是２０２６年，售价１９．９９元，增长５％。",
+      "source_sha256": "f20a1248a0aa3c5fe790ac34791fc1c2d18648ee99ef1aa8c10d149e6e9c5d05",
+      "classification": "unsupported_rejection",
+      "error": "unsupported Kokoro Mandarin symbol \"％\""
+    },
+    {
+      "id": "japanese-date",
+      "variant": "baseline",
+      "source_text": "2026年11月11日、東京都。",
+      "source_sha256": "c782d8b29bc605f1b253826d03677b07e3591a90f3e50d9dbcc7430fd4c373ba",
+      "classification": "matched",
+      "actual_phonemes": "ㄦ4ㄌ应2ㄦ4/ㄌ又4ㄋ言2/ㄕ十2ㄧ2月4/ㄕ十2ㄧ2ㄖ十4, ㄉ中1/ㄐ应1ㄉㄨ1."
+    },
+    {
+      "id": "japanese-date",
+      "variant": "g2pw",
+      "source_text": "2026年11月11日、東京都。",
+      "source_sha256": "c782d8b29bc605f1b253826d03677b07e3591a90f3e50d9dbcc7430fd4c373ba",
+      "classification": "matched",
+      "actual_phonemes": "ㄦ4ㄌ应2ㄦ4/ㄌ又4ㄋ言2/ㄕ十2ㄧ2月4/ㄕ十2ㄧ2ㄖ十4, ㄉ中1/ㄐ应1ㄉㄨ1."
+    },
+    {
+      "id": "spaces",
+      "variant": "baseline",
+      "source_text": "東京  大阪   hello\tAlice　物語。",
+      "source_sha256": "0cfc640952c86dbd4c43d0a34cd30baba9660484e49dc8baa1d29d9601137939",
+      "classification": "difference",
+      "actual_phonemes": "ㄉ中1ㄐ应1 ㄉㄚ4ㄅㄢ3 həlˈO ˈælɪs ㄨ4ㄩ3."
+    },
+    {
+      "id": "spaces",
+      "variant": "g2pw",
+      "source_text": "東京  大阪   hello\tAlice　物語。",
+      "source_sha256": "0cfc640952c86dbd4c43d0a34cd30baba9660484e49dc8baa1d29d9601137939",
+      "classification": "difference",
+      "actual_phonemes": "ㄉ中1ㄐ应1 ㄉㄚ4ㄅㄢ3 həlˈO ˈælɪs ㄨ4ㄩ3."
+    },
+    {
+      "id": "long-word",
+      "variant": "baseline",
+      "source_text": "Alice says supercalifragilisticexpialidocious and zorbulate. 最后一句。",
+      "source_sha256": "fbd8b040dcfacc2b9d35dd0a45e755aa416699a826509fc82fa89acaceb695bf",
+      "classification": "matched",
+      "actual_phonemes": "ˈælɪs sˈɛz sˌupəɹkˌæləfɹˌæʤəlˌɪstɪkˌɛkspiˌælədˈOʃəs ænd zˈɔɹbjʊlˌAt . ㄗ为4ㄏㄡ4/ㄧ2ㄐㄩ4."
+    },
+    {
+      "id": "long-word",
+      "variant": "g2pw",
+      "source_text": "Alice says supercalifragilisticexpialidocious and zorbulate. 最后一句。",
+      "source_sha256": "fbd8b040dcfacc2b9d35dd0a45e755aa416699a826509fc82fa89acaceb695bf",
+      "classification": "matched",
+      "actual_phonemes": "ˈælɪs sˈɛz sˌupəɹkˌæləfɹˌæʤəlˌɪstɪkˌɛkspiˌælədˈOʃəs ænd zˈɔɹbjʊlˌAt . ㄗ为4ㄏㄡ4/ㄧ2ㄐㄩ4."
+    },
+    {
+      "id": "long-paragraph",
+      "variant": "baseline",
+      "source_text": "清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。最后一句话必须完整读出。",
+      "source_sha256": "0c7b933bac1b99b3411b5e5bf352758999a5e9eb9a0eca7391f76b905e5cec90",
+      "classification": "matched",
+      "actual_phonemes": "ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄗ为4ㄏㄡ4/ㄧ2ㄐㄩ4/ㄏ穵4/ㄅㄧ4ㄒㄩ1/万2ㄓㄥ3/ㄉㄨ2ㄔㄨ1."
+    },
+    {
+      "id": "long-paragraph",
+      "variant": "g2pw",
+      "source_text": "清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。清晨，Alice 打开书说 hello，然后继续讲述故事。风吹过树林，河水流向远方。最后一句话必须完整读出。",
+      "source_sha256": "0c7b933bac1b99b3411b5e5bf352758999a5e9eb9a0eca7391f76b905e5cec90",
+      "classification": "matched",
+      "actual_phonemes": "ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄑ应1ㄔㄣ2, ˈælɪs ㄉㄚ3ㄎㄞ1/ㄕㄨ1/ㄕ我1 həlˈO , ㄖㄢ2ㄏㄡ4/ㄐㄧ4ㄒㄩ4/ㄐ阳3ㄕㄨ4/ㄍㄨ4ㄕ十5. ㄈㄥ1ㄔ为1/ㄍ我5/ㄕㄨ4ㄌ阴2, ㄏㄜ2ㄕ为3/ㄌ又2ㄒ阳4/元3ㄈㄤ1. ㄗ为4ㄏㄡ4/ㄧ2ㄐㄩ4/ㄏ穵4/ㄅㄧ4ㄒㄩ1/万2ㄓㄥ3/ㄉㄨ2ㄔㄨ1."
+    },
+    {
+      "id": "japanese-pronunciation",
+      "variant": "baseline",
+      "source_text": "<東京|とうきょう>  と <日本|ニホン>。",
+      "source_sha256": "9a939288ddf57cdd0e83772f54385e4533c1df3cc7a28bb70332679345b2ca8b",
+      "classification": "unsupported_rejection",
+      "error": "unsupported Kokoro Mandarin symbol \"<\""
+    },
+    {
+      "id": "japanese-pronunciation",
+      "variant": "g2pw",
+      "source_text": "<東京|とうきょう>  と <日本|ニホン>。",
+      "source_sha256": "9a939288ddf57cdd0e83772f54385e4533c1df3cc7a28bb70332679345b2ca8b",
+      "classification": "unsupported_rejection",
+      "error": "unsupported Kokoro Mandarin symbol \"<\""
+    }
+  ],
+  "difference_notes": {
+    "mixed": "Spaced 2026 年 uses the explicit product year policy.",
+    "layout": "Execution text maps newline to a space.",
+    "spaces": "Execution text collapses multiple spaces.",
+    "spanish": "Official eSpeak library returns də for isolated de; the 1.52.0 CLI with LF returns dˈə. Both tested en_dict files have SHA-256 1053f74a34af38abb6fbd64b7838dacbc655a687c48ce1bb663d364a127b05de. Other isolated function words also differ; no general mapping has been established."
+  }
+}

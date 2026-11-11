@@ -23,8 +23,8 @@ pub(super) fn catalog() -> Vec<ParameterSpec> {
         ParameterSpec {
             name: "language".into(),
             kind: ParamKind::Text { max_len: 48 },
-            default: ParamValue::Text("zh".into()),
-            description: "BCP-47 代码或语言名（模型内建约 700 种）".into(),
+            default: ParamValue::Text("auto".into()),
+            description: "auto、语言代码或语言名（模型内建约 700 种）".into(),
         },
         ParameterSpec {
             name: "speed".into(),
@@ -85,7 +85,7 @@ impl OmniVoiceParams {
 pub(super) struct Resolved {
     pub config: GenerationConfig,
     /// Normalized language id; the adapter rejects unknown names explicitly.
-    pub language: String,
+    pub language: Option<String>,
     pub speed: Option<f32>,
 }
 
@@ -95,13 +95,15 @@ pub(super) fn resolve(
     params: &GenerationParams,
 ) -> Result<Resolved, talechime_core::backend::BackendError> {
     let language = match params.get("language") {
-        Some(ParamValue::Text(name)) => talechime_omnivoice::frontend::resolve_language(Some(name))
-            .ok_or_else(|| {
+        Some(ParamValue::Text(name)) if name.eq_ignore_ascii_case("auto") => None,
+        Some(ParamValue::Text(name)) => Some(
+            talechime_omnivoice::frontend::resolve_language(Some(name)).ok_or_else(|| {
                 talechime_core::backend::BackendError::Unsupported(format!(
                     "unknown OmniVoice language parameter '{name}'"
                 ))
             })?,
-        _ => "zh".to_string(),
+        ),
+        _ => None,
     };
     let mut config = GenerationConfig::default();
     if let Some(ParamValue::Int(steps)) = params.get("num_step") {
@@ -143,7 +145,7 @@ mod tests {
         let resolved = resolve(&params).unwrap();
         assert_eq!(resolved.config.num_step, 64);
         assert_eq!(resolved.config.guidance_scale, 1.5);
-        assert_eq!(resolved.language, "zh");
+        assert_eq!(resolved.language.as_deref(), Some("zh"));
         assert_eq!(resolved.speed, Some(1.25));
     }
 
@@ -156,11 +158,11 @@ mod tests {
     }
 
     #[test]
-    fn empty_params_keep_previous_defaults() {
+    fn empty_params_select_automatic_language() {
         let resolved = resolve(&GenerationParams::new()).unwrap();
         assert_eq!(resolved.config.num_step, 32);
         assert_eq!(resolved.config.guidance_scale, 2.0);
-        assert_eq!(resolved.language, "zh");
+        assert_eq!(resolved.language, None);
         assert_eq!(resolved.speed, None);
     }
 }

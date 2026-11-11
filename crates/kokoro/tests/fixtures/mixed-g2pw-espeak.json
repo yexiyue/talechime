@@ -1,0 +1,89 @@
+{
+  "misaki_revision": "fba1236595f2d2bf21d414ba6e57d25256afada3",
+  "g2pw_revision": "b9328ce8129c4717a70f16a2688542a0197541dd",
+  "model_sha256": "bb40c8c7b5baa755b2acd317c6bc5a65e4af7b80c40a569247fbd76989299999",
+  "vocab_sha256": "45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c",
+  "context_sha256": "5bedd0e4460625bc57a92d3edd9ff573f68167d8f62fa259ac90a123fc27b381",
+  "spacy_model_wheel_sha256": "86cc141f63942d4b2c5fcee06630fd6f904788d2f0ab005cce45aadb8fb73889",
+  "versions": {
+    "misaki": "0.9.4",
+    "spacy": "3.7.5",
+    "en-core-web-sm": "3.7.1",
+    "espeakng-loader": "0.2.4",
+    "phonemizer-fork": "3.3.2",
+    "jieba": "0.42.1",
+    "pypinyin": "0.55.0",
+    "pypinyin-dict": "0.9.0",
+    "cn2an": "0.5.24",
+    "num2words": "0.5.14"
+  },
+  "onnxruntime": "1.23.2",
+  "method": "official Misaki tone rules with official g2pW predictions per Mandarin span",
+  "cases": [
+    {
+      "id": "dictionary",
+      "text": "你好hello世界。",
+      "phonemes": "ㄋㄧ2ㄏㄠ3 həlˈO ㄕ十4ㄐㄝ4."
+    },
+    {
+      "id": "brand",
+      "text": "她说Apple很好。",
+      "phonemes": "ㄊㄚ1/ㄕ我1 ˈæpᵊl ㄏㄣ2ㄏㄠ3."
+    },
+    {
+      "id": "abbreviation",
+      "text": "这是S600。",
+      "phonemes": "ㄓㄜ4/ㄕ十4 ˈɛs ㄌ又4ㄅㄞ3."
+    },
+    {
+      "id": "contraction",
+      "text": "他说don't走。",
+      "phonemes": "ㄊㄚ1/ㄕ我1 dˈOnt ㄗㄡ3."
+    },
+    {
+      "id": "hyphen",
+      "text": "你好hello-world朋友。",
+      "phonemes": "ㄋㄧ2ㄏㄠ3 həlˌOwˈɜɹld ㄆㄥ2又5."
+    },
+    {
+      "id": "english_words",
+      "text": "这是a book和an apple。",
+      "phonemes": "ㄓㄜ4/ㄕ十4 ɐ bˈʊk ㄏㄢ4 ɐn ˈæpᵊl ."
+    },
+    {
+      "id": "context_polyphone",
+      "text": "银行旁边有Apple。",
+      "phonemes": "阴2ㄏㄤ2/ㄆㄤ2ㄅ言1/又3 ˈæpᵊl ."
+    },
+    {
+      "id": "oov",
+      "text": "你好zorbulate世界。",
+      "phonemes": "ㄋㄧ2ㄏㄠ3 zˈɔɹbjʊlˌAt ㄕ十4ㄐㄝ4."
+    },
+    {
+      "id": "oov_name",
+      "text": "这是Xylophrenzia。",
+      "phonemes": "ㄓㄜ4/ㄕ十4 zˌIləfɹˈɛnziə ."
+    },
+    {
+      "id": "punctuation",
+      "text": "Hello,世界!",
+      "phonemes": "həlˈO ,ㄕ十4ㄐㄝ4!"
+    },
+    {
+      "id": "year_official",
+      "text": "今天是2026年。",
+      "phonemes": "ㄐ阴1ㄊ言1/ㄕ十4/ㄦ4ㄌ应2ㄦ4/ㄌ又4ㄋ言2."
+    },
+    {
+      "id": "year_spaced_product_policy",
+      "text": "今天是2026 年。",
+      "phonemes": "ㄐ阴1ㄊ言1/ㄕ十4/ㄦ4ㄑ言1/ㄌ应2/ㄦ4ㄕ十2ㄌ又4 ㄋ言2."
+    },
+    {
+      "id": "unsupported",
+      "text": "你好🙂",
+      "phonemes": "ㄋㄧ2ㄏㄠ3❓"
+    }
+  ]
+}

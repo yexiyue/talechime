@@ -66,7 +66,7 @@ async fn main() -> anyhow::Result<()> {
             text.trim().to_owned(),
             envelope.request.description.clone(),
             path.clone(),
-            None,
+            design::Options::default(),
         )
         .await
         .context("production VoiceDesign reference failed")?;
