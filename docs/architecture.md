@@ -29,6 +29,7 @@ flowchart TD
 
 - `crates/talechime`：CLI、worker、模型准备与设备校准装配、音色命令。
 - `crates/talechime-protocol`：协议 v7、配置、能力、来源身份与 UTF-8 范围，不链接音频和模型。
+- `crates/talechime-cloud-tts`：独立云 TTS 客户端，当前为实验性 Fish HTTP 合成和音色 API；不依赖本地模型、播放器或宿主业务类型，不自动接入现有播放会话。
 - `crates/talechime-core`：Backend / Playback 接口、会话、背压、音频预算、实际播放进度、配置和检查点。
 - `crates/talechime-backends`：Registry、资源清单、参考音频、设备与具体模型适配。
 - `crates/{qwen3-tts,moss-tts,voxcpm,omnivoice,cosyvoice3,indextts,kokoro}`：模型计算；发布包名统一加 `talechime-` 前缀，目录保留短名，Rust 导入名统一使用 `talechime_` 前缀。
@@ -245,3 +246,7 @@ Kokoro g2pW、CosyVoice3 和 IndexTTS 的运行时资源均通过固定 Hub 成�
 仅模型名或权重提交不能识别 Qwen Auto、Omni 自动语言及 Kokoro OOV 等代码行为变化。
 引擎的执行缓存身份也包含算法字段。共享算法版本保守使旧算法身份失效，
 权重目录仍按实际资源身份复用；此 API 不自动迁移宿主任务或改写旧声音。
+
+### HeyGen 云语音边界
+
+`talechime-cloud-tts::heygen` 与 `fish` 并列，直接提供显式模型、音色查询和有界原始字节流，不接入 Registry、本地音色库、CLI/worker 或播放器。请求 PCM16/MP3 格式，校验服务端格式头；HTTP 正常结束只代表传输结束，不是内容或播放完成。调用方持有响应，取消/drop 释放本地资源，不保证撤销计费。字段与使用边界见 [cloud crate](../crates/talechime-cloud-tts/README.md#heygen-provider)。
