@@ -12,7 +12,11 @@ use crate::{audio, generation, models, tokenizer};
 use anyhow::Result;
 use candle_core::{DType, IndexOp, Tensor};
 use serde::Serialize;
-use std::{collections::HashMap, path::Path, time::Instant};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 mod options;
 mod prompt;
@@ -28,6 +32,17 @@ thread_local! {
 /// A sequence of codec frames, where each frame contains 16 codebook values
 /// (1 semantic + 15 acoustic, formatted as `[semantic, acoustic_0..14]`).
 pub type FrameCodes = Vec<Vec<u32>>;
+
+/// Independently resolved inputs for a fixed Qwen model.
+#[derive(Clone, Debug)]
+pub struct ModelFiles {
+    pub config: PathBuf,
+    pub weights: PathBuf,
+    pub speech_weights: PathBuf,
+    pub vocab: PathBuf,
+    pub merges: PathBuf,
+    pub tokenizer_config: PathBuf,
+}
 
 /// Reference audio prompt for voice cloning.
 ///
@@ -82,6 +97,18 @@ pub struct Qwen3TTS {
 }
 
 impl Qwen3TTS {
+    /// Load a model from explicit files without directory assembly or network access.
+    pub fn from_files(files: &ModelFiles, device: Device) -> Result<Self> {
+        let config = ParsedModelConfig::from_file(&files.config)?;
+        let tokenizer = tokenizer::TextTokenizer::from_vocab_merge_files(
+            &files.vocab,
+            &files.merges,
+            Some(&files.tokenizer_config),
+        )?;
+        let weights = Self::load_weights(&files.weights, &device)?;
+        let speech_weights = Self::load_weights(&files.speech_weights, &device)?;
+        Self::build_from_components(&weights, &speech_weights, tokenizer, Some(&config), &device)
+    }
     /// Load a model from a HuggingFace model ID or local path.
     ///
     /// Auto-detects the model variant (0.6B/1.7B, Base/CustomVoice/VoiceDesign)

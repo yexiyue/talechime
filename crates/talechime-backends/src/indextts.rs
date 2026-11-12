@@ -1,6 +1,4 @@
 //! IndexTTS 2.5 reference cloning with named emotions and reference/vector controls.
-mod native;
-pub(crate) use native::recipe as native_recipe;
 pub mod params;
 mod reference_cache;
 pub mod resources;
@@ -79,16 +77,25 @@ pub struct IndexBackend {
 }
 
 impl IndexBackend {
-    pub async fn load_on(root: PathBuf, device: Device) -> Result<Self, BackendError> {
+    pub(crate) async fn load_cached(
+        root: PathBuf,
+        paths: std::collections::BTreeMap<String, PathBuf>,
+        device: Device,
+    ) -> Result<Self, BackendError> {
+        let files = runtime::Files::from_resolved(paths)
+            .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        Self::load_files(root, files, device).await
+    }
+    async fn load_files(
+        root: PathBuf,
+        files: runtime::Files,
+        device: Device,
+    ) -> Result<Self, BackendError> {
         if !available_devices().contains(&device) {
             return Err(BackendError::Initialize(format!(
                 "IndexTTS device {device:?} is unavailable"
             )));
         }
-        native_recipe()
-            .verify_existing(directory(&root), crate::PreparationControl::default())
-            .await
-            .map_err(|error| BackendError::Initialize(error.to_string()))?;
         let caps =
             capabilities(&root).map_err(|error| BackendError::Initialize(error.to_string()))?;
         let voice_root = root.clone();
@@ -96,7 +103,7 @@ impl IndexBackend {
         let (ready, loaded) = oneshot::channel();
         let thread = std::thread::Builder::new()
             .name("indextts-inference".into())
-            .spawn(move || runtime::run(root, device, jobs, ready))
+            .spawn(move || runtime::run(root, files, device, jobs, ready))
             .map_err(|error| BackendError::Initialize(error.to_string()))?;
         let backend = Self {
             requests: Some(requests),

@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 
 pub type Preparing<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>>;
 pub type Designing<'a> = Pin<Box<dyn Future<Output = anyhow::Result<DesignOutput>> + 'a>>;
+pub type Information<'a> = Pin<Box<dyn Future<Output = anyhow::Result<EngineInfo>> + 'a>>;
 
 /// Input limits an engine enforces before any weights load.
 #[derive(Clone, Copy, Debug)]
@@ -87,7 +88,7 @@ pub struct DesignOutput {
 ///   resources are released without producing a partial asset.
 pub trait VoiceDesigner {
     fn id(&self) -> &'static str;
-    fn info(&self, root: &Path) -> EngineInfo;
+    fn info<'a>(&'a self, root: &'a Path) -> Information<'a>;
     fn prepare<'a>(&'a self, root: &'a Path, progress: mpsc::Sender<Event>) -> Preparing<'a>;
     fn design<'a>(&'a self, root: &'a Path, request: DesignRequest) -> Designing<'a>;
 }

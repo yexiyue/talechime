@@ -371,21 +371,28 @@ mod design_tests {
         fn id(&self) -> &'static str {
             "fake-designer"
         }
-        fn info(&self, _root: &std::path::Path) -> EngineInfo {
-            EngineInfo {
-                id: "fake-designer",
-                name: "Fake Designer",
-                devices: vec![talechime_protocol::Device::Cpu],
-                inputs: InputConstraints {
-                    text_max_chars: 100,
-                    description_max_chars: None,
-                    description_max_bytes: 4096,
-                    forbid_parentheses: false,
-                },
-                extra_download_bytes: 0,
-                ready: true,
-                reuses_synthesis_model: false,
-            }
+        fn info<'a>(
+            &'a self,
+            _root: &'a std::path::Path,
+        ) -> talechime_core::design::Information<'a> {
+            Box::pin(async move {
+                Ok({
+                    EngineInfo {
+                        id: "fake-designer",
+                        name: "Fake Designer",
+                        devices: vec![talechime_protocol::Device::Cpu],
+                        inputs: InputConstraints {
+                            text_max_chars: 100,
+                            description_max_chars: None,
+                            description_max_bytes: 4096,
+                            forbid_parentheses: false,
+                        },
+                        extra_download_bytes: 0,
+                        ready: true,
+                        reuses_synthesis_model: false,
+                    }
+                })
+            })
         }
         fn prepare<'a>(
             &'a self,
@@ -447,7 +454,7 @@ mod design_tests {
             assert!(matches!(poll(&mut worker).await.event, Event::VoiceReady { voice, .. } if voice == "second"));
             worker.command(&request("race")).await;
             tokio::time::timeout(Duration::from_secs(2), async {
-                while !root.path().join("voices-v2/race/voice.json").is_file() {
+                while !root.path().join("models/voices-v2/race/voice.json").is_file() {
                     tokio::task::yield_now().await;
                 }
             }).await.unwrap();
@@ -468,7 +475,7 @@ mod design_tests {
             assert!(matches!(worker.command(&start).await.event, Event::Accepted));
             assert!(matches!(worker.command(&request("after-playback")).await.event, Event::Accepted));
             assert!(tokio::time::timeout(Duration::from_millis(20), worker.poll_background()).await.is_err());
-            assert!(!root.path().join("voices-v2/after-playback").exists());
+            assert!(!root.path().join("models/voices-v2/after-playback").exists());
             let stop = Request { command: Command::Stop, ..start };
             assert!(matches!(worker.command(&stop).await.event, Event::Accepted));
             assert!(matches!(poll(&mut worker).await.event, Event::Accepted));

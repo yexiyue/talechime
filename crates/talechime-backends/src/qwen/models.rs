@@ -1,4 +1,4 @@
-//! Pinned Qwen model identities; the legacy directory remains valid.
+//! Pinned Qwen model identities and resource directories.
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,13 +52,9 @@ impl Model {
         }
     }
     pub fn directory(self, root: &Path) -> PathBuf {
-        if self == Self::Custom06 {
-            root.join("qwen")
-        } else {
-            root.join("qwen/models")
-                .join(self.id())
-                .join(self.revision())
-        }
+        root.join("qwen/models")
+            .join(self.id())
+            .join(self.revision())
     }
     pub(crate) fn manifest(self) -> &'static str {
         match self {
@@ -69,9 +65,8 @@ impl Model {
             Self::Design17 => include_str!("models/1.7b-voicedesign.json"),
         }
     }
-    pub(super) fn detect(directory: &Path) -> anyhow::Result<Self> {
-        let config: serde_json::Value =
-            serde_json::from_reader(std::fs::File::open(directory.join("config.json"))?)?;
+    pub(super) fn detect_file(path: &Path) -> anyhow::Result<Self> {
+        let config: serde_json::Value = serde_json::from_reader(std::fs::File::open(path)?)?;
         match (
             config["tts_model_size"].as_str(),
             config["tts_model_type"].as_str(),
@@ -84,17 +79,36 @@ impl Model {
             other => anyhow::bail!("unsupported Qwen model metadata {other:?}"),
         }
     }
+
+    pub(crate) fn resolved_files(
+        mut files: std::collections::BTreeMap<String, PathBuf>,
+    ) -> anyhow::Result<talechime_qwen3_tts::ModelFiles> {
+        let mut take = |name: &str| {
+            files
+                .remove(name)
+                .ok_or_else(|| anyhow::anyhow!("missing Qwen resource {name}"))
+        };
+        Ok(talechime_qwen3_tts::ModelFiles {
+            config: take("config.json")?,
+            weights: take("model.safetensors")?,
+            speech_weights: take("speech_tokenizer/model.safetensors")?,
+            vocab: take("vocab.json")?,
+            merges: take("merges.txt")?,
+            tokenizer_config: take("tokenizer_config.json")?,
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn legacy_and_explicit_models_have_isolated_resources() {
+    fn models_have_versioned_isolated_resources() {
         let root = Path::new("cache");
         assert_eq!(
             Model::parse(None).unwrap().directory(root),
-            root.join("qwen")
+            root.join("qwen/models/0.6b-customvoice")
+                .join(Model::Custom06.revision())
         );
         assert_ne!(
             Model::Custom17.directory(root),

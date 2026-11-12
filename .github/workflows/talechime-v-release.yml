@@ -144,9 +144,6 @@ jobs:
       - name: "Select native release features"
         run: "python .github/scripts/configure-release.py"
         shell: "bash"
-      - name: "Build standalone Kokoro English helper"
-        run: "python tools/tts/prepare_espeak_bundle.py"
-        shell: "bash"
       - name: "Collect third-party license notices"
         run: "python .github/scripts/prepare-notices.py"
         shell: "bash"
@@ -223,7 +220,6 @@ jobs:
         shell: bash
         run: |
           dist build ${{ needs.plan.outputs.tag-flag }} --output-format=json "--artifacts=global" > dist-manifest.json
-          python3 .github/scripts/espeak-installers.py dist-manifest.json
           echo "dist ran successfully"
 
           # Parse out what we just built and upload it to scratch storage

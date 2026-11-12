@@ -1,10 +1,7 @@
 //! CPU readback model group. Explicit preparation, no inference-time downloads.
 mod sensevoice;
 mod worker;
-use std::{
-    path::{Path, PathBuf},
-    rc::Rc,
-};
+use std::{path::PathBuf, rc::Rc};
 use talechime_core::verification::{Recognizer, Verifier};
 use talechime_protocol::{Event, RecognizerIdentity};
 
@@ -14,16 +11,17 @@ pub const SENSEVOICE_REVISION: &str = "2365baeacb507f821a0c8120fcee3d484dba7a07"
 /// Selected v1 group: Qwen3-ASR 0.6B main, SenseVoiceSmall INT8 reviewer, CPU.
 #[derive(Debug, Clone)]
 pub struct ReadbackModelOptions {
-    pub resources: PathBuf,
     /// SenseVoice ORT intra-op threads; Qwen uses Candle's shared CPU thread pool.
     pub threads: usize,
 }
 impl ReadbackModelOptions {
-    pub fn new(resources: impl Into<PathBuf>) -> Self {
-        Self {
-            resources: resources.into(),
-            threads: 4,
-        }
+    pub fn new() -> Self {
+        Self { threads: 4 }
+    }
+}
+impl Default for ReadbackModelOptions {
+    fn default() -> Self {
+        Self::new()
     }
 }
 /// Download/check immutable manifests, then initialize both models on their owners.
@@ -33,15 +31,14 @@ pub async fn prepare(
     progress: tokio::sync::mpsc::Sender<Event>,
 ) -> anyhow::Result<Rc<Verifier>> {
     anyhow::ensure!(
-        !options.resources.as_os_str().is_empty() && (1..=32).contains(&options.threads),
-        "invalid ASR resource path or thread count"
+        (1..=32).contains(&options.threads),
+        "invalid ASR thread count"
     );
     for (name, manifest) in [
         ("qwen06", include_str!("asr/qwen06.json")),
         ("sensevoice", include_str!("asr/sensevoice.json")),
     ] {
-        crate::resources::prepare(
-            &options.resources.join("asr").join(name),
+        crate::resources::prepare_cached(
             &format!("asr/{name}"),
             serde_json::from_str(manifest)?,
             downloads,
@@ -49,53 +46,38 @@ pub async fn prepare(
         )
         .await?;
     }
-    load_local(
-        &options.resources.join("asr/qwen06"),
-        &options.resources.join("asr/sensevoice"),
-        options.threads,
-    )
-    .await
-}
-/// Load already prepared local files, validating the same pinned manifests. No download.
-pub async fn load_local(
-    qwen: &Path,
-    sensevoice: &Path,
-    threads: usize,
-) -> anyhow::Result<Rc<Verifier>> {
-    anyhow::ensure!((1..=32).contains(&threads), "invalid ASR thread count");
-    let primary = load_qwen(qwen).await?;
-    let reviewer = load_sensevoice(sensevoice, threads).await?;
+    let primary = load_qwen(downloads).await?;
+    let reviewer = load_sensevoice(downloads, options.threads).await?;
     Ok(Rc::new(Verifier::new(primary, reviewer)?))
 }
-/// Size-only presence check: downloaded manifests pin revisions but no
-/// content hashes, so local reloads detect truncation, not bit rot.
-async fn verify_local(dir: &Path, manifest: &str) -> anyhow::Result<()> {
-    let resources: Vec<crate::resources::Resource> = serde_json::from_str(manifest)?;
-    let directory = dir.to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        for resource in &resources {
-            let path = directory.join(&resource.path);
-            let size = std::fs::metadata(&path)
-                .map_err(|error| anyhow::anyhow!("missing ASR file {}: {error}", path.display()))?
-                .len();
-            anyhow::ensure!(
-                size == resource.size,
-                "unexpected ASR file size for {}: {size} != {}",
-                path.display(),
-                resource.size
-            );
-        }
-        Ok::<_, anyhow::Error>(())
-    })
-    .await??;
-    Ok(())
+
+fn file(
+    files: &std::collections::BTreeMap<String, PathBuf>,
+    name: &str,
+) -> anyhow::Result<PathBuf> {
+    files
+        .get(name)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("ASR manifest lacks {name}"))
 }
-/// Independently load a locally pinned Qwen recognizer (also useful for model probes).
-pub async fn load_qwen(directory: &Path) -> anyhow::Result<Rc<dyn Recognizer>> {
-    verify_local(directory, include_str!("asr/qwen06.json")).await?;
+
+/// Load the pinned Qwen recognizer from the configured Hub cache without downloading.
+pub async fn load_qwen(
+    downloads: &crate::downloads::Downloads,
+) -> anyhow::Result<Rc<dyn Recognizer>> {
+    let qwen =
+        crate::resources::resolve_manifest(include_str!("asr/qwen06.json"), downloads.clone())
+            .await?;
+    spawn_qwen(worker::Model::QwenFiles {
+        config: file(&qwen, "config.json")?,
+        tokenizer: file(&qwen, "tokenizer.json")?,
+        weights: file(&qwen, "model.safetensors")?,
+    })
+    .await
+}
+async fn spawn_qwen(model: worker::Model) -> anyhow::Result<Rc<dyn Recognizer>> {
     worker::spawn(
-        directory.to_path_buf(),
-        worker::Model::Qwen,
+        model,
         4,
         RecognizerIdentity {
             family: "qwen3-asr".into(),
@@ -106,15 +88,30 @@ pub async fn load_qwen(directory: &Path) -> anyhow::Result<Rc<dyn Recognizer>> {
     )
     .await
 }
-/// Independently load a locally pinned SenseVoice recognizer.
+/// Load the pinned SenseVoice recognizer from the configured Hub cache without downloading.
 pub async fn load_sensevoice(
-    directory: &Path,
+    downloads: &crate::downloads::Downloads,
     threads: usize,
 ) -> anyhow::Result<Rc<dyn Recognizer>> {
-    verify_local(directory, include_str!("asr/sensevoice.json")).await?;
+    anyhow::ensure!((1..=32).contains(&threads), "invalid ASR thread count");
+    let sensevoice =
+        crate::resources::resolve_manifest(include_str!("asr/sensevoice.json"), downloads.clone())
+            .await?;
+    spawn_sensevoice(
+        worker::Model::SenseVoiceFiles {
+            model: file(&sensevoice, "model.int8.onnx")?,
+            tokens: file(&sensevoice, "tokens.txt")?,
+        },
+        threads,
+    )
+    .await
+}
+async fn spawn_sensevoice(
+    model: worker::Model,
+    threads: usize,
+) -> anyhow::Result<Rc<dyn Recognizer>> {
     worker::spawn(
-        directory.to_path_buf(),
-        worker::Model::SenseVoice,
+        model,
         threads,
         RecognizerIdentity {
             family: "sensevoice".into(),
@@ -124,4 +121,19 @@ pub async fn load_sensevoice(
         },
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn offline_recognizer_loading_reports_missing_cache_without_creating_layout() {
+        let root = tempfile::tempdir().unwrap();
+        let downloads = crate::downloads::Downloads::test(root.path());
+        assert!(load_qwen(&downloads).await.is_err());
+        assert!(load_sensevoice(&downloads, 4).await.is_err());
+        assert!(load_sensevoice(&downloads, 0).await.is_err());
+        assert!(!root.path().join("asr").exists());
+    }
 }

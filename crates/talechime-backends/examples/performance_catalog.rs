@@ -1,7 +1,8 @@
 //! Offline catalogue for developer tooling. Never prepares or migrates resources.
 use talechime_core::paths::AppPaths;
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> anyhow::Result<()> {
     let mut args = std::env::args_os().skip(1);
     let paths = match args.next() {
         Some(root) => {
@@ -24,7 +25,8 @@ fn main() -> anyhow::Result<()> {
                     model
                         .to_str()
                         .ok_or_else(|| anyhow::anyhow!("UTF-8 model required"))?,
-                )?;
+                )
+                .await?;
                 println!("{}", serde_json::to_string(&receipt)?);
                 return Ok(());
             }

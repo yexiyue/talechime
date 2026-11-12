@@ -211,7 +211,10 @@ impl Frontend {
     pub fn from_runtime_artifacts(runtime: &RuntimeArtifacts) -> Result<Self> {
         let (tokenizer, model_config) = if let Some(gguf) = runtime.gguf_bundle() {
             let content = gguf.open_generator_content()?;
-            let mut tokenizer = Tokenizer::from_file(runtime.model_root().join("tokenizer.json"))?;
+            let root = runtime
+                .model_root()
+                .ok_or_else(|| OmniVoiceError::InvalidData("GGUF model root is missing".into()))?;
+            let mut tokenizer = Tokenizer::from_file(root.join("tokenizer.json"))?;
             register_omnivoice_gguf_specials(&mut tokenizer, &content)?;
             let model_config = ModelConfigFile {
                 num_audio_codebook: runtime.contracts().num_audio_codebooks,

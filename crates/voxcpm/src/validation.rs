@@ -193,7 +193,12 @@ fn official_f32_and_streaming_oracle() {
         PathBuf::from(std::env::var("VOXCPM_TEST_REFERENCE").expect("set VOXCPM_TEST_REFERENCE"));
     let original = std::env::var_os("VOXCPM_ORACLE_ORIGINAL").is_some();
     let mut base = if original {
-        Weights::native(&models.join("model.safetensors"), &Device::Cpu, DType::F32)
+        Weights::native(
+            &models.join("model.safetensors"),
+            crate::weights::NativeFormat::Safetensors,
+            &Device::Cpu,
+            DType::F32,
+        )
     } else {
         Weights::open(
             &models.join("VoxCPM2-BaseLM-Q8_0.gguf"),
@@ -246,7 +251,12 @@ fn official_f32_and_streaming_oracle() {
     drop(model);
     drop(base);
     let mut w = if original {
-        Weights::native(&models.join("model.safetensors"), &Device::Cpu, DType::F32)
+        Weights::native(
+            &models.join("model.safetensors"),
+            crate::weights::NativeFormat::Safetensors,
+            &Device::Cpu,
+            DType::F32,
+        )
     } else {
         Weights::open(
             &models.join("VoxCPM2-Acoustic-F16.gguf"),
@@ -348,7 +358,13 @@ fn official_f32_and_streaming_oracle() {
     );
     drop(a);
     if original {
-        w = Weights::native(&models.join("audiovae.pth"), &Device::Cpu, DType::F32).unwrap();
+        w = Weights::native(
+            &models.join("audiovae.pth"),
+            crate::weights::NativeFormat::Pytorch,
+            &Device::Cpu,
+            DType::F32,
+        )
+        .unwrap();
     }
     let mut codec = Codec::load(&mut w).unwrap();
     let f = fixture(&reference, "vae-encode");

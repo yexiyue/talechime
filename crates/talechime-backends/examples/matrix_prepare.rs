@@ -10,36 +10,58 @@ async fn main() -> anyhow::Result<()> {
     let root = PathBuf::from(&args[1]);
     anyhow::ensure!(root.is_absolute(), "resource root must be absolute");
     if args.len() == 7 {
-        let store = match args[2].as_str() {
-            #[cfg(feature = "indextts")]
-            "indextts" => talechime_backends::indextts::voice_store(&root)?,
-            #[cfg(feature = "cosyvoice3")]
-            "cosyvoice3" => talechime_backends::cosyvoice3::voice_store(&root)?,
-            #[cfg(feature = "qwen")]
-            "qwen" => {
-                let model = talechime_backends::qwen::models::Model::parse(Some(&args[3]))?;
-                talechime_backends::qwen::voice_store(&model.directory(&root), model)?
-            }
-            #[cfg(feature = "qwen")]
-            "qwen-reference" => {
-                let model = talechime_backends::qwen::models::Model::parse(Some(&args[3]))?;
-                talechime_backends::qwen::voice_store(&root, model)?
-            }
-            #[cfg(feature = "voxcpm")]
-            "voxcpm-reference" => talechime_backends::voxcpm::voice_store(&root)?,
-            #[cfg(feature = "omnivoice")]
-            "omnivoice" => talechime_backends::omnivoice::voice_store(
-                &talechime_backends::omnivoice::directory(&root),
-            )?,
-            #[cfg(feature = "moss-candle")]
-            "moss" => {
-                let mode = talechime_backends::moss::candle::Mode::parse(&args[3])?;
-                talechime_backends::moss::candle::voice_store(&mode.directory(&root), mode)?
-            }
-            backend => anyhow::bail!("reference import is not configured for {backend}"),
-        };
-        store.import(&args[6], &args[6], &PathBuf::from(&args[4]), &args[5], None)?;
-        return Ok(());
+        #[cfg(not(any(
+            feature = "indextts",
+            feature = "cosyvoice3",
+            feature = "qwen",
+            feature = "voxcpm",
+            feature = "omnivoice",
+            feature = "moss-candle"
+        )))]
+        anyhow::bail!("reference import is not configured in this build");
+        #[cfg(any(
+            feature = "indextts",
+            feature = "cosyvoice3",
+            feature = "qwen",
+            feature = "voxcpm",
+            feature = "omnivoice",
+            feature = "moss-candle"
+        ))]
+        {
+            let store = match args[2].as_str() {
+                #[cfg(feature = "indextts")]
+                "indextts" => talechime_backends::indextts::voice_store(&root)?,
+                #[cfg(feature = "cosyvoice3")]
+                "cosyvoice3" => talechime_backends::cosyvoice3::voice_store(&root)?,
+                #[cfg(feature = "qwen")]
+                "qwen" => {
+                    let model = talechime_backends::qwen::models::Model::parse(Some(&args[3]))?;
+                    talechime_backends::qwen::voice_store(&model.directory(&root), model)?
+                }
+                #[cfg(feature = "qwen")]
+                "qwen-reference" => {
+                    let model = talechime_backends::qwen::models::Model::parse(Some(&args[3]))?;
+                    talechime_backends::qwen::voice_store(&root, model)?
+                }
+                #[cfg(feature = "voxcpm")]
+                "voxcpm-reference" => talechime_backends::voxcpm::voice_store(&root)?,
+                #[cfg(feature = "omnivoice")]
+                "omnivoice" => talechime_backends::omnivoice::voice_store(
+                    &talechime_backends::omnivoice::directory(&root),
+                )?,
+                #[cfg(feature = "moss-candle")]
+                "moss" => {
+                    let mode = talechime_backends::moss::candle::Mode::parse(&args[3])?;
+                    talechime_backends::moss::candle::voice_store(
+                        &mode.data_directory(&root),
+                        mode,
+                    )?
+                }
+                backend => anyhow::bail!("reference import is not configured for {backend}"),
+            };
+            store.import(&args[6], &args[6], &PathBuf::from(&args[4]), &args[5], None)?;
+            return Ok(());
+        }
     }
     let transport = match std::env::var("TALECHIME_PREPARE_TRANSPORT").as_deref() {
         Ok("http") => talechime_backends::downloads::DownloadTransport::Http,
@@ -66,23 +88,14 @@ async fn main() -> anyhow::Result<()> {
         "qwen-design" => {
             let model = talechime_backends::qwen::models::Model::Design17;
             anyhow::ensure!(args[3] == model.id(), "Qwen design model mismatch");
-            talechime_backends::qwen::resources::prepare_model(
-                &model.directory(&root),
-                model,
-                registry.downloads(),
-                tx,
-            )
-            .await
+            talechime_backends::qwen::resources::prepare_model(model, registry.downloads(), tx)
+                .await
         }
         #[cfg(feature = "moss-candle")]
         "moss-design" => {
             anyhow::ensure!(args[3] == "voice-design-1.7b", "MOSS design model mismatch");
-            talechime_backends::moss::candle::resources::prepare_design(
-                &root,
-                registry.downloads(),
-                tx,
-            )
-            .await
+            talechime_backends::moss::candle::resources::prepare_design(registry.downloads(), tx)
+                .await
         }
         backend => {
             registry

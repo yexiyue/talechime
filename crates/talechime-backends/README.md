@@ -1,6 +1,6 @@
 # talechime-backends
 
-具体模型实现和资源目录。会话、播放和检查点由 `talechime-core` 管理；CLI/worker 通过 `Registry` 组装，阅读器不依赖本 crate。
+具体模型实现和固定 Hub 资源清单。会话、播放和检查点由 `talechime-core` 管理；CLI/worker 通过 `Registry` 组装，阅读器不依赖本 crate。
 
 ```mermaid
 flowchart LR
@@ -46,7 +46,7 @@ CPU、可选 CUDA（Windows/Linux，`qwen-cuda`）和 Metal（macOS，`qwen-meta
 
 ```sh
 cargo run --release -p talechime-backends --no-default-features --features qwen-metal --example qwen -- <model-directory> output.wav metal '你好，欢迎收听。'
-TRNOVEL_QWEN_MODEL_DIR=<model-directory> cargo test --release -p talechime-backends --features qwen real_model_streams_and_releases_cancelled_request
+TALECHIME_QWEN_HUB=<isolated-hub-cache> cargo test --release -p talechime-backends --features qwen real_model_streams_and_releases_cancelled_request
 ```
 
 ## MOSS 资源与音色
@@ -59,7 +59,7 @@ Nano 资源清单为 `src/moss/nano/resources.json`；共享 prompt 与内置音
 Nano 固定 revision `44502f80dbf9743528fa921cc544d662c685ebec`，资源与导入音色位于
 `moss/models/nano-candle/<revision>/{tts,codec,voices}`。参考 WAV 支持 1..30 秒
 非静音 mono/stereo PCM 或 float，经 sinc 重采样为 48kHz 交错 stereo，再由 Candle encoder 编码。
-重复音色 ID 拒绝覆盖；Realtime 使用独立模型目录与参考音色存储。
+重复音色 ID 拒绝覆盖；Realtime 从固定 Hub 缓存加载模型，并使用独立应用数据目录存储参考音色。
 
 旧 `nano`、`local-1b`、`local-1.7b` 加载时明确报错；旧配置、共享音色和模型文件留在原位置，
 不扫描、不复制、不删除。变更范围和历史依据见[决策记录](../../docs/records/moss/2026-10-26-moss-tier-removal.md)。

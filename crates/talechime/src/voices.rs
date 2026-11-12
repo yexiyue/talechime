@@ -94,7 +94,7 @@ pub async fn run(command: VoiceCommand, studio: VoiceStudio) -> anyhow::Result<(
             }
         }
         VoiceCommand::Engines => {
-            let engines = studio.engines();
+            let engines = studio.engines().await?;
             if engines.is_empty() {
                 println!("no design engine is compiled into this build");
             }

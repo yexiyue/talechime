@@ -9,7 +9,7 @@ use std::{
     time::Instant,
 };
 use talechime_backends::downloads::{
-    DownloadConfig, DownloadOptions, DownloadTransport, Downloads, FileProgressBridge,
+    DownloadConfig, DownloadOptions, DownloadTransport, Downloads, FileProgressBridge, HubResource,
 };
 use talechime_protocol::Event;
 const REPO: &str = "OpenMOSS-Team/MOSS-TTS-Realtime";
@@ -153,14 +153,15 @@ async fn main() -> anyhow::Result<()> {
                     transport,
                 },
             )?;
-            let target = tempfile::tempdir()?;
             let (tx, mut rx) = tokio::sync::mpsc::channel(64);
-            let destination = target.path().join(FILE);
-            let download = client.ensure(
-                &destination,
-                REPO,
-                REVISION,
-                FILE,
+            let download = client.ensure_resource(
+                HubResource {
+                    repo: REPO,
+                    revision: REVISION,
+                    filename: FILE,
+                    size: SIZE,
+                    sha256: "13a7a2a0322fe63984ff982a042373a41f707d95df5963233eff40e068a070d4",
+                },
                 FileProgressBridge::new(tx, FILE.into(), SIZE),
             );
             let sink = async {
@@ -179,7 +180,7 @@ async fn main() -> anyhow::Result<()> {
             };
             let (result, ()) = tokio::join!(download, sink);
             match result {
-                Ok(()) => eprintln!("bridge completed"),
+                Ok(_) => eprintln!("bridge completed"),
                 Err(error) => {
                     eprintln!(
                         "bridge failed: {}",

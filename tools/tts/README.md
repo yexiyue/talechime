@@ -2,7 +2,7 @@
 
 开发验收工具，不是通用文本预处理器。宿主传原文，每个模型拥有自己的 TN/G2P。真实运行输出放在 `.local/`，不得提交音频、权重、私有正文或参考。
 
-`backend-variants.json` 登记 15 个当前推理/辅助设计变体及源码、资源清单、设备边界和剩余缺口。`text-matrix.json` 为 19 条公开输入，包括原有 13 类、全角数字、无假名日文日期、连续空白、长词、长段和日语读音标注。每个变体均有独立计划行；参考语言、设计、方言、速度、时长和情绪模式的附加矩阵另列。2026-11-12 用户明确将 19 条原始 BF16 CUDA 实机行另行安排，本机结论不代表 CUDA 通过，见验收记录及 `finish-official-backend-parity/deferred-cuda.md`。
+`backend-variants.json` 登记 14 个当前推理/辅助设计变体及源码、资源清单、设备边界和剩余缺口。`text-matrix.json` 为 19 条公开输入，包括原有 13 类、全角数字、无假名日文日期、连续空白、长词、长段和日语读音标注。每个变体均有独立计划行；参考语言、设计、方言、速度、时长和情绪模式的附加矩阵另列。2026-11-12 用户明确将 19 条原始 BF16 CUDA 实机行另行安排，本机结论不代表 CUDA 通过，见验收记录及 `finish-official-backend-parity/deferred-cuda.md`。
 
 ```sh
 python3 -m unittest discover -s tools/tts -p 'test_*.py' -v
@@ -10,7 +10,7 @@ python3 tools/tts/run_text_matrix.py .local/matrix-config.json .local/matrix-run
   --probe target/release/examples/native_probe --timeout 600
 ```
 
-配置为 JSON 数组，每项需 `id`（目录中的变体 ID）、`backend`、`directory`、`voice`。可选 `device`（默认 cpu）、`params`（协议原生标量，如 `{"language":"auto"}`）、`style` 和 `reference_source`（公开来源说明）。`env` 只允许 `TALECHIME_KOKORO_MODEL`、`MOSS_MODEL`、`TALECHIME_ESPEAK_DIR`。后者显式选择独立 eSpeak 包，报告另存 helper manifest、源码身份和程序/数据摘要；模型资源与辅助程序分开记录。程序不会把任意环境变量或未知配置字段存入报告；子进程只继承路径、用户目录和临时目录基础变量，不继承凭据。参考音色须先由现有资源/音色流程准备，本工具不导入、不下载、不修改资源。VoiceDesign 使用独立的 `qwen-design` / `moss-design` / `voxcpm-design` 探针入口和必填 `style` 描述，调用真实设计 API；其长度限制与朗读不同。
+配置为 JSON 数组，每项需 `id`（目录中的变体 ID）、`backend`、`directory`、`voice`。可选 `device`（默认 cpu）、`params`（协议原生标量，如 `{"language":"auto"}`）、`style` 和 `reference_source`（公开来源说明）。`env` 只允许 `TALECHIME_KOKORO_MODEL`、`MOSS_MODEL`。程序不会把任意环境变量或未知配置字段存入报告；子进程只继承路径、用户目录和临时目录基础变量，不继承凭据。参考音色须先由现有资源/音色流程准备，本工具不导入、不下载、不修改资源。VoiceDesign 使用独立的 `qwen-design` / `moss-design` / `voxcpm-design` 探针入口和必填 `style` 描述，调用真实设计 API；其长度限制与朗读不同。
 
 输出目录必须全新，避免覆盖旧证据。`plan.json` 先于执行写入；`results.jsonl` 逐行落盘；`resources.json` 记录实际模型文件的大小和 SHA-256（不收录可变音色目录）；`build.json` 记录提交、工作区跟踪 diff 摘要、probe 二进制摘要和执行平台。探针另报编译 feature、构建时 rustc 版本与实际加载的模型 ID；参考记录/WAV 摘要和模型内部阶段快照独立记录。加载的模型 ID 必须与计划变体匹配。这些证据不等于官方数值对照。
 

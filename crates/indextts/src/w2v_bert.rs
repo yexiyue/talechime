@@ -773,15 +773,21 @@ impl Wav2Vec2Bert {
     /// `dir` points at the extracted facebook/w2v-bert-2.0 repository
     /// (model.safetensors + config.json).
     pub fn load(dir: &std::path::Path, device: &Device) -> Result<Self> {
-        let config_text = std::fs::read_to_string(dir.join("config.json"))
-            .map_err(|e| candle_core::Error::msg(format!("reading {}: {e}", dir.display())))?;
-        let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(
-                &[dir.join("model.safetensors")],
-                DType::F32,
-                device,
-            )?
-        };
+        Self::load_files(
+            &dir.join("config.json"),
+            &dir.join("model.safetensors"),
+            device,
+        )
+    }
+    /// Load configuration and model weights from independently resolved files.
+    pub fn load_files(
+        config: &std::path::Path,
+        weights: &std::path::Path,
+        device: &Device,
+    ) -> Result<Self> {
+        let config_text = std::fs::read_to_string(config)
+            .map_err(|e| candle_core::Error::msg(format!("reading {}: {e}", config.display())))?;
+        let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[weights], DType::F32, device)? };
         Self::from_builder(&Config::from_json(&config_text)?, vb)
     }
 

@@ -31,7 +31,7 @@ impl Worker {
             directory.path().join("config.json"),
             serde_json::to_vec(&talechime_protocol::Config {
                 backend: "kokoro".into(),
-                model: Some("1.1-zh".into()),
+                model: Some("1.1-zh-g2pw".into()),
                 voice: "zf_001".into(),
                 ..Default::default()
             })
@@ -184,8 +184,7 @@ fn model_catalog_is_read_only_and_uses_global_paths_after_subcommands() {
 fn library_voice_override_is_validated_without_materializing_or_loading_models() {
     let directory = tempfile::tempdir().unwrap();
     let resources = directory.path().join("resources");
-    let studio =
-        talechime::VoiceStudio::at(&resources, directory.path().join("voices-v2")).unwrap();
+    let studio = talechime::VoiceStudio::at(&resources, resources.join("voices-v2")).unwrap();
     let mut wav = b"RIFF".to_vec();
     wav.extend_from_slice(&38u32.to_le_bytes());
     wav.extend_from_slice(b"WAVEfmt ");
@@ -233,9 +232,10 @@ fn library_voice_override_is_validated_without_materializing_or_loading_models()
     let saved: talechime_protocol::Config =
         serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
     assert_eq!(saved.voice, "reader");
-    assert!(
-        !resources.exists(),
-        "validation must not prepare reference codecs or models"
+    assert_eq!(
+        std::fs::read_dir(&resources).unwrap().count(),
+        1,
+        "validation must leave only the existing voice library, without preparing models"
     );
     let plan = talechime_protocol::PlanRequest {
         source: talechime_protocol::SourceId {
@@ -290,7 +290,7 @@ fn library_voice_override_is_validated_without_materializing_or_loading_models()
         ),
         ("moss", Some("nano-candle"), "reader")
     );
-    assert!(!resources.exists());
+    assert_eq!(std::fs::read_dir(&resources).unwrap().count(), 1);
 }
 
 #[test]
@@ -484,14 +484,7 @@ fn backend_directory_and_switch_are_lightweight() {
             .filter(|caps| caps.backend == "kokoro")
             .map(|caps| caps.model.as_deref().unwrap())
             .collect::<Vec<_>>();
-        assert_eq!(
-            models,
-            vec![
-                "1.1-zh",
-                #[cfg(feature = "kokoro-g2pw")]
-                "1.1-zh-g2pw"
-            ]
-        );
+        assert_eq!(models, vec!["1.1-zh-g2pw"]);
     }
     for caps in &catalog {
         let json = serde_json::to_value(caps).unwrap();

@@ -133,16 +133,48 @@ pub struct QwenBackend {
     cache_identity: Option<String>,
 }
 impl QwenBackend {
-    pub async fn load_on(directory: PathBuf, device: Device) -> Result<Self, BackendError> {
-        Self::load_with_recovery(directory, device, None).await
+    /// Load fixed cached resources without downloading. The root owns writable voice data.
+    pub async fn load_on(
+        root: PathBuf,
+        model: models::Model,
+        device: Device,
+    ) -> Result<Self, BackendError> {
+        let downloads =
+            crate::downloads::Downloads::new(&crate::downloads::DownloadConfig::default())
+                .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        crate::registry::validate_model_data_root(
+            &root,
+            &model.directory(&root),
+            downloads.cache_dir(),
+        )
+        .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        let reference_path = (|| -> anyhow::Result<_> {
+            voice_store(&model.directory(&root), model)?.path("custom:storage-probe")
+        })()
+        .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        crate::registry::validate_model_data_root(&root, &reference_path, downloads.cache_dir())
+            .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        let paths = crate::resources::resolve_manifest(model.manifest(), downloads)
+            .await
+            .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        let files = models::Model::resolved_files(paths)
+            .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        Self::load_source(model.directory(&root), model, files, device, None).await
     }
-    pub async fn load_with_recovery(
+    pub(crate) async fn load_source(
         directory: PathBuf,
+        model: models::Model,
+        source: talechime_qwen3_tts::ModelFiles,
         device: Device,
         recovery: Option<mpsc::Sender<talechime_protocol::Event>>,
     ) -> Result<Self, BackendError> {
-        let model = models::Model::detect(&directory)
+        let detected = models::Model::detect_file(&source.config)
             .map_err(|e| BackendError::Initialize(e.to_string()))?;
+        if detected != model {
+            return Err(BackendError::Initialize(
+                "Qwen model metadata does not match selection".into(),
+            ));
+        }
         if !matches!(
             model,
             models::Model::Custom06
@@ -169,7 +201,7 @@ impl QwenBackend {
         let thread = std::thread::Builder::new()
             .name("qwen-inference".into())
             .spawn(move || {
-                runtime::run(directory, device, recovery, jobs, ready);
+                runtime::run(directory, source, model, device, recovery, jobs, ready);
             })
             .map_err(|error| BackendError::Initialize(error.to_string()))?;
         // Own the thread before awaiting initialization: cancellation must join it.
@@ -276,20 +308,47 @@ mod tests {
     use talechime_core::backend::AudioChunk;
     use talechime_qwen3_tts::Speaker;
 
-    #[cfg(unix)]
+    #[tokio::test]
+    async fn resolved_model_rejects_wrong_variant_before_loading_weights() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("config");
+        std::fs::write(
+            &config,
+            br#"{"tts_model_size":"0b6","tts_model_type":"custom_voice"}"#,
+        )
+        .unwrap();
+        let missing = root.path().join("not-loaded");
+        let files = talechime_qwen3_tts::ModelFiles {
+            config,
+            weights: missing.clone(),
+            speech_weights: missing.clone(),
+            vocab: missing.clone(),
+            merges: missing.clone(),
+            tokenizer_config: missing,
+        };
+        let result = QwenBackend::load_source(
+            root.path().join("data"),
+            models::Model::Base06,
+            files,
+            Device::Cpu,
+            None,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(BackendError::Initialize(message)) if message.contains("does not match"))
+        );
+        assert!(!root.path().join("data").exists());
+    }
+
     #[tokio::test(flavor = "current_thread")]
-    #[ignore = "requires explicit local Qwen Base weights and public reference WAV"]
+    #[ignore = "requires fixed Qwen Base Hub cache and public reference WAV"]
     async fn real_base_auto_language_generates_with_isolated_reference() -> anyhow::Result<()> {
-        use std::os::unix::fs::symlink;
         use talechime_core::{backend::SegmentRequest, params::GenerationParams};
-        let source = PathBuf::from(std::env::var("TALECHIME_QWEN_AUTO_MODEL")?);
+        let cache = PathBuf::from(std::env::var("TALECHIME_QWEN_AUTO_HUB")?);
         let wav = PathBuf::from(std::env::var("TALECHIME_QWEN_AUTO_WAV")?);
         let root = tempfile::tempdir()?;
-        for entry in std::fs::read_dir(&source)? {
-            let entry = entry?;
-            symlink(entry.path(), root.path().join(entry.file_name()))?;
-        }
-        let store = voice_store(root.path(), models::Model::Base06)?;
+        let directory = models::Model::Base06.directory(root.path());
+        let store = voice_store(&directory, models::Model::Base06)?;
         store.import(
             "custom:auto",
             "Public test",
@@ -297,7 +356,17 @@ mod tests {
             "Hello, welcome to our story today.",
             None,
         )?;
-        let backend = QwenBackend::load_on(root.path().to_path_buf(), Device::Cpu).await?;
+        let downloads = crate::downloads::Downloads::new(&crate::downloads::DownloadConfig {
+            cache_dir: cache,
+            endpoint: Some("http://127.0.0.1:9".into()),
+            token: None,
+        })?;
+        let paths =
+            crate::resources::resolve_manifest(models::Model::Base06.manifest(), downloads).await?;
+        let files = models::Model::resolved_files(paths)?;
+        let backend =
+            QwenBackend::load_source(directory, models::Model::Base06, files, Device::Cpu, None)
+                .await?;
         let params = GenerationParams::new();
         let text =
             std::env::var("TALECHIME_QWEN_AUTO_TEXT").unwrap_or_else(|_| "Hello, welcome.".into());
@@ -411,12 +480,30 @@ mod tests {
     }
     #[tokio::test]
     async fn real_model_streams_and_releases_cancelled_request() {
-        let Some(directory) = std::env::var_os("TRNOVEL_QWEN_MODEL_DIR") else {
+        let Some(cache) = std::env::var_os("TALECHIME_QWEN_HUB") else {
             return;
         };
-        let backend = QwenBackend::load_on(directory.into(), Device::Cpu)
-            .await
-            .unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let downloads = crate::downloads::Downloads::new(&crate::downloads::DownloadConfig {
+            cache_dir: cache.into(),
+            endpoint: Some("http://127.0.0.1:9".into()),
+            token: None,
+        })
+        .unwrap();
+        let paths =
+            crate::resources::resolve_manifest(models::Model::Custom06.manifest(), downloads)
+                .await
+                .unwrap();
+        let files = models::Model::resolved_files(paths).unwrap();
+        let backend = QwenBackend::load_source(
+            models::Model::Custom06.directory(root.path()),
+            models::Model::Custom06,
+            files,
+            Device::Cpu,
+            None,
+        )
+        .await
+        .unwrap();
         let params = talechime_core::params::GenerationParams::new();
         assert!(
             backend

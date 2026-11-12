@@ -8,7 +8,22 @@ use std::{
     },
 };
 pub async fn reference(
-    root: PathBuf,
+    downloads: &crate::downloads::Downloads,
+    selected: talechime_protocol::Device,
+    text: String,
+    description: String,
+    output: PathBuf,
+    seed: Option<u64>,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        super::available_devices().contains(&selected),
+        "MOSS voice design requires an available compiled CUDA or Metal device"
+    );
+    let files = resources::resolve(talechime_moss_tts::manifests::VOICE_DESIGN, downloads).await?;
+    reference_files(files, selected, text, description, output, seed).await
+}
+pub(crate) async fn reference_files(
+    files: resources::Files,
     selected: talechime_protocol::Device,
     text: String,
     description: String,
@@ -45,9 +60,11 @@ pub async fn reference(
                         "backend":"moss-design", "phase":"model_dtype", "dtype":format!("{dtype:?}")
                     }));
                 }
-                let mut model = talechime_moss_tts::Model::load(
+                let mut model = talechime_moss_tts::Model::load_files(
                     "voice-design-1.7b",
-                    &resources::design_directory(&root),
+                    &files.config,
+                    &files.tokenizer,
+                    &files.weights,
                     &device,
                     dtype,
                 )?;
@@ -55,8 +72,9 @@ pub async fn reference(
                     device.synchronize()?;
                 }
                 anyhow::ensure!(!check(), "voice design cancelled");
-                let mut codec = talechime_moss_tts::codec::AudioCodec::load(
-                    &resources::codec_directory(&root),
+                let mut codec = talechime_moss_tts::codec::AudioCodec::load_files(
+                    &files.codec_config,
+                    &files.codec_weights,
                     &device,
                     candle_core::DType::F16,
                 )?;

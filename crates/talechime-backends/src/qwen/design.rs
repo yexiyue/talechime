@@ -20,8 +20,25 @@ impl Default for Options {
     }
 }
 
+/// Load the fixed VoiceDesign files from the configured Hub cache.
 pub async fn reference(
-    directory: PathBuf,
+    downloads: &crate::downloads::Downloads,
+    device: Device,
+    text: String,
+    description: String,
+    output: PathBuf,
+    options: Options,
+) -> anyhow::Result<()> {
+    let paths = crate::resources::resolve_manifest(
+        super::models::Model::Design17.manifest(),
+        downloads.clone(),
+    )
+    .await?;
+    let files = super::models::Model::resolved_files(paths)?;
+    reference_source(files, device, text, description, output, options).await
+}
+pub(crate) async fn reference_source(
+    source: talechime_qwen3_tts::ModelFiles,
     device: Device,
     text: String,
     description: String,
@@ -37,7 +54,7 @@ pub async fn reference(
         "design reference text must contain 1..100 characters"
     );
     anyhow::ensure!(
-        super::models::Model::detect(&directory)? == super::models::Model::Design17,
+        super::models::Model::detect_file(&source.config)? == super::models::Model::Design17,
         "voice design requires 1.7b-voicedesign weights"
     );
     let (completed, receiver) = tokio::sync::oneshot::channel();
@@ -45,7 +62,7 @@ pub async fn reference(
         .name("qwen-voice-design".into())
         .spawn(move || {
             let result = (|| -> anyhow::Result<()> {
-                let model = runtime::load(&directory, device)?;
+                let model = runtime::load(&source, device)?;
                 let mut stream = model.synthesize_voice_design_streaming(
                     &text,
                     &description,

@@ -30,14 +30,25 @@ pub struct Nano {
 }
 impl Nano {
     pub fn load(directory: &Path, device: &Device) -> anyhow::Result<Self> {
-        let config: Config =
-            serde_json::from_slice(&std::fs::read(directory.join("config.json"))?)?;
+        Self::load_files(
+            &directory.join("config.json"),
+            &directory.join("pytorch_model.bin"),
+            device,
+        )
+    }
+    /// Load independently resolved configuration and weights.
+    pub fn load_files(
+        config_path: &Path,
+        weights_path: &Path,
+        device: &Device,
+    ) -> anyhow::Result<Self> {
+        let config: Config = serde_json::from_slice(&std::fs::read(config_path)?)?;
         anyhow::ensure!(
             config.n_vq == 16 && config.audio_codebook_sizes == vec![1024; 16],
             "unsupported Nano RVQ configuration"
         );
         // Candle reads the official BF16 PyTorch checkpoint and converts to F32.
-        let vb = VarBuilder::from_pth(directory.join("pytorch_model.bin"), DType::F32, device)?;
+        let vb = VarBuilder::from_pth(weights_path, DType::F32, device)?;
         let c = &config.gpt2_config;
         let text = embedding(c.vocab_size, c.n_embd, vb.pp("transformer.wte"))?;
         let text_head = Linear::new(text.embeddings().clone(), None);

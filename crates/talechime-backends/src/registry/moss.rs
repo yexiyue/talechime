@@ -21,6 +21,16 @@ enum Adapter {
     Realtime,
 }
 impl ModelAdapter for Adapter {
+    fn manifests(&self) -> Vec<&'static str> {
+        match self {
+            #[cfg(feature = "moss-nano-candle")]
+            Self::Nano => vec![moss::nano::MANIFEST],
+            Self::Realtime => vec![
+                talechime_moss_tts::manifests::REALTIME,
+                talechime_moss_tts::manifests::CODEC,
+            ],
+        }
+    }
     fn id(&self) -> &'static str {
         match self {
             #[cfg(feature = "moss-nano-candle")]
@@ -60,11 +70,11 @@ impl ModelAdapter for Adapter {
         match self {
             #[cfg(feature = "moss-nano-candle")]
             Self::Nano => Ok(ReferenceEntry::File(
-                moss::voices::VoiceStore::new(&moss::nano::directory(root)).path(id)?,
+                moss::voices::VoiceStore::new(&moss::nano::data_directory(root)).path(id)?,
             )),
             Self::Realtime => Ok(ReferenceEntry::Directory(
                 moss::candle::voice_store(
-                    &moss::candle::Mode::Realtime.directory(root),
+                    &moss::candle::Mode::Realtime.data_directory(root),
                     moss::candle::Mode::Realtime,
                 )?
                 .path(id)?,
@@ -92,7 +102,7 @@ impl ModelAdapter for Adapter {
                     "MOSS trial reference must be at most 10 seconds"
                 );
                 let mode = moss::candle::Mode::Realtime;
-                let store = moss::candle::voice_store(&mode.directory(root), mode)?;
+                let store = moss::candle::voice_store(&mode.data_directory(root), mode)?;
                 store.import(id, name, wav, transcript, None)?;
                 Ok(())
             }
@@ -127,41 +137,46 @@ impl ModelAdapter for Adapter {
             }
         })
     }
-    fn resource_status(&self, root: &Path) -> crate::resource_state::ResourceStatus {
-        match self {
-            #[cfg(feature = "moss-nano-candle")]
-            Self::Nano => crate::resource_state::status_of_manifests(&[(
-                moss::nano::MANIFEST,
-                &moss::nano::directory(root),
-            )]),
-            Self::Realtime => {
-                let mode = moss::candle::Mode::Realtime;
-                crate::resource_state::status_of_manifests(&[
-                    (
-                        talechime_moss_tts::manifests::REALTIME,
-                        &mode.directory(root),
-                    ),
-                    (
-                        talechime_moss_tts::manifests::CODEC,
-                        &moss::candle::resources::codec_directory(root),
-                    ),
-                ])
+    fn resource_status<'a>(
+        &'a self,
+        _root: &'a Path,
+        downloads: &'a crate::downloads::Downloads,
+    ) -> Inventory<'a> {
+        Box::pin(async move {
+            match self {
+                #[cfg(feature = "moss-nano-candle")]
+                Self::Nano => {
+                    crate::resources::cached_manifest_status(
+                        moss::nano::MANIFEST,
+                        downloads.clone(),
+                    )
+                    .await
+                }
+                Self::Realtime => {
+                    crate::resources::cached_manifests_status(
+                        &[
+                            talechime_moss_tts::manifests::REALTIME,
+                            talechime_moss_tts::manifests::CODEC,
+                        ],
+                        downloads.clone(),
+                    )
+                    .await
+                }
             }
-        }
+        })
     }
     fn prepare<'a>(
         &'a self,
-        root: &'a Path,
+        _root: &'a Path,
         downloads: &'a crate::downloads::Downloads,
         progress: mpsc::Sender<Event>,
     ) -> Preparing<'a> {
         Box::pin(async move {
             match self {
                 #[cfg(feature = "moss-nano-candle")]
-                Self::Nano => moss::nano::prepare(root, downloads, progress).await,
+                Self::Nano => moss::nano::prepare(downloads, progress).await,
                 Self::Realtime => {
                     moss::candle::resources::prepare(
-                        root,
                         moss::candle::Mode::Realtime,
                         downloads,
                         progress,
@@ -174,6 +189,7 @@ impl ModelAdapter for Adapter {
     fn load<'a>(
         &'a self,
         root: &'a Path,
+        downloads: &'a crate::downloads::Downloads,
         _progress: mpsc::Sender<Event>,
         device: Device,
         _recovery: bool,
@@ -182,17 +198,31 @@ impl ModelAdapter for Adapter {
             Ok(match self {
                 #[cfg(feature = "moss-nano-candle")]
                 Self::Nano => {
-                    Rc::new(moss::nano::NanoBackend::load_on(root.to_path_buf(), device).await?)
-                        as Rc<dyn Backend>
+                    let paths =
+                        crate::resources::resolve_manifest(moss::nano::MANIFEST, downloads.clone())
+                            .await?;
+                    let files = moss::nano::NanoFiles::from_resolved(paths)?;
+                    Rc::new(
+                        moss::nano::NanoBackend::load_files_on(root.to_path_buf(), files, device)
+                            .await?,
+                    ) as Rc<dyn Backend>
                 }
-                Self::Realtime => Rc::new(
-                    moss::candle::CandleBackend::load_on(
-                        root.to_path_buf(),
-                        moss::candle::Mode::Realtime,
-                        device,
+                Self::Realtime => {
+                    let files = moss::candle::resources::resolve(
+                        talechime_moss_tts::manifests::REALTIME,
+                        downloads,
                     )
-                    .await?,
-                ) as Rc<dyn Backend>,
+                    .await?;
+                    Rc::new(
+                        moss::candle::CandleBackend::load_files_on(
+                            root.to_path_buf(),
+                            moss::candle::Mode::Realtime,
+                            files,
+                            device,
+                        )
+                        .await?,
+                    ) as Rc<dyn Backend>
+                }
             })
         })
     }

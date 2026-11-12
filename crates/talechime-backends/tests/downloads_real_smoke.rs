@@ -45,7 +45,7 @@ async fn moss_nano_prepare_downloads_and_loads_from_shared_cache() {
         "prepared {} in {:.1}s; resource status now {:?}",
         capabilities.model_name,
         started.elapsed().as_secs_f32(),
-        registry.resource_status("moss", None).unwrap()
+        registry.resource_status("moss", None).await.unwrap()
     );
 }
 
@@ -56,6 +56,7 @@ async fn kokoro_reports_missing_conversion_without_downloading() {
     let registry = Registry::new(None).expect("registry");
     let status = registry
         .resource_status("kokoro", None)
+        .await
         .expect("kokoro status");
     // Without a converted bundle the honest offline answer is Missing.
     println!("kokoro status: {status:?}");

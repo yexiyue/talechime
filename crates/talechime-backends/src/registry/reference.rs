@@ -96,6 +96,16 @@ impl ReferenceEntry {
     }
 }
 
+pub(super) fn validate_location(root: &Path, entry: &ReferenceEntry) -> anyhow::Result<()> {
+    let root = super::resolved_storage_path(root)?;
+    let path = super::resolved_storage_path(entry.path())?;
+    anyhow::ensure!(
+        path != root && path.starts_with(&root),
+        "reference path escapes application data root"
+    );
+    Ok(())
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Materialization {
     library_id: String,
@@ -226,6 +236,7 @@ pub(super) async fn install(
     );
     let custom = format!("custom:{}", voice.asset.id());
     let entry = adapter.reference_entry(root, &custom)?;
+    validate_location(root, &entry)?;
     let Some(replacement) =
         Replacement::begin(&entry, voice.asset.id(), voice.asset.fingerprint())?
     else {
@@ -250,11 +261,34 @@ pub(super) async fn install(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn reference_location_rejects_nested_symlink_to_hub() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let data = root.path().join("data");
+        let hub = root.path().join("hub");
+        std::fs::create_dir(&data)?;
+        std::fs::create_dir(&hub)?;
+        std::fs::write(hub.join("sentinel"), b"model")?;
+        std::os::unix::fs::symlink(&hub, data.join("voices"))?;
+        let escaped = ReferenceEntry::Directory(data.join("voices/backend/voice"));
+        assert!(validate_location(&data, &escaped).is_err());
+        assert!(
+            super::super::validate_model_data_root(&data, &data.join("voices/backend"), &hub)
+                .is_err()
+        );
+        assert!(super::super::validate_model_data_root(&hub, &hub.join("voice"), &hub).is_err());
+        assert_eq!(std::fs::read(hub.join("sentinel"))?, b"model");
+        assert!(
+            validate_location(&data, &ReferenceEntry::Directory(data.join("other/voice"))).is_ok()
+        );
+        Ok(())
+    }
     fn downloads() -> crate::downloads::Downloads {
         let dir = tempfile::tempdir().expect("tempdir");
         crate::downloads::Downloads::test(dir.path())
     }
-    use crate::registry::{Installing, Loading, Preparing};
+    use crate::registry::{Installing, Inventory, Loading, Preparing};
     use std::cell::Cell;
     use talechime_core::voices::{VoiceLibrary, VoiceSource};
     use talechime_protocol::{Capabilities, Device, Event};
@@ -277,6 +311,9 @@ mod tests {
         }
     }
     impl ModelAdapter for Adapter {
+        fn manifests(&self) -> Vec<&'static str> {
+            vec![]
+        }
         fn id(&self) -> &'static str {
             "fixture"
         }
@@ -292,8 +329,12 @@ mod tests {
         fn revision(&self) -> &'static str {
             "fixture"
         }
-        fn resource_status(&self, _: &Path) -> crate::resource_state::ResourceStatus {
-            crate::resource_state::ResourceStatus::Ready
+        fn resource_status<'a>(
+            &'a self,
+            _root: &'a Path,
+            _downloads: &'a crate::downloads::Downloads,
+        ) -> Inventory<'a> {
+            Box::pin(async move { Ok(crate::resource_state::ResourceStatus::Ready) })
         }
         fn prepare<'a>(
             &'a self,
@@ -306,6 +347,7 @@ mod tests {
         fn load<'a>(
             &'a self,
             _: &'a Path,
+            _downloads: &'a crate::downloads::Downloads,
             _: mpsc::Sender<Event>,
             _: Device,
             _: bool,
@@ -355,6 +397,42 @@ mod tests {
             .unwrap()
             .create("hero", "Hero", wav, "Hello", None, VoiceSource::Imported)
             .unwrap()
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn installing_reference_never_follows_a_link_outside_data_root() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let data = root.path().join("data");
+        let hub = root.path().join("hub");
+        std::fs::create_dir(&data)?;
+        std::fs::create_dir(&hub)?;
+        std::fs::write(hub.join("sentinel"), b"keep")?;
+        std::os::unix::fs::symlink(&hub, data.join("hero"))?;
+        let wav = [
+            82, 73, 70, 70, 44, 0, 0, 0, 87, 65, 86, 69, 102, 109, 116, 32, 16, 0, 0, 0, 1, 0, 1,
+            0, 192, 93, 0, 0, 128, 187, 0, 0, 2, 0, 16, 0, 100, 97, 116, 97, 8, 0, 0, 0, 200, 0,
+            56, 255, 200, 0, 56, 255,
+        ];
+        let voice = asset(&wav);
+        let adapter = Adapter::new(false);
+        assert!(
+            install(
+                &adapter,
+                &data,
+                &downloads(),
+                ReferenceVoice {
+                    asset: &voice,
+                    wav: &wav
+                }
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(adapter.installs.get(), 0);
+        assert_eq!(std::fs::read(hub.join("sentinel"))?, b"keep");
+        assert_eq!(std::fs::read_dir(&hub)?.count(), 1);
+        Ok(())
     }
 
     #[tokio::test]

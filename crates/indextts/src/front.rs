@@ -11,10 +11,8 @@ use std::{
     cell::RefCell,
     path::{Path, PathBuf},
 };
-mod fst;
 mod nemo;
 mod normalization;
-mod reorder;
 
 pub(crate) mod japanese;
 
@@ -63,6 +61,18 @@ const ZH_EXTRA_MAP: [(&str, &str); 1] = [("$", ".")];
 /// The remaining entries of the full maps (`~`, `「`, `」`, `:`).
 const CHAR_REP_MAP_TAIL: [(&str, &str); 4] = [("~", "-"), ("「", "'"), ("」", "'"), (":", ",")];
 
+/// Fixed text-normalization resources resolved individually by the host.
+pub struct TextResources {
+    pub normalizer: [PathBuf; 4],
+    pub spanish: [PathBuf; 2],
+    pub linux: bool,
+}
+
+enum NormalizationResources {
+    Directory(PathBuf),
+    Files(TextResources),
+}
+
 pub struct TextFrontend {
     glossary: Vec<(Regex, String)>,
     zh_map: Vec<(&'static str, &'static str)>,
@@ -75,7 +85,7 @@ pub struct TextFrontend {
     alpha_re: Regex,
     pinyin_re: Regex,
     pron_re: Regex,
-    normalization_root: Option<PathBuf>,
+    normalization_resources: Option<NormalizationResources>,
     normalization: RefCell<Option<normalization::Normalization>>,
     spanish: RefCell<Option<normalization::Spanish>>,
 }
@@ -92,7 +102,7 @@ impl TextFrontend {
         base_map.extend_from_slice(&CHAR_REP_MAP_TAIL);
         Self {
             glossary: Vec::new(),
-            normalization_root: None,
+            normalization_resources: None,
             normalization: RefCell::new(None),
             spanish: RefCell::new(None),
             zh_map,
@@ -210,10 +220,17 @@ impl TextFrontend {
         if normalize && language == "es" {
             let mut spanish = self.spanish.borrow_mut();
             if spanish.is_none() {
-                let root = self.normalization_root.as_ref().ok_or_else(|| {
+                let resources = self.normalization_resources.as_ref().ok_or_else(|| {
                     candle_core::Error::Msg("IndexTTS TN resources were not configured".into())
                 })?;
-                *spanish = Some(normalization::Spanish::load(&root.with_file_name("es"))?);
+                *spanish = Some(match resources {
+                    NormalizationResources::Directory(root) => {
+                        normalization::Spanish::load(&root.with_file_name("es"))?
+                    }
+                    NormalizationResources::Files(files) => {
+                        normalization::Spanish::load_files(&files.spanish[0], &files.spanish[1])?
+                    }
+                });
             }
             text = spanish
                 .as_ref()
@@ -240,7 +257,15 @@ impl TextFrontend {
     /// is requested; Japanese does not run these normalizers.
     pub fn with_resources(directory: &Path) -> Self {
         Self {
-            normalization_root: Some(directory.to_owned()),
+            normalization_resources: Some(NormalizationResources::Directory(directory.to_owned())),
+            ..Self::new()
+        }
+    }
+
+    /// Configure the fixed normalization graphs as independently resolved files.
+    pub fn with_files(files: TextResources) -> Self {
+        Self {
+            normalization_resources: Some(NormalizationResources::Files(files)),
             ..Self::new()
         }
     }
@@ -262,10 +287,23 @@ impl TextFrontend {
         }
         let mut normalization = self.normalization.borrow_mut();
         if normalization.is_none() {
-            let root = self.normalization_root.as_ref().ok_or_else(|| {
+            let resources = self.normalization_resources.as_ref().ok_or_else(|| {
                 candle_core::Error::Msg("IndexTTS TN resources were not configured".into())
             })?;
-            *normalization = Some(normalization::Normalization::load(root)?);
+            *normalization = Some(match resources {
+                NormalizationResources::Directory(root) => {
+                    normalization::Normalization::load(root)?
+                }
+                NormalizationResources::Files(files) => normalization::Normalization::load_files(
+                    [
+                        &files.normalizer[0],
+                        &files.normalizer[1],
+                        &files.normalizer[2],
+                        &files.normalizer[3],
+                    ],
+                    files.linux,
+                )?,
+            });
         }
         let normalization = normalization.as_mut().ok_or_else(|| {
             candle_core::Error::Msg("IndexTTS TN resources were not loaded".into())
@@ -626,6 +664,74 @@ mod tests {
             }
         }
         compare_spanish_oracle(root);
+    }
+
+    #[test]
+    #[ignore = "requires separately staged fixed WeText and IndexTTS frontend files"]
+    fn independent_graph_paths_match_official_oracles() {
+        let wetext =
+            PathBuf::from(std::env::var_os("TALECHIME_WETEXT_FILES").expect("fixed WeText files"));
+        let index = PathBuf::from(
+            std::env::var_os("TALECHIME_INDEX_FRONTEND_FILES").expect("fixed IndexTTS files"),
+        );
+        for (linux, fixture) in [
+            (
+                false,
+                include_str!("../tests/fixtures/tn-macos-oracle.json"),
+            ),
+            (true, include_str!("../tests/fixtures/tn-linux-oracle.json")),
+        ] {
+            let normalizer = if linux {
+                [
+                    "zh/tagger.fst",
+                    "zh/verbalizer.fst",
+                    "en/tagger.fst",
+                    "en/verbalizer.fst",
+                ]
+                .map(|name| index.join("tn/linux").join(name))
+            } else {
+                [
+                    "zh/tn/tagger.fst",
+                    "zh/tn/verbalizer.fst",
+                    "en/tn/tagger.fst",
+                    "en/tn/verbalizer.fst",
+                ]
+                .map(|name| wetext.join(name))
+            };
+            let frontend = TextFrontend::with_files(TextResources {
+                normalizer,
+                spanish: [
+                    index.join("tn/es/tagger.fst"),
+                    index.join("tn/es/verbalizer.fst"),
+                ],
+                linux,
+            });
+            let fixture: serde_json::Value = serde_json::from_str(fixture).unwrap();
+            for case in fixture["cases"].as_array().unwrap() {
+                let input = case["text"].as_str().unwrap();
+                assert_eq!(
+                    frontend.normalize(&frontend.clean_pattern(input)).unwrap(),
+                    case["output"].as_str().unwrap(),
+                    "linux={linux} {input:?}"
+                );
+            }
+            let spanish = normalization::Spanish::load_files(
+                &index.join("tn/es/tagger.fst"),
+                &index.join("tn/es/verbalizer.fst"),
+            )
+            .unwrap();
+            let cases: serde_json::Value =
+                serde_json::from_str(include_str!("../tests/fixtures/spanish-oracle.json"))
+                    .unwrap();
+            for case in cases["cases"].as_array().unwrap() {
+                let input = case["text"].as_str().unwrap();
+                assert_eq!(
+                    spanish.normalize(input).unwrap(),
+                    case["output"].as_str().unwrap(),
+                    "{input:?}"
+                );
+            }
+        }
     }
 
     fn compare_spanish_oracle(root: &Path) {

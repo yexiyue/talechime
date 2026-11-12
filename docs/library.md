@@ -189,7 +189,7 @@ MOSS Realtime 使用独立请求的固定参考。预置音色和无参考自然
 
 ## 音色资产（VoiceStudio）
 
-音色库是模型无关的资产层：设计/导入音色存于 `~/.talechime/voices-v2/`（`ModelOptions.voices`
+音色库是模型无关的资产层：设计/导入音色存于 `~/.talechime/data/voices-v2/`（`ModelOptions.voices`
 可覆盖），一条音色 = 原始 WAV + 转写 + 描述 + 来源，可跨模型使用、单文件导出导入。
 `VoiceStudio` 与 `Engine` 相互独立——设计不需要先准备任何合成模型。
 
@@ -267,7 +267,7 @@ Qwen 和 MOSS ONNX 若启用非 CPU 设备故障恢复，执行设备可能切�
 
 `Backend::next_segment` 接收 `SegmentationRequest { text, voice, duration }`，返回一个可选片段；不再提供 select_voice、observe_duration 或整篇 segments 接口。时长估计属于执行，适配器不得保存隐式当前音色或跨执行学习状态。自定义后端和观察包装器须完整传递请求。
 
-`ModelOptions` 的 `device` 可选择 Auto，`calibrate` / `recovery` 默认 false；准备通过 backends 的 ResolvedModel 和 PrepareOptions 执行。开启校准可能额外准备 CPU 与加速模型并写入所选资源目录的校准记录。
+`ModelOptions` 的 `device` 可选择 Auto，`calibrate` / `recovery` 默认 false；准备通过 backends 的 ResolvedModel 和 PrepareOptions 执行。开启校准可能额外准备 CPU 与加速模型并写入独立应用缓存目录的校准记录。
 
 具体播放器位于 facade 私有模块，仅 `playback` feature 开放 Engine::listen/listen_to；注入播放器的方法无需该 feature。core 不再导出 AudioPlayer、download、ResourceError 或通用 Result 别名。
 
@@ -280,7 +280,7 @@ Qwen 和 MOSS ONNX 若启用非 CPU 设备故障恢复，执行设备可能切�
 错误为 `VoiceLibraryError`，输入包错误保留索引和嵌套的类型化原因，调用方不解析错误文本。
 模型适配器只消费已验证资产，角色与工程绑定继续归宿主。
 
-库默认数据根为 `~/.talechime/voices-v2`，宿主可显式传入自己的独立目录。
+库默认数据根为 `~/.talechime/data/voices-v2`，宿主可显式传入自己的独立目录。
 当前记录是 `talechime/voice/2`，包是 `talechime/voice-bundle/2`，不读旧格式、不迁移或删除历史目录。
 包内 `manifest.json` 的 `assets` 数组和 `voices/<id>/reference.wav` 构成自包含资产；
 原始创建时间、来源及精确录音保留，本机导入时间和内部重试标识不随包输出。

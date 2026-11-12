@@ -7,11 +7,13 @@
 | 记录 | 内容与适用边界 |
 | --- | --- |
 | [工具链与工程](toolchain.md) | 原生依赖、feature、构建与平台经验；带日期条目保留当时环境，版本和来源以当前 manifest/lock 为准 |
-| [Kokoro 中英混读](../kokoro.md#中英混排开发中2026-11-11) | 词典与独立 eSpeak 未知词后备、适用官方音素对照及真实资源验证边界；人工听感待完成 |
+| [Kokoro 中英混读](../kokoro.md#中英混排开发中2026-11-11) | 英文词典及神经未知词后备、历史官方音素对照和验证边界；人工听感待完成 |
 | [TTS 后端官方能力差异初审](plans/tts-backend-parity-audit-2026-11-11.md) | 七类后端的多语言、文本处理、公开能力与验收缺口；静态初审和后续验证顺序 |
 | [原生文本资源经验](lessons/native-text-resources-2026-11-11.md) | FST 严格代价比较、跨卷输入物化；官方文本 fixtures 与离线准备验证边界 |
 | [固定后端能力验收](../records/tts-core/official-backend-parity-2026-11-11.md) | 本轮本机 285 项官方输入/真实矩阵已交付，CUDA 延期；合成条件、产品策略及历史数值/听验失败单列 |
 | [hf-hub fork 与下载能力](hf-hub-fork.md) | 固定 Git 来源、HTTP/Xet 传输、断点语义和 SDK 发布限制；上游状态需在再次使用时核验 |
+| [Hub 资源完整性摘要](lessons/hub-resource-integrity-2026-11-12.md) | 固定 revision 的 LFS 和 Git 文件摘要来源；直接缓存加载尚在实施 |
+| [直接读取 Hub 缓存的阶段验证](../records/resources/hf-cache-direct-2026-11-12.md) | Qwen、MOSS Nano、Kokoro 的 macOS CPU 离线合成；CosyVoice3、IndexTTS 的分离文件加载及待发布资源边界 |
 | [TTS 性能优化方法](tts-performance.md) | 跨后端测量、准确性门禁、模块边界与候选取舍；不能把一个模型或设备的收益推广到其他路径 |
 | [OmniVoice 推理与验证](../omnivoice.md) | 自动语言、设计标签、参考音色及本轮结构/真实生成与待听验边界 |
 | [OmniVoice 性能现状](omnivoice-performance.md) | 当前执行路径、官方对照口径、受限优化和撤回项，实测结论仍按设备和版本区分 |

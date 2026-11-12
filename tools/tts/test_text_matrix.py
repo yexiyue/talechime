@@ -78,18 +78,6 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(row["text_diagnostics"]["events"][0]["source_end"], len(self.cases[0]["text"].encode()))
         self.assertIn("hello omitted", (self.output / "listen.html").read_text())
 
-    def test_helper_snapshot_records_source_and_data_and_propagates_path(self):
-        helper = self.root / "helper"
-        helper.mkdir()
-        (helper / "manifest.json").write_text(json.dumps(dict(source_commit="fixed", source_sha256="abc")))
-        (helper / "en_dict").write_bytes(b"dictionary")
-        self.config["env"] = {"TALECHIME_ESPEAK_DIR": str(helper)}
-        self.assertEqual(self.run_matrix()["generation"], {"generated": 1})
-        row = json.loads((self.output / "results.jsonl").read_text())
-        identity = row["helper_identity"]
-        self.assertEqual(identity["source_commit"], "fixed")
-        self.assertEqual({f["path"] for f in identity["resources"]["files"]}, {"manifest.json", "en_dict"})
-
     def test_missing_config_accounts_for_every_planned_row(self):
         self.cases.append({"id": "other", "text": "こんにちは。"})
         summary = self.run_matrix([])

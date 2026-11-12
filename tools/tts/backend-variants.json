@@ -489,78 +489,6 @@
     ]
   },
   {
-    "id": "kokoro",
-    "backend": "kokoro",
-    "source": "crates/kokoro/SOURCE.md",
-    "source_revision": "fba1236595f2d2bf21d414ba6e57d25256afada3",
-    "manifest": "crates/talechime-backends/src/kokoro/native-assets.json",
-    "resource_revisions": [
-      "4bd6c9644da381fee105f37fcd8cb63d038ba7e8",
-      "8eb001f5498e099e6ac929454e7fb28e457bf035"
-    ],
-    "devices": [
-      "cpu",
-      "metal",
-      "cuda"
-    ],
-    "purpose": "speech",
-    "capabilities": [
-      "preset",
-      "mixed-zh-en",
-      "speed"
-    ],
-    "gaps": [
-      "human listening",
-      "declared execution and year policy differences"
-    ],
-    "official": "all19-9-phonemes-matched-7-policy-rejections-3-execution-policy-differences-per-variant",
-    "generation": "metal-12-generated-7-declared-symbol-rejections",
-    "listening": "pending",
-    "expected_rejections": {
-      "japanese": {
-        "reason": "Chinese v1.1-zh frontend scope; crates/kokoro/SOURCE.md and docs/kokoro.md",
-        "error_contains": "unsupported Kokoro Mandarin symbol"
-      },
-      "japanese-date": {
-        "reason": "Chinese v1.1-zh frontend scope; crates/kokoro/SOURCE.md and docs/kokoro.md",
-        "error_contains": "unsupported Kokoro Mandarin symbol"
-      },
-      "japanese-pronunciation": {
-        "reason": "Chinese v1.1-zh frontend scope; crates/kokoro/SOURCE.md and docs/kokoro.md",
-        "error_contains": "unsupported Kokoro Mandarin symbol"
-      },
-      "korean": {
-        "reason": "Chinese v1.1-zh frontend scope; crates/kokoro/SOURCE.md and docs/kokoro.md",
-        "error_contains": "unsupported Kokoro Mandarin symbol"
-      },
-      "spanish": {
-        "reason": "Chinese v1.1-zh frontend scope; crates/kokoro/SOURCE.md and docs/kokoro.md",
-        "error_contains": "unsupported Kokoro Mandarin symbol"
-      },
-      "arabic": {
-        "reason": "Chinese v1.1-zh frontend scope; crates/kokoro/SOURCE.md and docs/kokoro.md",
-        "error_contains": "unsupported Kokoro Mandarin symbol"
-      },
-      "symbols": {
-        "reason": "Chinese v1.1-zh rejects this unsupported symbol explicitly; original v11 failure retained. Official unknown-symbol output is not treated as a usable native phoneme.",
-        "error_contains": "unsupported Kokoro Mandarin symbol \"🙂\""
-      },
-      "pronunciation": {
-        "reason": "Chinese v1.1-zh rejects this unsupported symbol explicitly; original v11 failure retained. Official unknown-symbol output is not treated as a usable native phoneme.",
-        "error_contains": "unsupported Kokoro Mandarin symbol \"<\""
-      },
-      "fullwidth": {
-        "reason": "Chinese v1.1-zh rejects this unsupported symbol explicitly; original v11 failure retained. Official unknown-symbol output is not treated as a usable native phoneme.",
-        "error_contains": "unsupported Kokoro Mandarin symbol \"％\""
-      }
-    },
-    "known_failures": {},
-    "model_id": "1.1-zh",
-    "source_kind": "fixed-upstream-reference",
-    "official_source_revision": "fba1236595f2d2bf21d414ba6e57d25256afada3",
-    "runtime_revision": "01e7505-runtime-f32-v3-text-v3-espeak-1.52.0-4870adfa25b1a32b4361592f1be8a40337c58d6c"
-  },
-  {
     "id": "kokoro-g2pw",
     "backend": "kokoro",
     "source": "crates/kokoro/SOURCE.md",
@@ -586,10 +514,11 @@
     ],
     "gaps": [
       "human listening",
+      "neural OOV official differences",
       "declared execution and year policy differences"
     ],
-    "official": "all19-9-phonemes-matched-7-policy-rejections-3-execution-policy-differences-per-variant",
-    "generation": "metal-12-generated-7-declared-symbol-rejections",
+    "official": "pending-neural-oov",
+    "generation": "pending-neural-oov",
     "listening": "pending",
     "expected_rejections": {
       "japanese": {

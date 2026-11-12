@@ -8,8 +8,15 @@ use talechime_core::verification::{
 };
 use tokio::sync::{mpsc, oneshot};
 pub(super) enum Model {
-    Qwen,
-    SenseVoice,
+    QwenFiles {
+        config: PathBuf,
+        tokenizer: PathBuf,
+        weights: PathBuf,
+    },
+    SenseVoiceFiles {
+        model: PathBuf,
+        tokens: PathBuf,
+    },
 }
 struct Request {
     audio: Arc<ReadbackAudio>,
@@ -89,7 +96,6 @@ enum Loaded {
     SenseVoice(sensevoice::SenseVoice),
 }
 pub(super) async fn spawn(
-    directory: PathBuf,
     variant: Model,
     threads: usize,
     identity: RecognizerIdentity,
@@ -101,14 +107,23 @@ pub(super) async fn spawn(
         .name(format!("asr-{}", identity.family))
         .spawn(move || {
             let model = match variant {
-                Model::Qwen => {
-                    talechime_qwen3_asr::AsrInference::load(&directory, candle_core::Device::Cpu)
-                        .map(|model| Loaded::Qwen(Box::new(model)))
+                Model::QwenFiles {
+                    config,
+                    tokenizer,
+                    weights,
+                } => talechime_qwen3_asr::AsrInference::load_files(
+                    &config,
+                    &tokenizer,
+                    &weights,
+                    candle_core::Device::Cpu,
+                )
+                .map(|model| Loaded::Qwen(Box::new(model)))
+                .map_err(|e| e.to_string()),
+                Model::SenseVoiceFiles { model, tokens } => {
+                    sensevoice::SenseVoice::load_files(&model, &tokens, threads)
+                        .map(Loaded::SenseVoice)
                         .map_err(|e| e.to_string())
                 }
-                Model::SenseVoice => sensevoice::SenseVoice::load(&directory, threads)
-                    .map(Loaded::SenseVoice)
-                    .map_err(|e| e.to_string()),
             };
             let mut model = match model {
                 Ok(model) => model,

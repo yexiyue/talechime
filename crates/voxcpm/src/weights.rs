@@ -13,6 +13,12 @@ enum Source {
     Native(candle_nn::VarBuilder<'static>),
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum NativeFormat {
+    Safetensors,
+    Pytorch,
+}
+
 pub(crate) struct Weights<'a> {
     source: Source,
     pub device: Device,
@@ -33,12 +39,20 @@ impl<'a> Weights<'a> {
             cancel: None,
         })
     }
-    pub fn native(path: &Path, device: &Device, dtype: DType) -> Result<Self> {
-        let builder = if path.extension().is_some_and(|s| s == "safetensors") {
-            // Files are immutable pinned assets; mappings live through initialization.
-            unsafe { candle_nn::VarBuilder::from_mmaped_safetensors(&[path], dtype, device)? }
-        } else {
-            candle_nn::VarBuilder::from_pth_with_state(path, dtype, "state_dict", device)?
+    pub fn native(
+        path: &Path,
+        format: NativeFormat,
+        device: &Device,
+        dtype: DType,
+    ) -> Result<Self> {
+        let builder = match format {
+            NativeFormat::Safetensors => {
+                // SAFETY: files are immutable pinned assets; the builder owns the mappings.
+                unsafe { candle_nn::VarBuilder::from_mmaped_safetensors(&[path], dtype, device)? }
+            }
+            NativeFormat::Pytorch => {
+                candle_nn::VarBuilder::from_pth_with_state(path, dtype, "state_dict", device)?
+            }
         };
         Ok(Self {
             source: Source::Native(builder),
@@ -217,6 +231,63 @@ impl Linear {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct CacheBlob(std::path::PathBuf);
+
+    impl CacheBlob {
+        fn new() -> std::io::Result<Self> {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            loop {
+                let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let path =
+                    std::env::temp_dir().join(format!("voxcpm-blob-{}-{id}", std::process::id()));
+                match File::create_new(&path) {
+                    Ok(_) => return Ok(Self(path)),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+    }
+
+    impl Drop for CacheBlob {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    #[test]
+    fn loads_safetensors_model_from_extensionless_cache_blob() -> Result<()> {
+        let blob = CacheBlob::new()?;
+        let tensor = Tensor::new(&[1.25f32, -2.5], &Device::Cpu)?;
+        candle_core::safetensors::save(
+            &std::collections::HashMap::from([("base_lm.embed_tokens.weight".to_owned(), tensor)]),
+            &blob.0,
+        )?;
+        let mut weights =
+            Weights::native(&blob.0, NativeFormat::Safetensors, &Device::Cpu, DType::F32)?;
+        assert_eq!(
+            weights.tensor("token_embd.weight")?.to_vec1::<f32>()?,
+            vec![1.25, -2.5]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn loads_pytorch_vae_from_extensionless_cache_blob() -> Result<()> {
+        let blob = CacheBlob::new()?;
+        std::fs::write(&blob.0, include_bytes!("../tests/fixtures/native-vae.pth"))?;
+        let mut weights =
+            Weights::native(&blob.0, NativeFormat::Pytorch, &Device::Cpu, DType::F32)?;
+        assert_eq!(
+            weights
+                .tensor("audio_vae.decoder.weight")?
+                .to_vec1::<f32>()?,
+            vec![1.25, -2.5]
+        );
+        Ok(())
+    }
+
     #[test]
     fn weight_norm_normalizes_each_output_channel() {
         let v = Tensor::new(&[[[3f32, 4.]], [[0., 2.]]], &Device::Cpu).unwrap();

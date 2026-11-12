@@ -114,7 +114,7 @@ impl RuntimeContracts {
 
 #[derive(Debug, Clone)]
 pub struct RuntimeArtifacts {
-    model_root: PathBuf,
+    model_root: Option<PathBuf>,
     manifest_path: Option<PathBuf>,
     manifest: Option<RuntimeArtifactManifest>,
     generator: Option<GeneratorArtifacts>,
@@ -154,7 +154,7 @@ impl RuntimeArtifacts {
             validate_runtime_contracts(&generator, &audio_tokenizer, &manifest.contracts)?;
 
             return Ok(Self {
-                model_root,
+                model_root: Some(model_root),
                 manifest_path: Some(manifest_path),
                 contracts: manifest.contracts.clone(),
                 manifest: Some(manifest),
@@ -175,7 +175,7 @@ impl RuntimeArtifacts {
             validate_runtime_contracts(&generator, &audio_tokenizer, &manifest.contracts)?;
 
             return Ok(Self {
-                model_root,
+                model_root: Some(model_root),
                 manifest_path: Some(manifest_path),
                 contracts: manifest.contracts.clone(),
                 manifest: Some(manifest),
@@ -189,7 +189,7 @@ impl RuntimeArtifacts {
         let gguf_bundle = GgufBundleArtifacts::resolve(&model_root)?;
         let contracts = gguf_bundle.read_contracts()?;
         Ok(Self {
-            model_root,
+            model_root: Some(model_root),
             manifest_path: None,
             manifest: None,
             generator: None,
@@ -197,6 +197,41 @@ impl RuntimeArtifacts {
             audio_tokenizer: None,
             gguf_bundle: Some(gguf_bundle),
             contracts,
+        })
+    }
+
+    /// Resolve the embedded runtime contract against independently supplied files.
+    pub fn from_files(files: &BTreeMap<PathBuf, PathBuf>) -> Result<Self> {
+        let manifest: RuntimeArtifactManifest = serde_json::from_slice(crate::ARTIFACTS_JSON)?;
+        if manifest.version != 1 {
+            return Err(OmniVoiceError::Unsupported(format!(
+                "unsupported runtime artifact manifest version {}",
+                manifest.version
+            )));
+        }
+        let resolve = |name: &Path| -> Result<Option<PathBuf>> {
+            validate_relative_artifact_path(name)?;
+            match files.get(name) {
+                Some(path) if path.is_absolute() && path.is_file() => Ok(Some(path.clone())),
+                Some(path) => Err(OmniVoiceError::MissingArtifact { path: path.clone() }),
+                None => Ok(None),
+            }
+        };
+        let generator = GeneratorArtifacts::resolve_with(&manifest.generator, &resolve)?;
+        let text_tokenizer =
+            TextTokenizerArtifacts::resolve_with(&manifest.text_tokenizer, &resolve)?;
+        let audio_tokenizer =
+            AudioTokenizerArtifacts::resolve_with(&manifest.audio_tokenizer, &resolve)?;
+        validate_runtime_contracts(&generator, &audio_tokenizer, &manifest.contracts)?;
+        Ok(Self {
+            model_root: None,
+            manifest_path: None,
+            contracts: manifest.contracts.clone(),
+            manifest: Some(manifest),
+            generator: Some(generator),
+            text_tokenizer: Some(text_tokenizer),
+            audio_tokenizer: Some(audio_tokenizer),
+            gguf_bundle: None,
         })
     }
 
@@ -219,8 +254,8 @@ impl RuntimeArtifacts {
         &self.contracts
     }
 
-    pub fn model_root(&self) -> &Path {
-        &self.model_root
+    pub fn model_root(&self) -> Option<&Path> {
+        self.model_root.as_deref()
     }
 
     pub fn manifest_path(&self) -> Option<&Path> {
@@ -486,8 +521,14 @@ pub struct GeneratorArtifacts {
 
 impl GeneratorArtifacts {
     fn resolve(model_root: &Path, manifest: &GeneratorArtifactManifest) -> Result<Self> {
-        let config_path = resolve_required_path(model_root, &manifest.config)?;
-        let weights_path = resolve_required_path(model_root, &manifest.weights)?;
+        Self::resolve_with(manifest, &|path| resolve_local_path(model_root, path))
+    }
+    fn resolve_with(
+        manifest: &GeneratorArtifactManifest,
+        resolve: &impl Fn(&Path) -> Result<Option<PathBuf>>,
+    ) -> Result<Self> {
+        let config_path = require_resolved(resolve, &manifest.config)?;
+        let weights_path = require_resolved(resolve, &manifest.weights)?;
         let required_prefixes = manifest.required_prefixes.iter().cloned().collect();
         let ignored_keys = manifest.ignored_keys.iter().cloned().collect();
         let observed_prefixes =
@@ -534,10 +575,21 @@ pub struct TextTokenizerArtifacts {
 
 impl TextTokenizerArtifacts {
     fn resolve(model_root: &Path, manifest: &TextTokenizerArtifactManifest) -> Result<Self> {
-        let tokenizer_path = resolve_required_path(model_root, &manifest.tokenizer)?;
-        let tokenizer_config_path = resolve_required_path(model_root, &manifest.tokenizer_config)?;
-        let chat_template_path =
-            resolve_optional_path(model_root, manifest.metadata.chat_template.as_ref())?;
+        Self::resolve_with(manifest, &|path| resolve_local_path(model_root, path))
+    }
+    fn resolve_with(
+        manifest: &TextTokenizerArtifactManifest,
+        resolve: &impl Fn(&Path) -> Result<Option<PathBuf>>,
+    ) -> Result<Self> {
+        let tokenizer_path = require_resolved(resolve, &manifest.tokenizer)?;
+        let tokenizer_config_path = require_resolved(resolve, &manifest.tokenizer_config)?;
+        let chat_template_path = manifest
+            .metadata
+            .chat_template
+            .as_deref()
+            .map(resolve)
+            .transpose()?
+            .flatten();
 
         Ok(Self {
             tokenizer_path,
@@ -571,15 +623,26 @@ pub struct AudioTokenizerArtifacts {
 
 impl AudioTokenizerArtifacts {
     fn resolve(model_root: &Path, manifest: &AudioTokenizerArtifactManifest) -> Result<Self> {
-        let config_path = resolve_required_path(model_root, &manifest.config)?;
-        let weights_path = resolve_required_path(model_root, &manifest.weights)?;
-        let preprocessor_config_path =
-            resolve_required_path(model_root, &manifest.preprocessor_config)?;
+        Self::resolve_with(manifest, &|path| resolve_local_path(model_root, path))
+    }
+    fn resolve_with(
+        manifest: &AudioTokenizerArtifactManifest,
+        resolve: &impl Fn(&Path) -> Result<Option<PathBuf>>,
+    ) -> Result<Self> {
+        let config_path = require_resolved(resolve, &manifest.config)?;
+        let weights_path = require_resolved(resolve, &manifest.weights)?;
+        let preprocessor_config_path = require_resolved(resolve, &manifest.preprocessor_config)?;
         let required_prefixes = manifest.required_prefixes.iter().cloned().collect();
         let observed_prefixes =
             inspect_safetensor_prefixes(&weights_path, &BTreeSet::new(), "audio_tokenizer")?;
         validate_minimum_prefixes(&observed_prefixes, &required_prefixes, "audio_tokenizer")?;
-        let license_path = resolve_optional_path(model_root, manifest.metadata.license.as_ref())?;
+        let license_path = manifest
+            .metadata
+            .license
+            .as_deref()
+            .map(resolve)
+            .transpose()?
+            .flatten();
 
         Ok(Self {
             config_path,
@@ -1537,19 +1600,16 @@ fn validate_runtime_contracts(
     Ok(())
 }
 
-fn resolve_required_path(model_root: &Path, relative: &Path) -> Result<PathBuf> {
-    validate_relative_artifact_path(relative)?;
-    let path = model_root.join(relative);
-    if !path.is_file() {
-        return Err(OmniVoiceError::MissingArtifact { path });
-    }
-    Ok(path)
+fn require_resolved(
+    resolve: &impl Fn(&Path) -> Result<Option<PathBuf>>,
+    relative: &Path,
+) -> Result<PathBuf> {
+    resolve(relative)?.ok_or_else(|| OmniVoiceError::MissingArtifact {
+        path: relative.to_path_buf(),
+    })
 }
 
-fn resolve_optional_path(model_root: &Path, relative: Option<&PathBuf>) -> Result<Option<PathBuf>> {
-    let Some(relative) = relative else {
-        return Ok(None);
-    };
+fn resolve_local_path(model_root: &Path, relative: &Path) -> Result<Option<PathBuf>> {
     validate_relative_artifact_path(relative)?;
     let path = model_root.join(relative);
     if !path.is_file() {
@@ -1921,6 +1981,80 @@ fn resolve_generation_mode(mode: Option<&str>, ref_audio_length: usize) -> Resul
 #[cfg(test)]
 mod tests {
     use super::{GgmlDType, ModelWeightDType, classify_gguf_weight_dtype};
+
+    #[test]
+    fn runtime_resolves_independent_files_and_checks_contracts() {
+        use std::{collections::BTreeMap, path::PathBuf};
+        let root = tempfile::tempdir().unwrap();
+        let first = root.path().join("repo-one");
+        let second = root.path().join("repo-two");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        let mut files = BTreeMap::new();
+        let fixtures: [(&str, &[u8]); 5] = [
+            (
+                "config.json",
+                br#"{"num_audio_codebook":8,"audio_vocab_size":1025,"audio_mask_id":1024}"#,
+            ),
+            ("tokenizer.json", b"{}"),
+            ("tokenizer_config.json", b"{}"),
+            (
+                "audio_tokenizer/config.json",
+                br#"{"sample_rate":24000,"downsample_factor":960}"#,
+            ),
+            (
+                "audio_tokenizer/preprocessor_config.json",
+                br#"{"sampling_rate":24000,"hop_length":960}"#,
+            ),
+        ];
+        for (index, (name, bytes)) in fixtures.into_iter().enumerate() {
+            let path = first.join(format!("file-{index}"));
+            std::fs::write(&path, bytes).unwrap();
+            files.insert(PathBuf::from(name), path);
+        }
+        for (name, keys) in [
+            (
+                "model.safetensors",
+                vec!["llm.x", "audio_embeddings.x", "audio_heads.x"],
+            ),
+            (
+                "audio_tokenizer/model.safetensors",
+                vec![
+                    "semantic_model.x",
+                    "acoustic_encoder.x",
+                    "acoustic_decoder.x",
+                    "quantizer.x",
+                ],
+            ),
+        ] {
+            let header: serde_json::Map<String, serde_json::Value> = keys
+                .into_iter()
+                .map(|key| (key.into(), serde_json::json!({})))
+                .collect();
+            let json = serde_json::to_vec(&header).unwrap();
+            let mut bytes = (json.len() as u64).to_le_bytes().to_vec();
+            bytes.extend(json);
+            let path = second.join(if name.starts_with("audio_") {
+                "codec"
+            } else {
+                "weights"
+            });
+            std::fs::write(&path, bytes).unwrap();
+            files.insert(PathBuf::from(name), path);
+        }
+        let runtime = super::RuntimeArtifacts::from_files(&files).unwrap();
+        assert!(runtime.model_root().is_none());
+        assert_eq!(
+            runtime.generator().unwrap().weights_path(),
+            files[&PathBuf::from("model.safetensors")]
+        );
+        assert_eq!(
+            runtime.audio_tokenizer().unwrap().weights_path(),
+            files[&PathBuf::from("audio_tokenizer/model.safetensors")]
+        );
+        files.remove(&PathBuf::from("model.safetensors"));
+        assert!(super::RuntimeArtifacts::from_files(&files).is_err());
+    }
 
     #[test]
     fn gguf_weight_dtype_follows_unquantized_weights() {

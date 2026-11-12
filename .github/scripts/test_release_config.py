@@ -27,7 +27,7 @@ class ReleaseConfigTests(unittest.TestCase):
                 self.assertFalse(any('cuda' in f or f == 'ort-dynamic' for f in features))
                 self.assertIn('asr', features)
                 self.assertIn('cli', features)
-                self.assertIn('kokoro-g2pw', features)
+                self.assertIn('kokoro', features)
                 self.assertEqual('kokoro-metal' in features, target.endswith('-apple-darwin'))
                 changed = tomllib.loads(path.read_text(encoding='utf-8'))
                 changed['dist']['features'] = original['dist']['features']

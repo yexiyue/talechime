@@ -27,6 +27,25 @@ pub enum Model {
     VoiceDesign(delay::DelayModel),
 }
 impl Model {
+    /// Load a fixed model using explicit configuration, tokenizer and weight shards.
+    pub fn load_files(
+        mode: &str,
+        config: &Path,
+        tokenizer: &Path,
+        shards: &[PathBuf],
+        device: &Device,
+        dtype: DType,
+    ) -> anyhow::Result<Self> {
+        Ok(match mode {
+            "realtime-1.7b" => Self::Realtime(realtime::RealtimeModel::load_files(
+                config, tokenizer, shards, device, dtype,
+            )?),
+            "voice-design-1.7b" => Self::VoiceDesign(delay::DelayModel::load_files(
+                config, tokenizer, shards, device, dtype,
+            )?),
+            _ => anyhow::bail!("unknown MOSS mode {mode}"),
+        })
+    }
     pub fn load(
         mode: &str,
         directory: &Path,
@@ -112,8 +131,18 @@ pub fn weights(
     } else {
         vec![directory.join("model.safetensors")]
     };
+    weights_files(&files, dtype, device)
+}
+
+/// Open explicitly resolved safetensors shards.
+pub fn weights_files(
+    files: &[PathBuf],
+    dtype: DType,
+    device: &Device,
+) -> anyhow::Result<VarBuilder<'static>> {
+    anyhow::ensure!(!files.is_empty(), "model has no weight shards");
     // SAFETY: model assets are immutable for the lifetime of the inference owner.
-    Ok(unsafe { VarBuilder::from_mmaped_safetensors(&files, dtype, device)? })
+    Ok(unsafe { VarBuilder::from_mmaped_safetensors(files, dtype, device)? })
 }
 
 pub(crate) fn check_cancel(cancelled: &impl Fn() -> bool) -> anyhow::Result<()> {

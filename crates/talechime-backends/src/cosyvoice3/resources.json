@@ -1,0 +1,98 @@
+[
+  {
+    "path": "llm.safetensors",
+    "repo": "spensercai/CosyVoice3-0.5B-Candle",
+    "revision": "ccdf65f11d4352c13692e700560076bd61a531e3",
+    "filename": "llm.safetensors",
+    "size": 2569164632,
+    "sha256": "06661f03d1ae2adf67abd03efb758cdd59df5495617b0066ead5ae8d17f80983"
+  },
+  {
+    "path": "flow.safetensors",
+    "repo": "spensercai/CosyVoice3-0.5B-Candle",
+    "revision": "ccdf65f11d4352c13692e700560076bd61a531e3",
+    "filename": "flow.safetensors",
+    "size": 1329066360,
+    "sha256": "fa408e2c1476a298271f7610578228819a97d30ade959d228a9459a0a135d95b"
+  },
+  {
+    "path": "campplus.onnx",
+    "repo": "spensercai/CosyVoice3-0.5B-Candle",
+    "revision": "ccdf65f11d4352c13692e700560076bd61a531e3",
+    "filename": "campplus.onnx",
+    "size": 28303423,
+    "sha256": "a6ac6a63997761ae2997373e2ee1c47040854b4b759ea41ec48e4e42df0f4d73"
+  },
+  {
+    "path": "speech_tokenizer_v3.onnx",
+    "repo": "spensercai/CosyVoice3-0.5B-Candle",
+    "revision": "ccdf65f11d4352c13692e700560076bd61a531e3",
+    "filename": "speech_tokenizer_v3.onnx",
+    "size": 969451503,
+    "sha256": "23236a74175dbdda47afc66dbadd5bcb41303c467a57c261cb8539ad9db9208d"
+  },
+  {
+    "path": "hift.safetensors",
+    "size": 96324828,
+    "sha256": "caeedf222ed35ea151a3478eea0d63b72e458d295d8b991a7a7c362221517e8b",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "1ae47e4998c45f60c8c62bb4090136b6554e17d0",
+    "filename": "native/cosyvoice3-v3/hift.safetensors"
+  },
+  {
+    "path": "tokenizer/tokenizer.json",
+    "size": 10573953,
+    "sha256": "caa0dadcb8c40c79a3244aaf290492e298a49c5c25e0db16cad12f2f8ff639c5",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "1ae47e4998c45f60c8c62bb4090136b6554e17d0",
+    "filename": "native/cosyvoice3-v3/tokenizer/tokenizer.json"
+  },
+  {
+    "path": "config.json",
+    "size": 2074,
+    "sha256": "455c574d7ccefeed2419d3ad67c87d17545eed2644f65ca46733d126d5790b26",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "1ae47e4998c45f60c8c62bb4090136b6554e17d0",
+    "filename": "native/cosyvoice3-v3/config.json"
+  },
+  {
+    "path": "tn/wetext/zh/tn/tagger.fst",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/wetext-0.1.0/zh/tn/tagger.fst",
+    "size": 811646,
+    "sha256": "63f3abeafe64fc3e9232099ab8ef6efd44c5198319193854af3ac2716d7c27a7"
+  },
+  {
+    "path": "tn/wetext/zh/tn/verbalizer.fst",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/wetext-0.1.0/zh/tn/verbalizer.fst",
+    "size": 87702,
+    "sha256": "9fcadad76cafddb2e96b92d892d18249f0ba5fbe60e4d4fc51f466cb6bc7ade9"
+  },
+  {
+    "path": "tn/wetext/en/tn/tagger.fst",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/wetext-0.1.0/en/tn/tagger.fst",
+    "size": 5220942,
+    "sha256": "bb804f88030153999f154f01950c18dbfd64de2c4cfc5035e21371d4eb4ead8a"
+  },
+  {
+    "path": "tn/wetext/en/tn/verbalizer.fst",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/wetext-0.1.0/en/tn/verbalizer.fst",
+    "size": 1822714,
+    "sha256": "33ad65460a3e8f7fe313994ff0204a218c0fcb5dec9c09b24aeeaa30ef21d67b"
+  },
+  {
+    "path": "LICENSE-WETEXT",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/wetext-0.1.0/LICENSE",
+    "size": 11357,
+    "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+  }
+]

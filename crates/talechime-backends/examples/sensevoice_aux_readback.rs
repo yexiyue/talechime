@@ -21,10 +21,7 @@ async fn main() -> anyhow::Result<()> {
 
 async fn run() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args_os().collect();
-    ensure!(
-        args.len() == 4,
-        "SENSEVOICE_DIRECTORY CASES.json NEW_OUTPUT.json"
-    );
+    ensure!(args.len() == 4, "HUB_CACHE CASES.json NEW_OUTPUT.json");
     let output = Path::new(&args[3]);
     ensure!(!output.exists(), "readback output already exists");
     let cases_file = Path::new(&args[2]);
@@ -37,7 +34,13 @@ async fn run() -> anyhow::Result<()> {
         !cases.is_empty() && cases.len() <= 16,
         "expected 1..=16 explicit clips"
     );
-    let recognizer = asr::load_sensevoice(Path::new(&args[1]), 4).await?;
+    let downloads = talechime_backends::downloads::Downloads::new(
+        &talechime_backends::downloads::DownloadConfig {
+            cache_dir: args[1].clone().into(),
+            ..Default::default()
+        },
+    )?;
+    let recognizer = asr::load_sensevoice(&downloads, 4).await?;
     let identity = recognizer.identity();
     let mut rows = Vec::new();
     for case in cases {

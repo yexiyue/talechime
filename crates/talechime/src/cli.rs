@@ -93,7 +93,7 @@ pub async fn run(
         .map_err(|error| anyhow::anyhow!("cannot read UTF-8 file {}: {error}", file.display()))?;
     let canonical = tokio::fs::canonicalize(&file).await?;
     let config = store.load()?;
-    let studio = crate::preparation::voice_studio(&store, &resources)?;
+    let studio = crate::preparation::voice_studio(&resources)?;
     let mut caps = resources.capabilities_for(&config.backend, config.model.as_deref())?;
     crate::preparation::include_library_voice(&mut caps, &config.voice, &studio)?;
     let config = store.initialize(&caps)?;

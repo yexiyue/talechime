@@ -6,7 +6,7 @@ use crate::{
     transformer::Transformer,
 };
 use candle_core::{DType, Device, Module, Tensor};
-use candle_nn::{Embedding, Linear, embedding, linear_no_bias};
+use candle_nn::{Embedding, Linear, VarBuilder, embedding, linear_no_bias};
 use rand::{SeedableRng, rngs::StdRng};
 use std::path::Path;
 use tokenizers::Tokenizer;
@@ -21,10 +21,34 @@ pub struct DelayModel {
 }
 impl DelayModel {
     pub fn load(directory: &Path, device: &Device, dtype: DType) -> anyhow::Result<Self> {
-        let config: SpeechConfig =
-            serde_json::from_slice(&std::fs::read(directory.join("config.json"))?)?;
+        Self::load_with_weights(
+            &directory.join("config.json"),
+            &directory.join("tokenizer.json"),
+            device,
+            || crate::weights(directory, dtype, device),
+        )
+    }
+    /// Load the model from separately resolved resources.
+    pub fn load_files(
+        config: &Path,
+        tokenizer: &Path,
+        shards: &[std::path::PathBuf],
+        device: &Device,
+        dtype: DType,
+    ) -> anyhow::Result<Self> {
+        Self::load_with_weights(config, tokenizer, device, || {
+            crate::weights_files(shards, dtype, device)
+        })
+    }
+    fn load_with_weights(
+        config_path: &Path,
+        tokenizer_path: &Path,
+        device: &Device,
+        weights: impl FnOnce() -> anyhow::Result<VarBuilder<'static>>,
+    ) -> anyhow::Result<Self> {
+        let config: SpeechConfig = serde_json::from_slice(&std::fs::read(config_path)?)?;
         config.validate()?;
-        let vb = crate::weights(directory, dtype, device)?;
+        let vb = weights()?;
         let d = config.language_config.hidden_size;
         let mut embeddings = vec![embedding(
             config.language_config.vocab_size,
@@ -52,8 +76,8 @@ impl DelayModel {
             })
             .collect::<candle_core::Result<_>>()?;
         let backbone = Transformer::load(&config.language_config, vb.pp("language_model"), true)?;
-        let tokenizer = Tokenizer::from_file(directory.join("tokenizer.json"))
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let tokenizer =
+            Tokenizer::from_file(tokenizer_path).map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(Self {
             config,
             tokenizer,

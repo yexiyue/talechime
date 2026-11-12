@@ -174,11 +174,10 @@ async fn run(
         );
         serde_json::json!({"verification":"synthetic_fixture"})
     } else {
-        serde_json::to_value(talechime_backends::performance::verify(
-            &registry,
-            &request.backend,
-            &request.model,
-        )?)?
+        serde_json::to_value(
+            talechime_backends::performance::verify(&registry, &request.backend, &request.model)
+                .await?,
+        )?
     };
     let verify_seconds = verify_started.elapsed().as_secs_f64();
     let load_started = Instant::now();

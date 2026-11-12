@@ -29,10 +29,8 @@ impl Mode {
     pub fn revision(self) -> &'static str {
         "75682787d8e2fcc73faca37ba2931453ca9c4022"
     }
-    pub fn directory(self, root: &Path) -> PathBuf {
-        root.join("moss/models")
-            .join(self.id())
-            .join(self.revision())
+    pub fn data_directory(self, root: &Path) -> PathBuf {
+        root.join("moss").join(self.id()).join(self.revision())
     }
     fn codebooks(self) -> usize {
         16
@@ -60,7 +58,7 @@ pub fn capabilities(root: &Path, mode: Mode) -> anyhow::Result<Capabilities> {
         parameters: params::catalog(),
         compiled_devices: compiled_devices(),
     };
-    for voice in voice_store(&mode.directory(root), mode)?.list()? {
+    for voice in voice_store(&mode.data_directory(root), mode)?.list()? {
         caps.voice_names.insert(voice.id.clone(), voice.name);
         caps.voices.push(voice.id);
     }
@@ -95,6 +93,31 @@ pub struct CandleBackend {
 }
 impl CandleBackend {
     pub async fn load_on(root: PathBuf, mode: Mode, device: Device) -> Result<Self, BackendError> {
+        let downloads = crate::downloads::Downloads::new(&Default::default())
+            .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        crate::registry::validate_model_data_root(
+            &root,
+            &mode.data_directory(&root),
+            downloads.cache_dir(),
+        )
+        .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        let reference_path = (|| -> anyhow::Result<_> {
+            voice_store(&mode.data_directory(&root), mode)?.path("custom:storage-probe")
+        })()
+        .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        crate::registry::validate_model_data_root(&root, &reference_path, downloads.cache_dir())
+            .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        let files = resources::resolve(talechime_moss_tts::manifests::REALTIME, &downloads)
+            .await
+            .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        Self::load_files_on(root, mode, files, device).await
+    }
+    pub(crate) async fn load_files_on(
+        root: PathBuf,
+        mode: Mode,
+        files: resources::Files,
+        device: Device,
+    ) -> Result<Self, BackendError> {
         if !available_devices().contains(&device) {
             return Err(BackendError::Initialize(format!(
                 "MOSS Candle device {device:?} is unavailable; select CUDA/Metal in a matching build"
@@ -106,13 +129,13 @@ impl CandleBackend {
             "moss-candle",
             &format!("{}/{}", mode.revision(), resources::CODEC_REVISION),
             device,
-            &mode.directory(&root),
+            &mode.data_directory(&root),
         );
         let (requests, jobs) = mpsc::channel(1);
         let (ready, loaded) = oneshot::channel();
         let thread = std::thread::Builder::new()
             .name("moss-candle-inference".into())
-            .spawn(move || runtime::run(root, mode, device, jobs, ready))
+            .spawn(move || runtime::run(root, mode, files, device, jobs, ready))
             .map_err(|e| BackendError::Initialize(e.to_string()))?;
         let backend = Self {
             requests: Some(requests),
@@ -214,9 +237,9 @@ mod tests {
         let retired = root.path().join("moss/voices/retired.json");
         std::fs::create_dir_all(retired.parent().unwrap())?;
         std::fs::write(&retired, b"retired voice must not be read or modified")?;
-        let realtime = voice_store(&Mode::Realtime.directory(root.path()), Mode::Realtime)?;
+        let realtime = voice_store(&Mode::Realtime.data_directory(root.path()), Mode::Realtime)?;
         let nano =
-            super::super::voices::VoiceStore::new(&super::super::nano::directory(root.path()));
+            super::super::voices::VoiceStore::new(&super::super::nano::data_directory(root.path()));
         nano.save(
             "custom:reader".into(),
             "Reader".into(),

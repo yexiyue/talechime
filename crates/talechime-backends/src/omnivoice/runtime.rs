@@ -59,15 +59,12 @@ pub(super) fn options_device(device: Device) -> Option<DeviceSpec> {
 }
 pub(super) fn run(
     directory: PathBuf,
+    source: super::ModelFiles,
     device: Device,
     mut jobs: mpsc::Receiver<Request>,
     ready: oneshot::Sender<Result<(), BackendError>>,
 ) {
-    let pipeline = match Pipeline::from_options(
-        RuntimeOptions::new(&directory)
-            .with_device(options_device(device).expect("validated device"))
-            .with_seed(42),
-    ) {
+    let pipeline = match pipeline(source, device, 42) {
         Ok(model) => model,
         Err(error) => {
             let _ = ready.send(Err(BackendError::Initialize(error.to_string())));
@@ -104,6 +101,21 @@ pub(super) fn run(
             let _ = crate::observation::send_audio(&request.audio, Err(error));
         }
     }
+}
+
+pub(super) fn pipeline(
+    source: super::ModelFiles,
+    device: Device,
+    seed: u64,
+) -> anyhow::Result<Pipeline> {
+    let device =
+        options_device(device).ok_or_else(|| anyhow::anyhow!("unsupported Omni device"))?;
+    Ok(Pipeline::from_runtime_artifacts(
+        RuntimeOptions::for_resolved_files()
+            .with_device(device)
+            .with_seed(seed),
+        talechime_omnivoice::artifacts::RuntimeArtifacts::from_files(&source)?,
+    )?)
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]

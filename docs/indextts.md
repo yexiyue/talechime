@@ -22,18 +22,13 @@ cargo build --release --locked -p talechime --features indextts-metal
 cargo build --release --locked -p talechime --features indextts-cuda-cudnn
 ```
 
-SDK 通过固定配方原生准备资源，不启动 Python、PyTorch 或 MLX。先调用
-`ResolvedModel::native_preparation_plan()` 展示缺失下载量、待转换组件和峰值额外空间，
-确认指纹后调用 `prepare_native_resources`；仅加载已就绪资源使用 `load_existing`，不会隐式下载。
-完整 API 与取消语义见[原生准备说明](native-resource-preparation.md)。
+SDK 根据固定清单盘点、下载并校验已发布成品，直接读取 Hub 缓存，不在用户机器转换；`load_existing` 只加载已就绪资源，不隐式下载。完整 API 与取消语义见[资源准备说明](native-resource-preparation.md)。
 
-当前开发资源版本目录为 `ROOT/indextts/models/2.5/c39ce5ba-runtime-f32-front-v6/`。
 配方包含固定 UniDic 词典、平台中英/西语 FST 及 QwenEmotion 六件资源；规模和逐件摘要以编译清单为准。
 此前 v3 的 14 个输入、13 个输出和 6,676,865,606 字节是 2026-11-05 历史基线。
 GPT、codec、s2mel、CAMPPlus、BigVGAN 保持官方 F32；特征矩阵及 mean/sqrt(var)
 由固定官方输入生成。词表、BigVGAN 配置和 w2v 文件直接验证复用。
-源构建依据固化在 `indextts/native-assets.json` 和 `indextts/native-sources.json`，成品输入使用 `indextts/distribution-inputs.json`；
-发布时验证每个输出与 `preparation.json`，缺件、混用版本或摘要不符均不能就绪。
+历史源构建与成品输入见下列记录；固定清单逐文件校验，缺件或摘要不符均不能就绪。
 
 2026-11-05 实测：2,707 个张量与独立 PyTorch 导出逐字节一致；在不含 Python 命令的
 PATH 中完成完整准备及就绪复验，用时 173.89 秒。社区 FP16 资源的名称/布局及精度损失
@@ -41,7 +36,7 @@ PATH 中完成完整准备及就绪复验，用时 173.89 秒。社区 FP16 资�
 详见[来源与逐张量记录](records/resources/indextts-community-2026-11-05.md)。
 CPU/Metal 真实短文本合成已生成有效 WAV；人工听感和其他平台验收仍未完成，详见[补充记录](records/resources/native-preparation-2026-11-05.md)。
 
-参考音色位于 `ROOT/voices/indextts/` 对应模型子目录，由引擎音色存储管理，
+参考音色位于应用数据目录的音色库，由引擎音色存储管理，
 不写入不可变的模型资源版本。权重、生成音频和转换工作目录不进入 Git。
 
 ## 导入并朗读

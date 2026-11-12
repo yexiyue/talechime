@@ -20,8 +20,8 @@ global-artifacts-jobs = ["./release-smoke"]
 install-path = "CARGO_HOME"
 install-updater = false
 msvc-crt-static = false
-features = ["cli", "asr", "qwen", "voxcpm", "omnivoice", "cosyvoice3", "moss-candle", "moss-nano-candle", "kokoro-g2pw"]
-include = ["LICENSE", "SOURCE.md", "docs", "assets", "target/third-party-licenses", "target/talechime-helpers"]
+features = ["cli", "asr", "qwen", "voxcpm", "omnivoice", "cosyvoice3", "moss-candle", "moss-nano-candle", "kokoro"]
+include = ["LICENSE", "SOURCE.md", "docs", "assets", "target/third-party-licenses"]
 github-build-setup = "../build-setup.yml"
 pr-run-mode = "plan"
 

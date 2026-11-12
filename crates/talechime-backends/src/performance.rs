@@ -98,232 +98,94 @@ fn verify_resources(
     Ok(files)
 }
 
-/// Verify the immutable production manifests without invoking preparation.
-pub fn verify(registry: &crate::Registry, backend: &str, model: &str) -> anyhow::Result<Receipt> {
-    registry.capabilities_for(backend, Some(model))?;
-    let root = registry.root();
-    let files = match backend {
-        #[cfg(feature = "kokoro")]
-        "kokoro" => {
-            let directory = crate::kokoro::directory_for(root, model);
-            let canonical_root = root.canonicalize()?;
-            crate::kokoro::resources::performance_resources(&directory, model)?
-                .into_iter()
-                .map(|resource| {
-                    let path = directory.join(&resource.path);
-                    anyhow::ensure!(
-                        path.canonicalize()?.starts_with(&canonical_root),
-                        "model file escapes resources root"
-                    );
-                    // Conversion manifests pin content hashes: verify exactly.
-                    crate::resources::verify_local(&directory, &resource)?;
-                    Ok(VerifiedFile {
-                        path: path.strip_prefix(root)?.to_owned(),
-                        size: resource.size,
-                        sha256: resource.sha256,
-                    })
-                })
-                .collect::<anyhow::Result<Vec<_>>>()?
+/// Verify pinned files in the shared Hub cache without downloading them.
+#[cfg(any(
+    feature = "kokoro",
+    feature = "qwen",
+    feature = "voxcpm",
+    feature = "omnivoice",
+    feature = "cosyvoice3",
+    feature = "indextts",
+    feature = "moss"
+))]
+pub async fn verify(
+    registry: &crate::Registry,
+    backend: &str,
+    model: &str,
+) -> anyhow::Result<Receipt> {
+    registry.resolve(backend, Some(model))?;
+    let manifests = crate::registry::model_manifests(backend, model)?;
+    let root = registry.downloads().cache_dir().canonicalize()?;
+    let mut files = Vec::new();
+    for manifest in manifests {
+        let paths =
+            crate::resources::resolve_manifest(manifest, registry.downloads().clone()).await?;
+        let entries: Vec<crate::resources::Resource> = serde_json::from_str(manifest)?;
+        for entry in entries {
+            let path = paths
+                .get(&entry.path)
+                .ok_or_else(|| anyhow::anyhow!("missing verified resource"))?;
+            files.push(VerifiedFile {
+                path: path.strip_prefix(&root)?.to_owned(),
+                size: entry.size,
+                sha256: entry.sha256,
+            });
         }
-        #[cfg(feature = "qwen")]
-        "qwen" => {
-            let selected = crate::qwen::models::Model::parse(Some(model))?;
-            let json = match model {
-                "0.6b-customvoice" => include_str!("qwen/resources.json"),
-                "1.7b-customvoice" => include_str!("qwen/models/1.7b-customvoice.json"),
-                "0.6b-base" => include_str!("qwen/models/0.6b-base.json"),
-                "1.7b-base" => include_str!("qwen/models/1.7b-base.json"),
-                "1.7b-voicedesign" => include_str!("qwen/models/1.7b-voicedesign.json"),
-                _ => anyhow::bail!("unknown Qwen model"),
-            };
-            manifest(root, &selected.directory(root), json)?
-        }
-        #[cfg(feature = "voxcpm")]
-        "voxcpm" => {
-            let selected = crate::voxcpm::models::Model::parse(Some(model))?;
-            manifest(root, &selected.directory(root), selected.manifest())?
-        }
-        #[cfg(feature = "omnivoice")]
-        "omnivoice" => manifest(
-            root,
-            &crate::omnivoice::directory(root),
-            include_str!("omnivoice/resources.json"),
-        )?,
-        #[cfg(feature = "cosyvoice3")]
-        "cosyvoice3" => native_manifest(root, crate::cosyvoice3::native_recipe())?,
-        #[cfg(feature = "indextts")]
-        "indextts" => native_manifest(root, crate::indextts::native_recipe())?,
-        #[cfg(feature = "moss")]
-        "moss" => match model {
-            #[cfg(feature = "moss-nano-candle")]
-            "nano-candle" => manifest(
-                root,
-                &crate::moss::nano::directory(root),
-                include_str!("moss/nano/resources.json"),
-            )?,
-            "realtime-1.7b" => {
-                let mode = crate::moss::candle::Mode::parse(model)?;
-                let json = talechime_moss_tts::manifests::REALTIME;
-                let mut files = manifest(root, &mode.directory(root), json)?;
-                files.extend(manifest(
-                    root,
-                    &crate::moss::candle::resources::codec_directory(root),
-                    talechime_moss_tts::manifests::CODEC,
-                )?);
-                files
-            }
-            _ => anyhow::bail!("model is not compiled"),
-        },
-        _ => Vec::new(),
-    };
-    anyhow::ensure!(
-        !files.is_empty(),
-        "blocked: offline production manifest or verified conversion receipt unavailable for {backend}/{model}"
-    );
+    }
     Ok(Receipt {
         schema: "talechime/performance-resources/1",
         backend: backend.into(),
         model: model.into(),
-        resources_root: root.to_owned(),
-        verification: if matches!(backend, "indextts" | "kokoro" | "cosyvoice3") {
-            "verified_native_recipe"
-        } else {
-            "production_manifest"
-        },
+        resources_root: root,
+        verification: "pinned_hub_manifest",
         files,
     })
 }
 
-#[cfg(any(feature = "cosyvoice3", feature = "indextts"))]
-fn native_manifest(
-    root: &Path,
-    recipe: crate::native_preparation::Recipe,
-) -> anyhow::Result<Vec<VerifiedFile>> {
-    let directory = root.join(&recipe.target);
-    recipe.verify_files(&directory, &crate::PreparationControl::default())?;
-    let canonical_root = root.canonicalize()?;
-    recipe
-        .outputs
-        .iter()
-        .map(|pin| {
-            let path = directory.join(pin.path);
-            anyhow::ensure!(
-                path.canonicalize()?.starts_with(&canonical_root),
-                "model file escapes resources root"
-            );
-            Ok(VerifiedFile {
-                path: path.strip_prefix(root)?.to_owned(),
-                size: pin.size,
-                sha256: pin.sha256.into(),
-            })
-        })
-        .collect()
+#[cfg(not(any(
+    feature = "kokoro",
+    feature = "qwen",
+    feature = "voxcpm",
+    feature = "omnivoice",
+    feature = "cosyvoice3",
+    feature = "indextts",
+    feature = "moss"
+)))]
+pub async fn verify(_: &crate::Registry, _: &str, _: &str) -> anyhow::Result<Receipt> {
+    anyhow::bail!("backend/model is not compiled")
 }
 
-/// Load an already verified model using the production owner path, without prepare.
-/// The caller must retain the receipt and complete verification before timing load.
+/// Load the same verified cache resources used by the production registry.
 pub async fn load(
     registry: &crate::Registry,
     backend: &str,
     model: &str,
     device: talechime_protocol::Device,
 ) -> anyhow::Result<std::rc::Rc<dyn talechime_core::backend::Backend>> {
-    registry.capabilities_for(backend, Some(model))?;
-    #[cfg(any(
-        feature = "qwen",
-        feature = "voxcpm",
-        feature = "omnivoice",
-        feature = "cosyvoice3",
-        feature = "indextts",
-        feature = "kokoro",
-        feature = "moss"
-    ))]
-    {
-        anyhow::ensure!(
-            registry
-                .compiled_devices_for(backend, Some(model))
-                .contains(&device),
-            "model device is not compiled"
-        );
-        anyhow::ensure!(
-            registry
-                .available_devices_for(backend, Some(model))
-                .contains(&device),
-            "model device is unavailable; no fallback"
-        );
-    }
-    let root = registry.root();
-    let loaded: Option<std::rc::Rc<dyn talechime_core::backend::Backend>> = match backend {
-        #[cfg(feature = "kokoro")]
-        "kokoro" => Some(std::rc::Rc::new(
-            crate::kokoro::KokoroBackend::load_model_on(
-                crate::kokoro::directory_for(root, model),
-                model,
-                device,
-            )
-            .await?,
-        )),
-        #[cfg(feature = "qwen")]
-        "qwen" => Some(std::rc::Rc::new(
-            crate::qwen::QwenBackend::load_on(
-                crate::qwen::models::Model::parse(Some(model))?.directory(root),
-                device,
-            )
-            .await?,
-        )),
-        #[cfg(feature = "voxcpm")]
-        "voxcpm" => {
-            let selected = crate::voxcpm::models::Model::parse(Some(model))?;
-            Some(std::rc::Rc::new(
-                crate::voxcpm::VoxBackend::load_model_on(
-                    selected.directory(root),
-                    selected,
-                    device,
-                )
-                .await?,
-            ))
-        }
-        #[cfg(feature = "omnivoice")]
-        "omnivoice" => Some(std::rc::Rc::new(
-            crate::omnivoice::OmniBackend::load_on(crate::omnivoice::directory(root), device)
-                .await?,
-        )),
-        #[cfg(feature = "cosyvoice3")]
-        "cosyvoice3" => Some(std::rc::Rc::new(
-            crate::cosyvoice3::CosyBackend::load_on(root.to_owned(), device).await?,
-        )),
-        #[cfg(feature = "indextts")]
-        "indextts" => Some(std::rc::Rc::new(
-            crate::indextts::IndexBackend::load_on(root.to_owned(), device).await?,
-        )),
-        #[cfg(feature = "moss")]
-        "moss" => match model {
-            #[cfg(feature = "moss-nano-candle")]
-            "nano-candle" => Some(std::rc::Rc::new(
-                crate::moss::nano::NanoBackend::load_on(root.to_owned(), device).await?,
-            )),
-            "realtime-1.7b" => Some(std::rc::Rc::new(
-                crate::moss::candle::CandleBackend::load_on(
-                    root.to_owned(),
-                    crate::moss::candle::Mode::parse(model)?,
-                    device,
-                )
-                .await?,
-            )),
-            _ => None,
+    let model = registry.resolve(backend, Some(model))?;
+    anyhow::ensure!(
+        model.compiled_devices().contains(&device) && model.available_devices().contains(&device),
+        "model device is unavailable; no fallback"
+    );
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    let drain = async { while rx.recv().await.is_some() {} };
+    let load = model.load_existing(
+        crate::PrepareOptions {
+            device,
+            ..Default::default()
         },
-        _ => None,
-    };
-    let _ = (root, device); // Empty-feature catalogue builds have no model arms.
-    loaded.ok_or_else(|| anyhow::anyhow!("backend/model is not compiled"))
+        tx,
+    );
+    let (result, ()) = tokio::join!(load, drain);
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[cfg(feature = "kokoro")]
-    #[test]
-    fn kokoro_rejects_locally_invented_manifests_and_wrong_modes() -> anyhow::Result<()> {
+    #[tokio::test]
+    async fn kokoro_rejects_locally_invented_manifests_and_wrong_modes() -> anyhow::Result<()> {
         use sha2::{Digest, Sha256};
         let root = tempfile::tempdir()?;
         let directory = crate::kokoro::directory(root.path());
@@ -362,17 +224,28 @@ mod tests {
             directory.join("manifest.json"),
             serde_json::to_vec(&manifest)?,
         )?;
-        let registry = crate::Registry::new(Some(root.path().to_owned()))?;
-        assert!(verify(&registry, "kokoro", crate::kokoro::MODEL).is_err());
+        let registry = crate::Registry::with_downloads(
+            Some(root.path().join("data")),
+            &crate::downloads::DownloadConfig {
+                cache_dir: root.path().join("hub"),
+                ..Default::default()
+            },
+        )?;
+        assert!(
+            verify(&registry, "kokoro", crate::kokoro::MODEL)
+                .await
+                .is_err()
+        );
         assert_eq!(
             std::fs::read(directory.join("model.safetensors"))?,
             b"fixture"
         );
-        assert!(
-            crate::kokoro::resources::performance_resources(&directory, "1.1-zh-g2pw").is_err()
-        );
         std::fs::write(directory.join("model.safetensors"), b"corrupt")?;
-        assert!(verify(&registry, "kokoro", crate::kokoro::MODEL).is_err());
+        assert!(
+            verify(&registry, "kokoro", crate::kokoro::MODEL)
+                .await
+                .is_err()
+        );
         assert_eq!(
             std::fs::read(directory.join("model.safetensors"))?,
             b"corrupt"

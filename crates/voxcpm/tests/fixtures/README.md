@@ -1,5 +1,14 @@
 # Numerical fixtures
 
+`native-vae.pth` is a synthetic 662-byte PyTorch ZIP fixture generated with
+Python's standard-library `pickle` (protocol 2), `zipfile` and `struct`, without
+model downloads or a PyTorch runtime. Its `state_dict` contains one contiguous
+CPU FloatStorage tensor, `decoder.weight`, with shape `(2,)`, stride `(1,)`,
+offset 0 and values `[1.25, -2.5]`, rebuilt with `torch._utils._rebuild_tensor_v2`.
+The archive has `archive/data.pkl`, `archive/data/0` (two little-endian f32s),
+`archive/version` (`3\n`) and `archive/byteorder` (`little`). The loader test
+copies it to an extensionless path to exercise the original AudioVAE format.
+
 > Legacy `tools/tts` scripts mentioned here were removed on 2026-10-20. Retrieve historical scripts from Git revision `e591c94`; their paths below describe provenance or historical reproduction, not current executable entry points.
 
 `causal-convolutions.json` uses CPU PyTorch 2.14.1, `torch.manual_seed(42)`:

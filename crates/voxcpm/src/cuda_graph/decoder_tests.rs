@@ -54,7 +54,12 @@ fn decoder_state_gate(original: bool) -> Result<()> {
     let device = Device::new_cuda(0)?;
     let dtype = if original { DType::F32 } else { DType::F16 };
     let mut weights = if original {
-        Weights::native(&root.join("audiovae.pth"), &device, dtype)?
+        Weights::native(
+            &root.join("audiovae.pth"),
+            crate::weights::NativeFormat::Pytorch,
+            &device,
+            dtype,
+        )?
     } else {
         Weights::open(&root.join("VoxCPM2-Acoustic-F16.gguf"), &device, dtype)?
     };

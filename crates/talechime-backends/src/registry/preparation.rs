@@ -25,15 +25,6 @@ impl ResolvedModel {
     /// this for explicit resource preparation; [`Self::prepare`] still runs the
     /// same download pass before loading.
     pub async fn prepare_resources(&self, progress: mpsc::Sender<Event>) -> anyhow::Result<()> {
-        if let Some(recipe) = self.adapter.native_recipe() {
-            return crate::native_preparation::prepare_recipe(
-                recipe,
-                self.root.clone(),
-                self.downloads.clone(),
-                progress,
-            )
-            .await;
-        }
         self.adapter
             .prepare(&self.root, &self.downloads, progress)
             .await
@@ -52,7 +43,10 @@ impl ResolvedModel {
         progress: mpsc::Sender<Event>,
     ) -> anyhow::Result<Rc<dyn Backend>> {
         anyhow::ensure!(
-            self.adapter.resource_status(&self.root) == crate::ResourceStatus::Ready,
+            self.adapter
+                .resource_status(&self.root, &self.downloads)
+                .await?
+                == crate::ResourceStatus::Ready,
             "model resources are not ready; prepare explicitly first"
         );
         self.prepare_inner(options, progress, false).await
@@ -63,6 +57,13 @@ impl ResolvedModel {
         progress: mpsc::Sender<Event>,
         prepare_resources: bool,
     ) -> anyhow::Result<Rc<dyn Backend>> {
+        super::validate_storage_paths(&self.root, &self.cache, self.downloads.cache_dir())?;
+        if self.capabilities.cloning {
+            let entry = self
+                .adapter
+                .reference_entry(&self.root, "custom:storage-probe")?;
+            super::reference::validate_location(&self.root, &entry)?;
+        }
         let available = self.available_devices();
         anyhow::ensure!(
             options.device == Device::Auto || available.contains(&options.device),
@@ -101,7 +102,7 @@ impl ResolvedModel {
                 });
         let cached = key
             .as_deref()
-            .and_then(|key| calibration::cached_for(&self.root, "tts", key, &available));
+            .and_then(|key| calibration::cached_for(&self.cache, "tts", key, &available));
         if let Some(record) = &cached {
             selected = record.device;
         }
@@ -110,7 +111,13 @@ impl ResolvedModel {
         }
         let mut backend = match self
             .adapter
-            .load(&self.root, progress.clone(), selected, false)
+            .load(
+                &self.root,
+                &self.downloads,
+                progress.clone(),
+                selected,
+                false,
+            )
             .await
         {
             Ok(backend) => backend,
@@ -127,7 +134,13 @@ impl ResolvedModel {
                     ))
                     .await;
                 self.adapter
-                    .load(&self.root, progress.clone(), Device::Cpu, false)
+                    .load(
+                        &self.root,
+                        &self.downloads,
+                        progress.clone(),
+                        Device::Cpu,
+                        false,
+                    )
                     .await?
             }
             Err(error) => return Err(error),
@@ -148,7 +161,7 @@ impl ResolvedModel {
             let evaluation = async {
                 let accelerated = self
                     .adapter
-                    .load(&self.root, progress.clone(), device, false)
+                    .load(&self.root, &self.downloads, progress.clone(), device, false)
                     .await?;
                 let cpu = calibration::synthesis(&*backend, voice).await?;
                 let gpu = calibration::synthesis(&*accelerated, voice).await?;
@@ -171,7 +184,7 @@ impl ResolvedModel {
             };
             if measured && let Some(key) = key {
                 calibration::save(
-                    &self.root,
+                    &self.cache,
                     "tts",
                     &calibration::Record {
                         key,
@@ -196,7 +209,7 @@ impl ResolvedModel {
             drop(backend);
             backend = self
                 .adapter
-                .load(&self.root, progress, selected, true)
+                .load(&self.root, &self.downloads, progress, selected, true)
                 .await?;
         }
         Ok(backend)

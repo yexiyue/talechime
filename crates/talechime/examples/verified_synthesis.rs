@@ -4,17 +4,13 @@ use talechime::*;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() != 4 {
-        return Err("usage: verified_synthesis BACKEND TTS_RESOURCE_DIR ASR_RESOURCE_DIR".into());
+    if args.len() != 3 {
+        return Err("usage: verified_synthesis BACKEND TTS_RESOURCE_DIR".into());
     }
     run_local(async {
         let registry = Registry::new(Some(args[2].clone().into()))?;
-        let verifier = prepare_readback(
-            ReadbackModelOptions::new(&args[3]),
-            registry.downloads(),
-            |_| {},
-        )
-        .await?;
+        let verifier =
+            prepare_readback(ReadbackModelOptions::new(), registry.downloads(), |_| {}).await?;
         let mut engine =
             Engine::prepare_in(&registry, ModelOptions::new(&args[1], &args[2]), |_| {}).await?;
         engine.set_verifier(verifier)?;

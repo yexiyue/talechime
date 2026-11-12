@@ -70,9 +70,17 @@ impl ContextModel {
     /// Load an explicit `scripts/export_context.py` artifact. No downloading,
     /// provider auto-selection or Python execution takes place here.
     pub fn load(root: &Path) -> Result<Self> {
+        Self::load_files(
+            &root.join("context.json"),
+            &root.join("vocab.txt"),
+            &root.join("g2pw.onnx"),
+        )
+    }
+
+    /// Load contextual assets resolved independently from their Hub repositories.
+    pub fn load_files(context: &Path, vocabulary: &Path, model: &Path) -> Result<Self> {
         let data: ContextData =
-            serde_json::from_slice(&std::fs::read(root.join("context.json")).map_err(error)?)
-                .map_err(error)?;
+            serde_json::from_slice(&std::fs::read(context).map_err(error)?).map_err(error)?;
         if data.format != "kokoro-g2pw-v2"
             || data.source_revision != "b9328ce8129c4717a70f16a2688542a0197541dd"
             || data.archive_sha256
@@ -94,8 +102,7 @@ impl ContextModel {
         {
             candle_core::bail!("invalid contextual pronunciation label table");
         }
-        let path = root.join("vocab.txt");
-        let path = path
+        let path = vocabulary
             .to_str()
             .ok_or_else(|| error("invalid vocabulary path"))?;
         let wordpiece = WordPiece::from_file(path)
@@ -115,7 +122,7 @@ impl ContextModel {
             .map_err(error)?
             .with_intra_threads(2)
             .map_err(error)?
-            .commit_from_file(root.join("g2pw.onnx"))
+            .commit_from_file(model)
             .map_err(error)?;
         let char_ids = data
             .chars

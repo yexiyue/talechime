@@ -186,13 +186,25 @@ impl VoiceStudio {
             .map_err(VoiceStudioError::from)
     }
     /// Design engines compiled into this build with readiness and cost.
-    pub fn engines(&self) -> Vec<EngineInfo> {
+    pub async fn engines(&self) -> Result<Vec<EngineInfo>, VoiceStudioError> {
         match &self.designers {
-            Some(engines) => engines
-                .iter()
-                .map(|engine| engine.info(self.registry.root()))
-                .collect(),
-            None => self.registry.designers(),
+            Some(engines) => {
+                let mut infos = Vec::with_capacity(engines.len());
+                for engine in engines {
+                    infos.push(
+                        engine
+                            .info(self.registry.root())
+                            .await
+                            .map_err(VoiceStudioError::from)?,
+                    );
+                }
+                Ok(infos)
+            }
+            None => self
+                .registry
+                .designers()
+                .await
+                .map_err(VoiceStudioError::from),
         }
     }
     /// Automatic design: policy-chosen engine, engine-default text and device.
@@ -258,7 +270,13 @@ impl VoiceStudio {
         progress: tokio::sync::mpsc::Sender<Event>,
     ) -> Result<(), VoiceStudioError> {
         let engine = self.designer(id)?;
-        if engine.info(self.registry.root()).devices.is_empty() {
+        if engine
+            .info(self.registry.root())
+            .await
+            .map_err(VoiceStudioError::from)?
+            .devices
+            .is_empty()
+        {
             return Err(VoiceStudioError::new("design engine has no usable device"));
         }
         engine
@@ -285,6 +303,7 @@ impl VoiceStudio {
         let automatic = options.engine.is_none();
         let infos: Vec<_> = self
             .engines()
+            .await?
             .into_iter()
             .filter(|info| {
                 !automatic
@@ -559,21 +578,25 @@ mod tests {
         fn id(&self) -> &'static str {
             "fake-designer"
         }
-        fn info(&self, _root: &Path) -> EngineInfo {
-            EngineInfo {
-                id: "fake-designer",
-                name: "Fake Designer",
-                devices: vec![Device::Cpu],
-                inputs: InputConstraints {
-                    text_max_chars: 100,
-                    description_max_chars: None,
-                    description_max_bytes: 4096,
-                    forbid_parentheses: false,
-                },
-                extra_download_bytes: 0,
-                ready: self.ready,
-                reuses_synthesis_model: false,
-            }
+        fn info<'a>(&'a self, _root: &'a Path) -> talechime_core::design::Information<'a> {
+            Box::pin(async move {
+                Ok({
+                    EngineInfo {
+                        id: "fake-designer",
+                        name: "Fake Designer",
+                        devices: vec![Device::Cpu],
+                        inputs: InputConstraints {
+                            text_max_chars: 100,
+                            description_max_chars: None,
+                            description_max_bytes: 4096,
+                            forbid_parentheses: false,
+                        },
+                        extra_download_bytes: 0,
+                        ready: self.ready,
+                        reuses_synthesis_model: false,
+                    }
+                })
+            })
         }
         fn prepare<'a>(
             &'a self,
@@ -608,8 +631,8 @@ mod tests {
         fn id(&self) -> &'static str {
             "fake-designer"
         }
-        fn info(&self, root: &Path) -> EngineInfo {
-            FakeDesigner { ready: true }.info(root)
+        fn info<'a>(&'a self, root: &'a Path) -> talechime_core::design::Information<'a> {
+            Box::pin(async move { FakeDesigner { ready: true }.info(root).await })
         }
         fn prepare<'a>(
             &'a self,

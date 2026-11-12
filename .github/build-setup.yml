@@ -5,9 +5,6 @@
 - name: Select native release features
   shell: bash
   run: python .github/scripts/configure-release.py
-- name: Build standalone Kokoro English helper
-  shell: bash
-  run: python tools/tts/prepare_espeak_bundle.py
 - name: Collect third-party license notices
   shell: bash
   run: python .github/scripts/prepare-notices.py

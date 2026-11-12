@@ -16,6 +16,12 @@ impl TextFrontend {
             normalizer: WeText::load(directory).map_err(text_error)?,
         })
     }
+    /// Load fixed normalization graphs from individually resolved files.
+    pub fn load_files(paths: [&Path; 4]) -> Result<Self> {
+        Ok(Self {
+            normalizer: WeText::load_files(paths).map_err(text_error)?,
+        })
+    }
     /// Keep model control tokens verbatim, otherwise normalize and group using
     /// the fixed 80/60/20 token policy. The caller supplies the actual tokenizer.
     pub fn prepare(

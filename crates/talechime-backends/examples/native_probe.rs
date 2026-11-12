@@ -1,7 +1,7 @@
 //! Export the exact adapter stream; model files must already be verified locally.
 mod segmentation;
-use std::{path::PathBuf, rc::Rc, time::Instant};
-use talechime_core::backend::{AudioChunk, Backend};
+use std::{path::PathBuf, time::Instant};
+use talechime_core::backend::AudioChunk;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     tokio::task::LocalSet::new().run_until(run()).await
@@ -17,7 +17,6 @@ async fn run() -> anyhow::Result<()> {
             ("voxcpm-metal", cfg!(feature = "voxcpm-metal")),
             ("voxcpm-cuda", cfg!(feature = "voxcpm-cuda")),
             ("kokoro", cfg!(feature = "kokoro")),
-            ("kokoro-g2pw", cfg!(feature = "kokoro-g2pw")),
             ("kokoro-metal", cfg!(feature = "kokoro-metal")),
             ("kokoro-cuda", cfg!(feature = "kokoro-cuda")),
             ("cosyvoice3", cfg!(feature = "cosyvoice3")),
@@ -62,7 +61,7 @@ async fn run() -> anyhow::Result<()> {
     }
     anyhow::ensure!(
         args.len() >= 7,
-        "backend directory output.wav cpu|cuda|metal text voice"
+        "backend application-data-root output.wav cpu|cuda|metal text voice"
     );
     let directory = PathBuf::from(&args[2]);
     let text = if let Some(path) = args[5].strip_prefix('@') {
@@ -81,75 +80,31 @@ async fn run() -> anyhow::Result<()> {
         "qwen-design" | "moss-design" | "voxcpm-design" | "omnivoice-design"
     ) {
         let options = design_options(&args[1], &probe_params()?)?;
-        return design_probe(
-            &args[1],
-            directory,
-            PathBuf::from(&args[3]),
-            device,
-            &text,
-            options,
-        )
-        .await;
+        return design_probe(&args[1], PathBuf::from(&args[3]), device, &text, options).await;
     }
     let load = || async {
-        let backend: Rc<dyn Backend> = match args[1].as_str() {
-            #[cfg(feature = "moss-nano-candle")]
-            "moss-nano" => Rc::new(
-                talechime_backends::moss::nano::NanoBackend::load_on(directory.clone(), device)
-                    .await?,
+        let (backend, model) = match args[1].as_str() {
+            "moss-nano" => ("moss", Some("nano-candle".to_owned())),
+            "moss" => (
+                "moss",
+                Some(std::env::var("MOSS_MODEL").unwrap_or_else(|_| "realtime-1.7b".into())),
             ),
-            #[cfg(feature = "kokoro")]
-            "kokoro" => Rc::new(
-                talechime_backends::kokoro::KokoroBackend::load_model_on(
-                    directory.clone(),
-                    &std::env::var("TALECHIME_KOKORO_MODEL")
-                        .unwrap_or_else(|_| "1.1-zh-g2pw".into()),
-                    device,
-                )
-                .await?,
-            ),
-            #[cfg(feature = "cosyvoice3")]
-            "cosyvoice3" => Rc::new(
-                talechime_backends::cosyvoice3::CosyBackend::load_on(directory.clone(), device)
-                    .await?,
-            ),
-            #[cfg(feature = "indextts")]
-            "indextts" => Rc::new(
-                talechime_backends::indextts::IndexBackend::load_on(directory.clone(), device)
-                    .await?,
-            ),
-            #[cfg(feature = "moss-candle")]
-            "moss" => Rc::new(
-                talechime_backends::moss::candle::CandleBackend::load_on(
-                    directory.clone(),
-                    talechime_backends::moss::candle::Mode::parse(
-                        &std::env::var("MOSS_MODEL").unwrap_or_else(|_| "realtime-1.7b".into()),
-                    )?,
-                    device,
-                )
-                .await?,
-            ),
-            #[cfg(feature = "qwen")]
-            "qwen" => Rc::new(
-                talechime_backends::qwen::QwenBackend::load_on(directory.clone(), device).await?,
-            ),
-            #[cfg(feature = "voxcpm")]
-            "voxcpm" => Rc::new(
-                talechime_backends::voxcpm::VoxBackend::load_model_on(
-                    directory.clone(),
-                    probe_voxcpm_model()?,
-                    device,
-                )
-                .await?,
-            ),
-            #[cfg(feature = "omnivoice")]
-            "omnivoice" => Rc::new(
-                talechime_backends::omnivoice::OmniBackend::load_on(directory.clone(), device)
-                    .await?,
-            ),
-            _ => anyhow::bail!("backend not compiled"),
+            "kokoro" => ("kokoro", std::env::var("TALECHIME_KOKORO_MODEL").ok()),
+            name => (name, std::env::var("TALECHIME_PROBE_MODEL").ok()),
         };
-        Ok::<_, anyhow::Error>(backend)
+        let registry = talechime_backends::Registry::new(Some(directory.clone()))?;
+        let resolved = registry.resolve(backend, model.as_deref())?;
+        let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+        let drain = async { while rx.recv().await.is_some() {} };
+        let load = resolved.load_existing(
+            talechime_backends::PrepareOptions {
+                device,
+                ..Default::default()
+            },
+            tx,
+        );
+        let (result, ()) = tokio::join!(load, drain);
+        result
     };
     if std::env::var_os("NOVEL_TTS_PROBE_CANCEL_LOAD").is_some() {
         let started = Instant::now();
@@ -324,7 +279,6 @@ async fn run() -> anyhow::Result<()> {
 
 async fn design_probe(
     backend: &str,
-    directory: PathBuf,
     output: PathBuf,
     device: talechime_protocol::Device,
     text: &str,
@@ -348,7 +302,7 @@ async fn design_probe(
         #[cfg(feature = "qwen")]
         "qwen-design" => {
             talechime_backends::qwen::design::reference(
-                directory,
+                &talechime_backends::downloads::Downloads::new(&Default::default())?,
                 device,
                 text.to_owned(),
                 description,
@@ -361,7 +315,7 @@ async fn design_probe(
         #[cfg(feature = "moss-candle")]
         "moss-design" => {
             talechime_backends::moss::candle::design::reference(
-                directory,
+                &talechime_backends::downloads::Downloads::new(&Default::default())?,
                 device,
                 text.to_owned(),
                 description,
@@ -375,7 +329,7 @@ async fn design_probe(
         "voxcpm-design" => {
             let variant = probe_voxcpm_model()?;
             talechime_backends::voxcpm::design::reference_model(
-                directory,
+                &talechime_backends::downloads::Downloads::new(&Default::default())?,
                 variant,
                 device,
                 text.to_owned(),
@@ -389,7 +343,7 @@ async fn design_probe(
         #[cfg(feature = "omnivoice")]
         "omnivoice-design" => {
             talechime_backends::omnivoice::design::reference(
-                directory,
+                &talechime_backends::downloads::Downloads::new(&Default::default())?,
                 device,
                 text.to_owned(),
                 description,

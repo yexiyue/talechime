@@ -10,11 +10,54 @@ use talechime_protocol::{Capabilities, Device, Event};
 use tokio::sync::{mpsc, oneshot};
 pub const REVISION: &str = "44502f80dbf9743528fa921cc544d662c685ebec";
 pub(crate) const MANIFEST: &str = include_str!("nano/resources.json");
-pub fn directory(root: &Path) -> PathBuf {
-    root.join("moss/models/nano-candle").join(REVISION)
+pub(crate) struct NanoFiles {
+    config: PathBuf,
+    weights: PathBuf,
+    tokenizer: PathBuf,
+    codec: CodecFiles,
+}
+struct CodecFiles {
+    config: PathBuf,
+    shards: Vec<PathBuf>,
+}
+impl CodecFiles {
+    fn from_resolved(
+        paths: &mut std::collections::BTreeMap<String, PathBuf>,
+    ) -> anyhow::Result<Self> {
+        let mut take = |name: &str| {
+            paths
+                .remove(name)
+                .ok_or_else(|| anyhow::anyhow!("missing Nano resource {name}"))
+        };
+        Ok(Self {
+            config: take("codec/config.json")?,
+            shards: vec![take("codec/model-00001-of-00001.safetensors")?],
+        })
+    }
+}
+impl NanoFiles {
+    pub(crate) fn from_resolved(
+        mut paths: std::collections::BTreeMap<String, PathBuf>,
+    ) -> anyhow::Result<Self> {
+        let codec = CodecFiles::from_resolved(&mut paths)?;
+        let mut take = |name: &str| {
+            paths
+                .remove(name)
+                .ok_or_else(|| anyhow::anyhow!("missing Nano resource {name}"))
+        };
+        Ok(Self {
+            config: take("tts/config.json")?,
+            weights: take("tts/pytorch_model.bin")?,
+            tokenizer: take("tts/tokenizer.model")?,
+            codec,
+        })
+    }
+}
+pub(crate) fn data_directory(root: &Path) -> PathBuf {
+    root.join("moss/nano-candle").join(REVISION)
 }
 pub fn capabilities(root: &Path) -> anyhow::Result<Capabilities> {
-    let mut caps = super::nano_capabilities(&directory(root))?;
+    let mut caps = super::nano_capabilities(&data_directory(root))?;
     caps.model = Some("nano-candle".into());
     caps.model_name = "MOSS Nano Candle".into();
     caps.compiled_devices = compiled_devices();
@@ -58,18 +101,17 @@ pub fn available_devices() -> Vec<Device> {
         .collect()
 }
 pub async fn prepare(
-    root: &Path,
     downloads: &crate::downloads::Downloads,
     progress: mpsc::Sender<Event>,
 ) -> anyhow::Result<()> {
-    crate::resources::prepare(
-        &directory(root),
+    crate::resources::prepare_cached(
         "moss/nano-candle",
         serde_json::from_str(MANIFEST)?,
         downloads,
         progress,
     )
-    .await
+    .await?;
+    Ok(())
 }
 struct Request {
     #[cfg(feature = "performance-tools")]
@@ -90,12 +132,37 @@ pub struct NanoBackend {
 }
 impl NanoBackend {
     pub async fn load_on(root: PathBuf, selected: Device) -> Result<Self, BackendError> {
+        let downloads = crate::downloads::Downloads::new(&Default::default())
+            .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        crate::registry::validate_model_data_root(
+            &root,
+            &data_directory(&root),
+            downloads.cache_dir(),
+        )
+        .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        let reference_path = super::voices::VoiceStore::new(&data_directory(&root))
+            .path("custom:storage-probe")
+            .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        crate::registry::validate_model_data_root(&root, &reference_path, downloads.cache_dir())
+            .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        let paths = crate::resources::resolve_manifest(MANIFEST, downloads)
+            .await
+            .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        let files = NanoFiles::from_resolved(paths)
+            .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        Self::load_files_on(root, files, selected).await
+    }
+    pub(crate) async fn load_files_on(
+        root: PathBuf,
+        files: NanoFiles,
+        selected: Device,
+    ) -> Result<Self, BackendError> {
         let caps = capabilities(&root).map_err(|e| BackendError::Initialize(e.to_string()))?;
         let cache_identity = crate::cache_identity::identity(
             "moss-nano-candle",
             REVISION,
             selected,
-            &directory(&root),
+            &data_directory(&root),
         );
         let voice_root = root.clone();
         let (requests, mut jobs) = mpsc::channel::<Request>(1);
@@ -105,17 +172,19 @@ impl NanoBackend {
             .spawn(move || {
                 let load = || -> anyhow::Result<_> {
                     let device = device(selected)?;
-                    let dir = directory(&root);
-                    let model = talechime_moss_tts::nano::Nano::load(&dir.join("tts"), &device)?;
+                    let model = talechime_moss_tts::nano::Nano::load_files(
+                        &files.config,
+                        &files.weights,
+                        &device,
+                    )?;
                     anyhow::ensure!(!ready.is_closed(), "Nano loading cancelled");
-                    let codec = talechime_moss_tts::codec::AudioCodec::load(
-                        &dir.join("codec"),
+                    let codec = talechime_moss_tts::codec::AudioCodec::load_files(
+                        &files.codec.config,
+                        &files.codec.shards,
                         &device,
                         DType::F32,
                     )?;
-                    let tokenizer = Arc::new(SentencePieceProcessor::open(
-                        dir.join("tts/tokenizer.model"),
-                    )?);
+                    let tokenizer = Arc::new(SentencePieceProcessor::open(&files.tokenizer)?);
                     Ok((model, codec, tokenizer))
                 };
                 let (mut model, mut codec, tokenizer) = match load() {
@@ -273,7 +342,8 @@ fn generate(
     let manifest: serde_json::Value =
         serde_json::from_str(include_str!("assets/nano-prompt.json"))?;
     let cancelled = || job.audio.is_closed() || owner_closed();
-    let codes = super::voices::VoiceStore::new(&directory(root)).codes(&job.voice, &manifest)?;
+    let codes =
+        super::voices::VoiceStore::new(&data_directory(root)).codes(&job.voice, &manifest)?;
     let flat = super::prompt::rows(&manifest, &job.tokens, &codes)?;
     let rows: Vec<Vec<u32>> = flat
         .as_chunks::<17>()
@@ -336,7 +406,6 @@ fn generate_nonempty(
 #[cfg(test)]
 mod empty_eos_tests {
     use super::*;
-
     #[test]
     fn empty_eos_retries_with_distinct_reproducible_seeds() {
         let mut seeds = Vec::new();
@@ -422,7 +491,7 @@ mod tests {
                 .voices
                 .contains(&"custom:later".to_owned())
         );
-        super::super::voices::VoiceStore::new(&super::directory(root.path())).save(
+        super::super::voices::VoiceStore::new(&super::data_directory(root.path())).save(
             "custom:later".into(),
             "Later".into(),
             vec![vec![42; 16]; 3],
@@ -437,6 +506,23 @@ mod tests {
     }
 
     use super::*;
+    #[tokio::test]
+    async fn reference_import_rejects_data_root_in_hub_before_reading_audio() {
+        let root = tempfile::tempdir().unwrap();
+        let downloads = crate::downloads::Downloads::test(root.path());
+        let error = import_voice(
+            downloads.cache_dir().to_path_buf(),
+            &downloads,
+            "custom:test".into(),
+            "Test".into(),
+            root.path().join("missing.wav"),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("must not overlap"));
+        assert!(!downloads.cache_dir().exists());
+    }
+
     #[tokio::test(flavor = "current_thread")]
     #[ignore = "explicit complete local Nano resources and selected compiled device"]
     async fn real_cancel_full_queue_and_reuse_preserves_pcm() -> anyhow::Result<()> {
@@ -503,18 +589,25 @@ mod tests {
             .await
     }
 
-    #[test]
-    fn real_first_step_eos_recovers_without_skipping_text() -> anyhow::Result<()> {
+    #[tokio::test]
+    async fn real_first_step_eos_recovers_without_skipping_text() -> anyhow::Result<()> {
         let Some(root) = std::env::var_os("TALECHIME_NANO_EMPTY_ROOT") else {
             return Ok(());
         };
         let root = PathBuf::from(root);
-        let dir = directory(&root);
+        let downloads = crate::downloads::Downloads::new(&Default::default())?;
+        let paths = crate::resources::resolve_manifest(MANIFEST, downloads).await?;
+        let files = NanoFiles::from_resolved(paths)?;
         let device = CandleDevice::Cpu;
-        let mut model = talechime_moss_tts::nano::Nano::load(&dir.join("tts"), &device)?;
-        let mut codec =
-            talechime_moss_tts::codec::AudioCodec::load(&dir.join("codec"), &device, DType::F32)?;
-        let tokenizer = SentencePieceProcessor::open(dir.join("tts/tokenizer.model"))?;
+        let mut model =
+            talechime_moss_tts::nano::Nano::load_files(&files.config, &files.weights, &device)?;
+        let mut codec = talechime_moss_tts::codec::AudioCodec::load_files(
+            &files.codec.config,
+            &files.codec.shards,
+            &device,
+            DType::F32,
+        )?;
+        let tokenizer = SentencePieceProcessor::open(&files.tokenizer)?;
         let tokens: Vec<i32> = tokenizer
             .encode_to_ids(&super::super::text::normalize("陆鸣喃喃。"))?
             .into_iter()
@@ -522,8 +615,8 @@ mod tests {
             .collect();
         let manifest: serde_json::Value =
             serde_json::from_str(include_str!("assets/nano-prompt.json"))?;
-        let codes =
-            super::super::voices::VoiceStore::new(&directory(&root)).codes("Yuewen", &manifest)?;
+        let codes = super::super::voices::VoiceStore::new(&data_directory(&root))
+            .codes("Yuewen", &manifest)?;
         let flat = super::super::prompt::rows(&manifest, &tokens, &codes)?;
         let rows: Vec<Vec<u32>> = flat
             .as_chunks::<17>()
@@ -596,7 +689,7 @@ mod tests {
         assert_eq!(candle.default_voice, "Weiguo");
         assert!(candle.compiled_devices.contains(&Device::Cpu));
         assert!(!root.path().join("moss").exists());
-        super::super::voices::VoiceStore::new(&directory(root.path())).save(
+        super::super::voices::VoiceStore::new(&data_directory(root.path())).save(
             "custom:shared".into(),
             "shared".into(),
             vec![vec![42; 16]; 3],
@@ -622,6 +715,8 @@ pub async fn import_voice(
     wav: PathBuf,
 ) -> anyhow::Result<()> {
     use std::sync::atomic::{AtomicBool, Ordering};
+    let reference_path = super::voices::VoiceStore::new(&data_directory(&root)).path(&id)?;
+    crate::registry::validate_model_data_root(&root, &reference_path, downloads.cache_dir())?;
     // Reject unreadable/invalid audio before preparing any codec resources.
     let samples = super::audio::read_wav(&wav)?;
     let resources: Vec<crate::resources::Resource> =
@@ -632,14 +727,11 @@ pub async fn import_voice(
         .collect();
     let (progress, receiver) = mpsc::channel(1);
     drop(receiver);
-    crate::resources::prepare(
-        &directory(&root),
-        "moss/nano-candle/reference",
-        codec,
-        downloads,
-        progress,
-    )
-    .await?;
+    let cached =
+        crate::resources::prepare_cached("moss/nano-candle/reference", codec, downloads, progress)
+            .await?;
+    let mut paths = cached.into_iter().collect();
+    let codec = CodecFiles::from_resolved(&mut paths)?;
     let cancelled = Arc::new(AtomicBool::new(false));
     let signal = cancelled.clone();
     let (reply, result) = oneshot::channel();
@@ -649,8 +741,9 @@ pub async fn import_voice(
             let encoded = (|| {
                 let check = || signal.load(Ordering::Relaxed);
                 anyhow::ensure!(!check(), "Nano voice import cancelled");
-                let mut codec = talechime_moss_tts::codec::AudioCodec::load(
-                    &directory(&root).join("codec"),
+                let mut codec = talechime_moss_tts::codec::AudioCodec::load_files(
+                    &codec.config,
+                    &codec.shards,
                     &CandleDevice::Cpu,
                     DType::F32,
                 )?;
@@ -660,7 +753,7 @@ pub async fn import_voice(
                     .map(|row| row.into_iter().map(|id| id as i32).collect())
                     .collect();
                 anyhow::ensure!(!check(), "Nano voice import cancelled");
-                super::voices::VoiceStore::new(&directory(&root)).save(id, name, codes)
+                super::voices::VoiceStore::new(&data_directory(&root)).save(id, name, codes)
             })();
             let _ = reply.send(encoded);
         })?;

@@ -186,7 +186,7 @@ cargo clippy --locked -p talechime --no-default-features --all-targets -- -D war
 
 无默认 feature 的二进制构建需显式加 cli，例如 `--features cli,qwen-metal`。core 不编译播放器或 HTTP 依赖。facade 的 `playback` feature 启用默认音频设备，`cli` 自动启用它；无默认 feature 仍支持直接合成及注入播放器。
 
-ASR 普通测试使用确定性转写和合成夹具，不下载权重；原生前端用固定整数合成波形对照独立 kaldi-native-fbank 数值。手工真实模型探针：`cargo run --release --locked -p talechime-backends --features asr --example asr_readback -- QWEN_DIR SENSEVOICE_DIR CORPUS_JSON OUTPUT_JSON`。语料、模型、结果只放 Git 忽略目录；验证范围见[原生验收](records/asr/asr-readback-mainline-2026-10-09.md)。
+ASR 普通测试使用确定性转写和合成夹具，不下载权重；原生前端用固定整数合成波形对照独立 kaldi-native-fbank 数值。手工真实模型探针：`cargo run --release --locked -p talechime-backends --features asr --example asr_readback -- HUB_CACHE CORPUS_JSON OUTPUT_JSON`，缓存路径须为绝对路径，探针只读取已准备的固定资源。语料、模型、结果只放 Git 忽略目录；验证范围见[原生验收](records/asr/asr-readback-mainline-2026-10-09.md)。
 
 ## 固定参考验证
 

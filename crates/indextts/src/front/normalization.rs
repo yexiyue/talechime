@@ -1,5 +1,5 @@
 //! Fixed WeText 0.1.0 CN/EN resources and explicit default options.
-use super::{fst::FstNormalizer, reorder};
+use talechime_text::{FstNormalizer, reorder, reorder_linux};
 type Result<T> = std::result::Result<T, candle_core::Error>;
 fn text_error(error: talechime_text::Error) -> candle_core::Error {
     candle_core::Error::Msg(error.to_string())
@@ -56,10 +56,12 @@ const SPANISH_FILES: &[(&str, &str)] = &[
     ),
 ];
 
-fn verify_files(directory: &Path, files: &[(&str, &str)]) -> Result<()> {
-    for &(name, expected) in files {
-        let path = directory.join(name);
-        let mut file = File::open(&path).map_err(|error| {
+fn verify_files(paths: &[&Path], files: &[(&str, &str)]) -> Result<()> {
+    if paths.len() != files.len() {
+        candle_core::bail!("invalid IndexTTS TN resource count");
+    }
+    for (&path, &(name, expected)) in paths.iter().zip(files) {
+        let mut file = File::open(path).map_err(|error| {
             candle_core::Error::Msg(format!(
                 "IndexTTS requires pinned TN resource {}: {error}",
                 path.display()
@@ -97,15 +99,20 @@ impl Normalization {
             directory.to_owned()
         };
         let files = if linux { LINUX_FILES } else { FILES };
-        verify_files(&root, files)?;
+        let paths: [std::path::PathBuf; 4] = std::array::from_fn(|i| root.join(files[i].0));
+        Self::load_files([&paths[0], &paths[1], &paths[2], &paths[3]], linux)
+    }
+    pub(super) fn load_files(paths: [&Path; 4], linux: bool) -> Result<Self> {
+        let files = if linux { LINUX_FILES } else { FILES };
+        verify_files(&paths, files)?;
         Ok(Self {
             chinese: (
-                FstNormalizer::load(&root.join(files[0].0)).map_err(text_error)?,
-                FstNormalizer::load(&root.join(files[1].0)).map_err(text_error)?,
+                FstNormalizer::load(paths[0]).map_err(text_error)?,
+                FstNormalizer::load(paths[1]).map_err(text_error)?,
             ),
             english: (
-                FstNormalizer::load(&root.join(files[2].0)).map_err(text_error)?,
-                FstNormalizer::load(&root.join(files[3].0)).map_err(text_error)?,
+                FstNormalizer::load(paths[2]).map_err(text_error)?,
+                FstNormalizer::load(paths[3]).map_err(text_error)?,
             ),
             linux,
         })
@@ -138,9 +145,9 @@ impl Normalization {
             .apply_with_cancel(text, cancelled)
             .map_err(text_error)?;
         let ordered = if self.linux {
-            reorder::reorder_linux(tagged.trim(), chinese).map_err(text_error)?
+            reorder_linux(tagged.trim(), chinese).map_err(text_error)?
         } else {
-            reorder::reorder(tagged.trim(), chinese).map_err(text_error)?
+            reorder(tagged.trim(), chinese).map_err(text_error)?
         };
         Ok(verbalizer
             .apply_with_cancel(&ordered, cancelled)
@@ -156,11 +163,16 @@ pub(super) struct Spanish {
 }
 impl Spanish {
     pub(super) fn load(directory: &Path) -> Result<Self> {
-        verify_files(directory, SPANISH_FILES)?;
+        Self::load_files(
+            &directory.join("tagger.fst"),
+            &directory.join("verbalizer.fst"),
+        )
+    }
+    pub(super) fn load_files(tagger: &Path, verbalizer: &Path) -> Result<Self> {
+        verify_files(&[tagger, verbalizer], SPANISH_FILES)?;
         Ok(Self {
-            tagger: FstNormalizer::load(&directory.join("tagger.fst")).map_err(text_error)?,
-            verbalizer: FstNormalizer::load(&directory.join("verbalizer.fst"))
-                .map_err(text_error)?,
+            tagger: FstNormalizer::load(tagger).map_err(text_error)?,
+            verbalizer: FstNormalizer::load(verbalizer).map_err(text_error)?,
         })
     }
     #[cfg(test)]

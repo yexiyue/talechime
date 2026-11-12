@@ -51,7 +51,7 @@ async fn verify(model: models::Model, voice: &str, alternate: Option<&str>) -> a
         std::env::var_os("TALECHIME_VOX_STATE_RESOURCES")
             .ok_or_else(|| anyhow::anyhow!("TALECHIME_VOX_STATE_RESOURCES required"))?,
     );
-    let backend = VoxBackend::load_model_on(model.directory(&root), model, Device::Cuda).await?;
+    let backend = VoxBackend::load_model_on(root.clone(), model, Device::Cuda).await?;
     let params = GenerationParams::new();
     let expected = collect(&backend, voice, &params).await?;
 

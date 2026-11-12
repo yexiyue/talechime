@@ -39,19 +39,28 @@ pub(super) fn model_dtype(device: &Device) -> DType {
 pub(super) fn run(
     root: PathBuf,
     mode: Mode,
+    files: resources::Files,
     selected: talechime_protocol::Device,
     mut jobs: mpsc::Receiver<Request>,
     ready: oneshot::Sender<Result<(), BackendError>>,
 ) {
     let load = || -> anyhow::Result<_> {
         let dev = device(selected)?;
-        let model = Model::load(mode.id(), &mode.directory(&root), &dev, model_dtype(&dev))?;
+        let model = Model::load_files(
+            mode.id(),
+            &files.config,
+            &files.tokenizer,
+            &files.weights,
+            &dev,
+            model_dtype(&dev),
+        )?;
         // Finish Metal weight uploads/casts before loading the next component.
         if dev.is_metal() {
             dev.synchronize()?;
         }
         anyhow::ensure!(!ready.is_closed(), "initialization cancelled");
-        let codec = AudioCodec::load(&resources::codec_directory(&root), &dev, DType::F16)?;
+        let codec =
+            AudioCodec::load_files(&files.codec_config, &files.codec_weights, &dev, DType::F16)?;
         if dev.is_metal() {
             dev.synchronize()?;
         }
@@ -94,7 +103,7 @@ fn generate(
     let reference = if request.voice.starts_with("custom:") {
         Some(prompt(
             codec,
-            &mode.directory(root),
+            &mode.data_directory(root),
             mode,
             &request.voice,
             &|| request.audio.is_closed(),

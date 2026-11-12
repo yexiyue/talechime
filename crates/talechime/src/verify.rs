@@ -42,7 +42,7 @@ pub async fn run(
         .map(|x| x.map(|x| x as f32 / 32768.0))
         .collect::<Result<Vec<_>, _>>()?;
     let verifier = prepare_readback(
-        ReadbackModelOptions::new(resources.root()),
+        ReadbackModelOptions::new(),
         resources.downloads(),
         |event| {
             if let Event::ResourceState { stage, resource } = event {

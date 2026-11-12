@@ -1,5 +1,8 @@
 use candle_core::{DType, IndexOp};
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+};
 use talechime_core::{
     backend::{AudioChunk, BackendError, Pcm},
     text::TextSegment,
@@ -36,46 +39,37 @@ pub(super) fn candle_device(device: Device) -> candle_core::Result<candle_core::
     }
 }
 pub(super) fn run(
-    directory: PathBuf,
+    files: BTreeMap<String, PathBuf>,
     device: Device,
-    contextual: bool,
     mut jobs: mpsc::Receiver<Request>,
     ready: oneshot::Sender<Result<(), BackendError>>,
     shutdown: CancellationToken,
 ) {
-    #[cfg(feature = "kokoro-g2pw")]
-    let mut context = None;
     let loaded = (|| -> anyhow::Result<_> {
-        let manifest =
-            super::resources::verify_cancellable(&directory, &|| shutdown.is_cancelled())?;
-        anyhow::ensure!(
-            manifest.contextual == contextual,
-            "Kokoro pronunciation mode changed during loading"
-        );
+        let manifest = super::resources::compiled_manifest()?;
+        let path = |name: &str| {
+            files
+                .get(name)
+                .ok_or_else(|| anyhow::anyhow!("Kokoro manifest lacks {name}"))
+        };
         anyhow::ensure!(!shutdown.is_cancelled(), "Kokoro loading cancelled");
         let device = candle_device(device)?;
-        let model = Model::load(
-            &directory.join("model.safetensors"),
-            &directory.join("config.json"),
-            &device,
-        )?;
+        let model = Model::load(path("model.safetensors")?, path("config.json")?, &device)?;
         anyhow::ensure!(!shutdown.is_cancelled(), "Kokoro loading cancelled");
-        let frontend = Frontend::load(&directory.join("frontend"))?;
-        #[cfg(feature = "kokoro-g2pw")]
-        {
-            context = if contextual {
-                Some(talechime_kokoro::context::ContextModel::load(
-                    &directory.join("context"),
-                )?)
-            } else {
-                None
-            };
-        }
+        let frontend = Frontend::load_files(
+            path("frontend/frontend.json")?,
+            path("frontend/jieba.dict")?,
+        )?;
+        let context = talechime_kokoro::context::ContextModel::load_files(
+            path("context/context.json")?,
+            path("context/vocab.txt")?,
+            path("context/g2pw.onnx")?,
+        )?;
         anyhow::ensure!(!shutdown.is_cancelled(), "Kokoro loading cancelled");
         let mut voices = HashMap::new();
         for (id, voice) in manifest.voices {
             anyhow::ensure!(!shutdown.is_cancelled(), "Kokoro loading cancelled");
-            let values = candle_core::safetensors::load(directory.join(voice.path), &device)?;
+            let values = candle_core::safetensors::load(path(&voice.path)?, &device)?;
             let tensor = values
                 .get("voice")
                 .ok_or_else(|| anyhow::anyhow!("missing Kokoro voice tensor"))?;
@@ -86,9 +80,9 @@ pub(super) fn run(
             voices.insert(id, tensor.clone());
         }
         let runtime = tokio::runtime::Builder::new_current_thread().build()?;
-        Ok((model, frontend, voices, runtime))
+        Ok((model, frontend, context, voices, runtime))
     })();
-    let (model, frontend, voices, runtime) = match loaded {
+    let (model, frontend, mut context, voices, runtime) = match loaded {
         Ok(value) => value,
         Err(error) => {
             let _ = ready.send(Err(BackendError::Initialize(error.to_string())));
@@ -130,15 +124,9 @@ pub(super) fn run(
                     continue;
                 }
                 let result = (|| -> anyhow::Result<_> {
-                    #[cfg(feature = "kokoro-g2pw")]
-                    let phonemes = match &mut context {
-                        Some(context) => frontend.phonemes_with_context(&text, context, &|| {
-                            shutdown.is_cancelled() || audio.is_closed()
-                        })?,
-                        None => frontend.phonemes(&text)?,
-                    };
-                    #[cfg(not(feature = "kokoro-g2pw"))]
-                    let phonemes = frontend.phonemes(&text)?;
+                    let phonemes = frontend.phonemes_with_context(&text, &mut context, &|| {
+                        shutdown.is_cancelled() || audio.is_closed()
+                    })?;
                     let ids = model.token_ids(&phonemes)?;
                     if std::env::var("TALECHIME_TEXT_DIAGNOSTICS").is_ok_and(|value| value == "1") {
                         eprintln!(

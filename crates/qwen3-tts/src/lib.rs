@@ -103,7 +103,7 @@ pub use models::{
     TalkerConfig, TalkerModel,
 };
 pub use synthesis::{
-    CODEC_EOS_TOKEN_ID, FrameCodes, Qwen3TTS, SAMPLES_PER_FRAME, StreamingSession,
+    CODEC_EOS_TOKEN_ID, FrameCodes, ModelFiles, Qwen3TTS, SAMPLES_PER_FRAME, StreamingSession,
     SynthesisOptions, SynthesisTiming, VoiceClonePrompt, codes_to_tensor, compute_dtype_for_device,
     sync_device,
 };

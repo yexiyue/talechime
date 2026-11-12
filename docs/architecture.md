@@ -151,7 +151,7 @@ VoxCPM2（上游 `(description)text` 前缀）、OmniVoice
 [风格记录](records/tts-core/style-exposure-2026-10-10.md)。
 ### 音色资产层
 
-音色库（`~/.talechime/voices-v2/`，`VoiceLibrary`）是设计/导入音色的唯一事实源：每条音色
+音色库（`~/.talechime/data/voices-v2/`，`VoiceLibrary`）是设计/导入音色的唯一事实源：每条音色
 = 原始参考 WAV + 准确转写 + 描述与来源标注，与模型资源目录彻底分离，可单文件导出搬运。
 各模型的 per-model `VoiceStore` 降级为可再生物化缓存：按库音色的内容指纹
 （转写+描述+WAV 的 sha256）和缓存内容摘要写入相邻 `.library` 标记，缺失或损坏即重物化；
@@ -182,7 +182,7 @@ Qwen 0.6B / 1.7B Base 复用 Base ICL 编码，OmniVoice 复用 VoiceClonePrompt
 
 ## 适配器登记与基础设施边界
 
-Registry 通过静态登记表查找适配器。每个适配器拥有模型目录、设备能力、资源修订和加载/恢复机制。`ResolvedModel` 冻结已解析的模型身份；CLI 与 Engine 均调用它的 `prepare(PrepareOptions, progress)`，不在应用层按模型名选择恢复加载实现。自动校准保留三次预热、五次测量和现有阈值，显式设备失败不回退。
+Registry 通过静态登记表查找适配器。每个适配器拥有模型目录、设备能力、资源修订和加载/恢复机制，并通过必需的 `ModelAdapter::manifests()` 返回所选模型的固定 Hub 清单。资源盘点直接消费已解析适配器的清单，不另行维护按模型名称分派的资源表。`ResolvedModel` 冻结已解析的模型身份；CLI 与 Engine 均调用它的 `prepare(PrepareOptions, progress)`，不在应用层按模型名选择恢复加载实现。自动校准保留三次预热、五次测量和现有阈值，显式设备失败不回退。
 
 `PrepareOptions` 显式选择设备、自动校准、自动恢复和校准音色。Engine 默认 CPU、关闭校准/恢复；CLI 开启自动选择所需策略。Auto 先选 CPU（没有 CPU 才选首个加速设备），校准缓存按确切模型身份与资源修订隔离。查询目录不准备或下载模型。
 
@@ -214,8 +214,8 @@ core 保留 `Playback`、配置、检查点和有界暂存。facade 的 `playbac
 `Engine::load` 先检查资源就绪，再沿用调用方 Registry 装配；`prepare_in` 是显式允许准备资源的入口。
 宿主负责候选身份、暂存预算、用户确认和媒体读取，基础库不引用桌面业务类型。
 
-资源获取方式由 `ResolvedModel::resource_preparation()` 明确返回 Download 或 Native（显式计划及完整发布），
-不能通过缺失字节数推断准备方式；Native 配方也可直接下载已验证成品，转换需求由计划明确返回。
+资源盘点使用 `Registry::resource_inventory()` 返回缺失字节数和固定资源集合的就绪指纹；宿主在下载前重新盘点并比较指纹。
+显式下载调用 `ResolvedModel::prepare_resources()`；仅加载已就绪文件调用 `load_existing()`，不发起下载。
 
 宿主先设计候选并试听，最后显式提交的组合示例：
 
@@ -231,22 +231,17 @@ let asset = studio.library().save_candidate(&candidate)?;
 # Ok(()) }
 ```
 
-## 原生资源准备边界
+## 固定 Hub 资源准备边界
 
-`native_preparation` 为固定资源配方提供计划、协作取消、阶段进度和原子发布基础；`ResolvedModel::native_preparation_plan` 仅对已登记配方返回计划，`prepare_native_resources` 执行确认指纹对应的配方。计划计算在受跟踪 worker 上读取并校验缓存摘要；缺失下载量与含暂存的峰值空间分别表达。网络继续使用同一个 `Downloads`，没有外部脚本入口。`PreparationControl::cancel` 后应等待调用返回，不能直接丢弃未来并宣称资源已释放。模型特定转换归各后端，资源就绪与真实推理分开验收。
+固定 Hub 清单为每个资源指定仓库、提交、文件名、大小与摘要。`Registry::resource_inventory` 盘点已校验资源，`ResolvedModel::prepare_resources` 统一下载缺失或损坏的文件，并直接从共享缓存加载；资源可跨仓库，运行时不转换或组装模型目录。下载取消后宿主等待任务退出并检查断点保存结果；资源就绪与真实推理分开验收。详见[资源准备说明](native-resource-preparation.md)。
 
-Kokoro 两变体、CosyVoice3 和 IndexTTS 均已登记固定配方。维护方完成原生转换与逐张量对照后发布缺少的成品组件，默认运行时只下载/复用成品，不要求用户重复转换。原生源配方保留为显式开发构建路径，没有自动回退。来源、真实输入与验收边界见[2026-11-05 核验](records/resources/native-preparation-2026-11-05.md)。
-
-原生准备 API 的阶段、取消与发布边界见[接口说明](native-resource-preparation.md)。
-
-原生准备的受控工作区统一处理组件缓存与进度。后端只声明组件名称及其转换函数，不能注册任意远端脚本；每次转换回调收到固定输入视图、暂存目标和取消控制。组件摘要验证后可跨失败重试或 Kokoro 变体复用，整个模型仍以独立版本目录原子发布。准备租约覆盖 worker 退出和暂存清理，Registry 构造不会恢复执行。清理与提交后持久化错误语义见 [原生资源准备](native-resource-preparation.md)。
-
+Kokoro g2pW、CosyVoice3 和 IndexTTS 的运行时资源均通过固定 Hub 成品清单获取。旧原生转换 API、受控工作区和模型目录原子发布流程已移除；历史转换与逐张量对照的背景见[2026-11-05 核验](records/resources/native-preparation-2026-11-05.md)，不代表当前仍提供这些接口。当前直接缓存加载的验证及未验收边界见[2026-11-12 记录](records/resources/hf-cache-direct-2026-11-12.md)。
 
 ### 文本与条件算法身份
 
 `ResolvedModel::revision()` 标识所选模型的固定资源/推理版本，
 `text_semantics_revision()` 另行标识本批文本及语言条件算法（当前
-`official-backend-text-v2`）。宿主复用已保存音频时须同时冻结和比较这两个值；
+`official-backend-text-v3`）。宿主复用已保存音频时须同时冻结和比较这两个值；
 仅模型名或权重提交不能识别 Qwen Auto、Omni 自动语言及 Kokoro OOV 等代码行为变化。
 引擎的执行缓存身份也包含算法字段。共享算法版本保守使旧算法身份失效，
 权重目录仍按实际资源身份复用；此 API 不自动迁移宿主任务或改写旧声音。

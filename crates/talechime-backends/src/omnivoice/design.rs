@@ -1,8 +1,24 @@
 //! Create one tagged reference; subsequent narration uses its cached clone prompt.
 use std::{path::PathBuf, sync::Arc};
 use talechime_protocol::Device;
+/// Load the fixed VoiceDesign files from the configured Hub cache.
 pub async fn reference(
-    directory: PathBuf,
+    downloads: &crate::downloads::Downloads,
+    device: Device,
+    text: String,
+    description: String,
+    output: PathBuf,
+    seed: Option<u64>,
+) -> anyhow::Result<()> {
+    let files = crate::resources::resolve_manifest(super::resources::MANIFEST, downloads.clone())
+        .await?
+        .into_iter()
+        .map(|(name, path)| (name.into(), path))
+        .collect();
+    reference_source(files, device, text, description, output, seed).await
+}
+pub(crate) async fn reference_source(
+    source: super::ModelFiles,
     device: Device,
     text: String,
     description: String,
@@ -25,14 +41,7 @@ pub async fn reference(
         .name("omni-voice-design".into())
         .spawn(move || {
             let generated = (|| -> anyhow::Result<()> {
-                let pipeline = talechime_omnivoice::pipeline::Pipeline::from_options(
-                    talechime_omnivoice::runtime::RuntimeOptions::new(directory)
-                        .with_device(
-                            super::runtime::options_device(device)
-                                .ok_or_else(|| anyhow::anyhow!("unsupported Omni device"))?,
-                        )
-                        .with_seed(seed.unwrap_or(42)),
-                )?;
+                let pipeline = super::runtime::pipeline(source, device, seed.unwrap_or(42))?;
                 let signal = completed.clone();
                 pipeline.set_cancellation_probe(Some(
                     talechime_omnivoice::stage0_model::CancellationProbe(Arc::new(move || {

@@ -1,26 +1,17 @@
-use std::path::Path;
 use talechime_protocol::Event;
 use tokio::sync::mpsc;
 pub const REVISION: &str = "169f64d8b98bbaab1761e4ca3a83e6af653456cc";
-pub async fn prepare(
-    directory: &Path,
-    downloads: &crate::downloads::Downloads,
-    progress: mpsc::Sender<Event>,
-) -> anyhow::Result<()> {
-    prepare_model(directory, super::models::Model::Q8, downloads, progress).await
-}
-pub async fn prepare_model(
-    directory: &Path,
+pub(crate) async fn prepare_model(
     model: super::models::Model,
     downloads: &crate::downloads::Downloads,
     progress: mpsc::Sender<Event>,
 ) -> anyhow::Result<()> {
-    crate::resources::prepare(
-        directory,
+    crate::resources::prepare_cached(
         &format!("voxcpm/{}", model.id()),
         serde_json::from_str(model.manifest())?,
         downloads,
         progress,
     )
-    .await
+    .await?;
+    Ok(())
 }

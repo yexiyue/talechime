@@ -1,0 +1,266 @@
+[
+  {
+    "path": "gpt.safetensors",
+    "size": 3259446504,
+    "sha256": "9e5e7d192907a24d80f19b587ab9e5fdf8032d679beb36239bd9af3e0c61378b",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "1ae47e4998c45f60c8c62bb4090136b6554e17d0",
+    "filename": "native/indextts-v3/gpt.safetensors"
+  },
+  {
+    "path": "codec.safetensors",
+    "size": 202358064,
+    "sha256": "30c5e9b989bfb63f77784a2c0753c11f2e2177b0e8be170f587c645c920cc408",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "1ae47e4998c45f60c8c62bb4090136b6554e17d0",
+    "filename": "native/indextts-v3/codec.safetensors"
+  },
+  {
+    "path": "s2mel.safetensors",
+    "size": 414778712,
+    "sha256": "edbe644be9538fe3a3e6d98f0ab54603ac3ebdbfa168dcf88d2c4ee62468e4bc",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "1ae47e4998c45f60c8c62bb4090136b6554e17d0",
+    "filename": "native/indextts-v3/s2mel.safetensors"
+  },
+  {
+    "path": "campplus.safetensors",
+    "size": 27831904,
+    "sha256": "2884cfd4a2953c9759a71137a354a61060733dc61a89f9cc0a15a2d151302b67",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "1ae47e4998c45f60c8c62bb4090136b6554e17d0",
+    "filename": "native/indextts-v3/campplus.safetensors"
+  },
+  {
+    "path": "bigvgan.safetensors",
+    "size": 449018644,
+    "sha256": "5cf00e7802f15a3c2aa24183691d437c7ad5a49fe6174d90f99fce38198368b3",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "1ae47e4998c45f60c8c62bb4090136b6554e17d0",
+    "filename": "native/indextts-v3/bigvgan.safetensors"
+  },
+  {
+    "path": "feats.safetensors",
+    "size": 438320,
+    "sha256": "b44309af6529e53412f35bf833ad499b39789b8b4496f1e5592b55774a3f4d77",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "1ae47e4998c45f60c8c62bb4090136b6554e17d0",
+    "filename": "native/indextts-v3/feats.safetensors"
+  },
+  {
+    "path": "bigvgan.config.json",
+    "repo": "nvidia/bigvgan_v2_22khz_80band_256x",
+    "revision": "633ff708ed5b74903e86ff1298cf4a98e921c513",
+    "filename": "config.json",
+    "size": 1405,
+    "sha256": "88a1f47acf747db0b21e97a389d838566147f7a5464583ff5c8d819d870f03ee"
+  },
+  {
+    "path": "multilingual_zh_ja_yue_char_del.tiktoken",
+    "repo": "IndexTeam/IndexTTS-2.5",
+    "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+    "filename": "multilingual_zh_ja_yue_char_del.tiktoken",
+    "size": 907395,
+    "sha256": "747979631e813193436aabcff7c1c235d37de8097b71c563ec8b63b7a515c718"
+  },
+  {
+    "path": "w2v-bert-2.0/model.safetensors",
+    "repo": "facebook/w2v-bert-2.0",
+    "revision": "da985ba0987f70aaeb84a80f2851cfac8c697a7b",
+    "filename": "model.safetensors",
+    "size": 2322063736,
+    "sha256": "eb890c9660ed6e3414b6812e27257b8ce5454365d5490d3ad581ea60b93be043"
+  },
+  {
+    "path": "w2v-bert-2.0/config.json",
+    "repo": "facebook/w2v-bert-2.0",
+    "revision": "da985ba0987f70aaeb84a80f2851cfac8c697a7b",
+    "filename": "config.json",
+    "size": 1874,
+    "sha256": "f5572bd5998b68182e9c328a43127ed21fed687f6910497136b91a4e3b0e3675"
+  },
+  {
+    "path": "LICENSE-INDEXTTS",
+    "repo": "IndexTeam/IndexTTS-2.5",
+    "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+    "filename": "LICENSE",
+    "size": 10553,
+    "sha256": "cc7da9ea0f8a97ef15ab3bf0389e636ce79ffca1aef5489520796ac87d87a87b"
+  },
+  {
+    "path": "config.json",
+    "size": 3269,
+    "sha256": "e3503c2f2e0af0c24fd456e6e02613d1e536b02e4c9bd3da185093db537cf487",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "1ae47e4998c45f60c8c62bb4090136b6554e17d0",
+    "filename": "native/indextts-v3/config.json"
+  },
+  {
+    "path": "qwen0.6bemo4-merge/chat_template.jinja",
+    "repo": "IndexTeam/IndexTTS-2.5",
+    "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+    "filename": "qwen0.6bemo4-merge/chat_template.jinja",
+    "size": 550,
+    "sha256": "a13337ea164ac47b2c1e644b6338d5e7e91cdcb58218511899c083112472730c"
+  },
+  {
+    "path": "qwen0.6bemo4-merge/config.json",
+    "repo": "IndexTeam/IndexTTS-2.5",
+    "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+    "filename": "qwen0.6bemo4-merge/config.json",
+    "size": 727,
+    "sha256": "2e04bc223dfb548dde52faebe2a819964523ff749cbe26467c49380aa371594f"
+  },
+  {
+    "path": "qwen0.6bemo4-merge/generation_config.json",
+    "repo": "IndexTeam/IndexTTS-2.5",
+    "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+    "filename": "qwen0.6bemo4-merge/generation_config.json",
+    "size": 117,
+    "sha256": "6453260cdb41552215d87400ab399a760f25509ec2860ceb07817b195651626d"
+  },
+  {
+    "path": "qwen0.6bemo4-merge/model.safetensors",
+    "repo": "IndexTeam/IndexTTS-2.5",
+    "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+    "filename": "qwen0.6bemo4-merge/model.safetensors",
+    "size": 1192135096,
+    "sha256": "11293257a8df593c154a8ecd5fc039f3076de35411e35f06d41b471e136f6641"
+  },
+  {
+    "path": "qwen0.6bemo4-merge/tokenizer.json",
+    "repo": "IndexTeam/IndexTTS-2.5",
+    "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+    "filename": "qwen0.6bemo4-merge/tokenizer.json",
+    "size": 11422654,
+    "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
+  },
+  {
+    "path": "qwen0.6bemo4-merge/tokenizer_config.json",
+    "repo": "IndexTeam/IndexTTS-2.5",
+    "revision": "c39ce5ba981572cb187443877ff559dfb246ce63",
+    "filename": "qwen0.6bemo4-merge/tokenizer_config.json",
+    "size": 5433,
+    "sha256": "147bae7844ddfb8767c1f9cc0f505d4a26839bd6fbb0656d6d6bc17c82e9108a"
+  },
+  {
+    "path": "tn/wetext/zh/tn/tagger.fst",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/wetext-0.1.0/zh/tn/tagger.fst",
+    "size": 811646,
+    "sha256": "63f3abeafe64fc3e9232099ab8ef6efd44c5198319193854af3ac2716d7c27a7"
+  },
+  {
+    "path": "tn/wetext/zh/tn/verbalizer.fst",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/wetext-0.1.0/zh/tn/verbalizer.fst",
+    "size": 87702,
+    "sha256": "9fcadad76cafddb2e96b92d892d18249f0ba5fbe60e4d4fc51f466cb6bc7ade9"
+  },
+  {
+    "path": "tn/wetext/en/tn/tagger.fst",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/wetext-0.1.0/en/tn/tagger.fst",
+    "size": 5220942,
+    "sha256": "bb804f88030153999f154f01950c18dbfd64de2c4cfc5035e21371d4eb4ead8a"
+  },
+  {
+    "path": "tn/wetext/en/tn/verbalizer.fst",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/wetext-0.1.0/en/tn/verbalizer.fst",
+    "size": 1822714,
+    "sha256": "33ad65460a3e8f7fe313994ff0204a218c0fcb5dec9c09b24aeeaa30ef21d67b"
+  },
+  {
+    "path": "LICENSE-WETEXT",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/wetext-0.1.0/LICENSE",
+    "size": 11357,
+    "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+  },
+  {
+    "path": "japanese.dic",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/indextts-v6/japanese.dic",
+    "size": 253256167,
+    "sha256": "74f2526bcb8637f387bb688ecd15aced3001b349275e7ec921c68324ebec2ddd"
+  },
+  {
+    "path": "LICENSE-UNIDIC",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/indextts-v6/LICENSE-UNIDIC",
+    "size": 1515,
+    "sha256": "7917ecfaf95a5ba7b4f45aa9a845ac931d79c90f39b7e711442dbc21c612560f"
+  },
+  {
+    "path": "LICENSE-NEMO_TEXT_PROCESSING",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/indextts-v6/LICENSE-NEMO_TEXT_PROCESSING",
+    "size": 11356,
+    "sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+  },
+  {
+    "path": "LICENSE-WETEXTPROCESSING",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/indextts-v6/LICENSE-WETEXTPROCESSING",
+    "size": 11357,
+    "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+  },
+  {
+    "path": "tn/es/tagger.fst",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/indextts-v6/tn/es/tagger.fst",
+    "size": 12387470,
+    "sha256": "fb8ecfe237d74bc19c5fbe0b6200042929118a00653c2adc755e42e260ff4f13"
+  },
+  {
+    "path": "tn/es/verbalizer.fst",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/indextts-v6/tn/es/verbalizer.fst",
+    "size": 33650222,
+    "sha256": "d723c5fe90e18d7b76b19357f5c75ebb7b019ae49855a5d2b35f188b608e7932"
+  },
+  {
+    "path": "tn/linux/zh/tagger.fst",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/indextts-v6/tn/linux/zh/tagger.fst",
+    "size": 527178,
+    "sha256": "88aabfb4b0d3df506622f620538f031e3d2747083989e84aa242dec3413a9155"
+  },
+  {
+    "path": "tn/linux/zh/verbalizer.fst",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/indextts-v6/tn/linux/zh/verbalizer.fst",
+    "size": 2135078,
+    "sha256": "6f1aa8af41f294390da58618dc8612b7e9ab198d6b8dca47764cf663bda683d5"
+  },
+  {
+    "path": "tn/linux/en/tagger.fst",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/indextts-v6/tn/linux/en/tagger.fst",
+    "size": 5610778,
+    "sha256": "d8fa27641bf5773d2cfd9486f9213697be82dbce56d8bf44f18d658a0bee33f3"
+  },
+  {
+    "path": "tn/linux/en/verbalizer.fst",
+    "repo": "yexiyue/talechime-resources",
+    "revision": "aec04d67e67f8e309ec8996f161d134b43e4ecd7",
+    "filename": "frontend/indextts-v6/tn/linux/en/verbalizer.fst",
+    "size": 6573194,
+    "sha256": "d2290ffaaad4b611ccca4b480f7a70a9842785caeda6d28632f5259860ae5265"
+  }
+]

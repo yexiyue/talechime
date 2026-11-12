@@ -40,8 +40,7 @@ pub use talechime_backends::downloads::{
     FileProgressBridge, default_cache_dir,
 };
 pub use talechime_backends::{
-    PreparationControl, PreparationError, PreparationPhase, PreparationPlan, PreparationProgress,
-    PrepareOptions, Registry, ResolvedModel, ResourcePreparation, ResourceStatus,
+    PrepareOptions, Registry, ResolvedModel, ResourceInventory, ResourceStatus,
 };
 pub use talechime_core::design;
 pub use talechime_core::design::{

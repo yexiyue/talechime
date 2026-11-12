@@ -61,7 +61,12 @@ async fn main() -> anyhow::Result<()> {
         ensure!(!path.exists(), "refuse existing reference output");
         let clock = Instant::now();
         design::reference(
-            envelope.request.model.clone(),
+            &talechime_backends::downloads::Downloads::new(
+                &talechime_backends::downloads::DownloadConfig {
+                    cache_dir: envelope.request.model.clone(),
+                    ..Default::default()
+                },
+            )?,
             Device::Cuda,
             text.trim().to_owned(),
             envelope.request.description.clone(),

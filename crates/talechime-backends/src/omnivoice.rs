@@ -8,6 +8,7 @@ use talechime_core::backend::{Backend, BackendError, Segmentation, Streaming};
 use talechime_protocol::{Capabilities, Device};
 use tokio::sync::{mpsc, oneshot};
 pub const MODEL: &str = "0.6b";
+pub(crate) type ModelFiles = std::collections::BTreeMap<PathBuf, PathBuf>;
 pub fn directory(root: &Path) -> PathBuf {
     root.join("omnivoice/models")
         .join(MODEL)
@@ -68,7 +69,11 @@ pub struct OmniBackend {
     cache_identity: String,
 }
 impl OmniBackend {
-    pub async fn load_on(directory: PathBuf, device: Device) -> Result<Self, BackendError> {
+    pub(crate) async fn load_source_on(
+        directory: PathBuf,
+        source: ModelFiles,
+        device: Device,
+    ) -> Result<Self, BackendError> {
         if !available_devices().contains(&device) {
             return Err(BackendError::Initialize(format!(
                 "OmniVoice device {device:?} is unavailable"
@@ -85,7 +90,7 @@ impl OmniBackend {
         let (ready, loaded) = oneshot::channel();
         let thread = std::thread::Builder::new()
             .name("omnivoice-inference".into())
-            .spawn(move || runtime::run(directory, device, jobs, ready))
+            .spawn(move || runtime::run(directory, source, device, jobs, ready))
             .map_err(|e| BackendError::Initialize(e.to_string()))?;
         // Own the thread before awaiting initialization: cancellation must join it.
         let backend = Self {

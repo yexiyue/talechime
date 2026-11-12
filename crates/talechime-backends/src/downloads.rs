@@ -2,9 +2,7 @@
 //!
 //! Model weights live in the content-addressed HF cache (blobs named by etag,
 //! snapshotted per revision) so other Hub tools on the same machine share them.
-//! Engine-layout entries are hardlinks into that cache: no second copy, and the
-//! link keeps the inode alive even if the cache is later cleaned. The engine
-//! layout stays the consumption view adapters load from.
+//! Fixed model resources are verified and loaded directly from this cache.
 //!
 //! `DownloadConfig` must carry an absolute cache directory. Cache, endpoint and
 //! optional token are passed explicitly instead of inheriting hf-hub's implicit
@@ -13,6 +11,7 @@
 //! Face ecosystem, not to TaleChime's own `~/.talechime` layout.
 use sha2::Digest;
 use std::{
+    io::Read,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -20,8 +19,6 @@ use std::{
 use hf_hub::progress::{DownloadEvent, FileStatus, ProgressEvent, ProgressHandler};
 use talechime_protocol::Event;
 use tokio::sync::{mpsc, watch};
-
-mod pinned_url;
 
 /// Host-provided download configuration.
 #[derive(Clone)]
@@ -98,8 +95,50 @@ impl Default for DownloadOptions {
 pub struct Downloads {
     client: hf_hub::HFClient,
     cache_dir: PathBuf,
-    source_identity: String,
     transport: DownloadTransport,
+}
+
+/// Immutable identity and integrity information for one Hub resource.
+#[derive(Clone, Copy, Debug)]
+pub struct HubResource<'a> {
+    /// Repository in `owner/name` form.
+    pub repo: &'a str,
+    /// Immutable repository commit.
+    pub revision: &'a str,
+    /// Repository-relative file name.
+    pub filename: &'a str,
+    /// Expected file size in bytes.
+    pub size: u64,
+    /// Expected SHA-256, encoded as hexadecimal.
+    pub sha256: &'a str,
+}
+
+fn resource_verified(
+    path: &Path,
+    resource: HubResource<'_>,
+    check: &impl Fn() -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
+    check()?;
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.is_file() || metadata.len() != resource.size {
+        return Ok(false);
+    }
+    let mut file = std::fs::File::open(path)?;
+    let mut hash = sha2::Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        check()?;
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hash.update(&buffer[..count]);
+    }
+    Ok(format!("{hash:x}", hash = hash.finalize()) == resource.sha256)
 }
 
 impl std::fmt::Debug for Downloads {
@@ -137,19 +176,6 @@ impl Downloads {
         Ok(Self {
             client: builder.build()?,
             cache_dir: config.cache_dir.clone(),
-            source_identity: format!(
-                "{:x}",
-                sha2::Sha256::digest(serde_json::to_vec(&(
-                    &config.cache_dir,
-                    config
-                        .endpoint
-                        .as_deref()
-                        .unwrap_or("https://huggingface.co"),
-                    config.token.as_deref(),
-                    options.connections,
-                    format!("{:?}", options.transport),
-                ))?)
-            ),
             transport: options.transport,
         })
     }
@@ -159,27 +185,111 @@ impl Downloads {
         &self.cache_dir
     }
 
-    pub(crate) fn source_identity(&self) -> &str {
-        &self.source_identity
-    }
-
-    pub(crate) fn cached_path(
+    fn checked_cached_path(
         &self,
         repo: &str,
         revision: &str,
         filename: &str,
-    ) -> Option<PathBuf> {
-        let (owner, name) = split_repo(repo).ok()?;
+    ) -> anyhow::Result<Option<PathBuf>> {
+        let (owner, name) = split_repo(repo)?;
         let path = self
             .cache_dir
             .join(format!("models--{owner}--{name}"))
             .join("snapshots")
             .join(revision)
             .join(filename);
-        let canonical = path.canonicalize().ok()?;
-        canonical
-            .starts_with(self.cache_dir.canonicalize().ok()?)
-            .then_some(canonical)
+        let canonical = match path.canonicalize() {
+            Ok(path) => path,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        anyhow::ensure!(
+            canonical.starts_with(self.cache_dir.canonicalize()?),
+            "cached resource escapes Hub cache"
+        );
+        Ok(Some(canonical))
+    }
+
+    /// Resolve a pinned resource offline, rejecting missing or corrupted content.
+    #[cfg(any(
+        feature = "moss",
+        feature = "qwen",
+        feature = "voxcpm",
+        feature = "omnivoice",
+        feature = "asr",
+        feature = "kokoro",
+        feature = "cosyvoice3",
+        feature = "indextts",
+        test
+    ))]
+    pub(crate) fn resolve_resource(
+        &self,
+        resource: HubResource<'_>,
+        check: impl Fn() -> anyhow::Result<()>,
+    ) -> anyhow::Result<Option<PathBuf>> {
+        let Some(path) =
+            self.checked_cached_path(resource.repo, resource.revision, resource.filename)?
+        else {
+            return Ok(None);
+        };
+        Ok(resource_verified(&path, resource, &check)?.then_some(path))
+    }
+
+    /// Return the verified Hub blob, refreshing a corrupt cached copy if needed.
+    pub async fn ensure_resource(
+        &self,
+        resource: HubResource<'_>,
+        progress: FileProgressBridge,
+    ) -> anyhow::Result<PathBuf> {
+        let (owner, name) = split_repo(resource.repo)?;
+        anyhow::ensure!(
+            [owner, name].iter().all(|part| {
+                *part != "."
+                    && *part != ".."
+                    && part
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+            }) && !resource.filename.contains('\\')
+                && !resource.filename.is_empty()
+                && Path::new(resource.filename)
+                    .components()
+                    .all(|part| matches!(part, std::path::Component::Normal(_)))
+                && resource.revision.len() == 40
+                && resource.revision.bytes().all(|b| b.is_ascii_hexdigit())
+                && resource.sha256.len() == 64
+                && resource
+                    .sha256
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                && resource.size > 0
+                && progress.size == resource.size,
+            "invalid pinned Hub resource"
+        );
+        let cached =
+            self.checked_cached_path(resource.repo, resource.revision, resource.filename)?;
+        if let Some(path) = cached.as_ref()
+            && verify_resource_async(path.clone(), resource).await?
+        {
+            return Ok(path.clone());
+        }
+        let path = self
+            .download_cached(
+                resource.repo,
+                resource.revision,
+                resource.filename,
+                progress,
+                cached.is_some(),
+            )
+            .await?;
+        anyhow::ensure!(
+            verify_resource_async(path.clone(), resource).await?,
+            "downloaded resource integrity mismatch: {}@{}/{}",
+            resource.repo,
+            resource.revision,
+            resource.filename
+        );
+        self.checked_cached_path(resource.repo, resource.revision, resource.filename)?
+            .ok_or_else(|| anyhow::anyhow!("downloaded resource is absent from Hub cache"))
     }
 
     /// Test-only client with an isolated cache at `root/hf-cache` and the
@@ -199,48 +309,15 @@ impl Downloads {
         self.client.download_checkpoint_failed()
     }
 
-    /// Ensure one pinned manifest entry is usable at `dest` (engine layout).
-    ///
-    /// An existing `dest` is kept only when its size matches the manifest.
-    /// A truncated hardlink also requires refreshing its shared cache blob.
-    /// Dropping the returned future cancels the transfer.
-    pub async fn ensure(
+    async fn download_cached(
         &self,
-        dest: &Path,
-        repo: &str,
-        revision: &str,
-        filename: &str,
-        progress: FileProgressBridge,
-    ) -> anyhow::Result<()> {
-        self.ensure_inner(dest, repo, revision, filename, progress, false)
-            .await
-    }
-
-    pub(crate) async fn refresh(
-        &self,
-        dest: &Path,
-        repo: &str,
-        revision: &str,
-        filename: &str,
-        progress: FileProgressBridge,
-    ) -> anyhow::Result<()> {
-        self.ensure_inner(dest, repo, revision, filename, progress, true)
-            .await
-    }
-
-    async fn ensure_inner(
-        &self,
-        dest: &Path,
         repo: &str,
         revision: &str,
         filename: &str,
         progress: FileProgressBridge,
         refresh: bool,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<PathBuf> {
         let expected_size = progress.size;
-        if !refresh && crate::resource_state::entry_ready(dest, expected_size) {
-            return Ok(());
-        }
         let relay = ProgressRelay {
             tx: progress.tx.clone(),
             resource: progress.resource.clone(),
@@ -281,17 +358,26 @@ impl Downloads {
                     crate::resource_state::entry_ready(&path, expected_size),
                     "downloaded file size does not match manifest: {repo}@{revision}/{filename}"
                 );
-                link_into_layout(&path, dest).map_err(|error| {
-                    download_error(
-                        repo,
-                        revision,
-                        filename,
-                        DownloadFailure::Disk(error.to_string()),
-                    )
-                })
+                Ok(path)
             })
             .await
     }
+}
+
+async fn verify_resource_async(path: PathBuf, resource: HubResource<'_>) -> anyhow::Result<bool> {
+    let size = resource.size;
+    let sha256 = resource.sha256.to_owned();
+    crate::resource_worker::run(move |control| {
+        let resource = HubResource {
+            repo: "",
+            revision: "",
+            filename: "",
+            size,
+            sha256: &sha256,
+        };
+        resource_verified(&path, resource, &|| control.check())
+    })
+    .await
 }
 
 /// Typed download failure so hosts can react without string matching.
@@ -346,6 +432,11 @@ fn classify(error: hf_hub::HFError) -> DownloadFailure {
         | HFError::CacheNotEnabled => DownloadFailure::Cache(error.to_string()),
         HFError::Request { source, .. } => DownloadFailure::Network(source.to_string()),
         HFError::Xet { source, .. } => DownloadFailure::Network(source.to_string()),
+        HFError::Http { ref context }
+            if context.status.is_server_error() || context.status.as_u16() == 408 =>
+        {
+            DownloadFailure::Network(error.to_string())
+        }
         HFError::Io(source) => DownloadFailure::Disk(source.to_string()),
         other => DownloadFailure::Other(other.to_string()),
     }
@@ -369,31 +460,6 @@ fn split_repo(repo: &str) -> anyhow::Result<(&str, &str)> {
         "empty repository id part in {repo}"
     );
     Ok((owner, name))
-}
-
-/// Hardlink the cached blob into the engine layout, falling back to a symlink
-/// (Unix) or a copy when the cache sits on another volume or filesystem.
-///
-/// The cached path hf-hub returns is a snapshot *symlink*; `link(2)` does not
-/// follow symlinks, so hardlinking it verbatim would produce another name for
-/// the symlink whose relative target dangles in the engine layout. Resolve to
-/// the real blob first.
-fn link_into_layout(cached: &Path, dest: &Path) -> anyhow::Result<()> {
-    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(parent)?;
-    let resolved = cached.canonicalize()?;
-    // A unique staging directory cleans up on both failure and same-inode
-    // rename (a no-op on Unix), without removing the previous destination.
-    let staging = tempfile::tempdir_in(parent)?;
-    let linking = staging.path().join("resource");
-    if std::fs::hard_link(&resolved, &linking).is_err() {
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&resolved, &linking)?;
-        #[cfg(not(unix))]
-        std::fs::copy(&resolved, &linking)?;
-    }
-    std::fs::rename(&linking, dest)?;
-    Ok(())
 }
 
 /// Bridge hf-hub per-file delta events to the engine's `Event::ModelProgress`.
@@ -450,10 +516,10 @@ struct ProgressRelay {
     latest: watch::Receiver<Option<u64>>,
 }
 impl ProgressRelay {
-    async fn run(
+    async fn run<T>(
         mut self,
-        operation: impl std::future::Future<Output = anyhow::Result<()>>,
-    ) -> anyhow::Result<()> {
+        operation: impl std::future::Future<Output = anyhow::Result<T>>,
+    ) -> anyhow::Result<T> {
         let mut latest = self.latest.clone();
         let forward = async {
             while latest.changed().await.is_ok() {
@@ -500,7 +566,6 @@ impl ProgressRelay {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     #[tokio::test]
     async fn progress_backpressure_keeps_latest_without_blocking_download_completion() {
@@ -557,7 +622,7 @@ mod tests {
         };
         let operation = async move {
             latest.send_replace(Some(25));
-            Err(anyhow::anyhow!("download failed"))
+            Err::<(), _>(anyhow::anyhow!("download failed"))
         };
         let consume = async move {
             let mut values = Vec::new();
@@ -596,6 +661,136 @@ mod tests {
     }
 
     #[test]
+    fn pinned_resource_checks_content_and_cancellation() {
+        let dir = tempdir();
+        let client = Downloads::test(dir.path());
+        let resource = HubResource {
+            repo: "owner/model",
+            revision: "0123456789012345678901234567890123456789",
+            filename: "nested/weights",
+            size: 3,
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        };
+        assert!(
+            client
+                .resolve_resource(resource, || Ok(()))
+                .unwrap()
+                .is_none()
+        );
+        let path = client
+            .cache_dir()
+            .join("models--owner--model/snapshots")
+            .join(resource.revision)
+            .join(resource.filename);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"abc").unwrap();
+        assert_eq!(
+            client.resolve_resource(resource, || Ok(())).unwrap(),
+            Some(path.canonicalize().unwrap())
+        );
+        assert!(
+            client
+                .resolve_resource(resource, || anyhow::bail!("cancelled"))
+                .is_err()
+        );
+        std::fs::write(&path, b"abd").unwrap();
+        assert!(
+            client
+                .resolve_resource(resource, || Ok(()))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cached_resource_rejects_snapshot_link_outside_cache() {
+        let root = tempdir();
+        let client = Downloads::test(root.path());
+        let resource = HubResource {
+            repo: "owner/model",
+            revision: "0123456789012345678901234567890123456789",
+            filename: "weights",
+            size: 3,
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        };
+        let outside = root.path().join("outside");
+        std::fs::write(&outside, b"abc").unwrap();
+        let snapshot = client
+            .cache_dir()
+            .join("models--owner--model/snapshots")
+            .join(resource.revision)
+            .join(resource.filename);
+        std::fs::create_dir_all(snapshot.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(outside, snapshot).unwrap();
+        assert!(client.resolve_resource(resource, || Ok(())).is_err());
+    }
+
+    #[tokio::test]
+    async fn direct_resource_repairs_same_size_corruption_and_loads_offline() {
+        let server = httpmock::MockServer::start();
+        let repo = "owner/model";
+        let revision = "0123456789012345678901234567890123456789";
+        let filename = "nested/weights";
+        let sha256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        let mock = server.mock(|when, then| {
+            when.path_includes(format!("/{revision}/{filename}"));
+            then.status(200)
+                .header("ETag", format!("\"{sha256}\""))
+                .header("X-Repo-Commit", revision)
+                .body("abc");
+        });
+        let dir = tempdir();
+        let client = Downloads::with_options(
+            &DownloadConfig {
+                cache_dir: dir.path().join("hub"),
+                endpoint: Some(server.base_url()),
+                token: None,
+            },
+            DownloadOptions {
+                transport: DownloadTransport::Http,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let resource = HubResource {
+            repo,
+            revision,
+            filename,
+            size: 3,
+            sha256,
+        };
+        let bridge = || {
+            let (tx, rx) = mpsc::channel(1);
+            drop(rx);
+            FileProgressBridge::new(tx, "weights".into(), 3)
+        };
+        let path = client.ensure_resource(resource, bridge()).await.unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"abc");
+        let first_requests = mock.calls();
+        assert!(first_requests > 0);
+        // A valid cached file must work with an unreachable endpoint.
+        let offline = Downloads::new(&DownloadConfig {
+            cache_dir: dir.path().join("hub"),
+            endpoint: Some("http://127.0.0.1:9".into()),
+            token: None,
+        })
+        .unwrap();
+        assert_eq!(
+            offline.ensure_resource(resource, bridge()).await.unwrap(),
+            path.canonicalize().unwrap()
+        );
+        assert_eq!(mock.calls(), first_requests);
+        std::fs::write(&path, b"bad").unwrap();
+        assert!(offline.ensure_resource(resource, bridge()).await.is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"bad");
+        let repaired = client.ensure_resource(resource, bridge()).await.unwrap();
+        assert_eq!(std::fs::read(repaired).unwrap(), b"abc");
+        assert!(mock.calls() > first_requests);
+        assert!(!dir.path().join("engine").exists());
+    }
+
+    #[test]
     fn default_cache_dir_is_absolute_and_shared() {
         let dir = default_cache_dir();
         assert!(dir.is_absolute());
@@ -629,47 +824,5 @@ mod tests {
         assert!(split_repo("OpenMOSS-Team/MOSS-TTS-Nano-100M").is_ok());
         assert!(split_repo("MOSS-TTS-Nano-100M").is_err());
         assert!(split_repo("OpenMOSS-Team/").is_err());
-    }
-
-    #[test]
-    fn link_into_layout_hardlinks_same_volume() {
-        let dir = tempdir();
-        let cached = dir.path().join("blob");
-        std::fs::write(&cached, b"payload").unwrap();
-        let dest = dir.path().join("engine/model.bin");
-        link_into_layout(&cached, &dest).unwrap();
-        assert_eq!(std::fs::read(&dest).unwrap(), b"payload");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            let cached_meta = std::fs::metadata(&cached).unwrap();
-            let dest_meta = std::fs::metadata(&dest).unwrap();
-            assert_eq!(
-                cached_meta.ino(),
-                dest_meta.ino(),
-                "same-volume link must be a hardlink"
-            );
-        }
-        // Relinking replaces the destination atomically.
-        std::fs::write(&cached, b"payload-2").unwrap();
-        link_into_layout(&cached, &dest).unwrap();
-        assert_eq!(std::fs::read(&dest).unwrap(), b"payload-2");
-        assert!(
-            dir.path()
-                .join("engine/model.bin.linking")
-                .try_exists()
-                .is_ok_and(|yes| !yes)
-        );
-    }
-
-    #[test]
-    fn link_into_layout_creates_nested_parents() {
-        let dir = tempdir();
-        let cached = dir.path().join("blob");
-        let mut file = std::fs::File::create(&cached).unwrap();
-        file.write_all(b"x").unwrap();
-        let dest = dir.path().join("a/b/c/model.bin");
-        link_into_layout(&cached, &dest).unwrap();
-        assert!(dest.is_file());
     }
 }

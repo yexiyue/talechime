@@ -1,9 +1,9 @@
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 use talechime_core::backend::{AudioChunk, BackendError, Pcm};
 use talechime_cosyvoice3::{
     DEFAULT_PROMPT_PREFIX, SamplingConfig,
     frontend::ort_models::FrontendOnnx,
-    pipeline::{CosyVoice3, Mode, extract_prompt_features},
+    pipeline::{CosyVoice3, Mode, ModelFiles, extract_prompt_features},
 };
 use talechime_protocol::Device;
 use tokio::sync::{mpsc, oneshot};
@@ -18,6 +18,64 @@ pub(super) struct Request {
     pub cross_lingual: bool,
     pub text_frontend: bool,
     pub audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
+}
+
+pub(super) struct Files {
+    pub config: PathBuf,
+    pub tokenizer: PathBuf,
+    pub llm: PathBuf,
+    pub flow: PathBuf,
+    pub hift: PathBuf,
+    pub speech_tokenizer: PathBuf,
+    pub campplus: PathBuf,
+    pub text_graphs: [PathBuf; 4],
+}
+impl Files {
+    #[cfg(test)]
+    const REQUIRED: &'static [&'static str] = &[
+        "config.json",
+        "tokenizer/tokenizer.json",
+        "llm.safetensors",
+        "flow.safetensors",
+        "hift.safetensors",
+        "speech_tokenizer_v3.onnx",
+        "campplus.onnx",
+        "tn/wetext/zh/tn/tagger.fst",
+        "tn/wetext/zh/tn/verbalizer.fst",
+        "tn/wetext/en/tn/tagger.fst",
+        "tn/wetext/en/tn/verbalizer.fst",
+    ];
+    pub(super) fn from_resolved(mut paths: BTreeMap<String, PathBuf>) -> anyhow::Result<Self> {
+        let mut take = |name: &str| {
+            paths
+                .remove(name)
+                .ok_or_else(|| anyhow::anyhow!("CosyVoice3 resource manifest lacks {name}"))
+        };
+        Ok(Self {
+            config: take("config.json")?,
+            tokenizer: take("tokenizer/tokenizer.json")?,
+            llm: take("llm.safetensors")?,
+            flow: take("flow.safetensors")?,
+            hift: take("hift.safetensors")?,
+            speech_tokenizer: take("speech_tokenizer_v3.onnx")?,
+            campplus: take("campplus.onnx")?,
+            text_graphs: [
+                take("tn/wetext/zh/tn/tagger.fst")?,
+                take("tn/wetext/zh/tn/verbalizer.fst")?,
+                take("tn/wetext/en/tn/tagger.fst")?,
+                take("tn/wetext/en/tn/verbalizer.fst")?,
+            ],
+        })
+    }
+    #[cfg(test)]
+    pub(super) fn from_directory(directory: &std::path::Path) -> anyhow::Result<Self> {
+        Self::from_resolved(
+            Self::REQUIRED
+                .iter()
+                .map(|name| ((*name).to_owned(), directory.join(name)))
+                .collect(),
+        )
+    }
 }
 /// Wrap a plain style in the official Instruct prompt format.
 pub(super) fn instruction(style: Option<&str>) -> Result<Option<String>, BackendError> {
@@ -49,17 +107,32 @@ pub(super) fn candle_device(device: Device) -> candle_core::Result<candle_core::
 }
 pub(super) fn run(
     root: PathBuf,
+    files: Files,
     device: Device,
     mut jobs: mpsc::Receiver<Request>,
     ready: oneshot::Sender<Result<(), BackendError>>,
 ) {
-    let directory = super::directory(&root);
     let loaded = (|| -> anyhow::Result<_> {
         let device = candle_device(device)?;
-        let pipeline = CosyVoice3::load(&directory, &device, candle_core::DType::F32, 0)?;
-        let frontend = FrontendOnnx::load(&directory, 1)?;
-        let text_frontend =
-            talechime_cosyvoice3::frontend::text::TextFrontend::load(&directory.join("tn/wetext"))?;
+        let pipeline = CosyVoice3::load_files(
+            &ModelFiles {
+                config: &files.config,
+                tokenizer: &files.tokenizer,
+                llm: &files.llm,
+                flow: &files.flow,
+                hift: &files.hift,
+            },
+            &device,
+            candle_core::DType::F32,
+            0,
+        )?;
+        let frontend = FrontendOnnx::load_files(&files.speech_tokenizer, &files.campplus, 1)?;
+        let text_frontend = talechime_cosyvoice3::frontend::text::TextFrontend::load_files([
+            &files.text_graphs[0],
+            &files.text_graphs[1],
+            &files.text_graphs[2],
+            &files.text_graphs[3],
+        ])?;
         let runtime = tokio::runtime::Builder::new_current_thread().build()?;
         Ok((pipeline, frontend, text_frontend, runtime))
     })();
@@ -213,6 +286,56 @@ async fn deliver(
 mod tests {
     use super::*;
     use talechime_cosyvoice3::StreamChunk;
+
+    #[test]
+    fn resolved_files_keep_independent_paths_and_reject_missing_resources() {
+        let mut paths: BTreeMap<_, _> = Files::REQUIRED
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                (
+                    (*name).to_owned(),
+                    PathBuf::from(format!("/independent/blob-{index}")),
+                )
+            })
+            .collect();
+        let expected = paths["config.json"].clone();
+        let files = Files::from_resolved(paths.clone()).unwrap();
+        assert_eq!(files.config, expected);
+        paths.remove("tn/wetext/en/tn/tagger.fst");
+        assert!(Files::from_resolved(paths).is_err());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires explicit fixed CosyVoice3 files and staged WeText graphs; no downloads"]
+    async fn owner_loads_independently_resolved_files() {
+        let model = PathBuf::from(
+            std::env::var_os("TALECHIME_COSY_FILES").expect("set TALECHIME_COSY_FILES"),
+        );
+        let text = PathBuf::from(
+            std::env::var_os("TALECHIME_WETEXT_FILES").expect("set TALECHIME_WETEXT_FILES"),
+        );
+        let data = tempfile::tempdir().unwrap();
+        let mut files = Files::from_directory(&model).unwrap();
+        files.text_graphs = [
+            "zh/tn/tagger.fst",
+            "zh/tn/verbalizer.fst",
+            "en/tn/tagger.fst",
+            "en/tn/verbalizer.fst",
+        ]
+        .map(|name| text.join(name));
+        let (sender, jobs) = mpsc::channel(1);
+        let (ready, received) = oneshot::channel();
+        let root = data.path().join("application-data");
+        let thread = std::thread::spawn(move || run(root, files, Device::Cpu, jobs, ready));
+        received
+            .await
+            .expect("owner exited")
+            .expect("model initialization failed");
+        drop(sender);
+        thread.join().unwrap();
+        assert!(!data.path().join("application-data").exists());
+    }
     #[test]
     fn cross_lingual_supplies_the_official_target_marker() {
         assert_eq!(

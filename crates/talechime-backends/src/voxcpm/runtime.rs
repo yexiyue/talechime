@@ -26,6 +26,7 @@ pub(super) fn candle_device(device: Device) -> candle_core::Result<candle_core::
 }
 pub(super) fn run(
     directory: PathBuf,
+    files: super::models::ModelFiles,
     variant: super::models::Model,
     device: Device,
     mut jobs: mpsc::Receiver<Request>,
@@ -33,9 +34,7 @@ pub(super) fn run(
 ) {
     let loaded = candle_device(device).and_then(|device| {
         variant
-            .load(&directory, &device, &|| {
-                ready.is_closed() || jobs.is_closed()
-            })
+            .load_files(&files, &device, &|| ready.is_closed() || jobs.is_closed())
             .map(|model| (device, model))
     });
     let (device, mut model) = match loaded {

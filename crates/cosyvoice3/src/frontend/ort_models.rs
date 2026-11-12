@@ -34,10 +34,22 @@ impl FrontendOnnx {
     /// `model_dir` must contain `speech_tokenizer_v3.onnx` and
     /// `campplus.onnx`.
     pub fn load(model_dir: &std::path::Path, threads: usize) -> std::io::Result<Self> {
-        let speech_tokenizer = open(&model_dir.join("speech_tokenizer_v3.onnx"), threads)
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
-        let campplus = open(&model_dir.join("campplus.onnx"), threads)
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        Self::load_files(
+            &model_dir.join("speech_tokenizer_v3.onnx"),
+            &model_dir.join("campplus.onnx"),
+            threads,
+        )
+    }
+
+    /// Load speech tokenizer and speaker encoder from independent files.
+    pub fn load_files(
+        speech_tokenizer: &std::path::Path,
+        campplus: &std::path::Path,
+        threads: usize,
+    ) -> std::io::Result<Self> {
+        let speech_tokenizer =
+            open(speech_tokenizer, threads).map_err(|e| std::io::Error::other(e.to_string()))?;
+        let campplus = open(campplus, threads).map_err(|e| std::io::Error::other(e.to_string()))?;
         let run = RunOptions::new().map_err(|e| std::io::Error::other(e.to_string()))?;
         Ok(Self {
             speech_tokenizer,

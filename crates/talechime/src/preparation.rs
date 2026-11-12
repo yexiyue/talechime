@@ -19,16 +19,8 @@ pub fn include_library_voice(
     Ok(())
 }
 
-pub fn voice_studio(
-    store: &talechime_core::config::ConfigStore,
-    resources: &Registry,
-) -> anyhow::Result<talechime::VoiceStudio> {
-    let voices = talechime_core::paths::AppPaths::voice_library_at(
-        store
-            .path()
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("config path needs a parent directory"))?,
-    );
+pub fn voice_studio(resources: &Registry) -> anyhow::Result<talechime::VoiceStudio> {
+    let voices = talechime_core::paths::AppPaths::voice_library_at(resources.root());
     // Share the host registry's download settings (cache dir, mirror, token).
     Ok(talechime::VoiceStudio::at_registry(resources, voices)?)
 }
@@ -93,7 +85,6 @@ pub async fn prepare_models(
     if readback {
         anyhow::bail!("readback models require the asr build feature");
     }
-    let directory = resources.root().to_path_buf();
     #[cfg(feature = "asr")]
     let downloads = resources.downloads().clone();
     let backend = prepare(resources, config, progress.clone()).await?;
@@ -101,7 +92,7 @@ pub async fn prepare_models(
     let verifier = if readback {
         Some(
             talechime_backends::asr::prepare(
-                &talechime_backends::asr::ReadbackModelOptions::new(directory),
+                &talechime_backends::asr::ReadbackModelOptions::new(),
                 &downloads,
                 progress,
             )
@@ -112,7 +103,7 @@ pub async fn prepare_models(
     };
     #[cfg(not(feature = "asr"))]
     let verifier = {
-        let _ = (directory, progress);
+        let _ = progress;
         None
     };
     Ok(PreparedModels { backend, verifier })

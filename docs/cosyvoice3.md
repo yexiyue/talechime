@@ -16,22 +16,18 @@ LLM、Flow/DiT、HiFT 使用 Candle，参考语音 tokenizer 与 campplus 使用
 
 ## 准备模型
 
-SDK 使用原生固定配方准备资源，不启动 Python。先调用
-`ResolvedModel::native_preparation_plan()`，确认指纹后调用 `prepare_native_resources`；
-`load_existing` 只校验并加载已发布的完整版本，不隐式下载。
-详见[原生准备 API](native-resource-preparation.md)。
+SDK 根据固定清单盘点、下载并校验已发布成品，直接读取 Hub 缓存，不在用户机器转换。`load_existing` 只加载已就绪资源，不隐式下载。详见[资源准备 API](native-resource-preparation.md)。
 
-当前版本目录为 `ROOT/cosyvoice3/models/0.5b/2512-runtime-f64-front-v4/`。
 新版增加固定 WeText FST 与许可，缺件、摘要错误或混用版本均不能就绪。
 LLM、Flow、campplus 和语音 tokenizer 四个文件使用已逐字节核验的固定社区版本；
 HiFT 由维护方从固定官方 checkpoint 原生导入后分发，保持 F0 的 F64 路径；完整 tokenizer 补齐官方
 281 个特殊 token（含 EOF），配置采用固定版本。输入、输出摘要与许可见
-`cosyvoice3/native.rs`（源构建）和 `cosyvoice3/distribution-inputs.json`（成品输入）及[核验记录](records/resources/native-preparation-2026-11-05.md)。
+历史源构建和成品输入见[核验记录](records/resources/native-preparation-2026-11-05.md)。
 HiFT 共 246 个张量与独立 PyTorch 对照逐字节一致；社区 HiFT 存在 82 个差异张量，
 没有替换原有精度要求或改写历史摘要。发布必须完整验证输出及配方标记，缺件、混合版本
 和损坏资源均拒绝加载。固定组件和 ORT 前端对照通过；完整 CPU/Metal 对照仍分别有 2/1 项历史数值门禁差异，未放宽要求。两设备真实短文本合成均已生成有效 WAV，人工听感未评估，详见同一核验记录。
 
-参考音色由 `ROOT/voices/cosyvoice3/` 下的模型音色存储管理，独立于不可变模型版本。
+参考音色由应用数据目录下的音色库存储，独立于共享模型资源。
 开发对照可使用 Python 环境，最终用户准备和加载不依赖它。权重与参考音频不进入 Git。
 
 ## 导入与使用

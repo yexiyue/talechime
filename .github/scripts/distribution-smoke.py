@@ -1,7 +1,6 @@
 """Build cargo-dist artifacts and exercise an isolated, model-free installation."""
 import json
 import hashlib
-import importlib.util
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import os
@@ -28,34 +27,8 @@ def run(*args, **kwargs):
 
 
 def build_global_installers(*extra_args):
-    # Use the manifest from this exact generation; never test vanilla templates.
-    with tempfile.TemporaryDirectory(prefix='talechime-global-manifest-') as temporary:
-        manifest = Path(temporary) / 'dist-manifest.json'
-        with manifest.open('w', encoding='utf-8') as output:
-            run('dist', 'build', '--artifacts', 'global', *extra_args,
-                '--output-format=json', stdout=output)
-        run(sys.executable, '.github/scripts/espeak-installers.py', str(manifest))
-
-
-def verify_helper(helper, suffix, env):
-    if not helper.is_dir():
-        raise ValueError(f'Installer omitted Kokoro helper: {helper}')
-    spec = importlib.util.spec_from_file_location('espeak_bundle', 'tools/tts/prepare_espeak_bundle.py')
-    builder = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(builder)
-    builder.verify_bundle(helper)
-    helper_env = dict(env)
-    helper_env.pop('ESPEAK_DATA_PATH', None)
-    helper_env.pop('HOME', None)
-    result = run(str(helper / ('espeak-ng' + suffix)), f'--path={helper}', '-q', '-v', 'en-us', '-b', '1',
-                 '--ipa', '--tie=^', '--stdin', input='zorbulate\n', capture_output=True,
-                 text=True, encoding='utf-8', env=helper_env)
-    if not result.stdout.strip():
-        raise ValueError('Bundled eSpeak helper produced no phonemes')
-    result = run(str(helper / ('kokoro-espeak-phonemize' + suffix)), f'--path={helper}',
-                 input='de\n', capture_output=True, text=True, encoding='utf-8', env=helper_env)
-    if result.stdout.strip() != 'də':
-        raise ValueError('Bundled eSpeak phonemizer does not match the official library')
+    run('dist', 'build', '--artifacts', 'global', *extra_args, '--output-format=json',
+        stdout=subprocess.DEVNULL)
 
 
 def main(app, target, skip_build=False, build_installers=False):
@@ -64,7 +37,6 @@ def main(app, target, skip_build=False, build_installers=False):
     if not skip_build:
         run(sys.executable, '.github/scripts/configure-release.py', target)
         run('dist', 'generate', '--check')
-        subprocess.run([sys.executable, 'tools/tts/prepare_espeak_bundle.py'], check=True)
         subprocess.run([sys.executable, '.github/scripts/prepare-notices.py'], check=True)
         subprocess.run(['dist', 'build', '--artifacts', 'local', '--target', target], check=True)
         build_global_installers()
@@ -77,8 +49,6 @@ def main(app, target, skip_build=False, build_installers=False):
     expected_hash = Path(str(archive) + '.sha256').read_text(encoding='utf-8').split()[0]
     assert hashlib.sha256(archive.read_bytes()).hexdigest() == expected_hash, 'Archive checksum mismatch'
     version = tomllib.loads(Path('crates/talechime/Cargo.toml').read_text(encoding='utf-8'))['package']['version']
-    # eSpeak 1.52 has a fixed-size data path buffer; macOS's default
-    # /var/folders/... temporary prefix can exceed the runtime's path limit.
     temp_root = '/tmp' if sys.platform != 'win32' and Path('/tmp').is_dir() else None
     with tempfile.TemporaryDirectory(prefix='isolated install ', dir=temp_root) as temporary:
         base = Path(temporary)
@@ -94,13 +64,11 @@ def main(app, target, skip_build=False, build_installers=False):
         assert not any(path.suffix in ['.onnx', '.gguf', '.safetensors'] for path in files)
         assert (installed / 'third-party-licenses' / 'dependencies.json').is_file()
         assert (installed / 'docs/legal/onnxruntime/ThirdPartyNotices.txt').is_file()
-        helper = installed / 'talechime-helpers' / 'espeak-ng-1.52.0'
         home = base / 'home'
         home.mkdir()
         env = dict(os.environ, HOME=str(home), USERPROFILE=str(home))
         for key in ['LD_LIBRARY_PATH', 'DYLD_LIBRARY_PATH', 'CUDA_PATH', 'CUDA_HOME']:
             env.pop(key, None)
-        verify_helper(helper, suffix, env)
         for program in programs:
             binary = str(installed / (program + suffix))
             installed_version = run(binary, '--version', env=env, cwd=home,
@@ -112,7 +80,7 @@ def main(app, target, skip_build=False, build_installers=False):
                                      capture_output=True, text=True, encoding='utf-8').stdout)
             kokoro = {info['capabilities']['model'] for info in catalog
                       if info['capabilities']['backend'] == 'kokoro'}
-            assert kokoro == {'1.1-zh', '1.1-zh-g2pw'}, 'Standard archive lacks Kokoro models'
+            assert kokoro == {'1.1-zh-g2pw'}, 'Standard archive lacks Kokoro models'
             assert (installed / 'third-party-licenses/crates/kokoro/licenses/PYTORCH-LICENSE').is_file()
             wire_version = protocol_version()
             requests = ''.join(json.dumps(dict(protocol_version=wire_version, request_id=kind,
@@ -146,8 +114,6 @@ def main(app, target, skip_build=False, build_installers=False):
                 run('sh', str(Path(f'target/distrib/{app}-installer.sh').resolve()), env=installer_env)
             for program in programs:
                 run(str(base / 'installer-bin' / (program + suffix)), '--version', env=env, cwd=home)
-            installed_helper = base / 'installer-bin/talechime-helpers/espeak-ng-1.52.0'
-            verify_helper(installed_helper, suffix, env)
         finally:
             server.shutdown()
             server.server_close()

@@ -34,34 +34,40 @@ pub use preparation::PrepareOptions;
 type Preparing<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>;
 type Loading<'a> = Pin<Box<dyn Future<Output = anyhow::Result<Rc<dyn Backend>>> + 'a>>;
 type Installing<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>>;
-/// How callers obtain this model's resources; independent of missing byte counts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResourcePreparation {
-    /// Pinned resources can be fetched using the caller's download configuration.
-    Download,
-    /// Pinned inputs and versioned native transforms are prepared by the SDK.
-    Native,
-}
+type Inventory<'a> = Pin<Box<dyn Future<Output = anyhow::Result<crate::ResourceStatus>> + 'a>>;
 trait ModelAdapter {
-    fn native_recipe(&self) -> Option<crate::native_preparation::Recipe> {
-        None
-    }
-    fn resource_preparation(&self) -> ResourcePreparation {
-        ResourcePreparation::Download
-    }
     fn id(&self) -> &'static str;
     fn capabilities(&self, root: &Path) -> anyhow::Result<Capabilities>;
     fn compiled_devices(&self) -> Vec<Device>;
     fn available_devices(&self) -> Vec<Device>;
     fn revision(&self) -> &'static str;
+    /// Fixed Hub manifests owned by this exact model, in inventory order.
+    #[cfg_attr(
+        not(any(
+            feature = "kokoro",
+            feature = "qwen",
+            feature = "voxcpm",
+            feature = "omnivoice",
+            feature = "cosyvoice3",
+            feature = "indextts",
+            feature = "moss",
+            test
+        )),
+        expect(dead_code, reason = "no model adapters are compiled")
+    )]
+    fn manifests(&self) -> Vec<&'static str>;
     fn calibrates(&self) -> bool {
         true
     }
     fn supports_recovery(&self) -> bool {
         false
     }
-    /// Offline readiness of this model's resources in the engine layout.
-    fn resource_status(&self, root: &Path) -> crate::resource_state::ResourceStatus;
+    /// Offline readiness of this model's resources.
+    fn resource_status<'a>(
+        &'a self,
+        root: &'a Path,
+        downloads: &'a crate::downloads::Downloads,
+    ) -> Inventory<'a>;
     fn prepare<'a>(
         &'a self,
         root: &'a Path,
@@ -71,6 +77,7 @@ trait ModelAdapter {
     fn load<'a>(
         &'a self,
         root: &'a Path,
+        _downloads: &'a crate::downloads::Downloads,
         progress: mpsc::Sender<Event>,
         device: Device,
         recovery: bool,
@@ -132,52 +139,11 @@ static ADAPTERS: &[Registration] = &[
 pub struct ResolvedModel {
     adapter: Rc<dyn ModelAdapter>,
     root: PathBuf,
+    cache: PathBuf,
     downloads: crate::downloads::Downloads,
     capabilities: Capabilities,
 }
 impl ResolvedModel {
-    /// Offline native preparation requirements, when this adapter has a verified recipe.
-    /// Cached input checks run on an owned worker, keeping the engine owner responsive.
-    pub async fn native_preparation_plan(&self) -> anyhow::Result<Option<crate::PreparationPlan>> {
-        let Some(recipe) = self.adapter.native_recipe() else {
-            return Ok(None);
-        };
-        crate::native_preparation::plan_recipe(
-            recipe,
-            self.root.clone(),
-            self.downloads.clone(),
-            crate::PreparationControl::default(),
-        )
-        .await
-        .map(Some)
-    }
-
-    /// Execute exactly the confirmed native recipe with cooperative cancellation.
-    pub async fn prepare_native_resources(
-        &self,
-        fingerprint: String,
-        control: crate::PreparationControl,
-        progress: mpsc::Sender<crate::PreparationProgress>,
-        file_progress: mpsc::Sender<Event>,
-    ) -> anyhow::Result<()> {
-        self.adapter
-            .native_recipe()
-            .ok_or_else(|| anyhow::anyhow!("model has no verified native preparation recipe"))?
-            .execute(
-                self.root.clone(),
-                self.downloads.clone(),
-                fingerprint,
-                control,
-                progress,
-                file_progress,
-            )
-            .await
-    }
-
-    /// Resource acquisition contract, even when the inventory is empty or partial.
-    pub fn resource_preparation(&self) -> ResourcePreparation {
-        self.adapter.resource_preparation()
-    }
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
@@ -209,7 +175,115 @@ impl ResolvedModel {
 #[derive(Clone)]
 pub struct Registry {
     root: PathBuf,
+    cache: PathBuf,
     downloads: crate::downloads::Downloads,
+}
+
+/// Offline inventory identity for confirming an exact set of missing resources.
+pub struct ResourceInventory {
+    /// Total bytes of missing or corrupt files.
+    pub missing_bytes: u64,
+    /// Opaque digest of resource identities and readiness.
+    pub fingerprint: String,
+}
+
+#[cfg(any(
+    feature = "kokoro",
+    feature = "qwen",
+    feature = "voxcpm",
+    feature = "omnivoice",
+    feature = "cosyvoice3",
+    feature = "indextts",
+    feature = "moss"
+))]
+#[cfg(feature = "performance-tools")]
+pub(crate) fn model_manifests(backend: &str, model: &str) -> anyhow::Result<Vec<&'static str>> {
+    let registration = ADAPTERS
+        .iter()
+        .find(|entry| entry.id == backend)
+        .ok_or_else(|| anyhow::anyhow!("backend/model is not compiled"))?;
+    let adapter = (registration.models)()
+        .into_iter()
+        .find(|adapter| adapter.id() == model)
+        .ok_or_else(|| anyhow::anyhow!("model is not compiled"))?;
+    Ok(adapter.manifests())
+}
+
+fn resolved_storage_path(path: &Path) -> anyhow::Result<PathBuf> {
+    let mut ancestor = path;
+    let mut suffix = Vec::new();
+    loop {
+        match std::fs::symlink_metadata(ancestor) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                suffix.push(
+                    ancestor
+                        .file_name()
+                        .ok_or_else(|| anyhow::anyhow!("invalid storage path"))?
+                        .to_owned(),
+                );
+                ancestor = ancestor
+                    .parent()
+                    .ok_or_else(|| anyhow::anyhow!("invalid storage path"))?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let mut resolved = ancestor.canonicalize()?;
+    for part in suffix.into_iter().rev() {
+        resolved.push(part);
+    }
+    Ok(resolved)
+}
+#[cfg(any(feature = "qwen", feature = "voxcpm", feature = "moss", test))]
+pub(crate) fn validate_model_data_root(
+    root: &Path,
+    model_data: &Path,
+    hub: &Path,
+) -> anyhow::Result<()> {
+    for path in [root, model_data, hub] {
+        anyhow::ensure!(
+            path.is_absolute()
+                && !path
+                    .components()
+                    .any(|part| matches!(part, std::path::Component::ParentDir)),
+            "storage paths must be absolute and contain no parent traversal"
+        );
+    }
+    let root = resolved_storage_path(root)?;
+    let data = resolved_storage_path(model_data)?;
+    let hub = resolved_storage_path(hub)?;
+    anyhow::ensure!(
+        !root.starts_with(&hub) && !hub.starts_with(&root),
+        "application data and Hub cache must not overlap"
+    );
+    anyhow::ensure!(
+        data.starts_with(&root),
+        "model data escapes application data root"
+    );
+    Ok(())
+}
+
+fn validate_storage_paths(root: &Path, cache: &Path, hub: &Path) -> anyhow::Result<()> {
+    for path in [root, cache, hub] {
+        anyhow::ensure!(
+            path.is_absolute()
+                && !path
+                    .components()
+                    .any(|part| matches!(part, std::path::Component::ParentDir)),
+            "storage paths must be absolute and contain no parent traversal"
+        );
+    }
+    let data = resolved_storage_path(root)?;
+    let cache = resolved_storage_path(cache)?;
+    let hub = resolved_storage_path(hub)?;
+    for (a, b) in [(&data, &cache), (&data, &hub), (&cache, &hub)] {
+        anyhow::ensure!(
+            !a.starts_with(b) && !b.starts_with(a),
+            "storage paths must not overlap"
+        );
+    }
+    Ok(())
 }
 impl Registry {
     pub fn new(root: Option<PathBuf>) -> anyhow::Result<Self> {
@@ -230,11 +304,25 @@ impl Registry {
         config: &crate::downloads::DownloadConfig,
         options: crate::downloads::DownloadOptions,
     ) -> anyhow::Result<Self> {
+        let defaults = talechime_core::paths::AppPaths::user_default()?;
+        Self::with_storage_paths(
+            root.unwrap_or_else(|| defaults.resources()),
+            defaults.cache(),
+            config,
+            options,
+        )
+    }
+    /// Configure independent application data, application cache and Hub cache paths.
+    pub fn with_storage_paths(
+        root: PathBuf,
+        cache: PathBuf,
+        config: &crate::downloads::DownloadConfig,
+        options: crate::downloads::DownloadOptions,
+    ) -> anyhow::Result<Self> {
+        validate_storage_paths(&root, &cache, &config.cache_dir)?;
         Ok(Self {
-            root: match root {
-                Some(root) => root,
-                None => talechime_core::paths::AppPaths::user_default()?.resources(),
-            },
+            root,
+            cache,
             downloads: crate::downloads::Downloads::with_options(config, options)?,
         })
     }
@@ -244,9 +332,45 @@ impl Registry {
     pub fn root(&self) -> &Path {
         &self.root
     }
+    pub fn cache(&self) -> &Path {
+        &self.cache
+    }
+    /// Remove regenerable TTS device calibration records from the application cache.
+    /// Hub resources, other files, directories and symbolic links are left untouched.
+    pub fn clear_calibration_cache(&self) -> anyhow::Result<usize> {
+        validate_storage_paths(&self.root, &self.cache, self.downloads.cache_dir())?;
+        let entries = match std::fs::read_dir(&self.cache) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(error.into()),
+        };
+        let mut removed = 0;
+        for entry in entries {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(hash) = name
+                .to_str()
+                .and_then(|name| name.strip_prefix("calibration-tts-"))
+                .and_then(|name| name.strip_suffix(".json"))
+            else {
+                continue;
+            };
+            if hash.len() != 64
+                || !hash
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                || !entry.file_type()?.is_file()
+            {
+                continue;
+            }
+            std::fs::remove_file(entry.path())?;
+            removed += 1;
+        }
+        Ok(removed)
+    }
     /// Engine info for every design engine compiled into this build.
-    pub fn designers(&self) -> Vec<talechime_core::design::EngineInfo> {
-        crate::design::designers(&self.root, &self.downloads)
+    pub async fn designers(&self) -> anyhow::Result<Vec<talechime_core::design::EngineInfo>> {
+        crate::design::designers(&self.root, &self.downloads).await
     }
     /// Materialize a library asset; unmarked custom references are never replaced.
     pub async fn install_reference(
@@ -255,6 +379,7 @@ impl Registry {
         model: Option<&str>,
         voice: ReferenceVoice<'_>,
     ) -> anyhow::Result<()> {
+        validate_storage_paths(&self.root, &self.cache, self.downloads.cache_dir())?;
         let adapter = self.adapter(backend, model)?;
         reference::install(adapter.as_ref(), &self.root, &self.downloads, voice).await
     }
@@ -282,7 +407,6 @@ impl Registry {
             feature,
             "kokoro"
                 | "kokoro-metal"
-                | "kokoro-g2pw"
                 | "kokoro-cuda"
                 | "moss"
                 | "moss-candle"
@@ -330,6 +454,7 @@ impl Registry {
             adapter,
             capabilities,
             root: self.root.clone(),
+            cache: self.cache.clone(),
             downloads: self.downloads.clone(),
         })
     }
@@ -345,13 +470,40 @@ impl Registry {
         }
         Ok(catalog)
     }
-    /// Offline resource readiness for one model; never touches the network.
-    pub fn resource_status(
+    /// Check existing resources without network access, including content integrity
+    /// for models that use the direct Hub resource interface.
+    pub async fn resource_status(
         &self,
         backend: &str,
         model: Option<&str>,
     ) -> anyhow::Result<crate::resource_state::ResourceStatus> {
-        Ok(self.adapter(backend, model)?.resource_status(&self.root))
+        let adapter = self.adapter(backend, model)?;
+        adapter.resource_status(&self.root, &self.downloads).await
+    }
+
+    /// Inventory the exact fixed files so a caller can detect same-size changes.
+    #[cfg(any(
+        feature = "kokoro",
+        feature = "qwen",
+        feature = "voxcpm",
+        feature = "omnivoice",
+        feature = "cosyvoice3",
+        feature = "indextts",
+        feature = "moss"
+    ))]
+    pub async fn resource_inventory(
+        &self,
+        backend: &str,
+        model: Option<&str>,
+    ) -> anyhow::Result<ResourceInventory> {
+        let selected = self.resolve(backend, model)?;
+        let manifests = selected.adapter.manifests();
+        let (missing_bytes, fingerprint) =
+            crate::resources::inventory_identity(&manifests, self.downloads.clone()).await?;
+        Ok(ResourceInventory {
+            missing_bytes,
+            fingerprint,
+        })
     }
     pub fn capabilities(&self, backend: &str) -> anyhow::Result<Capabilities> {
         self.capabilities_for(backend, None)
@@ -426,6 +578,102 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clearing_calibration_preserves_shared_and_persistent_files() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let data = temp.path().join("data");
+        let cache = temp.path().join("cache");
+        let hub = temp.path().join("hub");
+        for dir in [&data, &cache, &hub] {
+            std::fs::create_dir(dir)?;
+        }
+        let name = format!("calibration-tts-{}.json", "a".repeat(64));
+        std::fs::write(cache.join(&name), b"cache")?;
+        std::fs::write(cache.join("unrelated.json"), b"keep")?;
+        std::fs::write(data.join("voice"), b"voice")?;
+        std::fs::write(hub.join("model"), b"model")?;
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(
+            hub.join("model"),
+            cache.join(format!("calibration-tts-{}.json", "b".repeat(64))),
+        )?;
+        let registry = Registry::with_storage_paths(
+            data.clone(),
+            cache.clone(),
+            &crate::downloads::DownloadConfig {
+                cache_dir: hub.clone(),
+                ..Default::default()
+            },
+            Default::default(),
+        )?;
+        assert_eq!(registry.clear_calibration_cache()?, 1);
+        assert_eq!(registry.clear_calibration_cache()?, 0);
+        assert_eq!(std::fs::read(cache.join("unrelated.json"))?, b"keep");
+        assert_eq!(std::fs::read(data.join("voice"))?, b"voice");
+        assert_eq!(std::fs::read(hub.join("model"))?, b"model");
+        #[cfg(unix)]
+        {
+            std::fs::write(hub.join(&name), b"shared")?;
+            std::fs::remove_dir_all(&cache)?;
+            std::os::unix::fs::symlink(&hub, &cache)?;
+            assert!(registry.clear_calibration_cache().is_err());
+            assert_eq!(std::fs::read(hub.join(&name))?, b"shared");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn storage_paths_are_independent_absolute_and_do_not_create_data() -> anyhow::Result<()> {
+        let parent = tempfile::tempdir()?;
+        let data = parent.path().join("data");
+        let cache = parent.path().join("cache");
+        let hub = parent.path().join("hub");
+        let config = crate::downloads::DownloadConfig {
+            cache_dir: hub.clone(),
+            ..Default::default()
+        };
+        let registry =
+            Registry::with_storage_paths(data.clone(), cache.clone(), &config, Default::default())?;
+        assert_eq!(registry.root(), data);
+        assert_eq!(registry.cache(), cache);
+        assert_eq!(registry.downloads().cache_dir(), hub);
+        assert!(!data.exists() && !cache.exists());
+        assert!(
+            Registry::with_storage_paths(
+                data.clone(),
+                data.join("cache"),
+                &config,
+                Default::default()
+            )
+            .is_err()
+        );
+        assert!(
+            Registry::with_storage_paths(
+                data,
+                PathBuf::from("relative"),
+                &config,
+                Default::default()
+            )
+            .is_err()
+        );
+        #[cfg(unix)]
+        {
+            std::fs::create_dir(&cache)?;
+            let alias = parent.path().join("alias");
+            std::os::unix::fs::symlink(&cache, &alias)?;
+            assert!(
+                Registry::with_storage_paths(
+                    alias.join("data"),
+                    cache,
+                    &config,
+                    Default::default()
+                )
+                .is_err()
+            );
+        }
+        Ok(())
+    }
     #[test]
     fn registered_models_resolve_defaults_and_exact_identities_without_writes() -> anyhow::Result<()>
     {
@@ -444,6 +692,12 @@ mod tests {
                 let model = registry.resolve(registration.id, Some(adapter.id()))?;
                 assert!(identities.insert((registration.id, adapter.id())));
                 assert!(!model.revision().is_empty());
+                let manifests = model.adapter.manifests();
+                assert!(!manifests.is_empty());
+                for manifest in manifests {
+                    let entries: Vec<serde_json::Value> = serde_json::from_str(manifest)?;
+                    assert!(!entries.is_empty());
+                }
                 assert_eq!(model.capabilities().backend, registration.id);
                 assert_eq!(model.capabilities().model.as_deref(), Some(adapter.id()));
                 assert_eq!(

@@ -2,7 +2,8 @@
 //! the Hub. Never touches the network; pinned commit revisions avoid revision
 //! resolution requests.
 use talechime_backends::downloads::{
-    DownloadConfig, DownloadOptions, DownloadTransport, Downloads, FileProgressBridge,
+    DownloadConfig, DownloadFailure, DownloadOptions, DownloadTransport, Downloads,
+    FileProgressBridge, HubResource,
 };
 
 const REPO: &str = "example-team/example-model";
@@ -11,6 +12,16 @@ const FILENAME: &str = "model.bin";
 
 fn bridge(resource: &str, size: u64) -> FileProgressBridge {
     FileProgressBridge::new(tokio::sync::mpsc::channel(1).0, resource.into(), size)
+}
+
+fn resource() -> HubResource<'static> {
+    HubResource {
+        repo: REPO,
+        revision: REVISION,
+        filename: FILENAME,
+        size: 13,
+        sha256: "958fc29fabc266c3dbf13432936e396cfc6fe2b50c33a77457888896858e1463",
+    }
 }
 
 fn downloads(endpoint: &str, cache_dir: std::path::PathBuf) -> Downloads {
@@ -56,40 +67,32 @@ async fn auto_falls_back_when_mirror_advertises_xet_without_a_token_endpoint() {
         token: None,
     })
     .unwrap();
-    let dest = root.path().join("engine/model.bin");
-    client
-        .ensure(&dest, REPO, REVISION, FILENAME, bridge(FILENAME, 13))
+    let path = client
+        .ensure_resource(resource(), bridge(FILENAME, 13))
         .await
         .unwrap();
-    assert_eq!(std::fs::read(dest).unwrap(), payload);
+    assert_eq!(std::fs::read(path).unwrap(), payload);
     token.assert_calls(1);
     body.assert_calls(1);
 }
 
 #[tokio::test]
-async fn ensure_downloads_links_and_skips_existing_dest() {
+async fn direct_cache_download_reuses_valid_and_repairs_corrupt_content() {
     let payload = b"model-payload".to_vec();
     let etag = format!("\"{}\"", sha256_hex(&payload));
     let server = httpmock::MockServer::start();
     let mock = server.mock(|when, then| {
-        // Any method: hf-hub probes with HEAD before the GET transfer.
         when.path_includes(format!("/{REVISION}/{FILENAME}"));
         then.status(200)
             .header("ETag", &etag)
             .header("X-Repo-Commit", REVISION)
-            .header("X-Xet-Hash", "should-not-use-xet")
             .body(payload.clone());
     });
-    let root = tempfile::tempdir().expect("tempdir");
+    let root = tempfile::tempdir().unwrap();
     let client = downloads(&server.base_url(), root.path().join("hf-cache"));
-    let dest = root.path().join("engine/moss/model.bin");
-
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-    let ensure = client.ensure(
-        &dest,
-        REPO,
-        REVISION,
-        FILENAME,
+    let download = client.ensure_resource(
+        resource(),
         FileProgressBridge::new(tx, "test/model.bin".into(), 13),
     );
     let collect = async move {
@@ -103,69 +106,28 @@ async fn ensure_downloads_links_and_skips_existing_dest() {
         }
         values
     };
-    let (result, values) = tokio::join!(ensure, collect);
-    result.expect("first ensure downloads from the local hub");
-    assert_eq!(
-        values.last(),
-        Some(&13),
-        "publication must flush exact file completion"
-    );
+    let (result, values) = tokio::join!(download, collect);
+    let path = result.unwrap();
+    assert!(path.starts_with(root.path().join("hf-cache").canonicalize().unwrap()));
+    assert_eq!(std::fs::read(&path).unwrap(), payload);
+    assert_eq!(values.last(), Some(&13));
     assert!(values.windows(2).all(|w| w[0] <= w[1]));
-
-    assert!(
-        dest.is_file(),
-        "engine-layout entry must be a real file after linking"
-    );
-    assert_eq!(std::fs::read(&dest).unwrap(), b"model-payload");
-    // One HEAD (etag) plus one GET (transfer).
-    assert_eq!(mock.calls(), 2, "exactly one HEAD + one GET");
-    // The blob landed in the shared cache, not the engine directory.
-    assert!(root.path().join("hf-cache").is_dir());
-
-    client
-        .ensure(
-            &dest,
-            REPO,
-            REVISION,
-            FILENAME,
-            bridge("test/model.bin", 13),
-        )
+    assert_eq!(mock.calls(), 2);
+    let again = client
+        .ensure_resource(resource(), bridge(FILENAME, 13))
         .await
-        .expect("second ensure succeeds");
-    assert_eq!(
-        mock.calls(),
-        2,
-        "existing dest entries are never re-downloaded"
-    );
-    // Corrupt the hardlinked inode, including the cached blob. A retry must
-    // ask the official client to refresh it rather than reuse the bad cache.
-    std::fs::write(&dest, b"short").unwrap();
-    client
-        .ensure(
-            &dest,
-            REPO,
-            REVISION,
-            FILENAME,
-            bridge("test/model.bin", 13),
-        )
+        .unwrap();
+    assert_eq!(again, path);
+    assert_eq!(mock.calls(), 2);
+    // Isolated cache only: corruption of the same size must be detected by hash.
+    std::fs::write(&path, b"wrong-payload").unwrap();
+    let repaired = client
+        .ensure_resource(resource(), bridge(FILENAME, 13))
         .await
-        .expect("truncated files must be repaired");
-    assert_eq!(std::fs::read(&dest).unwrap(), payload);
+        .unwrap();
+    assert_eq!(std::fs::read(repaired).unwrap(), payload);
     assert!(mock.calls() > 2);
-    // Also heal a corrupt shared blob when the engine-layout entry is gone.
-    std::fs::write(&dest, b"short").unwrap();
-    std::fs::remove_file(&dest).unwrap();
-    client
-        .ensure(
-            &dest,
-            REPO,
-            REVISION,
-            FILENAME,
-            bridge("test/model.bin", 13),
-        )
-        .await
-        .expect("a corrupt cache hit must be refreshed");
-    assert_eq!(std::fs::read(&dest).unwrap(), payload);
+    assert!(!root.path().join("engine").exists());
 }
 
 #[tokio::test]
@@ -177,20 +139,31 @@ async fn ensure_reports_server_errors() {
     });
     let root = tempfile::tempdir().expect("tempdir");
     let client = downloads(&server.base_url(), root.path().join("hf-cache"));
-    let dest = root.path().join("engine/missing.bin");
     let error = client
-        .ensure(
-            &dest,
-            REPO,
-            REVISION,
-            FILENAME,
-            bridge("test/missing.bin", 13),
-        )
+        .ensure_resource(resource(), bridge("test/missing.bin", 13))
         .await
         .expect_err("404 must fail");
     assert!(error.to_string().contains("download failed"), "{error}");
-    assert!(!dest.exists(), "no partial destination on failure");
+    assert!(!root.path().join("engine").exists());
     assert!(mock.calls() >= 1, "the server was asked");
+}
+
+#[tokio::test]
+async fn gateway_failure_is_reported_as_network_error() {
+    let server = httpmock::MockServer::start();
+    server.mock(|when, then| {
+        when.path_includes(format!("/{REVISION}/{FILENAME}"));
+        then.status(502);
+    });
+    let root = tempfile::tempdir().unwrap();
+    let error = downloads(&server.base_url(), root.path().join("hf-cache"))
+        .ensure_resource(resource(), bridge("test/model.bin", 13))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<DownloadFailure>(),
+        Some(DownloadFailure::Network(_))
+    ));
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -267,17 +240,18 @@ async fn http_resume_validates_ranges_status_and_length_before_publication() {
             .unwrap(),
         )
         .unwrap();
-        let dest = root.path().join("engine/model.bin");
         let result = downloads(&server.base_url(), cache)
-            .ensure(&dest, REPO, REVISION, FILENAME, bridge(FILENAME, 13))
+            .ensure_resource(resource(), bridge(FILENAME, 13))
             .await;
         if case == "resume" || case == "ignored-range" {
-            result.unwrap();
-            assert_eq!(std::fs::read(dest).unwrap(), payload);
+            assert_eq!(std::fs::read(result.unwrap()).unwrap(), payload);
             assert!(!incomplete.exists());
         } else {
             assert!(result.is_err(), "{case}");
-            assert!(!dest.exists(), "{case}: must not publish");
+            assert!(
+                !root.path().join("engine").exists(),
+                "{case}: must not publish"
+            );
             assert!(
                 !blobs.join(&hash).exists(),
                 "{case}: must not finalize cache"
@@ -315,12 +289,11 @@ async fn mirror_absolute_metadata_redirect_drops_credentials_across_origins() {
         token: Some("diagnostic-test-token".into()),
     })
     .unwrap();
-    let dest = root.path().join("engine/model.bin");
-    client
-        .ensure(&dest, REPO, REVISION, FILENAME, bridge(FILENAME, 13))
+    let path = client
+        .ensure_resource(resource(), bridge(FILENAME, 13))
         .await
         .unwrap();
-    assert_eq!(std::fs::read(dest).unwrap(), payload);
+    assert_eq!(std::fs::read(path).unwrap(), payload);
     mirror_request.assert_calls(1);
     hub_request.assert_calls(2);
 }
@@ -347,12 +320,11 @@ async fn metadata_bearing_redirect_does_not_head_the_cdn() {
         then.status(200).body(payload.as_slice());
     });
     let root = tempfile::tempdir().unwrap();
-    let dest = root.path().join("engine/model.bin");
-    downloads(&hub.base_url(), root.path().join("cache"))
-        .ensure(&dest, REPO, REVISION, FILENAME, bridge(FILENAME, 13))
+    let path = downloads(&hub.base_url(), root.path().join("cache"))
+        .ensure_resource(resource(), bridge(FILENAME, 13))
         .await
         .unwrap();
-    assert_eq!(std::fs::read(dest).unwrap(), payload);
+    assert_eq!(std::fs::read(path).unwrap(), payload);
     head.assert_calls(1);
     get.assert_calls(1);
     cdn_head.assert_calls(0);

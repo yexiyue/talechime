@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 use talechime_backends::downloads::{
-    DownloadConfig, DownloadOptions, Downloads, FileProgressBridge,
+    DownloadConfig, DownloadOptions, Downloads, FileProgressBridge, HubResource,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -149,6 +149,59 @@ fn bridge() -> FileProgressBridge {
         SIZE as u64,
     )
 }
+async fn fetch(
+    client: &Downloads,
+    payload: &[u8],
+    progress: FileProgressBridge,
+) -> anyhow::Result<std::path::PathBuf> {
+    let hash = format!("{:x}", Sha256::digest(payload));
+    client
+        .ensure_resource(
+            HubResource {
+                repo: "team/model",
+                revision: REV,
+                filename: "weights.bin",
+                size: SIZE as u64,
+                sha256: &hash,
+            },
+            progress,
+        )
+        .await
+}
+
+#[tokio::test]
+async fn invalid_resource_identity_is_rejected_before_cache_or_network_access() {
+    let root = tempfile::tempdir().unwrap();
+    let client = Downloads::new(&DownloadConfig {
+        cache_dir: root.path().join("cache"),
+        endpoint: Some("http://127.0.0.1:9".into()),
+        token: None,
+    })
+    .unwrap();
+    let hash = "a".repeat(64);
+    for (repo, revision, filename, digest) in [
+        ("team/model", REV, "../weights.bin", hash.as_str()),
+        ("team/../model", REV, "weights.bin", hash.as_str()),
+        ("team/model", "main", "weights.bin", hash.as_str()),
+        ("team/model", REV, "weights.bin", "bad"),
+    ] {
+        let error = client
+            .ensure_resource(
+                HubResource {
+                    repo,
+                    revision,
+                    filename,
+                    size: SIZE as u64,
+                    sha256: digest,
+                },
+                bridge(),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("invalid") || error.to_string().contains("repository"));
+    }
+    assert!(!root.path().join("cache").exists());
+}
 #[tokio::test]
 async fn ranges_share_a_global_budget_across_clients_and_verify_bytes() {
     let counters = Arc::new(Counters::default());
@@ -157,16 +210,12 @@ async fn ranges_share_a_global_budget_across_clients_and_verify_bytes() {
     let root = tempfile::tempdir().unwrap();
     let ca = a.client(&root.path().join("a"), 4);
     let cb = b.client(&root.path().join("b"), 4);
-    let da = root.path().join("a.bin");
-    let db = root.path().join("b.bin");
     let (ra, rb) = tokio::join!(
-        ca.ensure(&da, "team/model", REV, "weights.bin", bridge()),
-        cb.ensure(&db, "team/model", REV, "weights.bin", bridge())
+        fetch(&ca, &a.payload, bridge()),
+        fetch(&cb, &b.payload, bridge())
     );
-    ra.unwrap();
-    rb.unwrap();
-    assert_eq!(std::fs::read(da).unwrap(), *a.payload);
-    assert_eq!(std::fs::read(db).unwrap(), *b.payload);
+    assert_eq!(std::fs::read(ra.unwrap()).unwrap(), *a.payload);
+    assert_eq!(std::fs::read(rb.unwrap()).unwrap(), *b.payload);
     assert!((2..=4).contains(&counters.peak.load(Ordering::SeqCst)));
 }
 #[tokio::test]
@@ -174,14 +223,16 @@ async fn dropping_transfer_checkpoints_sparse_ranges_and_new_client_resumes() {
     let server = Server::new(Mode::Normal, Arc::new(Counters::default())).await;
     let root = tempfile::tempdir().unwrap();
     let cache = root.path().join("cache");
-    let dest = root.path().join("engine.bin");
+    let dest = root
+        .path()
+        .join("cache/models--team--model/snapshots")
+        .join(REV)
+        .join("weights.bin");
     let client = server.client(&cache, 4);
     let (tx, mut rx) = tokio::sync::mpsc::channel(64);
-    let mut download = Box::pin(client.ensure(
-        &dest,
-        "team/model",
-        REV,
-        "weights.bin",
+    let mut download = Box::pin(fetch(
+        &client,
+        &server.payload,
         FileProgressBridge::new(tx, "weights".into(), SIZE as u64),
     ));
     loop {
@@ -206,12 +257,10 @@ async fn dropping_transfer_checkpoints_sparse_ranges_and_new_client_resumes() {
         .collect();
     assert!(completed.iter().sum::<u64>() > 0 && completed.iter().sum::<u64>() < SIZE as u64);
     let before = server.ranges.lock().unwrap().len();
-    server
-        .client(&cache, 2)
-        .ensure(&dest, "team/model", REV, "weights.bin", bridge())
+    let resumed = fetch(&server.client(&cache, 2), &server.payload, bridge())
         .await
         .unwrap();
-    assert_eq!(std::fs::read(dest).unwrap(), *server.payload);
+    assert_eq!(std::fs::read(resumed).unwrap(), *server.payload);
     assert!(!checkpoint.exists());
     let starts: Vec<_> = server.ranges.lock().unwrap()[before..]
         .iter()
@@ -229,14 +278,19 @@ async fn unsupported_ranges_fall_back_and_invalid_or_corrupt_data_is_not_publish
     for mode in [Mode::Ignore, Mode::BadRange, Mode::Corrupt, Mode::Retry] {
         let server = Server::new(mode, Arc::new(Counters::default())).await;
         let root = tempfile::tempdir().unwrap();
-        let dest = root.path().join("engine.bin");
-        let result = server
-            .client(&root.path().join("cache"), 4)
-            .ensure(&dest, "team/model", REV, "weights.bin", bridge())
-            .await;
+        let dest = root
+            .path()
+            .join("cache/models--team--model/snapshots")
+            .join(REV)
+            .join("weights.bin");
+        let result = fetch(
+            &server.client(&root.path().join("cache"), 4),
+            &server.payload,
+            bridge(),
+        )
+        .await;
         if matches!(mode, Mode::Ignore | Mode::Retry) {
-            result.unwrap();
-            assert_eq!(std::fs::read(dest).unwrap(), *server.payload);
+            assert_eq!(std::fs::read(result.unwrap()).unwrap(), *server.payload);
         } else {
             assert!(result.is_err());
             assert!(!dest.exists());
@@ -249,14 +303,19 @@ async fn expired_signed_address_refreshes_once_and_identity_changes_are_rejected
     for mode in [Mode::Expired, Mode::Changed] {
         let server = Server::new(mode, Arc::new(Counters::default())).await;
         let root = tempfile::tempdir().unwrap();
-        let dest = root.path().join("engine.bin");
-        let result = server
-            .client(&root.path().join("cache"), 4)
-            .ensure(&dest, "team/model", REV, "weights.bin", bridge())
-            .await;
+        let dest = root
+            .path()
+            .join("cache/models--team--model/snapshots")
+            .join(REV)
+            .join("weights.bin");
+        let result = fetch(
+            &server.client(&root.path().join("cache"), 4),
+            &server.payload,
+            bridge(),
+        )
+        .await;
         if matches!(mode, Mode::Expired) {
-            result.unwrap();
-            assert_eq!(std::fs::read(dest).unwrap(), *server.payload);
+            assert_eq!(std::fs::read(result.unwrap()).unwrap(), *server.payload);
             assert_eq!(
                 server.heads.load(Ordering::SeqCst),
                 2,
@@ -274,14 +333,16 @@ async fn checkpoint_write_failure_is_visible_after_cancellation() {
     let server = Server::new(Mode::Normal, Arc::new(Counters::default())).await;
     let root = tempfile::tempdir().unwrap();
     let cache = root.path().join("cache");
-    let dest = root.path().join("engine.bin");
+    let dest = root
+        .path()
+        .join("cache/models--team--model/snapshots")
+        .join(REV)
+        .join("weights.bin");
     let client = server.client(&cache, 2);
     let (tx, mut rx) = tokio::sync::mpsc::channel(64);
-    let mut download = Box::pin(client.ensure(
-        &dest,
-        "team/model",
-        REV,
-        "weights.bin",
+    let mut download = Box::pin(fetch(
+        &client,
+        &server.payload,
         FileProgressBridge::new(tx, "weights".into(), SIZE as u64),
     ));
     loop {

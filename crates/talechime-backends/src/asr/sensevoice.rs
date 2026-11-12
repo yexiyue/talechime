@@ -18,14 +18,18 @@ pub(super) struct SenseVoice {
     norm: i32,
 }
 impl SenseVoice {
-    pub(super) fn load(directory: &Path, threads: usize) -> anyhow::Result<Self> {
+    pub(super) fn load_files(
+        model: &Path,
+        token_file: &Path,
+        threads: usize,
+    ) -> anyhow::Result<Self> {
         anyhow::ensure!((1..=32).contains(&threads), "invalid ASR threads");
         let session = Session::builder()?
             .with_intra_threads(threads)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?
             .with_inter_threads(1)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?
-            .commit_from_file(directory.join("model.int8.onnx"))
+            .commit_from_file(model)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let metadata = session.metadata()?;
         let get = |key| {
@@ -50,7 +54,7 @@ impl SenseVoice {
             "unsupported SenseVoice frontend"
         );
         let mut tokens = Vec::new();
-        for line in std::fs::read_to_string(directory.join("tokens.txt"))?.lines() {
+        for line in std::fs::read_to_string(token_file)?.lines() {
             let (text, id) = line
                 .rsplit_once(' ')
                 .ok_or_else(|| anyhow::anyhow!("invalid token"))?;

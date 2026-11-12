@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 IDENTIFIER = re.compile(r"[A-Za-z0-9_-]+\Z")
 # Only these switches can affect a probe. Never persist arbitrary env/config.
-ENV_KEYS = {"TALECHIME_KOKORO_MODEL", "MOSS_MODEL", "TALECHIME_ESPEAK_DIR"}
+ENV_KEYS = {"TALECHIME_KOKORO_MODEL", "MOSS_MODEL"}
 INHERIT_KEYS = {"PATH", "HOME", "TMPDIR", "TEMP", "TMP", "SystemRoot", "WINDIR"}
 CONFIG_KEYS = {"id", "backend", "directory", "resource_directories", "voice", "device", "params", "case_params", "style",
                "env", "reference_source"}
@@ -308,20 +308,6 @@ def resource_identity(config):
     return {"directory": str(directory), "files": files}
 
 
-def helper_identity(config):
-    root = config.get("env", {}).get("TALECHIME_ESPEAK_DIR")
-    if root is None:
-        return None
-    root = Path(root).resolve(strict=True)
-    manifest = root / "manifest.json"
-    value = read_json(manifest)
-    # The frontend verifies the fixed source and complete file manifest before use.
-    # Keep a separate snapshot: helper files are not neural model resources.
-    snapshot = resource_identity({"directory": str(root)})
-    return {"manifest_sha256": digest(manifest), "source_commit": value["source_commit"],
-            "source_sha256": value["source_sha256"], "resources": snapshot}
-
-
 def report(output, plan, records):
     expected = {row["id"] for row in plan}
     actual = [row["id"] for row in records]
@@ -412,8 +398,7 @@ def run(configs, variants, cases, probe, output, timeout):
                         params = planned["params"]
                         record.update(device=config.get("device", "cpu"), voice=config["voice"], params=params,
                                       style=config.get("style"), reference_source=config.get("reference_source"),
-                                      reference_identity=voice_identity(config, variant),
-                                      helper_identity=helper_identity(config))
+                                      reference_identity=voice_identity(config, variant))
                         env = {key: value for key, value in os.environ.items() if key in INHERIT_KEYS}
                         env.update(config.get("env", {}))
                         env["TALECHIME_PROBE_PARAMS"] = json.dumps(params)

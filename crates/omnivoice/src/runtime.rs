@@ -141,7 +141,7 @@ fn activation_dtype(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeOptions {
-    model_root: PathBuf,
+    model_root: Option<PathBuf>,
     device: DeviceSpec,
     dtype: DTypeSpec,
     seed: Option<u64>,
@@ -150,7 +150,17 @@ pub struct RuntimeOptions {
 impl RuntimeOptions {
     pub fn new(model_root: impl Into<PathBuf>) -> Self {
         Self {
-            model_root: model_root.into(),
+            model_root: Some(model_root.into()),
+            device: DeviceSpec::default(),
+            dtype: DTypeSpec::default(),
+            seed: None,
+        }
+    }
+
+    /// Runtime options for explicitly resolved model resources.
+    pub fn for_resolved_files() -> Self {
+        Self {
+            model_root: None,
             device: DeviceSpec::default(),
             dtype: DTypeSpec::default(),
             seed: None,
@@ -172,8 +182,8 @@ impl RuntimeOptions {
         self
     }
 
-    pub fn model_root(&self) -> &Path {
-        &self.model_root
+    pub fn model_root(&self) -> Option<&Path> {
+        self.model_root.as_deref()
     }
 
     pub fn device(&self) -> DeviceSpec {
@@ -227,7 +237,11 @@ impl RuntimeOptions {
     }
 
     pub fn load_runtime_artifacts(&self) -> Result<RuntimeArtifacts> {
-        RuntimeArtifacts::from_model_root(&self.model_root)
+        let root = self
+            .model_root
+            .as_ref()
+            .ok_or_else(|| OmniVoiceError::InvalidData("model root is not configured".into()))?;
+        RuntimeArtifacts::from_model_root(root)
     }
 }
 

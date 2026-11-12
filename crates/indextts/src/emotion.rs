@@ -118,9 +118,29 @@ impl QwenEmotion {
     pub fn load(root: &Path, device: &Device) -> Result<Self> {
         resources::verify(root)?;
         let directory = root.join("qwen0.6bemo4-merge");
-        let config: Config = serde_json::from_slice(&std::fs::read(directory.join("config.json"))?)
+        Self::load_verified(
+            &directory.join("config.json"),
+            &directory.join("tokenizer.json"),
+            &directory.join("model.safetensors"),
+            device,
+        )
+    }
+
+    /// Load the fixed classifier resources resolved independently by the host.
+    pub fn load_files(paths: &[std::path::PathBuf; 6], device: &Device) -> Result<Self> {
+        resources::verify_files(paths)?;
+        Self::load_verified(&paths[1], &paths[4], &paths[3], device)
+    }
+
+    fn load_verified(
+        config_path: &Path,
+        tokenizer_path: &Path,
+        weights_path: &Path,
+        device: &Device,
+    ) -> Result<Self> {
+        let config: Config = serde_json::from_slice(&std::fs::read(config_path)?)
             .map_err(|error| candle_core::Error::Msg(error.to_string()))?;
-        let tokenizer = tokenizers::Tokenizer::from_file(directory.join("tokenizer.json"))
+        let tokenizer = tokenizers::Tokenizer::from_file(tokenizer_path)
             .map_err(|error| candle_core::Error::Msg(format!("QwenEmotion tokenizer: {error}")))?;
         // CPU uses F32 to avoid unsupported half-precision host kernels. Numeric
         // and output parity must be measured separately from the official FP16.
@@ -129,7 +149,7 @@ impl QwenEmotion {
         } else {
             DType::F16
         };
-        let weights = candle_core::safetensors::load(directory.join("model.safetensors"), device)?;
+        let weights = candle_core::safetensors::load(weights_path, device)?;
         let vb = VarBuilder::from_tensors(weights, dtype, device);
         Ok(Self {
             model: ModelForCausalLM::new(&config, vb)?,
@@ -209,6 +229,13 @@ mod tests {
         std::fs::create_dir(&directory).unwrap();
         std::fs::write(directory.join("chat_template.jinja"), vec![b'x'; 550]).unwrap();
         let error = QwenEmotion::load(root.path(), &Device::Cpu)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("resource identity mismatch"));
+        let changed = directory.join("chat_template.jinja");
+        let files = std::array::from_fn(|_| changed.clone());
+        let error = QwenEmotion::load_files(&files, &Device::Cpu)
             .err()
             .unwrap()
             .to_string();

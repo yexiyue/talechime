@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 use talechime_core::backend::{AudioChunk, BackendError, Pcm};
 use talechime_protocol::Device;
 use tokio::sync::{mpsc, oneshot};
@@ -10,6 +13,123 @@ pub(super) struct Request {
     pub voice: String,
     pub resolved: super::params::Resolved,
     pub audio: mpsc::Sender<Result<AudioChunk, BackendError>>,
+}
+
+/// Logical model resource names mapped to independently verified files.
+pub(super) struct Files(BTreeMap<String, PathBuf>);
+impl Files {
+    const REQUIRED: &'static [&'static str] = &[
+        "config.json",
+        "multilingual_zh_ja_yue_char_del.tiktoken",
+        "gpt.safetensors",
+        "codec.safetensors",
+        "s2mel.safetensors",
+        "campplus.safetensors",
+        "bigvgan.safetensors",
+        "bigvgan.config.json",
+        "feats.safetensors",
+        "w2v-bert-2.0/config.json",
+        "w2v-bert-2.0/model.safetensors",
+        "japanese.dic",
+        "tn/wetext/zh/tn/tagger.fst",
+        "tn/wetext/zh/tn/verbalizer.fst",
+        "tn/wetext/en/tn/tagger.fst",
+        "tn/wetext/en/tn/verbalizer.fst",
+        "tn/linux/zh/tagger.fst",
+        "tn/linux/zh/verbalizer.fst",
+        "tn/linux/en/tagger.fst",
+        "tn/linux/en/verbalizer.fst",
+        "tn/es/tagger.fst",
+        "tn/es/verbalizer.fst",
+        "qwen0.6bemo4-merge/chat_template.jinja",
+        "qwen0.6bemo4-merge/config.json",
+        "qwen0.6bemo4-merge/generation_config.json",
+        "qwen0.6bemo4-merge/model.safetensors",
+        "qwen0.6bemo4-merge/tokenizer.json",
+        "qwen0.6bemo4-merge/tokenizer_config.json",
+    ];
+    pub(super) fn from_resolved(paths: BTreeMap<String, PathBuf>) -> anyhow::Result<Self> {
+        for name in Self::REQUIRED {
+            anyhow::ensure!(
+                paths.contains_key(*name),
+                "IndexTTS resource manifest lacks {name}"
+            );
+        }
+        Ok(Self(paths))
+    }
+    #[cfg(test)]
+    pub(super) fn from_directory(directory: &Path) -> anyhow::Result<Self> {
+        Self::from_resolved(
+            Self::REQUIRED
+                .iter()
+                .map(|name| ((*name).to_owned(), directory.join(name)))
+                .collect(),
+        )
+    }
+    fn load(&self, device: &candle_core::Device) -> candle_core::Result<talechime_indextts::Model> {
+        let file = |name: &str| {
+            self.0.get(name).map(PathBuf::as_path).ok_or_else(|| {
+                candle_core::Error::Msg(format!("IndexTTS resource manifest lacks {name}"))
+            })
+        };
+        let linux = cfg!(target_os = "linux");
+        let names = if linux {
+            [
+                "tn/linux/zh/tagger.fst",
+                "tn/linux/zh/verbalizer.fst",
+                "tn/linux/en/tagger.fst",
+                "tn/linux/en/verbalizer.fst",
+            ]
+        } else {
+            [
+                "tn/wetext/zh/tn/tagger.fst",
+                "tn/wetext/zh/tn/verbalizer.fst",
+                "tn/wetext/en/tn/tagger.fst",
+                "tn/wetext/en/tn/verbalizer.fst",
+            ]
+        };
+        let emotion = [
+            file("qwen0.6bemo4-merge/chat_template.jinja")?.to_owned(),
+            file("qwen0.6bemo4-merge/config.json")?.to_owned(),
+            file("qwen0.6bemo4-merge/generation_config.json")?.to_owned(),
+            file("qwen0.6bemo4-merge/model.safetensors")?.to_owned(),
+            file("qwen0.6bemo4-merge/tokenizer.json")?.to_owned(),
+            file("qwen0.6bemo4-merge/tokenizer_config.json")?.to_owned(),
+        ];
+        talechime_indextts::Model::load_files(
+            talechime_indextts::model::ModelFiles {
+                config: file("config.json")?,
+                tokenizer: file("multilingual_zh_ja_yue_char_del.tiktoken")?,
+                weights: talechime_indextts::weights::WeightFiles {
+                    gpt: file("gpt.safetensors")?,
+                    codec: file("codec.safetensors")?,
+                    s2mel: file("s2mel.safetensors")?,
+                    campplus: file("campplus.safetensors")?,
+                    bigvgan: file("bigvgan.safetensors")?,
+                    bigvgan_config: file("bigvgan.config.json")?,
+                    feats: file("feats.safetensors")?,
+                },
+                w2v_config: file("w2v-bert-2.0/config.json")?,
+                w2v_weights: file("w2v-bert-2.0/model.safetensors")?,
+                text: talechime_indextts::front::TextResources {
+                    normalizer: [
+                        file(names[0])?.to_owned(),
+                        file(names[1])?.to_owned(),
+                        file(names[2])?.to_owned(),
+                        file(names[3])?.to_owned(),
+                    ],
+                    spanish: [
+                        file("tn/es/tagger.fst")?.to_owned(),
+                        file("tn/es/verbalizer.fst")?.to_owned(),
+                    ],
+                    linux,
+                },
+                japanese: file("japanese.dic")?,
+                emotion,
+            },
+            device,
+        )
+    }
 }
 
 pub(super) fn candle_device(device: Device) -> candle_core::Result<candle_core::Device> {
@@ -28,13 +148,12 @@ pub(super) fn candle_device(device: Device) -> candle_core::Result<candle_core::
 
 pub(super) fn run(
     root: PathBuf,
+    files: Files,
     device: Device,
     mut jobs: mpsc::Receiver<Request>,
     ready: oneshot::Sender<Result<(), BackendError>>,
 ) {
-    let directory = super::directory(&root);
-    let loaded = candle_device(device)
-        .and_then(|device| talechime_indextts::Model::load(&directory, &device));
+    let loaded = candle_device(device).and_then(|device| files.load(&device));
     let mut model = match loaded {
         Ok(model) => model,
         Err(error) => {
@@ -147,6 +266,84 @@ fn generate(
         .map_err(|_| BackendError::Synthesis("IndexTTS receiver closed".into()))?;
     let _ = crate::observation::send_audio(&request.audio, Ok(AudioChunk::End));
     Ok(())
+}
+
+#[cfg(test)]
+mod resource_tests {
+    use super::*;
+
+    #[test]
+    fn resolved_file_map_preserves_independent_paths_and_rejects_missing_entries() {
+        let outputs: serde_json::Value =
+            serde_json::from_str(include_str!("native-assets.json")).unwrap();
+        let known: std::collections::BTreeSet<_> = outputs["outputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["path"].as_str().unwrap())
+            .collect();
+        let mut paths: BTreeMap<_, _> = Files::REQUIRED
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                assert!(known.contains(name));
+                (
+                    (*name).to_owned(),
+                    PathBuf::from(format!("/independent/blob-{i}")),
+                )
+            })
+            .collect();
+        let expected = paths["config.json"].clone();
+        let files = Files::from_resolved(paths.clone()).unwrap();
+        assert_eq!(files.0["config.json"], expected);
+        paths.remove("japanese.dic");
+        assert!(Files::from_resolved(paths).is_err());
+    }
+
+    #[test]
+    fn invalid_internal_mapping_reports_error_without_panicking() {
+        let files = Files(BTreeMap::new());
+        let error = match files.load(&candle_core::Device::Cpu) {
+            Ok(_) => panic!("missing model paths were accepted"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("resource manifest lacks"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires fixed IndexTTS model and separately staged frontend resources"]
+    async fn owner_loads_files_from_independent_locations() {
+        let source =
+            PathBuf::from(std::env::var_os("INDEXTTS_CONVERTED_DIR").expect("fixed model"));
+        let frontend = PathBuf::from(
+            std::env::var_os("TALECHIME_INDEX_FRONTEND_FILES").expect("fixed frontend"),
+        );
+        let wetext =
+            PathBuf::from(std::env::var_os("TALECHIME_WETEXT_FILES").expect("fixed WeText"));
+        let mut files = Files::from_directory(&source).unwrap();
+        for (name, path) in &mut files.0 {
+            if let Some(relative) = name.strip_prefix("tn/wetext/") {
+                *path = wetext.join(relative);
+            } else if name.starts_with("tn/linux/")
+                || name.starts_with("tn/es/")
+                || name == "japanese.dic"
+            {
+                *path = frontend.join(name);
+            }
+        }
+        let data = tempfile::tempdir().unwrap();
+        let root = data.path().join("application-data");
+        let (send, jobs) = mpsc::channel(1);
+        let (ready, received) = oneshot::channel();
+        let owner = std::thread::spawn(move || run(root, files, Device::Cpu, jobs, ready));
+        received
+            .await
+            .expect("owner exited")
+            .expect("model initialization failed");
+        drop(send);
+        owner.join().unwrap();
+        assert!(!data.path().join("application-data").exists());
+    }
 }
 
 #[cfg(all(test, target_os = "windows", feature = "indextts-cuda-cudnn"))]

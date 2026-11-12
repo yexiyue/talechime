@@ -1,15 +1,12 @@
 //! Independent Misaki/eSpeak fixtures; real frontend and optional g2pW data are external.
 use candle_core::Result;
 use std::path::PathBuf;
-use talechime_kokoro::frontend::{EspeakConfig, Frontend};
+use talechime_kokoro::frontend::Frontend;
 
 fn frontend() -> Result<Frontend> {
     let path = std::env::var_os("KOKORO_FRONTEND_DIR")
         .ok_or_else(|| candle_core::Error::Msg("set KOKORO_FRONTEND_DIR".into()))?;
-    let bundle = std::env::var_os("TALECHIME_ESPEAK_DIR")
-        .ok_or_else(|| candle_core::Error::Msg("set TALECHIME_ESPEAK_DIR".into()))?;
-    let options = EspeakConfig::from_bundle(&PathBuf::from(bundle))?;
-    Frontend::load_with_espeak(&PathBuf::from(path), options)
+    Frontend::load(&PathBuf::from(path))
 }
 
 fn fixture(json: &str) -> serde_json::Value {
@@ -18,7 +15,7 @@ fn fixture(json: &str) -> serde_json::Value {
 
 #[cfg(feature = "g2pw")]
 #[test]
-#[ignore = "requires pinned frontend, g2pW and separately built eSpeak bundle"]
+#[ignore = "requires pinned frontend and g2pW resources"]
 fn public_corpus_records_official_matches_and_differences() -> Result<()> {
     use sha2::{Digest, Sha256};
     let frontend = frontend()?;
@@ -60,6 +57,24 @@ fn public_corpus_records_official_matches_and_differences() -> Result<()> {
         match case["classification"].as_str().unwrap() {
             "matched" | "difference" => {
                 let actual = actual?;
+                // Historical eSpeak outputs are not the neural OOV contract.
+                if id == "spanish" {
+                    assert_ne!(actual, case["actual_phonemes"], "{variant} {id}");
+                    continue;
+                }
+                if id == "long-word" {
+                    assert!(
+                        actual.contains(
+                            &loqui_g2p::G2p::new(
+                                loqui_g2p::Dialect::American,
+                                loqui_g2p::OovFallback::Neural
+                            )
+                            .unwrap()
+                            .phonemize("zorbulate")
+                        )
+                    );
+                    continue;
+                }
                 assert_eq!(actual, case["actual_phonemes"], "{variant} {id}");
                 assert_eq!(
                     actual == expected["phonemes"].as_str().unwrap(),
@@ -79,9 +94,13 @@ fn public_corpus_records_official_matches_and_differences() -> Result<()> {
 }
 
 fn comparable(id: &str) -> bool {
-    // Spaced years and unknown symbols are explicit product policies. The
+    // OOV cases intentionally use neural pronunciations. Spaced years and
+    // unknown symbols are explicit product policies. The
     // strict comparison example still reports both differences.
-    !matches!(id, "year_spaced_product_policy" | "unsupported")
+    !matches!(
+        id,
+        "year_spaced_product_policy" | "unsupported" | "oov" | "oov_name"
+    )
 }
 
 #[test]
@@ -137,33 +156,16 @@ fn official_mixed_reference_cases_match() -> Result<()> {
 }
 
 #[test]
-#[ignore = "requires pinned frontend and separately built eSpeak CLI/data"]
-fn official_espeak_oov_words_match() -> Result<()> {
+#[ignore = "requires pinned external Kokoro frontend export"]
+fn neural_oov_works_without_external_helper() -> Result<()> {
     let frontend = frontend()?;
-    let data = fixture(include_str!("fixtures/english-oov-espeak.json"));
-    for case in data["cases"].as_array().unwrap() {
-        assert_eq!(
-            frontend.phonemes(case["text"].as_str().unwrap())?,
-            case["phonemes"].as_str().unwrap(),
-            "{}",
-            case["id"]
-        );
+    let model = loqui_g2p::G2p::new(loqui_g2p::Dialect::American, loqui_g2p::OovFallback::Neural)
+        .map_err(candle_core::Error::wrap)?;
+    for word in ["Hermione", "zorbulate", "thraxxil"] {
+        let expected = model.phonemize(word);
+        assert!(!expected.is_empty());
+        assert_eq!(frontend.phonemes(word)?, expected, "{word}");
     }
-    Ok(())
-}
-
-#[test]
-#[ignore = "requires pinned frontend and TALECHIME_ESPEAK_DIR bundle"]
-fn default_bundle_discovery_handles_real_oov() -> Result<()> {
-    let path = std::env::var_os("KOKORO_FRONTEND_DIR")
-        .ok_or_else(|| candle_core::Error::Msg("set KOKORO_FRONTEND_DIR".into()))?;
-    let frontend = Frontend::load(&PathBuf::from(path))?;
-    let data = fixture(include_str!("fixtures/english-oov-espeak.json"));
-    let case = &data["cases"][0];
-    assert_eq!(
-        frontend.phonemes(case["text"].as_str().unwrap())?,
-        case["phonemes"].as_str().unwrap()
-    );
     Ok(())
 }
 

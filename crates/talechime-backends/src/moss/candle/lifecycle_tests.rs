@@ -157,7 +157,7 @@ async fn check_fixed_reference(mode: Mode) -> anyhow::Result<()> {
                 writer.write_sample(sample)?;
             }
             writer.finalize()?;
-            let store = voice_store(&mode.directory(&root), mode)?;
+            let store = voice_store(&mode.data_directory(&root), mode)?;
             let id = format!(
                 "custom:lifecycle-gate-{}-{}",
                 std::process::id(),

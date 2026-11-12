@@ -1,9 +1,7 @@
-//! Offline resource readiness computed from the engine layout on disk.
+//! Offline resource readiness shared by cached and transitional native models.
 //!
-//! The engine layout is the consumption view (see [`crate::downloads`]):
-//! a present file of the pinned size is usable — hardlinks keep their inode
-//! alive even if the shared cache is cleaned. Inventory therefore never
-//! touches the network and never trusts stale task state.
+//! Direct Hub resources use pinned size and digest checks in `resources`;
+//! the legacy native recipes use their published layout until migrated.
 use std::path::Path;
 
 /// Per-model readiness aggregated over its manifest entries.
@@ -19,7 +17,7 @@ pub enum ResourceStatus {
         /// Sum of the sizes of the entries still missing.
         missing_bytes: u64,
     },
-    /// Every entry is present with its pinned size.
+    /// Every required entry passed its applicable readiness check.
     Ready,
 }
 
@@ -41,7 +39,7 @@ pub(crate) fn entry_ready(path: &Path, size: u64) -> bool {
 }
 
 /// Aggregate `(relative path, pinned size)` entries against one directory.
-#[cfg(any(feature = "kokoro", test))]
+#[cfg(test)]
 pub(crate) fn status_of(entries: &[(String, u64)], directory: &Path) -> ResourceStatus {
     let total = entries.len();
     let mut ready = 0usize;
@@ -56,14 +54,7 @@ pub(crate) fn status_of(entries: &[(String, u64)], directory: &Path) -> Resource
     resource_status(ready, total, missing_bytes)
 }
 
-#[cfg(any(
-    feature = "moss",
-    feature = "qwen",
-    feature = "voxcpm",
-    feature = "omnivoice",
-    feature = "kokoro",
-    test
-))]
+#[cfg(test)]
 fn resource_status(ready: usize, total: usize, missing_bytes: u64) -> ResourceStatus {
     if total == 0 || ready == total {
         ResourceStatus::Ready
@@ -76,60 +67,6 @@ fn resource_status(ready: usize, total: usize, missing_bytes: u64) -> ResourceSt
             missing_bytes,
         }
     }
-}
-
-/// Aggregate readiness across several `(embedded manifest, directory)` pairs,
-/// covering models whose files span multiple source directories.
-#[cfg(any(
-    feature = "moss",
-    feature = "qwen",
-    feature = "voxcpm",
-    feature = "omnivoice",
-    test
-))]
-pub(crate) fn status_of_manifests(manifests: &[(&str, &Path)]) -> ResourceStatus {
-    let mut ready = 0usize;
-    let mut total = 0usize;
-    let mut missing_bytes = 0u64;
-    for (json, directory) in manifests {
-        // Embedded manifests are compile-time inputs; if one fails to parse
-        // here, preparation will surface the error. Report missing meanwhile.
-        let Ok(entries) = manifest_entries(json) else {
-            return ResourceStatus::Missing { missing_bytes: 0 };
-        };
-        for (path, size) in entries {
-            total += 1;
-            if entry_ready(&directory.join(path), size) {
-                ready += 1;
-            } else {
-                missing_bytes += size;
-            }
-        }
-    }
-    resource_status(ready, total, missing_bytes)
-}
-
-/// Parse `(path, size)` pairs out of an embedded manifest, ignoring other
-/// fields. Works for both remote and local-conversion manifest shapes.
-#[cfg(any(
-    feature = "moss",
-    feature = "qwen",
-    feature = "voxcpm",
-    feature = "omnivoice",
-    test
-))]
-pub(crate) fn manifest_entries(json: &str) -> anyhow::Result<Vec<(String, u64)>> {
-    #[derive(serde::Deserialize)]
-    struct Entry {
-        path: String,
-        size: u64,
-    }
-
-    let entries: Vec<Entry> = serde_json::from_str(json)?;
-    Ok(entries
-        .into_iter()
-        .map(|entry| (entry.path, entry.size))
-        .collect())
 }
 
 #[cfg(test)]
@@ -171,18 +108,5 @@ mod tests {
     fn empty_manifests_are_ready() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(status_of(&[], dir.path()), ResourceStatus::Ready);
-    }
-
-    #[test]
-    fn manifest_entries_reads_paths_and_sizes_only() {
-        let entries = manifest_entries(
-            r#"[{"path":"m.bin","repo":"o/m","revision":"0123456789abcdef0123456789abcdef01234567","filename":"m.bin","size":7},{"path":"n.bin","size":3,"sha256":"x"}]"#,
-        )
-        .unwrap();
-        assert_eq!(
-            entries,
-            vec![("m.bin".to_owned(), 7u64), ("n.bin".to_owned(), 3u64)]
-        );
-        assert!(manifest_entries(r#"[{"path":"m.bin"}]"#).is_err());
     }
 }

@@ -35,9 +35,15 @@ pub(super) const FILES: &[(&str, u64, &str)] = &[
     ),
 ];
 pub(super) fn verify(root: &Path) -> Result<()> {
-    for &(name, size, expected) in FILES {
-        let path = root.join(name);
-        let mut file = File::open(&path).map_err(|error| {
+    let paths: Vec<_> = FILES.iter().map(|(name, _, _)| root.join(name)).collect();
+    verify_files(&paths)
+}
+pub(super) fn verify_files(paths: &[std::path::PathBuf]) -> Result<()> {
+    if paths.len() != FILES.len() {
+        candle_core::bail!("QwenEmotion resource count mismatch");
+    }
+    for (path, &(name, size, expected)) in paths.iter().zip(FILES) {
+        let mut file = File::open(path).map_err(|error| {
             candle_core::Error::Msg(format!(
                 "QwenEmotion requires fixed resource {}: {error}",
                 path.display()

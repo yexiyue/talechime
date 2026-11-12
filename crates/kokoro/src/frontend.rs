@@ -1,9 +1,7 @@
 //! Mandarin 1.1 frontend using exported official dictionaries and rules.
-mod espeak;
 mod normalize;
 mod sandhi;
 mod segment;
-pub use espeak::{EspeakConfig, EspeakOptions};
 pub use normalize::decimal_digit;
 
 use candle_core::Result;
@@ -95,9 +93,6 @@ mod tests {
             jieba,
             tags,
             max_word_chars: 1,
-            espeak: None,
-            bundle: None,
-            verified_espeak: OnceLock::new(),
         }
     }
 
@@ -170,7 +165,7 @@ mod tests {
     #[test]
     fn unsupported_input_and_invalid_budgets_are_explicit() -> Result<()> {
         let frontend = frontend();
-        assert!(frontend.phonemes("你好Kokoro").is_err());
+        assert!(!frontend.phonemes("你好Kokoro")?.is_empty());
         assert!(frontend.phonemes("你好🙂").is_err());
         assert!(frontend.segments("你好", 0).is_err());
         assert!(frontend.segments("你好", 511).is_err());
@@ -195,7 +190,7 @@ mod tests {
         let mixed = frontend.phonemes("你好hello你好")?;
         assert!(mixed.contains(&english));
         assert!(!frontend.phonemes("你好S")?.is_empty());
-        assert!(frontend.phonemes("你好zorbulate").is_err());
+        assert!(!frontend.phonemes("你好zorbulate")?.is_empty());
         assert!(frontend.phonemes("你好hello🙂").is_err());
         let text = "你好hello-world你好";
         let segments = frontend.segments(text, 15)?;
@@ -278,39 +273,6 @@ pub struct Frontend {
     jieba: Jieba,
     max_word_chars: usize,
     tags: HashMap<String, (u64, String)>,
-    espeak: Option<EspeakOptions>,
-    bundle: Option<std::path::PathBuf>,
-    verified_espeak: OnceLock<EspeakOptions>,
-}
-
-fn default_espeak_bundle() -> Option<std::path::PathBuf> {
-    if let Some(root) = std::env::var_os("TALECHIME_ESPEAK_DIR") {
-        return Some(root.into());
-    }
-    let executable = std::env::current_exe().ok()?;
-    let parent = executable.parent()?;
-    let relative = "talechime-helpers/espeak-ng-1.52.0";
-    let release = parent.join(relative);
-    if release.is_dir() {
-        return Some(release);
-    }
-    // Cargo puts binaries in target/{debug,release} and test binaries in deps.
-    let profile = if parent.file_name().is_some_and(|name| name == "deps") {
-        parent.parent().unwrap_or(parent)
-    } else {
-        parent
-    };
-    if profile
-        .file_name()
-        .is_some_and(|name| name == "debug" || name == "release")
-        && let Some(target) = profile.parent()
-    {
-        let development = target.join(relative);
-        if development.is_dir() {
-            return Some(development);
-        }
-    }
-    Some(release)
 }
 
 impl Frontend {
@@ -422,10 +384,14 @@ impl Frontend {
 
     /// Load the output of `scripts/export_frontend.py`; no download or Python.
     pub fn load(root: &Path) -> Result<Self> {
-        let data: Data = serde_json::from_slice(
-            &std::fs::read(root.join("frontend.json")).map_err(candle_core::Error::wrap)?,
-        )
-        .map_err(candle_core::Error::wrap)?;
+        Self::load_files(&root.join("frontend.json"), &root.join("jieba.dict"))
+    }
+
+    /// Load frontend assets resolved independently from their Hub repositories.
+    pub fn load_files(frontend: &Path, dictionary_path: &Path) -> Result<Self> {
+        let data: Data =
+            serde_json::from_slice(&std::fs::read(frontend).map_err(candle_core::Error::wrap)?)
+                .map_err(candle_core::Error::wrap)?;
         if data.format != "kokoro-misaki-zh-v1"
             || data.source_revision != "fba1236595f2d2bf21d414ba6e57d25256afada3"
         {
@@ -440,8 +406,7 @@ impl Frontend {
         {
             candle_core::bail!("invalid Kokoro pronunciation dictionary");
         }
-        let dictionary =
-            std::fs::read(root.join("jieba.dict")).map_err(candle_core::Error::wrap)?;
+        let dictionary = std::fs::read(dictionary_path).map_err(candle_core::Error::wrap)?;
         let mut jieba = Jieba::empty();
         jieba
             .load_dict(&mut BufReader::new(dictionary.as_slice()))
@@ -473,18 +438,7 @@ impl Frontend {
             jieba,
             max_word_chars,
             tags,
-            espeak: None,
-            bundle: default_espeak_bundle(),
-            verified_espeak: OnceLock::new(),
         })
-    }
-
-    /// Configure host-verified eSpeak CLI and data for genuinely unknown English words.
-    pub fn load_with_espeak(root: &Path, options: EspeakOptions) -> Result<Self> {
-        let mut frontend = Self::load(root)?;
-        frontend.espeak = Some(options);
-        frontend.bundle = None;
-        Ok(frontend)
     }
 
     /// Normalize and pronounce Mandarin text with embedded English.
@@ -493,7 +447,7 @@ impl Frontend {
         self.phonemes_cancellable(text, &|| false)
     }
 
-    /// Pronounce text while allowing an in-flight English fallback to be cancelled.
+    /// Pronounce text while checking cancellation between English spans.
     pub fn phonemes_cancellable(&self, text: &str, cancelled: &dyn Fn() -> bool) -> Result<String> {
         if cancelled() {
             candle_core::bail!("Kokoro frontend cancelled");
@@ -564,7 +518,7 @@ impl Frontend {
                 .get_or_init(|| {
                     loqui_g2p::G2p::new(
                         loqui_g2p::Dialect::American,
-                        loqui_g2p::OovFallback::SpellOut,
+                        loqui_g2p::OovFallback::Neural,
                     )
                     .map_err(|error| error.to_string())
                 })
@@ -572,25 +526,7 @@ impl Frontend {
                 .map_err(|error| {
                     candle_core::Error::Msg(format!("English frontend unavailable: {error}"))
                 })?;
-            let tokens = english.tokens_with_fallback(span.as_str(), &|word| {
-                let options = if let Some(options) = self.espeak.as_ref() {
-                    options
-                } else if let Some(options) = self.verified_espeak.get() {
-                    options
-                } else {
-                    let root = self.bundle.as_ref().ok_or_else(|| {
-                        candle_core::Error::Msg(
-                            "Kokoro English fallback resources are not configured".into(),
-                        )
-                    })?;
-                    let verified = EspeakOptions::from_bundle_cancellable(root, cancelled)?;
-                    let _ = self.verified_espeak.set(verified);
-                    self.verified_espeak.get().ok_or_else(|| {
-                        candle_core::Error::Msg("eSpeak bundle verification failed".into())
-                    })?
-                };
-                options.pronounce(word, cancelled).map(Some)
-            })?;
+            let tokens = english.tokens(span.as_str());
             if tokens.iter().any(|token| {
                 token.text.chars().any(|c| c.is_ascii_alphabetic())
                     && token.phonemes.trim().is_empty()

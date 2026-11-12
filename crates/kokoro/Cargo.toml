@@ -18,7 +18,7 @@ rayon.workspace = true
 regex.workspace = true
 jieba-rs.workspace = true
 sha2.workspace = true
-loqui-g2p = { package = "talechime-loqui-g2p", path = "../../third-party/loqui-g2p", version = "=0.4.0" }
+loqui-g2p = "=0.4.0"
 ort = { workspace = true, optional = true }
 tokenizers = { workspace = true, optional = true, features = ["fancy-regex"] }
 

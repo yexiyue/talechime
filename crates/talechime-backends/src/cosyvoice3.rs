@@ -1,6 +1,4 @@
 //! CosyVoice3 reference cloning and style instructions with bounded native streaming.
-mod native;
-pub(crate) use native::recipe as native_recipe;
 pub mod resources;
 mod runtime;
 use std::path::{Path, PathBuf};
@@ -80,23 +78,32 @@ pub struct CosyBackend {
     root: PathBuf,
 }
 impl CosyBackend {
-    pub async fn load_on(root: PathBuf, device: Device) -> Result<Self, BackendError> {
+    pub(crate) async fn load_cached(
+        root: PathBuf,
+        paths: std::collections::BTreeMap<String, PathBuf>,
+        device: Device,
+    ) -> Result<Self, BackendError> {
+        let files = runtime::Files::from_resolved(paths)
+            .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        Self::load_files(root, files, device).await
+    }
+    async fn load_files(
+        root: PathBuf,
+        files: runtime::Files,
+        device: Device,
+    ) -> Result<Self, BackendError> {
         if !available_devices().contains(&device) {
             return Err(BackendError::Initialize(format!(
                 "CosyVoice3 device {device:?} is unavailable"
             )));
         }
-        native_recipe()
-            .verify_existing(directory(&root), crate::PreparationControl::default())
-            .await
-            .map_err(|error| BackendError::Initialize(error.to_string()))?;
         let caps = capabilities(&root).map_err(|e| BackendError::Initialize(e.to_string()))?;
         let voice_root = root.clone();
         let (requests, jobs) = mpsc::channel(1);
         let (ready, loaded) = oneshot::channel();
         let thread = std::thread::Builder::new()
             .name("cosyvoice3-inference".into())
-            .spawn(move || runtime::run(root, device, jobs, ready))
+            .spawn(move || runtime::run(root, files, device, jobs, ready))
             .map_err(|e| BackendError::Initialize(e.to_string()))?;
         let backend = Self {
             requests: Some(requests),
@@ -320,16 +327,5 @@ mod tests {
         );
         assert_eq!(std::fs::read_dir(root.path())?.count(), 0);
         Ok(())
-    }
-    #[tokio::test]
-    async fn missing_conversion_fails_without_downloading_or_writing() {
-        let root = tempfile::tempdir().unwrap();
-        let (tx, _rx) = mpsc::channel(2);
-        let error = resources::prepare(root.path(), tx).await.unwrap_err();
-        assert!(matches!(
-            error.downcast_ref::<crate::PreparationError>(),
-            Some(crate::PreparationError::Integrity(_))
-        ));
-        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
 }

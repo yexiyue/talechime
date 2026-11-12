@@ -45,8 +45,7 @@ pub struct Weights {
     pub feats: FeatTensors,
 }
 
-fn mmap(dir: &std::path::Path, name: &str, device: &Device) -> Result<VarBuilder<'static>> {
-    let path = dir.join(name);
+fn mmap(path: &std::path::Path, device: &Device) -> Result<VarBuilder<'static>> {
     if !path.is_file() {
         bail!(
             "missing converted IndexTTS weight {} (provide offline converted weights from the pinned upstream checkpoint; see docs/indextts.md)",
@@ -58,6 +57,17 @@ fn mmap(dir: &std::path::Path, name: &str, device: &Device) -> Result<VarBuilder
     unsafe { VarBuilder::from_mmaped_safetensors(&[path], DType::F32, device) }
 }
 
+/// Pinned weight and configuration files resolved independently by the caller.
+pub struct WeightFiles<'a> {
+    pub gpt: &'a std::path::Path,
+    pub codec: &'a std::path::Path,
+    pub s2mel: &'a std::path::Path,
+    pub campplus: &'a std::path::Path,
+    pub bigvgan: &'a std::path::Path,
+    pub bigvgan_config: &'a std::path::Path,
+    pub feats: &'a std::path::Path,
+}
+
 fn take_feat(all: &mut std::collections::HashMap<String, Tensor>, name: &str) -> Result<Tensor> {
     all.remove(name).ok_or_else(|| {
         candle_core::Error::Msg(format!("feats.safetensors is missing tensor {name}"))
@@ -66,13 +76,27 @@ fn take_feat(all: &mut std::collections::HashMap<String, Tensor>, name: &str) ->
 
 impl Weights {
     pub fn load_dir(dir: &std::path::Path, device: &Device) -> Result<Self> {
-        let bigvgan_config_path = dir.join("bigvgan.config.json");
+        Self::load_files(
+            &WeightFiles {
+                gpt: &dir.join("gpt.safetensors"),
+                codec: &dir.join("codec.safetensors"),
+                s2mel: &dir.join("s2mel.safetensors"),
+                campplus: &dir.join("campplus.safetensors"),
+                bigvgan: &dir.join("bigvgan.safetensors"),
+                bigvgan_config: &dir.join("bigvgan.config.json"),
+                feats: &dir.join("feats.safetensors"),
+            },
+            device,
+        )
+    }
+    pub fn load_files(files: &WeightFiles<'_>, device: &Device) -> Result<Self> {
+        let bigvgan_config_path = files.bigvgan_config;
         if !bigvgan_config_path.is_file() {
             bail!("missing {}", bigvgan_config_path.display());
         }
-        let bigvgan_config_json = std::fs::read_to_string(&bigvgan_config_path)
+        let bigvgan_config_json = std::fs::read_to_string(bigvgan_config_path)
             .map_err(|e| candle_core::Error::Msg(format!("read bigvgan config: {e}")))?;
-        let mut all_feats = candle_core::safetensors::load(dir.join("feats.safetensors"), device)?;
+        let mut all_feats = candle_core::safetensors::load(files.feats, device)?;
         let feats = FeatTensors {
             spk_matrix: take_feat(&mut all_feats, "spk_matrix")?,
             emo_matrix: take_feat(&mut all_feats, "emo_matrix")?,
@@ -80,11 +104,11 @@ impl Weights {
             w2v_std: take_feat(&mut all_feats, "w2v_std")?,
         };
         Ok(Self {
-            gpt: mmap(dir, "gpt.safetensors", device)?,
-            codec: mmap(dir, "codec.safetensors", device)?,
-            s2mel: mmap(dir, "s2mel.safetensors", device)?,
-            campplus: mmap(dir, "campplus.safetensors", device)?,
-            bigvgan: mmap(dir, "bigvgan.safetensors", device)?,
+            gpt: mmap(files.gpt, device)?,
+            codec: mmap(files.codec, device)?,
+            s2mel: mmap(files.s2mel, device)?,
+            campplus: mmap(files.campplus, device)?,
+            bigvgan: mmap(files.bigvgan, device)?,
             bigvgan_config_json,
             feats,
         })

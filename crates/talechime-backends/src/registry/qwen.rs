@@ -19,6 +19,9 @@ pub(super) const REGISTRATION: Registration = Registration {
 };
 struct Adapter(Model);
 impl ModelAdapter for Adapter {
+    fn manifests(&self) -> Vec<&'static str> {
+        vec![self.0.manifest()]
+    }
     fn id(&self) -> &'static str {
         self.0.id()
     }
@@ -65,34 +68,40 @@ impl ModelAdapter for Adapter {
     fn supports_recovery(&self) -> bool {
         true
     }
-    fn resource_status(&self, root: &Path) -> crate::resource_state::ResourceStatus {
-        crate::resource_state::status_of_manifests(&[(self.0.manifest(), &self.0.directory(root))])
+    fn resource_status<'a>(
+        &'a self,
+        _root: &'a Path,
+        downloads: &'a crate::downloads::Downloads,
+    ) -> Inventory<'a> {
+        Box::pin(crate::resources::cached_manifest_status(
+            self.0.manifest(),
+            downloads.clone(),
+        ))
     }
     fn prepare<'a>(
         &'a self,
-        root: &'a Path,
+        _root: &'a Path,
         downloads: &'a crate::downloads::Downloads,
         progress: mpsc::Sender<Event>,
     ) -> Preparing<'a> {
-        Box::pin(async move {
-            qwen::resources::prepare_model(&self.0.directory(root), self.0, downloads, progress)
-                .await
-        })
+        Box::pin(async move { qwen::resources::prepare_model(self.0, downloads, progress).await })
     }
     fn load<'a>(
         &'a self,
         root: &'a Path,
+        downloads: &'a crate::downloads::Downloads,
         progress: mpsc::Sender<Event>,
         device: Device,
         recovery: bool,
     ) -> Loading<'a> {
         Box::pin(async move {
             let directory = self.0.directory(root);
-            let backend = if recovery && device != Device::Cpu {
-                qwen::QwenBackend::load_with_recovery(directory, device, Some(progress)).await?
-            } else {
-                qwen::QwenBackend::load_on(directory, device).await?
-            };
+            let paths =
+                crate::resources::resolve_manifest(self.0.manifest(), downloads.clone()).await?;
+            let files = Model::resolved_files(paths)?;
+            let recovery = (recovery && device != Device::Cpu).then_some(progress);
+            let backend =
+                qwen::QwenBackend::load_source(directory, self.0, files, device, recovery).await?;
             Ok(Rc::new(backend) as Rc<dyn Backend>)
         })
     }

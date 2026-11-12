@@ -7,7 +7,7 @@ use crate::{
     transformer::Transformer,
 };
 use candle_core::{DType, Device, Module, Tensor};
-use candle_nn::{Embedding, Linear, embedding, linear_no_bias};
+use candle_nn::{Embedding, Linear, VarBuilder, embedding, linear_no_bias};
 use rand::{SeedableRng, rngs::StdRng};
 use serde::Deserialize;
 use std::path::Path;
@@ -34,12 +34,37 @@ pub struct RealtimeModel {
 }
 impl RealtimeModel {
     pub fn load(directory: &Path, device: &Device, dtype: DType) -> anyhow::Result<Self> {
-        let cfg: Config = serde_json::from_slice(&std::fs::read(directory.join("config.json"))?)?;
+        Self::load_with_weights(
+            &directory.join("config.json"),
+            &directory.join("tokenizer.json"),
+            device,
+            || crate::weights(directory, dtype, device),
+        )
+    }
+    /// Load the model from separately resolved resources.
+    pub fn load_files(
+        config: &Path,
+        tokenizer: &Path,
+        shards: &[std::path::PathBuf],
+        device: &Device,
+        dtype: DType,
+    ) -> anyhow::Result<Self> {
+        Self::load_with_weights(config, tokenizer, device, || {
+            crate::weights_files(shards, dtype, device)
+        })
+    }
+    fn load_with_weights(
+        config: &Path,
+        tokenizer_path: &Path,
+        device: &Device,
+        weights: impl FnOnce() -> anyhow::Result<VarBuilder<'static>>,
+    ) -> anyhow::Result<Self> {
+        let cfg: Config = serde_json::from_slice(&std::fs::read(config)?)?;
         anyhow::ensure!(
             cfg.rvq == 16 && cfg.audio_vocab_size == 1027 && cfg.audio_pad_token == 1024,
             "unsupported Realtime configuration"
         );
-        let vb = crate::weights(directory, dtype, device)?;
+        let vb = weights()?;
         let d = cfg.language_config.hidden_size;
         let mut embeddings = vec![embedding(
             cfg.language_config.vocab_size,
@@ -73,8 +98,8 @@ impl RealtimeModel {
             .collect::<candle_core::Result<_>>()?;
         let backbone = Transformer::load(&cfg.language_config, vb.pp("language_model"), true)?;
         let depth = Transformer::load(&cfg.local_config, vb.pp("local_transformer.model"), true)?;
-        let tokenizer = Tokenizer::from_file(directory.join("tokenizer.json"))
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let tokenizer =
+            Tokenizer::from_file(tokenizer_path).map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(Self {
             cfg,
             tokenizer,

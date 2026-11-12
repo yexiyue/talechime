@@ -7,6 +7,43 @@ pub enum Model {
     Q8,
     OriginalBf16,
 }
+
+pub(crate) enum ModelFiles {
+    Q8 {
+        base: PathBuf,
+        acoustic: PathBuf,
+    },
+    Original {
+        config: PathBuf,
+        tokenizer: PathBuf,
+        model: PathBuf,
+        vae: PathBuf,
+    },
+}
+impl ModelFiles {
+    pub(crate) fn from_resolved(
+        model: Model,
+        mut paths: std::collections::BTreeMap<String, PathBuf>,
+    ) -> anyhow::Result<Self> {
+        let mut take = |name: &str| {
+            paths
+                .remove(name)
+                .ok_or_else(|| anyhow::anyhow!("missing VoxCPM resource {name}"))
+        };
+        Ok(match model {
+            Model::Q8 => Self::Q8 {
+                base: take("VoxCPM2-BaseLM-Q8_0.gguf")?,
+                acoustic: take("VoxCPM2-Acoustic-F16.gguf")?,
+            },
+            Model::OriginalBf16 => Self::Original {
+                config: take("config.json")?,
+                tokenizer: take("tokenizer.json")?,
+                model: take("model.safetensors")?,
+                vae: take("audiovae.pth")?,
+            },
+        })
+    }
+}
 impl Model {
     pub fn parse(id: Option<&str>) -> anyhow::Result<Self> {
         match id {
@@ -65,20 +102,39 @@ impl Model {
             Self::Q8 => DType::F16,
         }
     }
-    pub(super) fn load(
+    pub(super) fn load_files(
         self,
-        directory: &Path,
+        files: &ModelFiles,
         device: &Device,
         cancel: &impl Fn() -> bool,
     ) -> candle_core::Result<talechime_voxcpm::Model> {
-        match self {
-            Self::Q8 => talechime_voxcpm::Model::load_with_cancel(directory, device, cancel),
-            Self::OriginalBf16 => {
+        match (self, files) {
+            (Self::Q8, ModelFiles::Q8 { base, acoustic }) => {
+                talechime_voxcpm::Model::load_files_with_cancel(base, acoustic, device, cancel)
+            }
+            (
+                Self::OriginalBf16,
+                ModelFiles::Original {
+                    config,
+                    tokenizer,
+                    model,
+                    vae,
+                },
+            ) => {
                 if !device.is_cuda() {
                     candle_core::bail!("experimental VoxCPM2 BF16 requires CUDA");
                 }
-                talechime_voxcpm::Model::load_original(directory, device, DType::BF16, cancel)
+                talechime_voxcpm::Model::load_original_files(
+                    config,
+                    tokenizer,
+                    model,
+                    vae,
+                    device,
+                    DType::BF16,
+                    cancel,
+                )
             }
+            _ => candle_core::bail!("VoxCPM model and resource files do not match"),
         }
     }
 }
@@ -101,7 +157,16 @@ mod tests {
         );
         assert!(
             Model::OriginalBf16
-                .load(Path::new("missing"), &Device::Cpu, &|| false)
+                .load_files(
+                    &ModelFiles::Original {
+                        config: "missing".into(),
+                        tokenizer: "missing".into(),
+                        model: "missing".into(),
+                        vae: "missing".into()
+                    },
+                    &Device::Cpu,
+                    &|| false
+                )
                 .err()
                 .unwrap()
                 .to_string()

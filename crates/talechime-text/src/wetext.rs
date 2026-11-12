@@ -32,11 +32,17 @@ pub struct WeText {
     chinese: (FstNormalizer, FstNormalizer),
     english: (FstNormalizer, FstNormalizer),
 }
+
 impl WeText {
     /// Reject missing or modified resources before loading the graphs.
     pub fn load(directory: &Path) -> Result<Self> {
-        for &(name, _, expected) in FILES {
-            let mut file = File::open(directory.join(name))?;
+        let paths: [std::path::PathBuf; 4] = std::array::from_fn(|i| directory.join(FILES[i].0));
+        Self::load_files([&paths[0], &paths[1], &paths[2], &paths[3]])
+    }
+    /// Load the four fixed graphs from independently resolved files.
+    pub fn load_files(paths: [&Path; 4]) -> Result<Self> {
+        for ((name, _, expected), path) in FILES.iter().zip(paths) {
+            let mut file = File::open(path)?;
             let mut hash = Sha256::new();
             let mut buffer = [0; 65536];
             loop {
@@ -46,7 +52,7 @@ impl WeText {
                 }
                 hash.update(&buffer[..size]);
             }
-            if format!("{:x}", hash.finalize()) != expected {
+            if format!("{:x}", hash.finalize()) != *expected {
                 return Err(Error::Invalid(format!(
                     "WeText resource identity mismatch: {name}"
                 )));
@@ -54,12 +60,12 @@ impl WeText {
         }
         Ok(Self {
             chinese: (
-                FstNormalizer::load(&directory.join(FILES[0].0))?,
-                FstNormalizer::load(&directory.join(FILES[1].0))?,
+                FstNormalizer::load(paths[0])?,
+                FstNormalizer::load(paths[1])?,
             ),
             english: (
-                FstNormalizer::load(&directory.join(FILES[2].0))?,
-                FstNormalizer::load(&directory.join(FILES[3].0))?,
+                FstNormalizer::load(paths[2])?,
+                FstNormalizer::load(paths[3])?,
             ),
         })
     }
@@ -97,5 +103,37 @@ impl WeText {
         verbalizer
             .apply_with_cancel(&reorder(&tagged, chinese)?, cancelled)
             .map(|text| text.trim().to_owned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn independent_graphs_reject_changed_content_before_parsing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("graph.fst");
+        std::fs::write(&path, b"incorrect graph").unwrap();
+        let error = match WeText::load_files([&path, &path, &path, &path]) {
+            Ok(_) => panic!("incorrect graph was accepted"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("identity mismatch"));
+    }
+
+    #[test]
+    #[ignore = "requires the separately staged, fixed WeText graphs"]
+    fn independently_resolved_real_graphs_normalize_text() {
+        let root = std::path::PathBuf::from(
+            std::env::var_os("TALECHIME_WETEXT_FILES").expect("set TALECHIME_WETEXT_FILES"),
+        );
+        let paths: [std::path::PathBuf; 4] = std::array::from_fn(|i| root.join(FILES[i].0));
+        let text = WeText::load_files([&paths[0], &paths[1], &paths[2], &paths[3]]).unwrap();
+        for input in ["今天有123本书。", "I have 123 books."] {
+            let normalized = text.normalize(input).unwrap();
+            assert!(!normalized.is_empty());
+            assert_ne!(normalized, input);
+        }
     }
 }

@@ -1,6 +1,6 @@
 //! Explicit local real-model verification; ordinary tests never run or download this.
 use serde::Deserialize;
-use std::{path::Path, rc::Rc, sync::Arc, time::Instant};
+use std::{path::PathBuf, rc::Rc, sync::Arc, time::Instant};
 use talechime_backends::asr;
 use talechime_core::{SourceSnapshot, backend::Pcm, verification::*};
 use talechime_protocol::{SourceId, TextRange};
@@ -14,15 +14,21 @@ struct Case {
 async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     anyhow::ensure!(
-        args.len() == 5,
-        "usage: asr_readback QWEN_DIR SENSEVOICE_DIR CORPUS_JSON OUTPUT_JSON"
+        args.len() == 4,
+        "usage: asr_readback HUB_CACHE CORPUS_JSON OUTPUT_JSON"
     );
     let started = Instant::now();
-    let primary = asr::load_qwen(Path::new(&args[1])).await?;
-    let reviewer = asr::load_sensevoice(Path::new(&args[2]), 4).await?;
+    let downloads = talechime_backends::downloads::Downloads::new(
+        &talechime_backends::downloads::DownloadConfig {
+            cache_dir: PathBuf::from(&args[1]),
+            ..Default::default()
+        },
+    )?;
+    let primary = asr::load_qwen(&downloads).await?;
+    let reviewer = asr::load_sensevoice(&downloads, 4).await?;
     let verifier = Verifier::new(primary.clone(), reviewer.clone())?;
     let load_s = started.elapsed().as_secs_f64();
-    let cases: Vec<Case> = serde_json::from_slice(&std::fs::read(&args[3])?)?;
+    let cases: Vec<Case> = serde_json::from_slice(&std::fs::read(&args[2])?)?;
     let mut rows = Vec::new();
     let mut cancellation_s = None;
     for case in cases {
@@ -125,7 +131,7 @@ async fn main() -> anyhow::Result<()> {
         rows.push(serde_json::json!({"id":case.id,"qwen":qwen_row,"qwen_error":qwen.err().map(|e|e.to_string()),
             "sensevoice":sense_row,"sensevoice_error":sense.err().map(|e|e.to_string()),"qwen_s":qwen_s,"sensevoice_s":sense_s,"report":report}));
         std::fs::write(
-            &args[4],
+            &args[3],
             serde_json::to_vec_pretty(
                 &serde_json::json!({"load_s":load_s,"cancellation_settled_s":cancellation_s,"rows":rows}),
             )?,

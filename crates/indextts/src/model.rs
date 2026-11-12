@@ -175,11 +175,23 @@ pub struct Model {
     emo_reference: Option<Tensor>,
     /// Derived only from `emo_reference`; invalidated on replacement/clear.
     emo_reference_emovec: Option<Tensor>,
-    /// Converted checkpoint directory (for the lazy CPU codec load of
-    /// [`Options::decode_on_cpu`]).
-    source_dir: std::path::PathBuf,
+    codec_path: std::path::PathBuf,
+    japanese_path: std::path::PathBuf,
+    emotion_paths: [std::path::PathBuf; 6],
     /// Lazily loaded CPU copy of the codec (see [`Options::decode_on_cpu`]).
     codec_cpu: Option<SemanticCodec>,
+}
+
+/// Immutable model components, each resolved independently by the caller.
+pub struct ModelFiles<'a> {
+    pub config: &'a Path,
+    pub tokenizer: &'a Path,
+    pub weights: crate::weights::WeightFiles<'a>,
+    pub w2v_config: &'a Path,
+    pub w2v_weights: &'a Path,
+    pub text: front::TextResources,
+    pub japanese: &'a Path,
+    pub emotion: [std::path::PathBuf; 6],
 }
 
 impl Model {
@@ -187,14 +199,72 @@ impl Model {
     /// [`crate::weights`]). `device` is CPU or a CUDA/Metal device selected
     /// by the caller.
     pub fn load(dir: &Path, device: &Device) -> Result<Self> {
-        let config = Config::load(&dir.join("config.json"))?;
+        let linux = cfg!(target_os = "linux");
+        let normalizer = if linux {
+            [
+                "zh/tagger.fst",
+                "zh/verbalizer.fst",
+                "en/tagger.fst",
+                "en/verbalizer.fst",
+            ]
+            .map(|name| dir.join("tn/linux").join(name))
+        } else {
+            [
+                "zh/tn/tagger.fst",
+                "zh/tn/verbalizer.fst",
+                "en/tn/tagger.fst",
+                "en/tn/verbalizer.fst",
+            ]
+            .map(|name| dir.join("tn/wetext").join(name))
+        };
+        let emotion = [
+            "chat_template.jinja",
+            "config.json",
+            "generation_config.json",
+            "model.safetensors",
+            "tokenizer.json",
+            "tokenizer_config.json",
+        ]
+        .map(|name| dir.join("qwen0.6bemo4-merge").join(name));
+        Self::load_files(
+            ModelFiles {
+                config: &dir.join("config.json"),
+                tokenizer: &dir.join("multilingual_zh_ja_yue_char_del.tiktoken"),
+                weights: crate::weights::WeightFiles {
+                    gpt: &dir.join("gpt.safetensors"),
+                    codec: &dir.join("codec.safetensors"),
+                    s2mel: &dir.join("s2mel.safetensors"),
+                    campplus: &dir.join("campplus.safetensors"),
+                    bigvgan: &dir.join("bigvgan.safetensors"),
+                    bigvgan_config: &dir.join("bigvgan.config.json"),
+                    feats: &dir.join("feats.safetensors"),
+                },
+                w2v_config: &dir.join("w2v-bert-2.0/config.json"),
+                w2v_weights: &dir.join("w2v-bert-2.0/model.safetensors"),
+                text: front::TextResources {
+                    normalizer,
+                    spanish: [
+                        dir.join("tn/es/tagger.fst"),
+                        dir.join("tn/es/verbalizer.fst"),
+                    ],
+                    linux,
+                },
+                japanese: &dir.join("japanese.dic"),
+                emotion,
+            },
+            device,
+        )
+    }
+
+    /// Load model components directly from independently resolved resource paths.
+    pub fn load_files(files: ModelFiles<'_>, device: &Device) -> Result<Self> {
+        let config = Config::load(files.config)?;
         config.validate()?;
-        let weights = Weights::load_dir(dir, device)?;
+        let weights = Weights::load_files(&files.weights, device)?;
 
-        let tokenizer_path = dir.join("multilingual_zh_ja_yue_char_del.tiktoken");
-        let tokenizer = Tokenizer::from_tiktoken_file(&tokenizer_path)?;
+        let tokenizer = Tokenizer::from_tiktoken_file(files.tokenizer)?;
 
-        let w2v_bert = Wav2Vec2Bert::load(&dir.join("w2v-bert-2.0"), device)?;
+        let w2v_bert = Wav2Vec2Bert::load_files(files.w2v_config, files.w2v_weights, device)?;
         let codec = SemanticCodec::load(&weights.codec, &config.semantic_codec)?;
         let s2mel = S2Mel::load(&weights.s2mel, &config.s2mel)?;
         let campplus = CampPlus::load(&weights.campplus)?;
@@ -208,7 +278,7 @@ impl Model {
             config,
             device: device.clone(),
             tokenizer,
-            frontend: TextFrontend::with_resources(&dir.join("tn/wetext")),
+            frontend: TextFrontend::with_files(files.text),
             japanese_frontend: None,
             text_emotion: None,
             w2v_bert,
@@ -225,7 +295,9 @@ impl Model {
             reference_emovec: None,
             emo_reference: None,
             emo_reference_emovec: None,
-            source_dir: dir.to_path_buf(),
+            codec_path: files.weights.codec.to_path_buf(),
+            japanese_path: files.japanese.to_path_buf(),
+            emotion_paths: files.emotion,
             codec_cpu: None,
         })
     }
@@ -252,7 +324,7 @@ impl Model {
     /// per segment.
     fn decode_codes_on_cpu(&mut self, codes: &Tensor) -> Result<Tensor> {
         if self.codec_cpu.is_none() {
-            let path = self.source_dir.join("codec.safetensors");
+            let path = &self.codec_path;
             if !path.is_file() {
                 candle_core::bail!(
                     "missing converted codec weights {} (provide offline converted weights from the pinned upstream checkpoint; see docs/indextts.md)",
@@ -377,8 +449,8 @@ impl Model {
         let mut rng = StdRng::seed_from_u64(opts.seed.unwrap_or_else(random_seed));
         let emotion_vector = if let Some(emotion_text) = &opts.emotion_text {
             if self.text_emotion.is_none() {
-                self.text_emotion = Some(crate::emotion::QwenEmotion::load(
-                    &self.source_dir,
+                self.text_emotion = Some(crate::emotion::QwenEmotion::load_files(
+                    &self.emotion_paths,
                     &device,
                 )?);
             }
@@ -422,7 +494,7 @@ impl Model {
         let lang_prefix = format!("<|{lang_lower}|> ");
         if lang_lower == "ja" && self.japanese_frontend.is_none() {
             self.japanese_frontend = Some(front::japanese::JapaneseFrontend::load(
-                &self.source_dir.join("japanese.dic"),
+                &self.japanese_path,
             )?);
         }
         let text = self.frontend.prepare_with_cancel(
@@ -769,6 +841,85 @@ fn push_chunk(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires fixed IndexTTS weights and separately staged frontend files"]
+    fn independently_resolved_model_files_load_on_cpu() {
+        let dir = std::path::PathBuf::from(
+            std::env::var_os("INDEXTTS_CONVERTED_DIR").expect("set fixed weights directory"),
+        );
+        let frontend = std::path::PathBuf::from(
+            std::env::var_os("TALECHIME_INDEX_FRONTEND_FILES")
+                .expect("set IndexTTS frontend files"),
+        );
+        let wetext = std::path::PathBuf::from(
+            std::env::var_os("TALECHIME_WETEXT_FILES").expect("set WeText files"),
+        );
+        let linux = cfg!(target_os = "linux");
+        let normalizer = if linux {
+            [
+                "zh/tagger.fst",
+                "zh/verbalizer.fst",
+                "en/tagger.fst",
+                "en/verbalizer.fst",
+            ]
+            .map(|name| frontend.join("tn/linux").join(name))
+        } else {
+            [
+                "zh/tn/tagger.fst",
+                "zh/tn/verbalizer.fst",
+                "en/tn/tagger.fst",
+                "en/tn/verbalizer.fst",
+            ]
+            .map(|name| wetext.join(name))
+        };
+        let emotion = [
+            "chat_template.jinja",
+            "config.json",
+            "generation_config.json",
+            "model.safetensors",
+            "tokenizer.json",
+            "tokenizer_config.json",
+        ]
+        .map(|name| dir.join("qwen0.6bemo4-merge").join(name));
+        let model = Model::load_files(
+            ModelFiles {
+                config: &dir.join("config.json"),
+                tokenizer: &dir.join("multilingual_zh_ja_yue_char_del.tiktoken"),
+                weights: crate::weights::WeightFiles {
+                    gpt: &dir.join("gpt.safetensors"),
+                    codec: &dir.join("codec.safetensors"),
+                    s2mel: &dir.join("s2mel.safetensors"),
+                    campplus: &dir.join("campplus.safetensors"),
+                    bigvgan: &dir.join("bigvgan.safetensors"),
+                    bigvgan_config: &dir.join("bigvgan.config.json"),
+                    feats: &dir.join("feats.safetensors"),
+                },
+                w2v_config: &dir.join("w2v-bert-2.0/config.json"),
+                w2v_weights: &dir.join("w2v-bert-2.0/model.safetensors"),
+                text: front::TextResources {
+                    normalizer,
+                    spanish: [
+                        frontend.join("tn/es/tagger.fst"),
+                        frontend.join("tn/es/verbalizer.fst"),
+                    ],
+                    linux,
+                },
+                japanese: &frontend.join("japanese.dic"),
+                emotion,
+            },
+            &Device::Cpu,
+        )
+        .unwrap();
+        assert!(
+            !model
+                .frontend
+                .normalize("今天有123本书。")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(front::japanese::JapaneseFrontend::load(&model.japanese_path).is_ok());
+    }
 
     #[test]
     #[ignore = "requires converted weights and INDEXTTS_ORACLE_JSON"]

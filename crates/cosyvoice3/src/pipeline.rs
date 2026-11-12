@@ -52,6 +52,15 @@ pub struct CosyVoice3 {
     n_timesteps: usize,
 }
 
+/// Independently resolved immutable CosyVoice model components.
+pub struct ModelFiles<'a> {
+    pub config: &'a std::path::Path,
+    pub tokenizer: &'a std::path::Path,
+    pub llm: &'a std::path::Path,
+    pub flow: &'a std::path::Path,
+    pub hift: &'a std::path::Path,
+}
+
 impl CosyVoice3 {
     /// Load a converted model directory (`llm.safetensors`,
     /// `flow.safetensors`, `hift.safetensors`, `config.json`,
@@ -62,20 +71,35 @@ impl CosyVoice3 {
         dtype: DType,
         seed: u64,
     ) -> std::io::Result<Self> {
-        let config = CosyVoice3Config::from_model_dir(dir)?;
-        let tokenizer = load_tokenizer(&dir.join("tokenizer"))?;
-        let llm_vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(&[dir.join("llm.safetensors")], dtype, device)
-        }
-        .map_err(io_msg)?;
-        let flow_vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(&[dir.join("flow.safetensors")], dtype, device)
-        }
-        .map_err(io_msg)?;
-        let hift_vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(&[dir.join("hift.safetensors")], dtype, device)
-        }
-        .map_err(io_msg)?;
+        Self::load_files(
+            &ModelFiles {
+                config: &dir.join("config.json"),
+                tokenizer: &dir.join("tokenizer/tokenizer.json"),
+                llm: &dir.join("llm.safetensors"),
+                flow: &dir.join("flow.safetensors"),
+                hift: &dir.join("hift.safetensors"),
+            },
+            device,
+            dtype,
+            seed,
+        )
+    }
+
+    /// Load fixed model components from independent resolved files.
+    pub fn load_files(
+        files: &ModelFiles<'_>,
+        device: &candle_core::Device,
+        dtype: DType,
+        seed: u64,
+    ) -> std::io::Result<Self> {
+        let config: CosyVoice3Config = serde_json::from_slice(&std::fs::read(files.config)?)?;
+        let tokenizer = load_tokenizer(files.tokenizer)?;
+        let llm_vb = unsafe { VarBuilder::from_mmaped_safetensors(&[files.llm], dtype, device) }
+            .map_err(io_msg)?;
+        let flow_vb = unsafe { VarBuilder::from_mmaped_safetensors(&[files.flow], dtype, device) }
+            .map_err(io_msg)?;
+        let hift_vb = unsafe { VarBuilder::from_mmaped_safetensors(&[files.hift], dtype, device) }
+            .map_err(io_msg)?;
 
         let llm = CosyVoice3Lm::new(&config.llm, llm_vb).map_err(io_msg)?;
         let dit = crate::flow::dit::DiT::new(config.flow.dit.clone(), flow_vb.pp("dit"))
@@ -357,10 +381,9 @@ fn llm_conditioning<'a>(
     })
 }
 
-fn load_tokenizer(dir: &std::path::Path) -> std::io::Result<tokenizers::Tokenizer> {
-    let tokenizer = tokenizers::Tokenizer::from_file(dir.join("tokenizer.json")).map_err(|e| {
-        std::io::Error::other(format!("load tokenizer.json (run conversion first): {e}"))
-    })?;
+fn load_tokenizer(path: &std::path::Path) -> std::io::Result<tokenizers::Tokenizer> {
+    let tokenizer = tokenizers::Tokenizer::from_file(path)
+        .map_err(|e| std::io::Error::other(format!("load tokenizer.json: {e}")))?;
     if tokenizer.token_to_id("<|endofprompt|>") != Some(151646) {
         return Err(std::io::Error::other(
             "tokenizer must encode <|endofprompt|> as 151646",

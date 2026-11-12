@@ -1,7 +1,7 @@
 //! Concrete model adapters. The core and reader never import inference types.
 /// Shared text/conditioning semantics. Bump when a change can alter saved speech
 /// without changing the selected model's immutable resource revision.
-pub const TEXT_SEMANTICS_REVISION: &str = "official-backend-text-v2";
+pub const TEXT_SEMANTICS_REVISION: &str = "official-backend-text-v3";
 #[cfg(feature = "asr")]
 pub mod asr;
 #[cfg(any(
@@ -52,6 +52,8 @@ pub mod reference;
     feature = "asr",
     feature = "performance-tools",
     feature = "kokoro",
+    feature = "cosyvoice3",
+    feature = "indextts",
 ))]
 mod resources;
 #[cfg(feature = "voxcpm")]
@@ -61,11 +63,7 @@ pub mod voxcpm;
 pub mod cosyvoice3;
 
 mod registry;
-pub use registry::{PrepareOptions, ReferenceVoice, Registry, ResolvedModel, ResourcePreparation};
+pub use registry::{PrepareOptions, ReferenceVoice, Registry, ResolvedModel, ResourceInventory};
 mod resource_state;
+mod resource_worker;
 pub use resource_state::ResourceStatus;
-
-mod native_preparation;
-pub use native_preparation::{
-    PreparationControl, PreparationError, PreparationPhase, PreparationPlan, PreparationProgress,
-};

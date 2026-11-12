@@ -234,6 +234,7 @@ impl Engine {
     ) -> Result<Self, EngineError> {
         if registry
             .resource_status(&options.backend, options.model.as_deref())
+            .await
             .map_err(EngineError::Prepare)?
             != ResourceStatus::Ready
         {
@@ -289,11 +290,7 @@ impl Engine {
     ) -> Result<Self, EngineError> {
         let voices = options
             .voices
-            .map(Ok)
-            .unwrap_or_else(|| {
-                talechime_core::paths::AppPaths::user_default().map(|paths| paths.voices())
-            })
-            .map_err(|error| EngineError::Voice(format!("{error}")))?;
+            .unwrap_or_else(|| talechime_core::paths::AppPaths::voice_library_at(registry.root()));
         let studio = crate::VoiceStudio::at_registry(registry, voices)
             .map_err(|error| EngineError::Voice(error.to_string()))?;
         let mut engine = Self::from_backend(backend);

@@ -177,13 +177,7 @@ async fn main() -> anyhow::Result<()> {
         );
     }
     if let Some(Commands::Voices { command }) = args.command {
-        // Asset operations depend on the config location, not synthesis settings.
-        let voices = config
-            .path()
-            .parent()
-            .map(talechime_core::paths::AppPaths::voice_library_at)
-            .ok_or_else(|| anyhow::anyhow!("config path needs a parent directory"))?;
-        let studio = talechime::VoiceStudio::at(resources.root(), voices)?;
+        let studio = preparation::voice_studio(&resources)?;
         return talechime::run_local(voices::run(command, studio)).await;
     }
     let plan = match args.plan.as_deref() {
@@ -262,7 +256,7 @@ async fn main() -> anyhow::Result<()> {
             .or_else(|| {
                 (target != current.backend || model_changed).then(|| caps.default_voice.clone())
             });
-        let studio = preparation::voice_studio(&config, &resources)?;
+        let studio = preparation::voice_studio(&resources)?;
         preparation::include_library_voice(
             &mut caps,
             voice.as_deref().unwrap_or(&current.voice),

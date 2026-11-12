@@ -94,21 +94,32 @@ pub struct AsrInference {
 // The engine stays on its inference owner; no Send assertion for native tensors.
 
 impl AsrInference {
-    pub fn load(model_dir: &Path, device: Device) -> crate::Result<Self> {
-        if !device.is_cpu() {
-            return Err(AsrError::ModelLoad(anyhow::anyhow!(
-                "Talechime v1 ASR supports CPU only"
-            )));
-        }
+    /// Load the fixed single-file model using independently resolved resource paths.
+    pub fn load_files(
+        config: &Path,
+        tokenizer: &Path,
+        weights: &Path,
+        device: Device,
+    ) -> crate::Result<Self> {
+        ensure_cpu(&device)?;
+        let weights = candle_core::safetensors::load(weights, &device)
+            .context("load weights")
+            .map_err(AsrError::ModelLoad)?;
+        Self::load_with_weights(config, tokenizer, weights, device)
+    }
+
+    fn load_with_weights(
+        config_path: &Path,
+        tokenizer_path: &Path,
+        mut weights: HashMap<String, Tensor>,
+        device: Device,
+    ) -> crate::Result<Self> {
         info!("Loading config...");
-        let config = AsrConfig::from_file(&model_dir.join("config.json"))
+        let config = AsrConfig::from_file(config_path)
             .context("load config")
             .map_err(AsrError::ModelLoad)?;
 
         info!("Loading weights (this may take a moment)...");
-        let mut weights = load_weights(model_dir, &device)
-            .context("load weights")
-            .map_err(AsrError::ModelLoad)?;
         info!("Loaded {} weight tensors", weights.len());
 
         for (new, old) in [
@@ -132,7 +143,7 @@ impl AsrInference {
             .map_err(AsrError::ModelLoad)?;
 
         info!("Loading tokenizer...");
-        let tokenizer = tokenizers::Tokenizer::from_file(model_dir.join("tokenizer.json"))
+        let tokenizer = tokenizers::Tokenizer::from_file(tokenizer_path)
             .map_err(|e| anyhow::anyhow!("tokenizer load failed: {}", e))
             .map_err(AsrError::ModelLoad)?;
 
@@ -542,36 +553,13 @@ fn maybe_convert_weights_for_cpu(
     Ok(())
 }
 
-/// Load safetensors weights from a directory (single file or sharded).
-fn load_weights(model_dir: &Path, device: &Device) -> anyhow::Result<HashMap<String, Tensor>> {
-    // Check for sharded model
-    let index_path = model_dir.join("model.safetensors.index.json");
-    if index_path.exists() {
-        let index_content = std::fs::read_to_string(&index_path)?;
-        let index: serde_json::Value = serde_json::from_str(&index_content)?;
-        let weight_map = index["weight_map"]
-            .as_object()
-            .ok_or_else(|| anyhow::anyhow!("invalid index.json"))?;
-
-        let mut shard_files: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for v in weight_map.values() {
-            if let Some(s) = v.as_str() {
-                shard_files.insert(s.to_string());
-            }
-        }
-
-        let mut all_weights = HashMap::new();
-        for shard in shard_files {
-            let shard_path = model_dir.join(&shard);
-            let w = candle_core::safetensors::load(&shard_path, device)?;
-            all_weights.extend(w);
-        }
-        return Ok(all_weights);
+fn ensure_cpu(device: &Device) -> crate::Result<()> {
+    if !device.is_cpu() {
+        return Err(AsrError::ModelLoad(anyhow::anyhow!(
+            "Talechime v1 ASR supports CPU only"
+        )));
     }
-
-    // Single file
-    let model_path = model_dir.join("model.safetensors");
-    candle_core::safetensors::load(&model_path, device).map_err(Into::into)
+    Ok(())
 }
 
 #[cfg(test)]

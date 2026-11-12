@@ -65,13 +65,14 @@ talechime voices remove reader-copy
 
 ## 路径与机器接入
 
-默认配置 ~/.talechime/config.json；资源 ~/.talechime/resources/；
-音色 ~/.talechime/voices/；检查点 ~/.talechime/checkpoints/。
+默认配置 ~/.talechime/config.json；应用数据 ~/.talechime/data/；
+音色 ~/.talechime/data/voices-v2/；引擎缓存 ~/.talechime/cache/；检查点 ~/.talechime/checkpoints/。
+固定 Hub 文件默认存放在 ~/.cache/huggingface/hub/。
 --config、--model-dir、--checkpoint-dir 是全局路径参数，可放在子命令前后：
 
 ```sh
-talechime voices list --config ./speech-data/config.json --model-dir ./speech-data/resources
-talechime models --json --model-dir ./speech-data/resources
+talechime voices list --config ./speech-data/config.json --model-dir "$PWD/speech-data/resources"
+talechime models --json --model-dir "$PWD/speech-data/resources"
 ```
 
 音色库跟随 config 文件，位于其父目录的 voices/；只改 model-dir 不会搬动用户音色。

@@ -6,9 +6,11 @@ Talechime 只使用当前数据目录与格式，不再扫描、复制或转换�
 | --- | --- |
 | 配置 | `~/.talechime/config.json` |
 | 实际播放检查点 | `~/.talechime/checkpoints/` |
-| 模型、音色及校准资源 | `~/.talechime/resources/` |
+| 持久数据和音色库 | `~/.talechime/data/` |
+| 引擎校准缓存 | `~/.talechime/cache/` |
+| 固定 Hub 模型文件 | `~/.cache/huggingface/hub/` |
 
-`--config`、`--checkpoint-dir`、`--model-dir` 可指定显式路径。路径解析不创建文件，Rust 库不隐式扫描用户目录。当前格式的有效数据继续使用；不支持的版本、损坏数据或不匹配的模型/音色身份明确报错，不覆盖为默认值。
+`--config`、`--checkpoint-dir`、`--model-dir` 可指定显式路径；引擎数据根须为绝对路径。旧 `~/.talechime/resources/` 和旧 `~/.talechime/voices-v2/` 保留原位，不自动读取、迁移或删除。路径解析不创建文件，不支持的版本、损坏数据或不匹配的模型/音色身份明确报错，不覆盖为默认值。
 
 旧音色需要用当前程序重新导入。模型文件只有符合当前固定资源清单的内容才能使用；模型准备继续校验大小与摘要，不将路径存在视为有效。旧格式配置和检查点不提供转换器，也不自动恢复历史播放位置。
 

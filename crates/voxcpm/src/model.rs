@@ -94,6 +94,20 @@ impl Model {
         device: &Device,
         cancel: &impl Fn() -> bool,
     ) -> Result<Self> {
+        Self::load_files_with_cancel(
+            &directory.join("VoxCPM2-BaseLM-Q8_0.gguf"),
+            &directory.join("VoxCPM2-Acoustic-F16.gguf"),
+            device,
+            cancel,
+        )
+    }
+    /// Load the two independently resolved GGUF resources.
+    pub fn load_files_with_cancel(
+        base_file: &Path,
+        acoustic_file: &Path,
+        device: &Device,
+        cancel: &impl Fn() -> bool,
+    ) -> Result<Self> {
         if cancel() {
             candle_core::bail!("model loading cancelled");
         }
@@ -102,12 +116,7 @@ impl Model {
         } else {
             DType::F16
         };
-        let mut base = Weights::open(
-            &directory.join("VoxCPM2-BaseLM-Q8_0.gguf"),
-            device,
-            DType::F32,
-        )?
-        .with_cancel(cancel);
+        let mut base = Weights::open(base_file, device, DType::F32)?.with_cancel(cancel);
         base.expect_string("general.architecture", "minicpm4")?;
         for (name, expected) in [
             ("embedding_length", 2048),
@@ -133,9 +142,7 @@ impl Model {
             Some(rope.clone()),
             true,
         )?;
-        let mut acoustic =
-            Weights::open(&directory.join("VoxCPM2-Acoustic-F16.gguf"), device, dtype)?
-                .with_cancel(cancel);
+        let mut acoustic = Weights::open(acoustic_file, device, dtype)?.with_cancel(cancel);
         acoustic.expect_string("general.architecture", "voxcpm-acoustic")?;
         if acoustic.value("voxcpm.model_version")?.to_f32()? != 2.0 {
             candle_core::bail!("unsupported VoxCPM acoustic model version");
@@ -190,6 +197,33 @@ impl Model {
         dtype: DType,
         cancel: &impl Fn() -> bool,
     ) -> Result<Self> {
+        let vae = if directory.join("audiovae.safetensors").exists() {
+            directory.join("audiovae.safetensors")
+        } else {
+            directory.join("audiovae.pth")
+        };
+        Self::load_original_files(
+            &directory.join("config.json"),
+            &directory.join("tokenizer.json"),
+            &directory.join("model.safetensors"),
+            &vae,
+            device,
+            dtype,
+            cancel,
+        )
+    }
+    /// Load original weights from independently resolved resource files.
+    /// The model is safetensors; AudioVAE is PyTorch unless named `.safetensors`.
+    /// Extensionless Hub blobs use the original PyTorch AudioVAE format.
+    pub fn load_original_files(
+        config_file: &Path,
+        tokenizer_file: &Path,
+        model_file: &Path,
+        vae_file: &Path,
+        device: &Device,
+        dtype: DType,
+        cancel: &impl Fn() -> bool,
+    ) -> Result<Self> {
         if cancel() {
             candle_core::bail!("model loading cancelled");
         }
@@ -198,13 +232,18 @@ impl Model {
         {
             candle_core::bail!("original weights require CPU F32 or GPU F32/F16/BF16");
         }
-        let config: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(directory.join("config.json"))?)
-                .map_err(|e| candle_core::Error::Msg(e.to_string()))?;
+        let config: serde_json::Value = serde_json::from_slice(&std::fs::read(config_file)?)
+            .map_err(|e| candle_core::Error::Msg(e.to_string()))?;
         validate_original_config(&config)?;
-        let tokenizer = Tokenizer::from_file(&directory.join("tokenizer.json"))?;
-        let mut weights = Weights::native(&directory.join("model.safetensors"), device, dtype)?
-            .with_cancel(cancel);
+        let tokenizer = Tokenizer::from_file(tokenizer_file)?;
+        // Hub snapshot symlinks may resolve to extensionless content-addressed blobs.
+        let mut weights = Weights::native(
+            model_file,
+            crate::weights::NativeFormat::Safetensors,
+            device,
+            dtype,
+        )?
+        .with_cancel(cancel);
         let embedding = weights.tensor("token_embd.weight")?;
         let factors: Vec<f32> =
             serde_json::from_value(config["lm_config"]["rope_scaling"]["short_factor"].clone())
@@ -230,12 +269,13 @@ impl Model {
             true,
         )?;
         let acoustic = Acoustic::load(&mut weights, &rope)?;
-        let vae = if directory.join("audiovae.safetensors").exists() {
-            directory.join("audiovae.safetensors")
+        let vae_format = if vae_file.extension().is_some_and(|s| s == "safetensors") {
+            crate::weights::NativeFormat::Safetensors
         } else {
-            directory.join("audiovae.pth")
+            crate::weights::NativeFormat::Pytorch
         };
-        let mut vae = Weights::native(&vae, device, DType::F32)?.with_cancel(cancel);
+        let mut vae =
+            Weights::native(vae_file, vae_format, device, DType::F32)?.with_cancel(cancel);
         let codec = Codec::load(&mut vae)?;
         Ok(Self {
             tokenizer,

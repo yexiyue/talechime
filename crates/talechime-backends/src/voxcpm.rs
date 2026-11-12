@@ -89,12 +89,38 @@ pub struct VoxBackend {
     cache_identity: String,
 }
 impl VoxBackend {
-    pub async fn load_on(directory: PathBuf, device: Device) -> Result<Self, BackendError> {
-        Self::load_model_on(directory, models::Model::Q8, device).await
-    }
+    /// Load fixed resources from the default Hub cache and keep voices under the data root.
     pub async fn load_model_on(
+        root: PathBuf,
+        model: models::Model,
+        device: Device,
+    ) -> Result<Self, BackendError> {
+        let downloads =
+            crate::downloads::Downloads::new(&crate::downloads::DownloadConfig::default())
+                .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        crate::registry::validate_model_data_root(
+            &root,
+            &model.directory(&root),
+            downloads.cache_dir(),
+        )
+        .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        let reference_path = (|| -> anyhow::Result<_> {
+            voice_store_for(&model.directory(&root), model)?.path("custom:storage-probe")
+        })()
+        .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        crate::registry::validate_model_data_root(&root, &reference_path, downloads.cache_dir())
+            .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        let paths = crate::resources::resolve_manifest(model.manifest(), downloads)
+            .await
+            .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        let files = models::ModelFiles::from_resolved(model, paths)
+            .map_err(|error| BackendError::Initialize(error.to_string()))?;
+        Self::load_model_files_on(model.directory(&root), model, files, device).await
+    }
+    pub(super) async fn load_model_files_on(
         directory: PathBuf,
         model: models::Model,
+        files: models::ModelFiles,
         device: Device,
     ) -> Result<Self, BackendError> {
         if !model.compiled_devices().contains(&device) || !available_devices().contains(&device) {
@@ -111,7 +137,7 @@ impl VoxBackend {
         let voice_directory = directory.clone();
         let thread = std::thread::Builder::new()
             .name("voxcpm-inference".into())
-            .spawn(move || runtime::run(directory, model, device, jobs, ready))
+            .spawn(move || runtime::run(directory, files, model, device, jobs, ready))
             .map_err(|e| BackendError::Initialize(e.to_string()))?;
         // Own the thread before awaiting initialization: cancellation must join it.
         let backend = Self {

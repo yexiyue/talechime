@@ -100,15 +100,26 @@ impl TextTokenizer {
     /// - Post-processor: ByteLevel(trim_offsets=false)
     /// - Decoder: ByteLevel
     pub fn from_vocab_and_merges(dir: &Path) -> Result<Self> {
+        let config = dir.join("tokenizer_config.json");
+        Self::from_vocab_merge_files(
+            &dir.join("vocab.json"),
+            &dir.join("merges.txt"),
+            config.exists().then_some(config.as_path()),
+        )
+    }
+
+    /// Construct the text tokenizer from independently resolved files.
+    pub fn from_vocab_merge_files(
+        vocab_path: &Path,
+        merges_path: &Path,
+        config_path: Option<&Path>,
+    ) -> Result<Self> {
         use tokenizers::SplitDelimiterBehavior;
         use tokenizers::models::bpe::BPE;
         use tokenizers::normalizers::unicode::NFC;
         use tokenizers::pre_tokenizers::byte_level::ByteLevel;
         use tokenizers::pre_tokenizers::sequence::Sequence;
         use tokenizers::pre_tokenizers::split::Split;
-
-        let vocab_path = dir.join("vocab.json");
-        let merges_path = dir.join("merges.txt");
 
         // Build BPE model from files
         let bpe = BPE::from_file(
@@ -138,9 +149,8 @@ impl TextTokenizer {
         tokenizer.with_decoder(Some(ByteLevel::new(false, false, false)));
 
         // Add special tokens from tokenizer_config.json if present
-        let config_path = dir.join("tokenizer_config.json");
-        if config_path.exists() {
-            add_special_tokens_from_config(&mut tokenizer, &config_path)?;
+        if let Some(config_path) = config_path {
+            add_special_tokens_from_config(&mut tokenizer, config_path)?;
         }
 
         Self::from_tokenizer(tokenizer)
@@ -466,6 +476,34 @@ mod tests {
         // Should fail for non-existent file
         let result = TextTokenizer::from_file("/nonexistent/tokenizer.json");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn tokenizer_loads_vocab_merges_and_special_tokens_from_separate_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let vocab = root.path().join("vocabulary");
+        let merges = root.path().join("merges");
+        let config = root.path().join("configuration");
+        std::fs::write(&vocab, br#"{"<|endoftext|>":0,"a":1,"b":2}"#).unwrap();
+        std::fs::write(&merges, b"#version: 0.2\n").unwrap();
+        std::fs::write(
+            &config,
+            br#"{"added_tokens_decoder":{"3":{"content":"<|im_start|>","special":true}}}"#,
+        )
+        .unwrap();
+        let tokenizer =
+            TextTokenizer::from_vocab_merge_files(&vocab, &merges, Some(&config)).unwrap();
+        assert_eq!(tokenizer.bos_token_id, 3);
+        assert!(!tokenizer.encode("a").unwrap().is_empty());
+        std::fs::remove_file(config).unwrap();
+        assert!(
+            TextTokenizer::from_vocab_merge_files(
+                &vocab,
+                &merges,
+                Some(root.path().join("configuration").as_path())
+            )
+            .is_err()
+        );
     }
 
     #[test]

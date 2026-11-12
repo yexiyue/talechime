@@ -408,7 +408,28 @@ pub struct AudioCodec {
 }
 impl AudioCodec {
     pub fn load(directory: &Path, device: &Device, dtype: DType) -> anyhow::Result<Self> {
-        let c: Config = serde_json::from_slice(&std::fs::read(directory.join("config.json"))?)?;
+        Self::load_with_weights(&directory.join("config.json"), device, dtype, |kind| {
+            crate::weights(directory, kind, device)
+        })
+    }
+    /// Load a codec from an explicit configuration file and weight shards.
+    pub fn load_files(
+        config: &Path,
+        shards: &[std::path::PathBuf],
+        device: &Device,
+        dtype: DType,
+    ) -> anyhow::Result<Self> {
+        Self::load_with_weights(config, device, dtype, |kind| {
+            crate::weights_files(shards, kind, device)
+        })
+    }
+    fn load_with_weights(
+        config: &Path,
+        device: &Device,
+        dtype: DType,
+        weights: impl Fn(DType) -> anyhow::Result<VarBuilder<'static>>,
+    ) -> anyhow::Result<Self> {
+        let c: Config = serde_json::from_slice(&std::fs::read(config)?)?;
         anyhow::ensure!(
             (c.sampling_rate == 24000 && c.downsample_rate == 1920 && c.number_channels == 1)
                 || (c.sampling_rate == 48000
@@ -417,7 +438,7 @@ impl AudioCodec {
                     && c.channel_interleave),
             "unsupported codec configuration"
         );
-        let vb = crate::weights(directory, dtype, device)?;
+        let vb = weights(dtype)?;
         let build = |configs: &[StageConfig],
                      name: &str,
                      mut rate: f64,
@@ -459,10 +480,7 @@ impl AudioCodec {
             c.sampling_rate as f64 / c.downsample_rate as f64,
             false,
         )?;
-        let quantizer = Quantizer::load(
-            &c.quantizer_kwargs,
-            crate::weights(directory, DType::F32, device)?.pp("quantizer"),
-        )?;
+        let quantizer = Quantizer::load(&c.quantizer_kwargs, weights(DType::F32)?.pp("quantizer"))?;
         Ok(Self {
             encoder,
             decoder,

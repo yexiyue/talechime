@@ -7,11 +7,8 @@ pub(super) const REGISTRATION: Registration = Registration {
 };
 struct Adapter;
 impl ModelAdapter for Adapter {
-    fn native_recipe(&self) -> Option<crate::native_preparation::Recipe> {
-        Some(model::native_recipe())
-    }
-    fn resource_preparation(&self) -> ResourcePreparation {
-        ResourcePreparation::Native
+    fn manifests(&self) -> Vec<&'static str> {
+        vec![model::resources::MANIFEST]
     }
     fn id(&self) -> &'static str {
         model::MODEL
@@ -51,27 +48,47 @@ impl ModelAdapter for Adapter {
     fn calibrates(&self) -> bool {
         false
     }
-    fn resource_status(&self, root: &Path) -> crate::resource_state::ResourceStatus {
-        model::native_recipe().status(root)
+    fn resource_status<'a>(
+        &'a self,
+        _root: &'a Path,
+        downloads: &'a crate::downloads::Downloads,
+    ) -> Inventory<'a> {
+        Box::pin(async move {
+            crate::resources::cached_manifest_status(model::resources::MANIFEST, downloads.clone())
+                .await
+        })
     }
     fn prepare<'a>(
         &'a self,
-        root: &'a Path,
-        _downloads: &'a crate::downloads::Downloads,
+        _root: &'a Path,
+        downloads: &'a crate::downloads::Downloads,
         progress: mpsc::Sender<Event>,
     ) -> Preparing<'a> {
-        Box::pin(async move { model::resources::prepare(&model::directory(root), progress).await })
+        Box::pin(async move {
+            crate::resources::prepare_cached(
+                "cosyvoice3",
+                serde_json::from_str(model::resources::MANIFEST)?,
+                downloads,
+                progress,
+            )
+            .await?;
+            Ok(())
+        })
     }
     fn load<'a>(
         &'a self,
         root: &'a Path,
+        downloads: &'a crate::downloads::Downloads,
         _progress: mpsc::Sender<Event>,
         device: Device,
         _recovery: bool,
     ) -> Loading<'a> {
         Box::pin(async move {
+            let files =
+                crate::resources::resolve_manifest(model::resources::MANIFEST, downloads.clone())
+                    .await?;
             Ok(
-                Rc::new(model::CosyBackend::load_on(root.to_owned(), device).await?)
+                Rc::new(model::CosyBackend::load_cached(root.to_owned(), files, device).await?)
                     as Rc<dyn Backend>,
             )
         })

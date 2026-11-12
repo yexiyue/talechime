@@ -2,7 +2,7 @@
 use std::path::PathBuf;
 use talechime_protocol::Device;
 pub async fn reference(
-    directory: PathBuf,
+    downloads: &crate::downloads::Downloads,
     device: Device,
     text: String,
     description: String,
@@ -10,7 +10,7 @@ pub async fn reference(
     seed: Option<u64>,
 ) -> anyhow::Result<()> {
     reference_model(
-        directory,
+        downloads,
         super::models::Model::Q8,
         device,
         text,
@@ -21,7 +21,20 @@ pub async fn reference(
     .await
 }
 pub async fn reference_model(
-    directory: PathBuf,
+    downloads: &crate::downloads::Downloads,
+    variant: super::models::Model,
+    device: Device,
+    text: String,
+    description: String,
+    output: PathBuf,
+    seed: Option<u64>,
+) -> anyhow::Result<()> {
+    let paths = crate::resources::resolve_manifest(variant.manifest(), downloads.clone()).await?;
+    let files = super::models::ModelFiles::from_resolved(variant, paths)?;
+    reference_model_files(files, variant, device, text, description, output, seed).await
+}
+pub(crate) async fn reference_model_files(
+    files: super::models::ModelFiles,
     variant: super::models::Model,
     device: Device,
     text: String,
@@ -49,7 +62,7 @@ pub async fn reference_model(
         .spawn(move || {
             let generate = || -> anyhow::Result<()> {
                 let device = super::runtime::candle_device(device)?;
-                let mut model = variant.load(&directory, &device, &|| result.is_closed())?;
+                let mut model = variant.load_files(&files, &device, &|| result.is_closed())?;
                 if result.is_closed() {
                     anyhow::bail!("voice design cancelled");
                 }

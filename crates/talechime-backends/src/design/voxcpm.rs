@@ -14,42 +14,50 @@ impl VoiceDesigner for Engine {
     fn id(&self) -> &'static str {
         ID
     }
-    fn info(&self, root: &Path) -> EngineInfo {
-        let variant = Model::Q8;
-        let (ready, missing) =
-            super::manifest_state(&[(variant.manifest(), &variant.directory(root))]);
-        let devices = voxcpm::available_devices()
-            .into_iter()
-            .filter(|device| variant.compiled_devices().contains(device))
-            .collect();
-        EngineInfo {
-            id: ID,
-            name: "VoxCPM 2B · 描述合成",
-            devices,
-            inputs: InputConstraints {
-                text_max_chars: 100,
-                description_max_chars: Some(200),
-                description_max_bytes: 4096,
-                forbid_parentheses: true,
-            },
-            extra_download_bytes: missing,
-            ready,
-            reuses_synthesis_model: true,
-        }
-    }
-    fn prepare<'a>(&'a self, root: &'a Path, progress: mpsc::Sender<Event>) -> Preparing<'a> {
-        let directory = Model::Q8.directory(root);
-        let downloads = self.0.clone();
+    fn info<'a>(&'a self, _root: &'a Path) -> talechime_core::design::Information<'a> {
         Box::pin(async move {
-            voxcpm::resources::prepare_model(&directory, Model::Q8, &downloads, progress).await
+            Ok({
+                let variant = Model::Q8;
+                let status =
+                    crate::resources::cached_manifest_status(variant.manifest(), self.0.clone())
+                        .await?;
+                let ready = status == crate::ResourceStatus::Ready;
+                let missing = status.missing_bytes();
+                let devices = voxcpm::available_devices()
+                    .into_iter()
+                    .filter(|device| variant.compiled_devices().contains(device))
+                    .collect();
+                EngineInfo {
+                    id: ID,
+                    name: "VoxCPM 2B · 描述合成",
+                    devices,
+                    inputs: InputConstraints {
+                        text_max_chars: 100,
+                        description_max_chars: Some(200),
+                        description_max_bytes: 4096,
+                        forbid_parentheses: true,
+                    },
+                    extra_download_bytes: missing,
+                    ready,
+                    reuses_synthesis_model: true,
+                }
+            })
         })
     }
-    fn design<'a>(&'a self, root: &'a Path, request: DesignRequest) -> Designing<'a> {
-        let directory = Model::Q8.directory(root);
+    fn prepare<'a>(&'a self, _root: &'a Path, progress: mpsc::Sender<Event>) -> Preparing<'a> {
+        let downloads = self.0.clone();
+        Box::pin(
+            async move { voxcpm::resources::prepare_model(Model::Q8, &downloads, progress).await },
+        )
+    }
+    fn design<'a>(&'a self, _root: &'a Path, request: DesignRequest) -> Designing<'a> {
+        let downloads = self.0.clone();
         Box::pin(async move {
+            let paths = crate::resources::resolve_manifest(Model::Q8.manifest(), downloads).await?;
+            let files = voxcpm::models::ModelFiles::from_resolved(Model::Q8, paths)?;
             let output = tempfile::NamedTempFile::new()?;
-            voxcpm::design::reference_model(
-                directory,
+            voxcpm::design::reference_model_files(
+                files,
                 Model::Q8,
                 request.device,
                 request.text,

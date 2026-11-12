@@ -1,5 +1,7 @@
 # Qwen3-TTS 推理与验证
 
+模型资源统一位于 `qwen/models/<model-id>/<revision>/`，默认模型为 `0.6b-customvoice`。目录由后端的模型身份解析，资源按固定清单准备与校验。
+
 Qwen 的 CustomVoice、Base ICL 和 VoiceDesign 是不同模型路径。当前语言参数未指定或为 `auto` 时使用模型的自动语言前缀；CustomVoice 的 Eric 和 Dylan 在 `auto` 或中文条件下分别使用四川和北京方言前缀，显式其他语言保持其语言条件。VoiceStudio 共享设计入口默认使用 Auto；模型专用 `qwen::design::reference` 可通过 `Options.language` 显式选择语言。语言条件可传递不表示所有语言、音色或设备已完成听验。
 
 实现来源分开记录：`crates/qwen3-tts/SOURCE.md` 的 `711ceee07cad92673f86de8997bdf54c30caa49f` 是 TrevorS 社区 Rust 移植；独立 Python 对照使用 QwenLM/Qwen3-TTS 官方 `022e286b98fbec7e1e916cb940cdf532cd9f488e`，`modeling_qwen3_tts.py` SHA-256 为 `25c42656bcf810f06ef6bc1839bd7083f3c8cfedac3a147c4060b4262b1c96a0`。不将社区版本称为官方。

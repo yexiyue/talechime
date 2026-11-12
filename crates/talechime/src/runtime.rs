@@ -78,12 +78,8 @@ impl Worker {
         events: mpsc::Sender<SessionEvent>,
         progress: mpsc::Sender<Event>,
     ) -> Self {
-        // Voice assets live beside the config file, never inside model resources.
-        let voices = store
-            .path()
-            .parent()
-            .map(talechime_core::paths::AppPaths::voice_library_at)
-            .and_then(|voices| talechime::VoiceStudio::at(resources.root(), voices).ok());
+        let voices = talechime_core::paths::AppPaths::voice_library_at(resources.root());
+        let voices = talechime::VoiceStudio::at_registry(&resources, voices).ok();
         Self {
             readback_models: false,
             store,

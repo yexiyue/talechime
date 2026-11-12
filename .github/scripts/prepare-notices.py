@@ -7,6 +7,8 @@ import tomllib
 
 root = Path(__file__).resolve().parents[2]
 output = root / 'target' / 'third-party-licenses'
+# Rebuild this generated directory so removed dependencies are not shipped.
+shutil.rmtree(output, ignore_errors=True)
 
 
 def collect(directory, destination):
@@ -20,11 +22,6 @@ def collect(directory, destination):
 
 collect(root / 'crates', output / 'crates')
 collect(root / 'third-party', output / 'third-party')
-helper = root / 'target/talechime-helpers/espeak-ng-1.52.0'
-if helper.exists():
-    collect(helper / 'source', output / 'standalone/espeak-ng')
-    (output / 'standalone/espeak-ng').mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(helper / 'manifest.json', output / 'standalone/espeak-ng/manifest.json')
 features = tomllib.loads((root / 'dist-workspace.toml').read_text())['dist']['features']
 host = next(line.removeprefix('host: ') for line in subprocess.check_output(
     ['rustc', '-vV'], text=True).splitlines() if line.startswith('host: '))

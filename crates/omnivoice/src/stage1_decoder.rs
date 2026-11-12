@@ -25,7 +25,6 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct Stage1DecoderBundle {
-    model_root: PathBuf,
     weights_path: PathBuf,
     output_sample_rate: u32,
     expected_codebooks: usize,
@@ -128,21 +127,16 @@ impl Stage1DecoderBundle {
 
     pub fn from_runtime_artifacts(runtime: &RuntimeArtifacts) -> Result<Self> {
         if let Some(gguf) = runtime.gguf_bundle() {
-            return Self::from_gguf_bundle(runtime.model_root(), gguf, runtime.contracts());
+            return Self::from_gguf_bundle(gguf, runtime.contracts());
         }
         Self::from_artifacts(
-            runtime.model_root(),
+            runtime.generator()?.config_path(),
             runtime.audio_tokenizer()?,
             runtime.contracts(),
         )
     }
 
-    fn from_gguf_bundle(
-        model_root: impl AsRef<Path>,
-        gguf: &GgufBundleArtifacts,
-        contracts: &RuntimeContracts,
-    ) -> Result<Self> {
-        let model_root = model_root.as_ref().to_path_buf();
+    fn from_gguf_bundle(gguf: &GgufBundleArtifacts, contracts: &RuntimeContracts) -> Result<Self> {
         let expected_codebooks = contracts.num_audio_codebooks;
         let model_config =
             inspect_stage1_model_config(gguf.audio_tokenizer_path(), expected_codebooks)?;
@@ -159,7 +153,6 @@ impl Stage1DecoderBundle {
             )));
         }
         Ok(Self {
-            model_root,
             weights_path: gguf.audio_tokenizer_path().to_path_buf(),
             output_sample_rate: contracts.sample_rate,
             expected_codebooks,
@@ -168,13 +161,11 @@ impl Stage1DecoderBundle {
     }
 
     pub fn from_artifacts(
-        model_root: impl AsRef<Path>,
+        main_config: impl AsRef<Path>,
         audio_tokenizer: &AudioTokenizerArtifacts,
         contracts: &RuntimeContracts,
     ) -> Result<Self> {
-        let model_root = model_root.as_ref().to_path_buf();
-        let main_model: MainModelConfig =
-            serde_json::from_str(&fs::read_to_string(model_root.join("config.json"))?)?;
+        let main_model: MainModelConfig = serde_json::from_str(&fs::read_to_string(main_config)?)?;
         let tokenizer_model: AudioTokenizerConfig =
             serde_json::from_str(&fs::read_to_string(audio_tokenizer.config_path())?)?;
         let preprocessor: AudioTokenizerPreprocessorConfig = serde_json::from_str(
@@ -234,7 +225,6 @@ impl Stage1DecoderBundle {
         }
 
         Ok(Self {
-            model_root,
             weights_path: audio_tokenizer.weights_path().to_path_buf(),
             output_sample_rate: tokenizer_model.sample_rate,
             expected_codebooks: contracts.num_audio_codebooks,
@@ -287,10 +277,6 @@ impl Stage1DecoderBundle {
             )));
         }
         Ok(())
-    }
-
-    pub fn model_root(&self) -> &Path {
-        &self.model_root
     }
 }
 

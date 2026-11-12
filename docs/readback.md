@@ -4,14 +4,14 @@
 
 ## 库调用
 
-`prepare_readback` 只准备 ASR，`Engine::prepare` 只准备 TTS。准备调用可以下载固定 revision 的文件并验证大小、SHA-256；合成和报告调用不下载。宿主传入自己的资源目录及 Registry 共享的 `Downloads`，沿用明确配置的端点、缓存与下载参数；模型组留在同一个 LocalSet。
+`prepare_readback` 只准备 ASR，`Engine::prepare` 只准备 TTS。准备调用可以下载固定 revision 的文件并验证大小、SHA-256；合成和报告调用不下载。ASR 直接读取 Registry 共享的 `Downloads` 所配置的 Hub 缓存，不组装模型目录；模型组留在同一个 LocalSet。
 
 ```rust,no_run
 use talechime::*;
 # async fn example(mut engine: Engine) -> Result<(), Box<dyn std::error::Error>> {
-let registry = Registry::new(Some("./models".into()))?;
+let registry = Registry::new(None)?;
 let verifier = prepare_readback(
-    ReadbackModelOptions::new("./models"), registry.downloads(), |_| {}
+    ReadbackModelOptions::new(), registry.downloads(), |_| {}
 ).await?;
 engine.set_verifier(verifier.clone())?; // Engine 空闲时设置，随后复用
 let options = VerificationOptions {

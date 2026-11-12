@@ -77,6 +77,14 @@ pub struct Pipeline {
 impl Pipeline {
     pub fn from_options(options: RuntimeOptions) -> Result<Self> {
         let runtime_artifacts = options.load_runtime_artifacts()?;
+        Self::from_runtime_artifacts(options, runtime_artifacts)
+    }
+
+    /// Construct a pipeline from already resolved and validated model files.
+    pub fn from_runtime_artifacts(
+        options: RuntimeOptions,
+        runtime_artifacts: RuntimeArtifacts,
+    ) -> Result<Self> {
         let frontend = Frontend::from_runtime_artifacts(&runtime_artifacts)?;
         let shared_device = options.resolve_device()?;
         let audio_tokenizer = Some(

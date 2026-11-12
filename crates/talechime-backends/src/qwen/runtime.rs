@@ -23,12 +23,14 @@ pub(super) struct Request {
 
 pub(super) fn run(
     directory: PathBuf,
+    source: talechime_qwen3_tts::ModelFiles,
+    variant: super::models::Model,
     device: Device,
     recovery: Option<mpsc::Sender<Event>>,
     mut jobs: mpsc::Receiver<Request>,
     ready: oneshot::Sender<Result<(), BackendError>>,
 ) {
-    let model = load(&directory, device);
+    let model = load(&source, device);
     let mut model = match model {
         Ok(model) => model,
         Err(error) => {
@@ -47,14 +49,14 @@ pub(super) fn run(
         if request.audio.is_closed() {
             continue;
         }
-        if let Err(error) = generate(&model, &directory, &mut prompts, &request) {
+        if let Err(error) = generate(&model, &directory, variant, &mut prompts, &request) {
             let recover = !request.audio.is_closed()
                 && recovery.is_some()
                 && active_device != Device::Cpu
                 && matches!(error, BackendError::Synthesis(_));
             let _ = crate::observation::send_audio(&request.audio, Err(error));
             if recover {
-                match load(&directory, Device::Cpu) {
+                match load(&source, Device::Cpu) {
                     Ok(cpu) => {
                         model = cpu;
                         prompts.clear();
@@ -88,8 +90,11 @@ pub(super) fn device(selected: Device) -> anyhow::Result<talechime_qwen3_tts::De
     }
 }
 
-pub(super) fn load(directory: &std::path::Path, selected: Device) -> anyhow::Result<Qwen3TTS> {
-    Qwen3TTS::from_pretrained(&directory.to_string_lossy(), device(selected)?)
+pub(super) fn load(
+    source: &talechime_qwen3_tts::ModelFiles,
+    selected: Device,
+) -> anyhow::Result<Qwen3TTS> {
+    Qwen3TTS::from_files(source, device(selected)?)
 }
 
 fn inference_error(error: anyhow::Error) -> BackendError {
@@ -98,6 +103,7 @@ fn inference_error(error: anyhow::Error) -> BackendError {
 fn generate(
     model: &Qwen3TTS,
     directory: &std::path::Path,
+    variant: super::models::Model,
     prompts: &mut std::collections::HashMap<String, talechime_qwen3_tts::VoiceClonePrompt>,
     request: &Request,
 ) -> Result<(), BackendError> {
@@ -110,7 +116,6 @@ fn generate(
             .unwrap_or(if model.device().is_cuda() { 20 } else { 10 });
     let mut stream = if request.voice.starts_with("custom:") {
         if !prompts.contains_key(&request.voice) {
-            let variant = super::models::Model::detect(directory).map_err(inference_error)?;
             let store = super::voice_store(directory, variant).map_err(inference_error)?;
             let voice = store.load(&request.voice).map_err(inference_error)?;
             let path = store.path(&request.voice).map_err(inference_error)?;

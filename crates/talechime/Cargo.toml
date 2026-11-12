@@ -16,7 +16,6 @@ required-features = ["cli"]
 
 [features]
 kokoro = ["talechime-backends/kokoro"]
-kokoro-g2pw = ["kokoro", "talechime-backends/kokoro-g2pw"]
 kokoro-metal = ["kokoro", "talechime-backends/kokoro-metal"]
 kokoro-cuda = ["kokoro", "talechime-backends/kokoro-cuda"]
 indextts = ["talechime-backends/indextts"]

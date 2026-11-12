@@ -8,8 +8,7 @@ description = "Native model adapters for Talechime"
 repository = "https://github.com/yexiyue/talechime"
 
 [features]
-kokoro = ["dep:talechime-kokoro", "dep:candle-core", "dep:tokio-util"]
-kokoro-g2pw = ["kokoro", "talechime-kokoro/g2pw", "zip/deflate-flate2-zlib-rs"]
+kokoro = ["dep:talechime-kokoro", "talechime-kokoro/g2pw", "dep:candle-core", "dep:tokio-util", "zip/deflate-flate2-zlib-rs"]
 kokoro-metal = ["kokoro", "talechime-kokoro/metal", "dep:candle-metal-kernels"]
 kokoro-cuda = ["kokoro", "talechime-kokoro/cuda"]
 performance-tools = ["dep:tracing", "dep:metrics"]

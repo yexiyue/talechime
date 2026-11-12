@@ -8,9 +8,9 @@
 
 Talechime 是用 Rust 编写的本地语音合成与长文播放引擎。它提供命令行程序、可嵌入的 Rust 库，以及供阅读器调用的 JSON Lines worker。宿主负责获取正文、识别角色和绑定音色；Talechime 负责合成、播放、取消和按实际播放进度恢复。
 
-当前工作区已完成本轮本机官方能力补齐及完整文本矩阵，尚未发行：15 个变体 × 19 条公开输入，共 285 项；248 段有效音频、18 条声明拒绝、19 条原始 BF16 CUDA 实机项按用户要求延期。官方输入对照逐项覆盖，部分仅为合成条件结构；Kokoro 产品执行策略差异、CosyVoice3 历史声学数值差异及用户听验失败保持独立，不能称为全模型数值或音质等价。IndexTTS 五语前端与 QwenEmotion、各后端条件/模式和本机控制音频已验证，详见[验收记录](docs/records/tts-core/official-backend-parity-2026-11-11.md#2026-11-12-本机交付)。Nano 漏读、年份连贯及音色问题后置，其他声音待人工听验。
+当前工作区提供各后端的固定文本前端和模型能力；自动化与真实模型验证覆盖范围不同。Kokoro 英文神经后备的人工听感、CUDA 和发行包仍需验证；Nano 的漏读、年份连贯及音色问题尚待处理。
 
-当前源码的 Kokoro 中文前端增加中英文混读，独立 eSpeak NG 负责英文未知词；普通版和 g2pW 的适用混读音素及 20 条功能词/OOV 对照通过，带空格年份与未知符号的产品差异单列。独立程序、数据、许可和对应源码随包构建，Rust 不链接其 GPL 库；人工听感及其他平台验证仍待完成。此改动尚未发行，详见 [Kokoro 指南](docs/kokoro.md)。
+当前源码的 Kokoro 中文前端支持中英文混读；英文使用 crates.io 固定 0.4.0 的词典和神经未知词后备，无需独立辅助程序。未知词读音可能不同于历史 Misaki/eSpeak 对照，人工听感及其他平台验证仍待完成；此改动尚未发行，详见 [Kokoro 指南](docs/kokoro.md)。
 
 [快速开始](#快速开始) · [TTS 后端](#tts-后端) · [与官方实现的性能对比](#与官方实现的性能对比) · [文档索引](docs/README.md) · [知识库](docs/knowledge/README.md) · [架构](docs/architecture.md) · [Rust 库](docs/library.md)
 
@@ -22,12 +22,12 @@ Talechime 是用 Rust 编写的本地语音合成与长文播放引擎。它提�
 - 导入参考音频、管理音色，并通过 Rust API 或 JSON Lines v7 接入应用。
 - 按需启用 Qwen3-ASR 与 SenseVoiceSmall 回读报告或逐段校验；默认关闭。
 
-正文和参考音频由本地模型处理。模型权重按需准备，安装包不包含权重；CosyVoice3 需要先转换并放置本地模型文件。
+正文和参考音频由本地模型处理。模型权重按需准备，安装包不包含权重；当前源码使用固定 Hub 成品清单并直接读取共享缓存，用户不需要本地转换。此变更仍在实施，发行包能力以对应版本为准。
 
 ## 0.6.1 更新
 
-标准包加入 Kokoro 中文预置音色后端与可选 g2pW 多音字消歧，macOS 同时编入 Metal
-解码路径；转换后的本地资源仍需显式准备。新增模型目录与模型无关的 VoiceStudio API，
+标准包加入 Kokoro 中文预置音色后端与 g2pW 多音字消歧，macOS 同时编入 Metal
+解码路径；模型资源仍需显式准备。新增模型目录与模型无关的 VoiceStudio API，
 统一采用官方固定参考或预置音色合成。移除滚动/双参考、历史数据迁移与旧接口；
 宿主须更新已移除的 API 和请求字段，JSON Lines 仍为 v7，历史文件保持原样。
 完整变化见[更新日志](CHANGELOG.md)。
@@ -77,7 +77,7 @@ cargo run --release -- --backend moss --model nano-candle --tts-device cpu chapt
 | 后端 / `--backend` | 模型或实现 | 音色与输出 | 构建和资源边界 |
 | --- | --- | --- | --- |
 | MOSS / `moss` | Nano Candle `nano-candle`（默认）；Realtime `realtime-1.7b` | Nano 内置或固定导入音色；两档均不提供 style/instruction/language | Nano 默认 CPU，Metal / CUDA 需显式 feature；Realtime 为需 `moss-candle-*` 的 GPU 模型 |
-| Kokoro / `kokoro` | `1.1-zh`；可选 `1.1-zh-g2pw` | 官方中文预置音色，24 kHz 分段 PCM；支持 speed，无克隆/风格/原生流式 | Candle F32，CPU/Metal 已做官方对照，CUDA 待实机验证；工作区可显式[准备固定成品资源](docs/kokoro.md)，无需用户转换；0.6.1 标准包包含 CPU/g2pW，macOS 另含 Metal |
+| Kokoro / `kokoro` | `1.1-zh-g2pw` | 官方中文预置音色，24 kHz 分段 PCM；支持 speed，无克隆/风格/原生流式 | Candle F32，CPU/Metal 已做官方对照，CUDA 待实机验证；工作区可显式[准备固定成品资源](docs/kokoro.md)，无需用户转换；0.6.1 标准包包含 CPU/g2pW，macOS 另含 Metal |
 | Qwen3-TTS / `qwen` | 0.6B、1.7B CustomVoice；0.6B、1.7B Base | CustomVoice 预置音色；1.7B CustomVoice 支持风格；Base 可导入参考音频克隆 | Candle CPU；Metal / CUDA 需 `qwen-metal` / `qwen-cuda` |
 | VoxCPM2 / `voxcpm` | 2B Q8 GGUF；另有实验 BF16 路径 | 固定参考音色、音色设计与原生流式 PCM | Candle CPU；Metal / CUDA 需 `voxcpm-metal` / `voxcpm-cuda` |
 | OmniVoice / `omnivoice` | 0.6B | 参考音色、音色设计、风格和生成期语速；按语义段输出 | Candle CPU；Metal / CUDA 需 `omnivoice-metal` / `omnivoice-cuda`；当前不是模型原生实时流式 |
@@ -98,7 +98,7 @@ MOSS 两档均使用 Candle；各模型通过自己的 feature 启用 GPU。详�
 
 ### 音色和生成参数
 
-音色资产存放在独立的音色库（`~/.talechime/voices-v2/`），与任何后端/模型解耦：
+音色资产存放在独立的音色库（`~/.talechime/data/voices-v2/`），与任何后端/模型解耦：
 同一条音色可交给支持参考克隆的模型使用，具体录音仍须通过对应模型的限制校验；首次引用时物化进所选模型。
 音色包支持多个音色，先检查再按选择导入；不覆盖已有声音。当前仅支持 v2 记录与包，旧数据保持原样，不提供兼容或转换。
 
@@ -211,13 +211,15 @@ Talechime 不获取章节、不分析角色，也不决定下一章。TRNovel �
 | --- | --- |
 | 配置 | `~/.talechime/config.json` |
 | 播放检查点 | `~/.talechime/checkpoints/` |
-| 音色库（设计/导入音色的唯一事实源） | `~/.talechime/voices-v2/` |
-| 模型及可再生音色缓存 | `~/.talechime/resources/` |
+| 音色库（设计/导入音色的唯一事实源） | `~/.talechime/data/voices-v2/` |
+| 引擎持久数据及参考音色 | `~/.talechime/data/` |
+| 引擎校准缓存 | `~/.talechime/cache/` |
+| 固定 Hub 模型文件 | `~/.cache/huggingface/hub/` |
 
-可用 `--config`、`--checkpoint-dir`、`--model-dir` 指定自定义路径。程序只使用当前目录与格式，不扫描或迁移旧 `novel-tts` 数据；旧文件保留原位，详见[数据目录说明](docs/migration.md)。
+可用 `--config`、`--checkpoint-dir`、`--model-dir` 指定自定义路径；`--model-dir` 使用绝对路径，作为引擎应用数据根。旧 `~/.talechime/resources/`、旧音色库和 `novel-tts` 数据不会自动扫描、迁移或删除，详见[数据目录说明](docs/migration.md)。
 
 开发命令、CPU / 原生 CI 与实机验收边界见[开发说明](docs/development.md)。普通测试不下载模型。项目源码采用 MIT；第三方源码和模型各有授权，见[许可说明](docs/licenses.md)。模型权重、用户音频和小说正文不随仓库分发。
 
 嵌入式模型下载现支持受控 HTTP 分片与断点：`Registry::with_download_options` 或 `Downloads::with_options` 接受独立的 `DownloadOptions`，默认每文件两路、进程全局最多四路。宿主 drop future 停止传输，检查 `checkpoint_failed()` 后确认暂停保存；应用任务状态与重启恢复由宿主负责。范围、实测与发布限制见[分片下载验收](docs/records/downloads/parallel-download-acceptance-2026-11-05.md)。
 
-工作区原生资源准备及公开成品分发见[接口说明](docs/native-resource-preparation.md)与[2026-11-05 分发记录](docs/records/resources/runtime-distribution-2026-11-05.md)。这些变更尚未作为新的 SDK/应用版本发布；其他平台与人工听感不随资源就绪自动验收。
+工作区正将模型资源改为固定 Hub 成品的直接缓存加载，进度与实测见[资源记录](docs/records/resources/hf-cache-direct-2026-11-12.md)及活动变更 `use-hf-cache-directly`。这些变更尚未作为新的 SDK/应用版本发布；其他平台与人工听感不随资源就绪自动验收。

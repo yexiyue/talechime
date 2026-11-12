@@ -3,9 +3,9 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-use talechime_backends::kokoro::{self, KokoroBackend};
+use talechime_backends::{PrepareOptions, Registry, kokoro};
 use talechime_core::{
-    backend::{AudioChunk, Backend, SegmentRequest},
+    backend::{AudioChunk, SegmentRequest},
     params::GenerationParams,
 };
 use talechime_protocol::Device;
@@ -16,12 +16,12 @@ async fn main() -> anyhow::Result<()> {
         .nth(1)
         .map(PathBuf::from)
         .ok_or_else(|| anyhow::anyhow!("usage: kokoro_lifecycle RESOURCE_ROOT"))?;
-    let directory = kokoro::directory(&root);
-    let (progress, _events) = tokio::sync::mpsc::channel(1);
+    let registry = Registry::new(Some(root))?;
+    let model = registry.resolve("kokoro", Some(kokoro::MODEL))?;
     let started = Instant::now();
     let cancelled = tokio::time::timeout(
         Duration::from_millis(1),
-        kokoro::resources::prepare(&directory, progress),
+        registry.resource_status("kokoro", Some(kokoro::MODEL)),
     )
     .await;
     anyhow::ensure!(
@@ -29,15 +29,23 @@ async fn main() -> anyhow::Result<()> {
         "expected cancellation while verifying real resources"
     );
     println!(
-        "preparation cancellation returned after verification join: {:?}",
+        "verification cancellation returned after worker join: {:?}",
         started.elapsed()
     );
+    let load = || async {
+        let (progress, _events) = tokio::sync::mpsc::channel(32);
+        model
+            .load_existing(
+                PrepareOptions {
+                    device: Device::Cpu,
+                    ..Default::default()
+                },
+                progress,
+            )
+            .await
+    };
     let started = Instant::now();
-    let cancelled = tokio::time::timeout(
-        Duration::from_millis(1),
-        KokoroBackend::load_on(directory.clone(), Device::Cpu),
-    )
-    .await;
+    let cancelled = tokio::time::timeout(Duration::from_millis(1), load()).await;
     anyhow::ensure!(
         cancelled.is_err(),
         "expected cancellation while loading real model"
@@ -46,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
         "load cancellation returned after owned thread join: {:?}",
         started.elapsed()
     );
-    let backend = KokoroBackend::load_on(directory, Device::Cpu).await?;
+    let backend = load().await?;
     let params = GenerationParams::new();
     let mut receiver = backend
         .stream(SegmentRequest {

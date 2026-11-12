@@ -7,7 +7,7 @@ async fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     let directory = PathBuf::from(
         args.next()
-            .ok_or_else(|| anyhow::anyhow!("model directory required"))?,
+            .ok_or_else(|| anyhow::anyhow!("application data root required"))?,
     );
     let output = PathBuf::from(
         args.next()
@@ -23,7 +23,12 @@ async fn main() -> anyhow::Result<()> {
     let voice = args.next().unwrap_or_else(|| "uncle_fu".into());
     let style = std::env::var("NOVEL_TTS_PROBE_STYLE").ok();
     let started = Instant::now();
-    let backend = talechime_backends::qwen::QwenBackend::load_on(directory, device).await?;
+    let backend = talechime_backends::qwen::QwenBackend::load_on(
+        directory,
+        talechime_backends::qwen::models::Model::Custom06,
+        device,
+    )
+    .await?;
     let load_ms = started.elapsed().as_millis();
     if std::env::var("NOVEL_TTS_PROBE_CANCEL").is_ok() {
         let params = talechime_core::params::GenerationParams::new();

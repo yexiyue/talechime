@@ -125,7 +125,7 @@ async fn verify(model: models::Model, voice: &str, alternate: Option<&str>) -> a
     } else {
         None
     };
-    let mut backend = QwenBackend::load_on(directory, Device::Cuda).await?;
+    let mut backend = QwenBackend::load_on(root.clone(), model, Device::Cuda).await?;
     let mut params = GenerationParams::new();
     params.insert(
         "repetition_penalty",
@@ -250,7 +250,7 @@ async fn verify(model: models::Model, voice: &str, alternate: Option<&str>) -> a
         let waveform = cache.parent().unwrap().join("reference.wav");
         let hidden_waveform = cache.parent().unwrap().join("reference.offline.wav");
         std::fs::rename(&waveform, &hidden_waveform)?;
-        backend = QwenBackend::load_on(model.directory(&root), Device::Cuda).await?;
+        backend = QwenBackend::load_on(root.clone(), model, Device::Cuda).await?;
         let new_owner = backend.thread.as_ref().unwrap().thread().id();
         assert_ne!(new_owner, original_owner);
         assert_eq!(collect(&backend, &reference.id, &params).await?, other);
@@ -364,10 +364,15 @@ async fn real_cuda_custom17_state_and_voice_switch() -> anyhow::Result<()> {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "explicit local CUDA VoiceDesign model and new output directory; no downloads"]
 async fn real_cuda_voice_design_production_repeat() -> anyhow::Result<()> {
-    let root = PathBuf::from(
-        std::env::var_os("TALECHIME_QWEN_STATE_RESOURCES")
-            .ok_or_else(|| anyhow::anyhow!("TALECHIME_QWEN_STATE_RESOURCES required"))?,
+    let cache = PathBuf::from(
+        std::env::var_os("TALECHIME_QWEN_HUB")
+            .ok_or_else(|| anyhow::anyhow!("TALECHIME_QWEN_HUB required"))?,
     );
+    let downloads = crate::downloads::Downloads::new(&crate::downloads::DownloadConfig {
+        cache_dir: cache,
+        endpoint: Some("http://127.0.0.1:9".into()),
+        token: None,
+    })?;
     let output = PathBuf::from(
         std::env::var_os("TALECHIME_QWEN_DESIGN_OUTPUT")
             .ok_or_else(|| anyhow::anyhow!("TALECHIME_QWEN_DESIGN_OUTPUT required"))?,
@@ -379,7 +384,7 @@ async fn real_cuda_voice_design_production_repeat() -> anyhow::Result<()> {
         tokio::time::timeout(
             Duration::from_secs(180),
             design::reference(
-                models::Model::Design17.directory(&root),
+                &downloads,
                 Device::Cuda,
                 TEXT.to_owned(),
                 "年轻女性，声音清晰自然，用平静温柔的语气讲述。".to_owned(),

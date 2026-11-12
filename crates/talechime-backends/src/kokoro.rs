@@ -1,6 +1,4 @@
 //! Official-model Kokoro Mandarin synthesis with built-in voices and segment PCM.
-mod native;
-pub(crate) use native::recipe as native_recipe;
 pub mod resources;
 mod runtime;
 use std::path::{Path, PathBuf};
@@ -9,9 +7,7 @@ use talechime_protocol::{Capabilities, Device, ParamKind, ParamValue, ParameterS
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-pub const MODEL: &str = "1.1-zh";
-#[cfg(feature = "kokoro-g2pw")]
-pub const CONTEXT_MODEL: &str = "1.1-zh-g2pw";
+pub const MODEL: &str = "1.1-zh-g2pw";
 pub fn directory(root: &Path) -> PathBuf {
     directory_for(root, MODEL)
 }
@@ -20,27 +16,18 @@ pub fn directory_for(root: &Path, model: &str) -> PathBuf {
         .join(model)
         .join(resources::REVISION)
 }
-pub fn capabilities(directory: &Path) -> anyhow::Result<Capabilities> {
-    capabilities_for(directory, MODEL)
+pub(crate) fn cached_capabilities(model: &str) -> anyhow::Result<Capabilities> {
+    anyhow::ensure!(model == MODEL, "unsupported Kokoro model");
+    Ok(capabilities_with_voices(
+        model,
+        resources::compiled_manifest()?.voices.into_keys().collect(),
+    ))
 }
-pub fn capabilities_for(directory: &Path, model: &str) -> anyhow::Result<Capabilities> {
-    let voices = if directory.join("manifest.json").exists() {
-        resources::read_for(directory, model)?
-            .voices
-            .into_keys()
-            .collect::<Vec<_>>()
-    } else {
-        vec!["zf_001".to_owned()]
-    };
-    Ok(Capabilities {
+fn capabilities_with_voices(model: &str, voices: Vec<String>) -> Capabilities {
+    Capabilities {
         backend: "kokoro".into(),
         model: Some(model.into()),
-        model_name: if model == MODEL {
-            "Kokoro 82M v1.1 中文 (Candle)"
-        } else {
-            "Kokoro 82M v1.1 中文 + g2pW (Candle/ORT CPU)"
-        }
-        .into(),
+        model_name: "Kokoro 82M v1.1 中文 + g2pW (Candle/ORT CPU)".into(),
         default_voice: if voices.iter().any(|v| v == "zf_001") {
             "zf_001".into()
         } else {
@@ -59,7 +46,7 @@ pub fn capabilities_for(directory: &Path, model: &str) -> anyhow::Result<Capabil
             default: ParamValue::Float(1.0),
             description: "官方时长预测语速；中文前端，按完整语义段输出".into(),
         }],
-    })
+    }
 }
 pub fn compiled_devices() -> Vec<Device> {
     vec![
@@ -90,38 +77,38 @@ pub struct KokoroBackend {
     caps: Capabilities,
 }
 impl KokoroBackend {
-    pub async fn load_on(directory: PathBuf, device: Device) -> Result<Self, BackendError> {
-        Self::load_model_on(directory, MODEL, device).await
-    }
-    pub async fn load_model_on(
-        directory: PathBuf,
+    pub(crate) async fn load_cached(
+        files: std::collections::BTreeMap<String, PathBuf>,
         model: &str,
         device: Device,
     ) -> Result<Self, BackendError> {
-        let contextual = match model {
-            MODEL => false,
-            #[cfg(feature = "kokoro-g2pw")]
-            CONTEXT_MODEL => true,
-            _ => {
-                return Err(BackendError::Initialize(format!(
-                    "unsupported Kokoro model {model}"
-                )));
-            }
-        };
+        let caps =
+            cached_capabilities(model).map_err(|e| BackendError::Initialize(e.to_string()))?;
+        Self::load_input(files, caps, model, device).await
+    }
+    async fn load_input(
+        input: std::collections::BTreeMap<String, PathBuf>,
+        caps: Capabilities,
+        model: &str,
+        device: Device,
+    ) -> Result<Self, BackendError> {
+        if model != MODEL {
+            return Err(BackendError::Initialize(format!(
+                "unsupported Kokoro model {model}"
+            )));
+        }
         if !available_devices().contains(&device) {
             return Err(BackendError::Initialize(format!(
                 "Kokoro device {device:?} is unavailable"
             )));
         }
-        let caps = capabilities_for(&directory, model)
-            .map_err(|e| BackendError::Initialize(e.to_string()))?;
         let shutdown = CancellationToken::new();
         let stop = shutdown.clone();
         let (requests, jobs) = mpsc::channel(1);
         let (ready, loaded) = oneshot::channel();
         let thread = std::thread::Builder::new()
             .name("kokoro-inference".into())
-            .spawn(move || runtime::run(directory, device, contextual, jobs, ready, stop))
+            .spawn(move || runtime::run(input, device, jobs, ready, stop))
             .map_err(|e| BackendError::Initialize(e.to_string()))?;
         let backend = Self {
             requests: Some(requests),
@@ -250,30 +237,25 @@ mod tests {
     fn resolved_revision_tracks_oov_semantics_without_changing_resources() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
         let registry = crate::Registry::new(Some(root.path().to_owned()))?;
-        let expected =
-            "01e7505-runtime-f32-v3-text-v3-espeak-1.52.0-4870adfa25b1a32b4361592f1be8a40337c58d6c";
+        let expected = "01e7505-runtime-f32-v3-text-v4-loqui-neural-0.4.0";
         assert_eq!(
             registry.resolve("kokoro", Some(MODEL))?.revision(),
             expected
         );
-        #[cfg(feature = "kokoro-g2pw")]
-        assert_eq!(
-            registry.resolve("kokoro", Some(CONTEXT_MODEL))?.revision(),
-            expected
-        );
+        assert_eq!(registry.resolve("kokoro", None)?.revision(), expected);
+        assert!(registry.resolve("kokoro", Some("1.1-zh")).is_err());
         assert_eq!(resources::REVISION, "01e7505-runtime-f32-v3");
         assert!(directory_for(root.path(), MODEL).ends_with(resources::REVISION));
         Ok(())
     }
     #[tokio::test]
     async fn request_validation_and_forwarding_do_not_require_a_model() -> anyhow::Result<()> {
-        let root = tempfile::tempdir()?;
         let (tx, mut jobs) = mpsc::channel(1);
         let backend = KokoroBackend {
             requests: Some(tx),
             thread: None,
             shutdown: CancellationToken::new(),
-            caps: capabilities(root.path())?,
+            caps: cached_capabilities(MODEL)?,
         };
         let mut params = GenerationParams::new();
         params.insert("speed", ParamValue::Float(0.8));
@@ -314,17 +296,5 @@ mod tests {
             _ => panic!("expected synthesis request"),
         }
         Ok(())
-    }
-    #[tokio::test]
-    async fn missing_conversion_fails_without_writing() {
-        let root = tempfile::tempdir().unwrap();
-        let (tx, _rx) = mpsc::channel(2);
-        let error = resources::prepare(root.path(), tx).await.unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("prepare the native resource recipe")
-        );
-        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
 }
