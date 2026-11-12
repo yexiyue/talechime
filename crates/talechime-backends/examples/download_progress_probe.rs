@@ -1,5 +1,5 @@
 //! Bounded real-network diagnostic. No model loading; never prints credentials or signed URLs.
-//! cargo run -p talechime-backends --no-default-features --example download_progress_probe -- raw|bridge|http|xet CACHE_DIR [ENDPOINT] [CONNECTIONS] [SECONDS] [BYTE_BUDGET]
+//! `cargo run -p talechime-backends --no-default-features --example download_progress_probe -- raw|bridge|http|xet CACHE_DIR [ENDPOINT] [CONNECTIONS] [SECONDS] [BYTE_BUDGET]`
 use hf_hub::progress::{DownloadEvent, ProgressEvent, ProgressHandler};
 use std::{
     sync::{

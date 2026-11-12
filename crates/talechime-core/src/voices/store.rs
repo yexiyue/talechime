@@ -682,6 +682,9 @@ mod tests {
             Ok(owner) => owner,
             Err(_) => panic!("unexpected scratch owner"),
         };
+        // Simulate a crashed owner: closing the content handle must leave its file
+        // behind. NamedTempFile::drop would unlink it and refresh the directory age.
+        let (file, content_path) = file.keep().unwrap();
         let path = owner.directory.keep();
         owner
             ._lease
@@ -690,6 +693,7 @@ mod tests {
         age_directory(&path);
         recover_scratch();
         assert!(path.exists());
+        assert!(content_path.exists());
         drop(file);
         drop(owner._lease);
         recover_scratch();

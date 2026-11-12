@@ -9,3 +9,9 @@ CastGlean 的音色保存、重复保存和音色包检查测试在 Windows 报�
 Windows 还会拒绝重命名包含锁定文件的暂存目录。因此正式发布在持有库锁时释放暂存 lease 后重命名，暂存回收也持有同一库锁，避免释放到发布之间被回收。废弃 Scratch 目录已经通过独占 lease 确认没有活动所有者；删除前释放回收者自己的锁。唯一 Scratch 目录不会被新任务接管，并发回收者重复删除只会得到不存在，不会删除活动任务。
 
 验证：`cargo test -p talechime-core --lib --offline` 70 项通过，含内容可重开、活动 lease 不清理、释放后回收、部分发布失败和幂等重导入；相关 Clippy 严格检查与 rustdoc 通过。相邻 CastGlean 的完整宿主回归也已通过，原三项文件锁失败转为通过。审查后将两个回收测试的 Windows 目录时间设置合并为测试专用 helper，并再次通过上述 70 项测试、Clippy 与 rustdoc。测试使用合成 WAV，不需要模型、私人录音或网络。未发布 SDK 或应用版本。
+
+## 2026-11-12：macOS 回收测试夹具修正
+
+合并独立租约修复后，`old_scratch_is_reclaimed_only_after_its_owner_releases_the_lease` 在 macOS 的最终目录回收断言失败。夹具先将目录时间设旧，再 `drop(NamedTempFile)`；后者删除内容文件并刷新父目录修改时间，正确触发生产回收器的五分钟保护。夹具改用 `keep()` 模拟进程崩溃后遗留文件，再关闭内容句柄及租约，不变更生产回收条件；仍验证活动租约保护内容、释放后删除整个废弃目录。此补充不改变上述 Windows 历史验证结论。
+
+本轮 macOS 验证：指定回收测试通过；`cargo test --locked -p talechime-core --lib` 全部 70 项通过，局部 rustfmt 与 diff 空白检查通过。Windows/Linux 未在本轮重跑。

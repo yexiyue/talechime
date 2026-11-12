@@ -4,7 +4,7 @@
 
 ## 合成
 
-设置 `FISH_API_KEY` 与 `FISH_VOICE_ID`，运行 `cargo run -p talechime-cloud-tts --example synthesize -- output.mp3`。示例显式选用 `s2.1-pro-free`，不会自动切换付费模型；运行前应确认当前服务条款、可用性及价格。环境变量由调用方提供，crate 不自动读取 `.env`。
+设置 `FISH_API_KEY` 与 `FISH_VOICE_ID`，运行 `cargo run -p talechime-cloud-tts --example fish_synthesize -- output.mp3`。示例显式选用 `s2.1-pro-free`，不会自动切换付费模型；运行前应确认当前服务条款、可用性及价格。环境变量由调用方提供，crate 不自动读取 `.env`。
 
 网络需要代理时由宿主配置 `HTTPS_PROXY`；Windows 系统代理不一定自动传给 Rust 客户端，排查记录见[知识库](../../docs/knowledge/lessons/fish-audio-windows-proxy.md)。
 

@@ -215,3 +215,5 @@ Xet 的文件进度为零不代表网络没收到数据；真实对照、小批�
 `TEXT_SEMANTICS_REVISION`；宿主应冻结 `ResolvedModel::revision()` 和
 `text_semantics_revision()`。资源升级仍更新所属模型/配方 revision，不能只改共享
 算法常量代替资源完整性身份，也不为了算法修正复制相同权重。
+
+工作区内的示例名称须保持唯一；`cargo doc --workspace --examples` 将所有示例写入同一输出目录，同名示例会冲突。云语音示例使用供应商前缀（例如 `fish_synthesize`、`heygen_synthesize`）。
