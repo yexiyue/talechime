@@ -234,10 +234,10 @@ mod tests {
         Ok(())
     }
     #[test]
-    fn resolved_revision_tracks_oov_semantics_without_changing_resources() -> anyhow::Result<()> {
+    fn resolved_revision_tracks_text_semantics_without_changing_resources() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
         let registry = crate::Registry::new(Some(root.path().to_owned()))?;
-        let expected = "01e7505-runtime-f32-v3-text-v4-loqui-neural-0.4.0";
+        let expected = "01e7505-runtime-f32-v3-text-v5-loqui-neural-0.4.0";
         assert_eq!(
             registry.resolve("kokoro", Some(MODEL))?.revision(),
             expected

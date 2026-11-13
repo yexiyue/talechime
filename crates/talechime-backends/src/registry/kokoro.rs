@@ -2,7 +2,7 @@ use super::*;
 use crate::kokoro as model;
 
 // Inference identity is independent of the v3 verified resource directory.
-const INFERENCE_REVISION: &str = "01e7505-runtime-f32-v3-text-v4-loqui-neural-0.4.0";
+const INFERENCE_REVISION: &str = "01e7505-runtime-f32-v3-text-v5-loqui-neural-0.4.0";
 
 pub(super) const REGISTRATION: Registration = Registration {
     id: "kokoro",

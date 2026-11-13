@@ -138,8 +138,11 @@ pub(super) fn normalize(text: &str) -> Result<String> {
             .ok_or_else(|| candle_core::Error::Msg("invalid fraction".into()))?;
         Ok(format!("{}分之{}", number(b)?, number(a)?))
     })?;
-    text = replace(&text, r"-?(?:[0-9]+\.)?[0-9]+%", |value| {
-        Ok(format!("百分之{}", number(&value[..value.len() - 1])?))
+    text = replace(&text, r"-?(?:[0-9]+\.)?[0-9]+[%％]", |value| {
+        Ok(format!(
+            "百分之{}",
+            number(value.trim_end_matches(['%', '％']))?
+        ))
     })?;
     text = replace(&text, r"[0-9]+℃", |value| {
         Ok(number(value.trim_end_matches('℃'))? + "摄氏度")
@@ -173,6 +176,24 @@ pub(super) fn normalize(text: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn numeric_fullwidth_percent_shares_the_ascii_reading() -> Result<()> {
+        for (input, expected) in [
+            ("增幅50％。", "增幅百分之五十."),
+            (
+                "１２.５％，-0.5％，５０%",
+                "百分之十二点五, 百分之负零点五, 百分之五十",
+            ),
+            ("提升50％的力道", "提升百分之五十的力道"),
+            ("Hello，50％。", "Hello, 百分之五十."),
+        ] {
+            assert_eq!(normalize(input)?, expected, "{input}");
+            assert_eq!(normalize(input)?, normalize(&input.replace('％', "%"))?);
+        }
+        assert_eq!(normalize("你好％")?, "你好％");
+        assert!(normalize("0.12345678901234567％").is_err());
+        Ok(())
+    }
     #[test]
     fn dates_units_and_decimals_preserve_official_readings() -> Result<()> {
         assert_eq!(

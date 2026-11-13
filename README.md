@@ -225,3 +225,5 @@ Talechime 不获取章节、不分析角色，也不决定下一章。TRNovel �
 嵌入式模型下载现支持受控 HTTP 分片与断点：`Registry::with_download_options` 或 `Downloads::with_options` 接受独立的 `DownloadOptions`，默认每文件两路、进程全局最多四路。宿主 drop future 停止传输，检查 `checkpoint_failed()` 后确认暂停保存；应用任务状态与重启恢复由宿主负责。范围、实测与发布限制见[分片下载验收](docs/records/downloads/parallel-download-acceptance-2026-11-05.md)。
 
 工作区正将模型资源改为固定 Hub 成品的直接缓存加载，进度与实测见[资源记录](docs/records/resources/hf-cache-direct-2026-11-12.md)及活动变更 `use-hf-cache-directly`。这些变更尚未作为新的 SDK/应用版本发布；其他平台与人工听感不随资源就绪自动验收。
+
+2026-11-13：Kokoro 支持数字后的全角百分号（如 50％），与半角百分数采用相同中文读法；孤立未知符号继续拒绝。文本推理身份已更新，旧宿主计划需显式重新生成，详见[规则与验证](docs/knowledge/decisions/kokoro-numeric-percent.md)。
